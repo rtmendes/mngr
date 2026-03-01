@@ -1404,13 +1404,13 @@ def test_all_default_work_dir_files_are_loadable() -> None:
         assert content, f"defaults/{resource_name} is empty"
 
 
-def test_all_default_command_files_are_loadable() -> None:
-    """Verify all declared default command files can be loaded from resources."""
-    from imbue.mng_claude_zygote.provisioning import _DEFAULT_COMMAND_FILES
+def test_all_default_skill_files_are_loadable() -> None:
+    """Verify all declared default skill files can be loaded from resources."""
+    from imbue.mng_claude_zygote.provisioning import _DEFAULT_SKILL_DIRS
 
-    for command_file in _DEFAULT_COMMAND_FILES:
-        content = load_zygote_resource(f"defaults/commands/{command_file}")
-        assert content, f"defaults/commands/{command_file} is empty"
+    for skill_name in _DEFAULT_SKILL_DIRS:
+        content = load_zygote_resource(f"defaults/skills/{skill_name}/SKILL.md")
+        assert content, f"defaults/skills/{skill_name}/SKILL.md is empty"
 
 
 def test_default_claude_md_mentions_mng() -> None:
@@ -1435,17 +1435,23 @@ def test_default_entrypoint_json_is_valid_json() -> None:
     assert "permissions" in parsed
 
 
-def test_default_new_chat_command_references_chat_script() -> None:
-    """Verify the new-chat command references the chat.sh script."""
-    content = load_zygote_resource("defaults/commands/new-chat.md")
+def test_default_new_chat_skill_has_frontmatter_and_references_chat_script() -> None:
+    """Verify the new-chat skill has YAML frontmatter and references the chat.sh script."""
+    content = load_zygote_resource("defaults/skills/new-chat/SKILL.md")
+    assert content.startswith("---")
+    assert "name: new-chat" in content
+    assert "description:" in content
     assert "chat.sh" in content
     assert "--new" in content
     assert "--as-agent" in content
 
 
-def test_default_list_conversations_command_references_chat_script() -> None:
-    """Verify the list-conversations command references chat.sh --list."""
-    content = load_zygote_resource("defaults/commands/list-conversations.md")
+def test_default_list_conversations_skill_has_frontmatter_and_references_chat_script() -> None:
+    """Verify the list-conversations skill has YAML frontmatter and references chat.sh --list."""
+    content = load_zygote_resource("defaults/skills/list-conversations/SKILL.md")
+    assert content.startswith("---")
+    assert "name: list-conversations" in content
+    assert "description:" in content
     assert "chat.sh" in content
     assert "--list" in content
 
@@ -1463,8 +1469,8 @@ def test_provision_default_content_writes_missing_files() -> None:
     assert any("CLAUDE.md" in p for p in written_paths)
     assert any("entrypoint.md" in p for p in written_paths)
     assert any("entrypoint.json" in p for p in written_paths)
-    assert any("new-chat.md" in p for p in written_paths)
-    assert any("list-conversations.md" in p for p in written_paths)
+    assert any("new-chat/SKILL.md" in p for p in written_paths)
+    assert any("list-conversations/SKILL.md" in p for p in written_paths)
 
 
 def test_provision_default_content_skips_existing_files() -> None:

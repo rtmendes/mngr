@@ -40,10 +40,11 @@ _DEFAULT_CHANGELINGS_DIR_FILES: Final[tuple[tuple[str, str], ...]] = (
 # Tuples of (resource path under defaults/, target path relative to work dir).
 _DEFAULT_WORK_DIR_FILES: Final[tuple[tuple[str, str], ...]] = (("CLAUDE.md", "CLAUDE.md"),)
 
-# Default command/skill files written to .claude/commands/ if missing.
-_DEFAULT_COMMAND_FILES: Final[tuple[str, ...]] = (
-    "new-chat.md",
-    "list-conversations.md",
+# Default skill files written to .claude/skills/<name>/SKILL.md if missing.
+# Each entry is a skill directory name under defaults/skills/.
+_DEFAULT_SKILL_DIRS: Final[tuple[str, ...]] = (
+    "new-chat",
+    "list-conversations",
 )
 
 
@@ -119,7 +120,7 @@ def provision_default_content(
     - CLAUDE.md (shared project instructions for all agents)
     - <changelings_dir>/entrypoint.md (primary agent inner monologue prompt)
     - <changelings_dir>/entrypoint.json (primary agent Claude settings)
-    - .claude/commands/*.md (slash command skills)
+    - .claude/skills/<name>/SKILL.md (skills)
 
     Only writes files that are missing -- existing files are never overwritten.
     This allows fresh deployments to work out of the box while preserving
@@ -135,10 +136,10 @@ def provision_default_content(
         target_path = work_dir / relative_path
         _write_default_if_missing(host, target_path, f"defaults/{resource_name}", settings)
 
-    commands_dir = work_dir / ".claude" / "commands"
-    for command_file in _DEFAULT_COMMAND_FILES:
-        target_path = commands_dir / command_file
-        _write_default_if_missing(host, target_path, f"defaults/commands/{command_file}", settings)
+    skills_dir = work_dir / ".claude" / "skills"
+    for skill_name in _DEFAULT_SKILL_DIRS:
+        target_path = skills_dir / skill_name / "SKILL.md"
+        _write_default_if_missing(host, target_path, f"defaults/skills/{skill_name}/SKILL.md", settings)
 
 
 def install_llm_toolchain(host: OnlineHostInterface, settings: ProvisioningSettings) -> None:
