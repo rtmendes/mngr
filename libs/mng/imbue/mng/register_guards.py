@@ -4,6 +4,7 @@ from docker.api.client import APIClient
 from modal._grpc_client import UnaryStreamWrapper
 from modal._grpc_client import UnaryUnaryWrapper
 
+from imbue.imbue_common.conftest_hooks import register_marker
 from imbue.imbue_common.resource_guards import enforce_sdk_guard
 from imbue.imbue_common.resource_guards import register_resource_guard
 from imbue.imbue_common.resource_guards import register_sdk_guard
@@ -100,15 +101,25 @@ def _cleanup_docker_guards() -> None:
 
 _GUARDED_BINARY_RESOURCES = ("tmux", "rsync", "unison")
 
+_MNG_MARKERS = (
+    "docker: marks tests that require a running Docker daemon",
+    "tmux: marks tests that create real tmux sessions or mng agents",
+    "modal: marks tests that connect to the Modal cloud service",
+    "rsync: marks tests that invoke rsync for file transfer",
+    "unison: marks tests that start a real unison file-sync process",
+)
+
 
 def register_mng_guards() -> None:
-    """Register all mng-specific resource guards with the infrastructure.
+    """Register all mng-specific resource guards and markers.
 
-    Registers both SDK monkeypatches (Modal, Docker) and binary wrapper
-    guards (tmux, rsync, unison). Safe to call multiple times; both
-    register_sdk_guard and register_resource_guard deduplicate by name.
+    Registers SDK monkeypatches (Modal, Docker), binary wrapper guards
+    (tmux, rsync, unison), and pytest markers for each. Safe to call
+    multiple times; all registration functions deduplicate.
     Call this before register_conftest_hooks() in each conftest.py.
     """
+    for marker_line in _MNG_MARKERS:
+        register_marker(marker_line)
     register_sdk_guard("modal", _install_modal_guards, _cleanup_modal_guards)
     register_sdk_guard("docker", _install_docker_guards, _cleanup_docker_guards)
     for resource in _GUARDED_BINARY_RESOURCES:
