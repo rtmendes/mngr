@@ -779,6 +779,13 @@ def _handle_create(
         else:
             should_await_ready = opts.connect
 
+    # Optimistically update tab completion cache so the new agent name is
+    # immediately available. Done before the background/sync fork since the
+    # name is already determined. If creation fails, the stale entry will be
+    # cleaned up on the next background refresh.
+    if agent_opts.name is not None:
+        add_agent_name_to_cache(agent_opts.name)
+
     # If --no-connect and --no-await-ready, run api_create in background
     # Note: --edit-message incompatibility is validated early (before editor creation) to avoid
     # starting an editor subprocess that would need to be cleaned up
@@ -805,9 +812,6 @@ def _handle_create(
             create_work_dir=not is_work_dir_created,
             created_branch_name=early_created_branch_name,
         )
-
-        # Update tab completion cache so the new agent name is immediately available
-        add_agent_name_to_cache(create_result.agent.name)
 
         # If --edit-message was used, wait for editor and send the message
         if editor_session is not None:
@@ -923,11 +927,6 @@ def _create_agent_in_background(
         # Parent process: output message and exit immediately
         logger.info("Agent creation started in background (PID: {})", pid)
         logger.info("Agent name: {}", agent_options.name)
-        # Optimistically update tab completion cache with the new agent name.
-        # If creation fails in the child, the stale entry will be cleaned up
-        # on the next background refresh.
-        if agent_options.name is not None:
-            add_agent_name_to_cache(agent_options.name)
         return
 
     # Child process: detach from parent and continue
