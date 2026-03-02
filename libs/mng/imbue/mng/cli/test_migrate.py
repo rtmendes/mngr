@@ -3,6 +3,7 @@
 from uuid import uuid4
 
 import pluggy
+import pytest
 from click.testing import CliRunner
 
 from imbue.mng.cli.list import list_command
@@ -11,6 +12,7 @@ from imbue.mng.testing import tmux_session_cleanup
 from imbue.mng.testing import tmux_session_exists
 
 
+@pytest.mark.tmux
 def test_migrate_clones_and_destroys_source(
     cli_runner: CliRunner,
     create_test_agent,
