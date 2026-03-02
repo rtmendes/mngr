@@ -58,9 +58,9 @@ class _WatcherSettings:
     poll_interval: int = 5
 
 
-def _load_watcher_settings(agent_state_dir: Path) -> _WatcherSettings:
+def _load_watcher_settings(agent_work_dir: Path) -> _WatcherSettings:
     """Load transcript watcher settings from settings.toml."""
-    settings_path = agent_state_dir / "settings.toml"
+    settings_path = agent_work_dir / ".changelings" / "settings.toml"
     try:
         if not settings_path.exists():
             return _WatcherSettings()
@@ -333,6 +333,7 @@ def _convert_new_events(
 
 def main() -> None:
     agent_state_dir = Path(require_env("MNG_AGENT_STATE_DIR"))
+    agent_work_dir = Path(require_env("MNG_AGENT_WORK_DIR"))
     host_dir = Path(require_env("MNG_HOST_DIR"))
 
     input_file = agent_state_dir / "logs" / "claude_transcript" / "events.jsonl"
@@ -341,7 +342,7 @@ def main() -> None:
 
     log = Logger(host_dir / "logs" / "transcript_watcher.log")
 
-    settings = _load_watcher_settings(agent_state_dir)
+    settings = _load_watcher_settings(agent_work_dir)
 
     log.info("Transcript watcher started")
     log.info(f"  Agent data dir: {agent_state_dir}")

@@ -45,9 +45,9 @@ class _WatcherSettings:
     sources: list[str] = dataclasses.field(default_factory=lambda: ["messages", "scheduled", "mng_agents", "stop"])
 
 
-def _load_watcher_settings(agent_state_dir: Path) -> _WatcherSettings:
+def _load_watcher_settings(agent_work_dir: Path) -> _WatcherSettings:
     """Load watcher settings from settings.toml, falling back to defaults."""
-    settings_path = agent_state_dir / "settings.toml"
+    settings_path = agent_work_dir / ".changelings" / "settings.toml"
     try:
         if not settings_path.exists():
             return _WatcherSettings()
@@ -155,6 +155,7 @@ def _check_all_sources(
 
 def main() -> None:
     agent_state_dir = Path(require_env("MNG_AGENT_STATE_DIR"))
+    agent_work_dir = Path(require_env("MNG_AGENT_WORK_DIR"))
     agent_name = require_env("MNG_AGENT_NAME")
     host_dir = Path(require_env("MNG_HOST_DIR"))
 
@@ -164,7 +165,7 @@ def main() -> None:
 
     log = Logger(host_dir / "logs" / "event_watcher.log")
 
-    settings = _load_watcher_settings(agent_state_dir)
+    settings = _load_watcher_settings(agent_work_dir)
 
     log.info("Event watcher started")
     log.info(f"  Agent data dir: {agent_state_dir}")

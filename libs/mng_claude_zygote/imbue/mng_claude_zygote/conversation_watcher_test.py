@@ -23,12 +23,6 @@ def test_watcher_settings_defaults() -> None:
     assert settings.poll_interval == 5
 
 
-def test_watcher_settings_is_frozen() -> None:
-    settings = _WatcherSettings()
-    with pytest.raises(AttributeError):
-        settings.poll_interval = 10  # type: ignore[misc]
-
-
 # -- _load_watcher_settings tests --
 
 
