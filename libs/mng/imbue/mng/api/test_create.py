@@ -17,16 +17,17 @@ from imbue.mng import hookimpl
 from imbue.mng.api.create import _call_on_before_create_hooks
 from imbue.mng.api.create import create
 from imbue.mng.api.data_types import CreateAgentResult
-from imbue.mng.api.data_types import NewHostOptions
-from imbue.mng.api.data_types import OnBeforeCreateArgs
 from imbue.mng.api.providers import get_provider_instance
 from imbue.mng.config.data_types import MngContext
+from imbue.mng.hosts.host import Host
 from imbue.mng.hosts.host import HostLocation
 from imbue.mng.interfaces.agent import AgentInterface
 from imbue.mng.interfaces.host import AgentGitOptions
 from imbue.mng.interfaces.host import CreateAgentOptions
+from imbue.mng.interfaces.host import NewHostOptions
 from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.plugins import hookspecs
+from imbue.mng.plugins.hookspecs import OnBeforeCreateArgs
 from imbue.mng.primitives import AgentName
 from imbue.mng.primitives import AgentTypeName
 from imbue.mng.primitives import CommandString
@@ -273,7 +274,6 @@ def test_create_agent_with_unknown_type_uses_type_as_command(
 
 
 @pytest.mark.tmux
-@pytest.mark.git
 def test_create_agent_with_worktree(
     temp_mng_ctx: MngContext,
     temp_git_repo: Path,
@@ -331,7 +331,6 @@ def test_create_agent_with_worktree(
 
 
 @pytest.mark.tmux
-@pytest.mark.git
 def test_worktree_with_custom_branch_name(
     tmp_home_dir: Path,
     temp_mng_ctx: MngContext,
@@ -447,7 +446,58 @@ def test_in_place_mode_sets_is_generated_work_dir_false(
 
 
 @pytest.mark.tmux
-@pytest.mark.git
+def test_in_place_removes_previously_generated_work_dir(
+    temp_mng_ctx: MngContext,
+    temp_work_dir: Path,
+    temp_host_dir: Path,
+) -> None:
+    """Test that in-place mode removes a previously-generated work_dir from generated_work_dirs.
+
+    This is the critical scenario: if a directory was previously created by mng (e.g., as a
+    worktree for another agent) and is already tracked in generated_work_dirs, creating an
+    in-place agent in that directory must remove it from generated_work_dirs. Otherwise, GC
+    would delete the directory after the in-place agent is destroyed.
+    """
+    agent_name = AgentName(f"test-in-place-remove-{int(time.time())}")
+    session_name = f"{temp_mng_ctx.config.prefix}{agent_name}"
+
+    with tmux_session_cleanup(session_name):
+        local_host, source_location = _get_local_host_and_location(temp_mng_ctx, temp_work_dir)
+
+        # Pre-seed generated_work_dirs with the source path via the host's own method,
+        # simulating a previous worktree agent that created this directory.
+        assert isinstance(local_host, Host)
+        local_host._add_generated_work_dir(temp_work_dir)
+
+        # Verify pre-condition: the path IS in generated_work_dirs
+        certified_data = local_host.get_certified_data()
+        assert str(temp_work_dir) in certified_data.generated_work_dirs
+
+        # Create an in-place agent (git=None means in-place, no copy)
+        agent_options = CreateAgentOptions(
+            agent_type=AgentTypeName("in-place-remove-test"),
+            name=agent_name,
+            command=CommandString("sleep 60"),
+        )
+
+        create(
+            source_location=source_location,
+            target_host=local_host,
+            agent_options=agent_options,
+            mng_ctx=temp_mng_ctx,
+        )
+
+        # After in-place creation, the path should be REMOVED from generated_work_dirs
+        host_data_file = local_host.host_dir / "data.json"
+        post_data = json.loads(host_data_file.read_text())
+        generated_work_dirs = post_data.get("generated_work_dirs", [])
+        assert str(temp_work_dir) not in generated_work_dirs, (
+            "in-place mode should remove the path from generated_work_dirs "
+            "to prevent GC from deleting the directory after the agent is destroyed"
+        )
+
+
+@pytest.mark.tmux
 def test_worktree_mode_sets_is_generated_work_dir_true(
     tmp_home_dir: Path,
     temp_mng_ctx: MngContext,
@@ -506,6 +556,7 @@ def test_worktree_mode_sets_is_generated_work_dir_true(
 
 
 @pytest.mark.tmux
+@pytest.mark.rsync
 def test_target_path_different_from_source_sets_is_generated_work_dir_true(
     temp_mng_ctx: MngContext,
     temp_work_dir: Path,

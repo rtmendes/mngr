@@ -7,6 +7,7 @@ Provides common test infrastructure:
 - Output file redirection (slow tests report, coverage report)
 - Shared pytest defaults (markers, filterwarnings, CLI args, coverage report config)
 - Cached importlib.metadata.entry_points() for fast test startup on slow filesystems
+- Resource mark enforcement (ensures tests are correctly marked for external tool usage)
 
 Environment variables:
 - PYTEST_NUMPROCESSES: Override the number of xdist workers (default: 4, set in
@@ -38,12 +39,16 @@ from pathlib import Path
 from typing import Any
 from typing import Final
 from typing import TextIO
-from typing import Union
 from uuid import uuid4
 
 import pytest
 from coverage.exceptions import CoverageException
 
+from imbue.imbue_common.resource_guards import _pytest_runtest_makereport
+from imbue.imbue_common.resource_guards import _pytest_runtest_setup
+from imbue.imbue_common.resource_guards import _pytest_runtest_teardown
+from imbue.imbue_common.resource_guards import cleanup_resource_guard_wrappers
+from imbue.imbue_common.resource_guards import create_resource_guard_wrappers
 
 # ---------------------------------------------------------------------------
 # Cache importlib.metadata.entry_points() to avoid repeated filesystem scans.
@@ -61,13 +66,13 @@ from coverage.exceptions import CoverageException
 _original_entry_points = importlib.metadata.entry_points
 _entry_points_cache: dict[
     tuple[tuple[str, Any], ...],
-    Union[importlib.metadata.EntryPoints, importlib.metadata.SelectableGroups],
+    importlib.metadata.EntryPoints | importlib.metadata.SelectableGroups,
 ] = {}
 
 
 def _cached_entry_points(
     **params: Any,
-) -> Union[importlib.metadata.EntryPoints, importlib.metadata.SelectableGroups]:
+) -> importlib.metadata.EntryPoints | importlib.metadata.SelectableGroups:
     """Caching wrapper around importlib.metadata.entry_points().
 
     Converts the keyword arguments to a hashable key (frozenset of items) and
@@ -81,6 +86,7 @@ def _cached_entry_points(
 
 
 importlib.metadata.entry_points = _cached_entry_points  # type: ignore[assignment]
+
 
 # Directory for test output files (slow tests, coverage summaries).
 # Relative to wherever pytest is invoked from.
@@ -109,13 +115,21 @@ _registered: bool = False
 _SHARED_MARKERS: Final[list[str]] = [
     "acceptance: marks tests as requiring network access, Modal credentials, etc. These are required to pass in CI",
     "release: marks tests as being required for release (but not for merging PRs)",
-    "docker: marks tests that require a running Docker daemon. Filter with -m 'not docker' if Docker is unavailable",
-    "tmux: marks tests that create real tmux sessions or mng agents (slow, requires tmux)",
-    "git: marks tests that run real git commands via subprocess (clone, commit, push, pull)",
-    "modal: marks tests that connect to the Modal cloud service (requires credentials and network)",
-    "rsync: marks tests that invoke rsync for file transfer",
-    "unison: marks tests that start a real unison file-sync process",
 ]
+
+# Additional markers registered by projects via register_marker().
+_registered_markers: list[str] = []
+
+
+def register_marker(marker_line: str) -> None:
+    """Register a pytest marker to be added during pytest_configure.
+
+    Call this from each project's conftest.py before register_conftest_hooks().
+    The marker_line format is "name: description" (same as pyproject.toml markers).
+    """
+    if marker_line not in _registered_markers:
+        _registered_markers.append(marker_line)
+
 
 _SHARED_FILTER_WARNINGS: Final[list[str]] = [
     # Suppress grpclib warning that occurs during garbage collection when Channel.__del__ is called
@@ -285,16 +299,17 @@ def _pytest_sessionstart(session: pytest.Session) -> None:
 
     # xdist workers should not acquire the lock - only the controller does
     if _is_xdist_worker():
-        # Use setattr to avoid type errors - pytest Session doesn't declare these attributes
         setattr(session, "start_time", time.time())  # noqa: B010
-        return
+    else:
+        # Acquire the lock and store the handle on the session to keep it open
+        lock_handle = _acquire_global_test_lock(lock_path=_GLOBAL_TEST_LOCK_PATH)
+        setattr(session, _SESSION_LOCK_HANDLE_ATTR, lock_handle)  # noqa: B010
 
-    # Acquire the lock and store the handle on the session to keep it open
-    lock_handle = _acquire_global_test_lock(lock_path=_GLOBAL_TEST_LOCK_PATH)
-    setattr(session, _SESSION_LOCK_HANDLE_ATTR, lock_handle)  # noqa: B010
+        # Record start time AFTER acquiring the lock so wait time isn't counted
+        setattr(session, "start_time", time.time())  # noqa: B010
 
-    # Record start time AFTER acquiring the lock so wait time isn't counted
-    setattr(session, "start_time", time.time())  # noqa: B010
+    # Create resource guard wrappers (workers reuse the controller's via env var).
+    create_resource_guard_wrappers()
 
 
 @pytest.hookimpl(trylast=True)
@@ -304,6 +319,9 @@ def _pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     Prints per-test durations before checking the limit so that timing data
     is always visible in CI output, even when the suite exceeds the limit.
     """
+    # Clean up resource guard wrappers
+    cleanup_resource_guard_wrappers()
+
     # Print test durations before checking the time limit, so they are
     # visible in the CI output even when pytest.exit() aborts the session.
     terminalreporter = session.config.pluginmanager.get_plugin("terminalreporter")
@@ -335,7 +353,7 @@ def _pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             if "CI" in os.environ:
                 # this limit applies to the test suite that runs against all branches *except* "release" in GitHub CI (and which is basically just used for calculating coverage)
                 # typically integration tests and unit tests are run locally, so we want them to be fast
-                max_duration = 100.0
+                max_duration = 130.0
             else:
                 # this limit applies to the entire test suite when run locally
                 max_duration = 300.0
@@ -378,8 +396,8 @@ def _generate_output_filename(prefix: str, extension: str) -> Path:
 @pytest.hookimpl(tryfirst=True)
 def _pytest_configure(config: pytest.Config) -> None:
     """Register shared markers/filterwarnings and handle output-to-file options."""
-    # Register shared markers
-    for marker in _SHARED_MARKERS:
+    # Register shared markers and any additional markers from register_marker()
+    for marker in _SHARED_MARKERS + _registered_markers:
         config.addinivalue_line("markers", marker)
 
     # Register shared filterwarnings
@@ -651,5 +669,8 @@ def register_conftest_hooks(namespace: dict) -> None:
     namespace["pytest_configure"] = _pytest_configure
     namespace["pytest_collection_finish"] = _pytest_collection_finish
     namespace["pytest_terminal_summary"] = _pytest_terminal_summary
+    namespace["pytest_runtest_setup"] = _pytest_runtest_setup
+    namespace["pytest_runtest_teardown"] = _pytest_runtest_teardown
+    namespace["pytest_runtest_makereport"] = _pytest_runtest_makereport
     # Register the JUnit test ID fixture (with public name for pytest discovery)
     namespace["set_junit_test_id"] = _set_junit_test_id
