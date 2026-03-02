@@ -117,7 +117,7 @@ $new_lines"
         echo "$total_lines" > "$offset_file"
         log "Events sent successfully, offset updated to $total_lines"
     else
-        log "ERROR: failed to send events from $source_dir to $AGENT_NAME: $(cat "$send_stderr")"
+        log_error "Failed to send events from $source_dir to $AGENT_NAME: $(cat "$send_stderr")"
     fi
     rm -f "$send_stderr"
 }
