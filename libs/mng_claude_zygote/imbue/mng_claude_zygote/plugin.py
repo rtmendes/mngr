@@ -132,10 +132,9 @@ class ClaudeZygoteAgent(ClaudeAgent):
         4. Symlinks for .changelings/entrypoint.md -> CLAUDE.local.md
         5. Watcher scripts and chat utilities
         6. Event log directory structure (logs/<source>/events.jsonl)
-        7. Default chat model configuration
-        8. LLM tool scripts for conversation context
-        9. Memory directory symlink into Claude project
-        10. Settings file provisioned to agent state dir for script access
+        7. LLM tool scripts for conversation context
+        8. Memory directory symlink into Claude project
+        9. Settings file provisioned to agent state dir for script access
         """
         super().provision(host, options, mng_ctx)
 
