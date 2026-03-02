@@ -96,12 +96,12 @@ build_system_prompt() {
     local prompt=""
     local global_md="${MNG_AGENT_WORK_DIR:-}/GLOBAL.md"
 
-    if [ -n "$MNG_AGENT_WORK_DIR" ] && [ -f "$global_md" ]; then
+    if [ -n "${MNG_AGENT_WORK_DIR:-}" ] && [ -f "$global_md" ]; then
         prompt="$(cat "$global_md")"
         log "Loaded GLOBAL.md system prompt (${#prompt} chars)"
     fi
 
-    if [ -n "$MNG_AGENT_WORK_DIR" ] && [ -f "$TALKING_PROMPT" ]; then
+    if [ -n "${MNG_AGENT_WORK_DIR:-}" ] && [ -f "$TALKING_PROMPT" ]; then
         if [ -n "$prompt" ]; then
             prompt="$prompt"$'\n\n'"$(cat "$TALKING_PROMPT")"
         else
