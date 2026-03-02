@@ -52,11 +52,11 @@ import tomllib, pathlib, sys
 p = pathlib.Path('${MNG_AGENT_STATE_DIR}/settings.toml')
 try:
     s = tomllib.loads(p.read_text()) if p.exists() else {}
-    print(s.get('chat', {}).get('model', 'claude-opus-4-6'))
+    print(s.get('chat', {}).get('model', 'claude-opus-4.6'))
 except Exception as e:
     print(f'WARNING: failed to load settings: {e}', file=sys.stderr)
-    print('claude-opus-4-6')
-" 2>>"$LOG_FILE" || echo "claude-opus-4-6"
+    print('claude-opus-4.6')
+" 2>>"$LOG_FILE" || echo "claude-opus-4.6"
 }
 
 generate_cid() {
