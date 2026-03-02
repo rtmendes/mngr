@@ -2,7 +2,6 @@
 
 import json
 import os
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -135,19 +134,59 @@ def test_chat_script_logs_to_file() -> None:
 # -- Transcript watcher conversion logic tests --
 
 
-def _extract_convert_script() -> str:
-    """Extract the inline Python CONVERT_SCRIPT from transcript_watcher.sh."""
-    content = load_zygote_resource("transcript_watcher.sh")
-    start_marker = "python3 << 'CONVERT_SCRIPT'"
-    start_idx = content.index(start_marker)
-    start_of_python = content.index("\n", start_idx) + 1
-    remaining = content[start_of_python:]
-    python_lines = []
-    for line in remaining.split("\n"):
-        if line.strip() == "CONVERT_SCRIPT":
-            break
-        python_lines.append(line)
-    return "\n".join(python_lines)
+def _strip_below_watchdog_marker(source: str) -> str:
+    """Strip everything at and below the WATCHDOG-DEPENDENT marker line.
+
+    Searches for the marker as a standalone comment line (not inside a string
+    literal like a docstring). Returns the source text up to (but not including)
+    the marker line.
+    """
+    marker_prefix = "# --- WATCHDOG-DEPENDENT CODE BELOW"
+    lines = source.split("\n")
+    # Walk backwards to find the last occurrence (the real one, not a docstring mention)
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].startswith(marker_prefix):
+            return "\n".join(lines[:i])
+    raise ValueError(f"Marker {marker_prefix!r} not found in source")
+
+
+def _load_transcript_watcher_module() -> dict[str, Any]:
+    """Load the stdlib-only portion of transcript_watcher.py (above the watchdog marker).
+
+    Returns a namespace dict containing the conversion functions.
+    """
+    content = load_zygote_resource("transcript_watcher.py")
+    # Also load watcher_common.py (stripped above its watchdog marker) so
+    # transcript_watcher.py can import Logger from it.
+    watcher_common_content = load_zygote_resource("watcher_common.py")
+    watcher_common_stripped = _strip_below_watchdog_marker(watcher_common_content)
+
+    stripped = _strip_below_watchdog_marker(content)
+
+    # Exec watcher_common first so transcript_watcher can import from it
+    watcher_common_ns: dict[str, Any] = {}
+    exec(compile(watcher_common_stripped, "watcher_common.py", "exec"), watcher_common_ns)
+
+    # Patch sys.modules so `from watcher_common import ...` works during exec
+    import types
+
+    watcher_common_mod = types.ModuleType("watcher_common")
+    for key, value in watcher_common_ns.items():
+        if not key.startswith("__"):
+            setattr(watcher_common_mod, key, value)
+    import sys
+
+    old_mod = sys.modules.get("watcher_common")
+    sys.modules["watcher_common"] = watcher_common_mod
+    try:
+        ns: dict[str, Any] = {"__file__": "/tmp/transcript_watcher.py"}
+        exec(compile(stripped, "transcript_watcher.py", "exec"), ns)
+    finally:
+        if old_mod is not None:
+            sys.modules["watcher_common"] = old_mod
+        else:
+            sys.modules.pop("watcher_common", None)
+    return ns
 
 
 def _run_conversion(
@@ -156,6 +195,10 @@ def _run_conversion(
     tmp_path: Path = Path("/tmp"),
 ) -> list[dict[str, Any]]:
     """Run the conversion logic on the given input and return output events."""
+    ns = _load_transcript_watcher_module()
+    convert_fn = ns["_convert_new_events"]
+    logger_cls = ns["Logger"]
+
     with tempfile.TemporaryDirectory() as tmpdir:
         input_file = Path(tmpdir) / "input.jsonl"
         output_file = Path(tmpdir) / "output.jsonl"
@@ -165,22 +208,8 @@ def _run_conversion(
         if existing_output_lines:
             output_file.write_text("\n".join(existing_output_lines) + "\n")
 
-        script = _extract_convert_script()
-        env = {
-            **os.environ,
-            "_INPUT_FILE": str(input_file),
-            "_OUTPUT_FILE": str(output_file),
-        }
-
-        result = subprocess.run(
-            ["python3", "-c", script],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Conversion failed: {result.stderr}")
+        log = logger_cls(Path(tmpdir) / "test.log")
+        convert_fn(input_file, output_file, log)
 
         if not output_file.exists():
             return []

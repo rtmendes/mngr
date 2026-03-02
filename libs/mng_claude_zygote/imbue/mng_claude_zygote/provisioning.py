@@ -20,7 +20,7 @@ _SCRIPT_FILES: Final[tuple[str, ...]] = (
     "chat.sh",
     "conversation_watcher.py",
     "event_watcher.py",
-    "transcript_watcher.sh",
+    "transcript_watcher.py",
 )
 
 # Python modules provisioned alongside scripts (not executable, mode 0644)
