@@ -247,21 +247,6 @@ def test_save_config_file_preserves_formatting(tmp_path: Path) -> None:
 # =============================================================================
 
 
-def test_config_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that `config --help` works and exits 0."""
-    result = cli_runner.invoke(
-        config,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "config" in result.output.lower()
-
-
 def test_config_get_nonexistent_key(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,

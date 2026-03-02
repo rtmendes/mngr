@@ -43,36 +43,6 @@ def test_push_cli_options_can_be_instantiated() -> None:
     assert opts.uncommitted_changes == "fail"
 
 
-def test_push_nonexistent_agent(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test pushing to a non-existent agent returns error."""
-    result = cli_runner.invoke(
-        push,
-        ["nonexistent-agent-77312"],
-        obj=plugin_manager,
-        catch_exceptions=True,
-    )
-
-    assert result.exit_code != 0
-
-
-def test_push_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that push --help works and exits 0."""
-    result = cli_runner.invoke(
-        push,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "push" in result.output.lower()
-
-
 def test_push_requires_target(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,

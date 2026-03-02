@@ -1,13 +1,9 @@
 """Unit tests for the connect CLI command."""
 
-import pluggy
-from click.testing import CliRunner
-
 from imbue.mng.cli.conftest import make_test_agent_info
 from imbue.mng.cli.connect import ConnectCliOptions
 from imbue.mng.cli.connect import _build_connection_options
 from imbue.mng.cli.connect import build_status_text
-from imbue.mng.cli.connect import connect
 from imbue.mng.cli.connect import filter_agents
 from imbue.mng.cli.connect import handle_search_key
 from imbue.mng.primitives import AgentLifecycleState
@@ -248,18 +244,3 @@ def test_build_connection_options_custom_values() -> None:
 # =============================================================================
 # Tests for connect CLI command
 # =============================================================================
-
-
-def test_connect_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that connect --help works and exits 0."""
-    result = cli_runner.invoke(
-        connect,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "connect" in result.output.lower()

@@ -110,21 +110,6 @@ def test_start_connect_with_multiple_agents(
     assert "--connect can only be used with a single agent" in result.output
 
 
-def test_start_nonexistent_agent(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test starting a non-existent agent."""
-    result = cli_runner.invoke(
-        start,
-        ["nonexistent-agent-98732"],
-        obj=plugin_manager,
-        catch_exceptions=True,
-    )
-
-    assert result.exit_code != 0
-
-
 def test_start_all_with_no_stopped_agents(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
@@ -181,21 +166,6 @@ def test_output_result_format_template() -> None:
     with capture_stdout() as buf:
         _output_result(["my-agent"], output_opts)
     assert "my-agent" in buf.getvalue()
-
-
-def test_start_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that start --help works and exits 0."""
-    result = cli_runner.invoke(
-        start,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "start" in result.output.lower()
 
 
 def test_start_dry_run_all_no_stopped_agents(

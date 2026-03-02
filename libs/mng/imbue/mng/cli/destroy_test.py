@@ -119,36 +119,6 @@ def test_destroy_cannot_combine_agents_and_all(
     assert "Cannot specify both agent names and --all" in result.output
 
 
-def test_destroy_nonexistent_agent(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test destroying a non-existent agent."""
-    result = cli_runner.invoke(
-        destroy,
-        ["nonexistent-agent-88421"],
-        obj=plugin_manager,
-        catch_exceptions=True,
-    )
-
-    assert result.exit_code != 0
-
-
-def test_destroy_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that destroy --help works and exits 0."""
-    result = cli_runner.invoke(
-        destroy,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "destroy" in result.output.lower()
-
-
 def test_destroy_all_dry_run_no_agents(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,

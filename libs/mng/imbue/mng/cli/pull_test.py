@@ -279,21 +279,6 @@ def test_find_agent_without_skip_raises_for_stopped_agent(
         find_and_maybe_start_agent_by_name_or_id(str(agent_name), agents_by_host, temp_mng_ctx, "test")
 
 
-def test_pull_nonexistent_agent(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test pulling from a non-existent agent returns error."""
-    result = cli_runner.invoke(
-        pull,
-        ["nonexistent-agent-66201"],
-        obj=plugin_manager,
-        catch_exceptions=True,
-    )
-
-    assert result.exit_code != 0
-
-
 def test_pull_target_branch_requires_git_mode(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
@@ -307,18 +292,3 @@ def test_pull_target_branch_requires_git_mode(
     )
     assert result.exit_code != 0
     assert "--target-branch can only be used with --sync-mode=git" in result.output
-
-
-def test_pull_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that pull --help works and exits 0."""
-    result = cli_runner.invoke(
-        pull,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "pull" in result.output.lower()

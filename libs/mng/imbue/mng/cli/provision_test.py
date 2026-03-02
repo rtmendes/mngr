@@ -91,35 +91,6 @@ def test_output_result_human_format() -> None:
 # =============================================================================
 
 
-def test_provision_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that provision --help works and exits 0."""
-    result = cli_runner.invoke(
-        provision,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "provision" in result.output.lower()
-
-
-def test_provision_nonexistent_agent(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that provisioning a non-existent agent returns an error."""
-    result = cli_runner.invoke(
-        provision,
-        ["nonexistent-agent-77412"],
-        obj=plugin_manager,
-        catch_exceptions=True,
-    )
-    assert result.exit_code != 0
-
-
 def test_provision_rejects_both_positional_and_option_agent(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,

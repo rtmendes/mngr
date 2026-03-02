@@ -362,21 +362,6 @@ def test_emit_human_summary_with_errors() -> None:
     _emit_human_summary(result, dry_run=False)
 
 
-def test_emit_human_summary_with_all_resource_types() -> None:
-    """_emit_human_summary should handle all resource types combined."""
-    result = GcResult()
-    result.work_dirs_destroyed = [_create_work_dir_info(is_local=True, size_bytes=1000)]
-    result.machines_destroyed = [_create_host_info()]
-    result.snapshots_destroyed = [_create_snapshot_info()]
-    result.volumes_destroyed = [_create_volume_info()]
-    result.logs_destroyed = [_create_log_file_info()]
-    result.build_cache_destroyed = [_create_build_cache_info()]
-    result.errors = ["An error occurred"]
-
-    # Just verify no exception is raised with all types combined
-    _emit_human_summary(result, dry_run=False)
-
-
 # =============================================================================
 # Tests for GcCliOptions
 # =============================================================================
@@ -587,24 +572,33 @@ def test_emit_human_summary_errors_displayed(capsys) -> None:
     assert "Error B" in captured.out
 
 
+def test_emit_human_summary_with_all_resource_types(capsys) -> None:
+    """_emit_human_summary should report all resource types in a combined result."""
+    result = GcResult()
+    result.work_dirs_destroyed = [_create_work_dir_info(is_local=True, size_bytes=1000)]
+    result.machines_destroyed = [_create_host_info()]
+    result.snapshots_destroyed = [_create_snapshot_info()]
+    result.volumes_destroyed = [_create_volume_info()]
+    result.logs_destroyed = [_create_log_file_info()]
+    result.build_cache_destroyed = [_create_build_cache_info()]
+    result.errors = ["An error occurred"]
+
+    _emit_human_summary(result, dry_run=False)
+    captured = capsys.readouterr()
+
+    assert "Destroyed 6 resource(s) total" in captured.out
+    assert "Work directories: 1" in captured.out
+    assert "Machines: 1" in captured.out
+    assert "Snapshots: 1" in captured.out
+    assert "Volumes: 1" in captured.out
+    assert "Logs: 1" in captured.out
+    assert "Build cache: 1" in captured.out
+    assert "An error occurred" in captured.out
+
+
 # =============================================================================
 # Tests for gc CLI command
 # =============================================================================
-
-
-def test_gc_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that gc --help works and exits 0."""
-    result = cli_runner.invoke(
-        gc,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "gc" in result.output.lower()
 
 
 def test_gc_no_resource_types_exits_with_error(

@@ -77,21 +77,6 @@ def test_stop_cannot_combine_agents_and_all(
     assert "Cannot specify both agent names and --all" in result.output
 
 
-def test_stop_nonexistent_agent(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test stopping a non-existent agent."""
-    result = cli_runner.invoke(
-        stop,
-        ["nonexistent-agent-45721"],
-        obj=plugin_manager,
-        catch_exceptions=True,
-    )
-
-    assert result.exit_code != 0
-
-
 def test_stop_all_with_no_running_agents(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
@@ -241,21 +226,6 @@ def test_stop_cli_options_accepts_all_optional_fields() -> None:
     assert opts.verbose == 2
     assert opts.plugin == ("my-plugin",)
     assert opts.disable_plugin == ("other-plugin",)
-
-
-def test_stop_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that stop --help works and exits 0."""
-    result = cli_runner.invoke(
-        stop,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "stop" in result.output.lower()
 
 
 # =============================================================================

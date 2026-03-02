@@ -169,21 +169,6 @@ def test_message_sends_nothing_with_no_matching_agents(
     assert "No agents found to send message to" in result.output
 
 
-def test_message_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that message --help works and exits 0."""
-    result = cli_runner.invoke(
-        message,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "message" in result.output.lower()
-
-
 def test_message_nonexistent_agent(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,

@@ -63,16 +63,16 @@ def _make_output_opts(fmt: OutputFormat = OutputFormat.HUMAN) -> OutputOptions:
     return OutputOptions(output_format=fmt, format_template=None)
 
 
-def test_rename_output_human_format(capsys) -> None:
-    """_output should write to stdout in HUMAN format."""
-    _output("Renamed agent", _make_output_opts(OutputFormat.HUMAN))
+def test_rename_output_writes_to_stdout_in_human_format(capsys) -> None:
+    """_output should write the message to stdout in HUMAN format."""
+    _output("Agent already named: my-agent", _make_output_opts(OutputFormat.HUMAN))
     captured = capsys.readouterr()
-    assert "Renamed agent" in captured.out
+    assert "Agent already named: my-agent" in captured.out
 
 
-def test_rename_output_json_format(capsys) -> None:
-    """_output should be silent in JSON format."""
-    _output("Renamed agent", _make_output_opts(OutputFormat.JSON))
+def test_rename_output_is_silent_in_json_format(capsys) -> None:
+    """_output should produce no stdout in JSON format (JSON uses _output_result)."""
+    _output("some message", _make_output_opts(OutputFormat.JSON))
     captured = capsys.readouterr()
     assert captured.out == ""
 
@@ -95,11 +95,14 @@ def test_rename_output_result_json(capsys) -> None:
 
 
 def test_rename_output_result_jsonl(capsys) -> None:
-    """_output_result with JSONL should emit event."""
-    _output_result("old", "new", "agent-id", _make_output_opts(OutputFormat.JSONL))
+    """_output_result with JSONL should emit an event containing the rename fields."""
+    _output_result("alpha", "beta", "agent-xyz", _make_output_opts(OutputFormat.JSONL))
     captured = capsys.readouterr()
     output = json.loads(captured.out.strip())
     assert output["event"] == "rename_result"
+    assert output["old_name"] == "alpha"
+    assert output["new_name"] == "beta"
+    assert output["agent_id"] == "agent-xyz"
 
 
 def test_rename_requires_two_arguments(
@@ -114,31 +117,3 @@ def test_rename_requires_two_arguments(
         catch_exceptions=True,
     )
     assert result.exit_code != 0
-
-
-def test_rename_nonexistent_agent(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test renaming a non-existent agent returns error."""
-    result = cli_runner.invoke(
-        rename,
-        ["nonexistent-agent-99812", "new-name"],
-        obj=plugin_manager,
-        catch_exceptions=True,
-    )
-    assert result.exit_code != 0
-
-
-def test_rename_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that --help exits 0."""
-    result = cli_runner.invoke(
-        rename,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0

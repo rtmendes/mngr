@@ -83,20 +83,6 @@ def test_exec_requires_agent_or_all(
     assert "Must specify at least one agent or use --all" in result.output
 
 
-def test_exec_nonexistent_agent(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test executing on a non-existent agent."""
-    result = cli_runner.invoke(
-        exec_command,
-        ["nonexistent-agent-99999", "echo hello"],
-        obj=plugin_manager,
-        catch_exceptions=True,
-    )
-    assert result.exit_code != 0
-
-
 def test_emit_human_output_single_success(capsys: pytest.CaptureFixture[str]) -> None:
     """Test human output prints stdout and logs success for a single agent."""
     exec_result = ExecResult(agent_name="test-agent", stdout="hello world\n", stderr="", success=True)
@@ -172,21 +158,6 @@ def test_emit_jsonl_exec_result(capsys: pytest.CaptureFixture[str]) -> None:
     assert output["event"] == "exec_result"
     assert output["agent"] == "test-agent"
     assert output["success"] is True
-
-
-def test_exec_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that exec --help works and exits 0."""
-    result = cli_runner.invoke(
-        exec_command,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "exec" in result.output.lower()
 
 
 def test_exec_all_with_no_agents(

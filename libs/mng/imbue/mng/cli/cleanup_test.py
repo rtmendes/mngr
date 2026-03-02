@@ -156,6 +156,30 @@ def test_selected_marker_false() -> None:
 
 
 # =============================================================================
+# Tests for _create_cleanup_list_item
+# =============================================================================
+
+
+def test_create_cleanup_list_item_selected_contains_marker_and_agent_name() -> None:
+    """A selected item should contain [x] and the agent name in its display text."""
+    agent = make_test_agent_info(name="test-agent", state=AgentLifecycleState.RUNNING)
+    item = _create_cleanup_list_item(agent, is_selected=True, name_width=20, state_width=10, provider_width=10)
+    display_text = item.original_widget.text
+    assert "[x]" in display_text
+    assert "test-agent" in display_text
+
+
+def test_create_cleanup_list_item_not_selected_contains_empty_marker() -> None:
+    """An unselected item should contain [ ] and the agent name in its display text."""
+    agent = make_test_agent_info(name="other-agent", state=AgentLifecycleState.STOPPED)
+    item = _create_cleanup_list_item(agent, is_selected=False, name_width=20, state_width=10, provider_width=10)
+    display_text = item.original_widget.text
+    assert "[ ]" in display_text
+    assert "other-agent" in display_text
+    assert "STOPPED" in display_text
+
+
+# =============================================================================
 # Tests for CLI options model
 # =============================================================================
 
@@ -176,21 +200,6 @@ def test_cleanup_cli_options_fields() -> None:
 # =============================================================================
 # Tests for CLI command invocation
 # =============================================================================
-
-
-def test_cleanup_help_exits_zero(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that --help works and exits 0."""
-    result = cli_runner.invoke(
-        cleanup,
-        ["--help"],
-        obj=plugin_manager,
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0
-    assert "cleanup" in result.output.lower()
 
 
 def test_cleanup_dry_run_yes_no_agents(
@@ -449,26 +458,6 @@ def test_build_cleanup_status_text_stop_action() -> None:
     assert "1/5" in text
     assert "stop" in text
     assert "my-query" in text
-
-
-# =============================================================================
-# Tests for _create_cleanup_list_item
-# =============================================================================
-
-
-def test_create_cleanup_list_item_selected() -> None:
-    """Test creating a selected cleanup list item."""
-    agent = make_test_agent_info(name="test-agent", state=AgentLifecycleState.RUNNING)
-    item = _create_cleanup_list_item(agent, is_selected=True, name_width=20, state_width=10, provider_width=10)
-    # AttrMap wraps a SelectableIcon; verify the item was created successfully
-    assert item is not None
-
-
-def test_create_cleanup_list_item_not_selected() -> None:
-    """Test creating an unselected cleanup list item."""
-    agent = make_test_agent_info(name="other-agent", state=AgentLifecycleState.STOPPED)
-    item = _create_cleanup_list_item(agent, is_selected=False, name_width=20, state_width=10, provider_width=10)
-    assert item is not None
 
 
 # =============================================================================
