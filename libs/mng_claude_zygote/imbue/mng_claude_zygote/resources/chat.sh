@@ -137,15 +137,15 @@ new_conversation() {
 
     local system_prompt
     system_prompt=$(build_system_prompt)
+    local sys_args=()
+    if [ -n "$system_prompt" ]; then
+        sys_args=(-s "$system_prompt")
+    fi
 
     if [ "$as_agent" = true ]; then
         if [ -n "$message" ]; then
             log "Injecting agent message into conversation $cid"
-            if [ -n "$system_prompt" ]; then
-                llm inject --cid "$cid" -m "$model" -s "$system_prompt" "$message"
-            else
-                llm inject --cid "$cid" -m "$model" "$message"
-            fi
+            llm inject --cid "$cid" -m "$model" "${sys_args[@]}" "$message"
             log "Agent message injected successfully"
         fi
         echo "$cid"
@@ -153,22 +153,12 @@ new_conversation() {
         local tool_args
         tool_args=$(build_tool_args)
         log "Starting live-chat session: cid=$cid model=$model tool_args='$tool_args'"
-        if [ -n "$system_prompt" ]; then
-            if [ -n "$message" ]; then
-                # shellcheck disable=SC2086
-                exec llm live-chat --cid "$cid" -m "$model" -s "$system_prompt" $tool_args "$message"
-            else
-                # shellcheck disable=SC2086
-                exec llm live-chat --cid "$cid" -m "$model" -s "$system_prompt" $tool_args
-            fi
+        if [ -n "$message" ]; then
+            # shellcheck disable=SC2086
+            exec llm live-chat --cid "$cid" -m "$model" "${sys_args[@]}" $tool_args "$message"
         else
-            if [ -n "$message" ]; then
-                # shellcheck disable=SC2086
-                exec llm live-chat --cid "$cid" -m "$model" $tool_args "$message"
-            else
-                # shellcheck disable=SC2086
-                exec llm live-chat --cid "$cid" -m "$model" $tool_args
-            fi
+            # shellcheck disable=SC2086
+            exec llm live-chat --cid "$cid" -m "$model" "${sys_args[@]}" $tool_args
         fi
     fi
 }
@@ -192,14 +182,13 @@ resume_conversation() {
     tool_args=$(build_tool_args)
     local system_prompt
     system_prompt=$(build_system_prompt)
-    log "Starting live-chat session (resume): cid=$cid model=$model tool_args='$tool_args'"
+    local sys_args=()
     if [ -n "$system_prompt" ]; then
-        # shellcheck disable=SC2086
-        exec llm live-chat --show-history -c --cid "$cid" -m "$model" -s "$system_prompt" $tool_args
-    else
-        # shellcheck disable=SC2086
-        exec llm live-chat --show-history -c --cid "$cid" -m "$model" $tool_args
+        sys_args=(-s "$system_prompt")
     fi
+    log "Starting live-chat session (resume): cid=$cid model=$model tool_args='$tool_args'"
+    # shellcheck disable=SC2086
+    exec llm live-chat --show-history -c --cid "$cid" -m "$model" "${sys_args[@]}" $tool_args
 }
 
 list_conversations() {

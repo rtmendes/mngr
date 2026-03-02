@@ -10,6 +10,7 @@ import pytest
 from imbue.mng_claude_zygote.conftest import StubCommandResult
 from imbue.mng_claude_zygote.conftest import StubHost
 from imbue.mng_claude_zygote.data_types import ProvisioningSettings
+from imbue.mng_claude_zygote.provisioning import TalkingRoleConstraintError
 from imbue.mng_claude_zygote.provisioning import _LLM_TOOL_FILES
 from imbue.mng_claude_zygote.provisioning import _SCRIPT_FILES
 from imbue.mng_claude_zygote.provisioning import _is_recursive_plugin_registered
@@ -22,6 +23,7 @@ from imbue.mng_claude_zygote.provisioning import load_zygote_resource
 from imbue.mng_claude_zygote.provisioning import provision_changeling_scripts
 from imbue.mng_claude_zygote.provisioning import provision_default_content
 from imbue.mng_claude_zygote.provisioning import provision_llm_tools
+from imbue.mng_claude_zygote.provisioning import validate_talking_role_constraints
 from imbue.mng_claude_zygote.provisioning import warn_if_mng_unavailable
 
 _DEFAULT_PROVISIONING = ProvisioningSettings()
@@ -1544,8 +1546,6 @@ def test_provision_default_content_writes_to_thinking_dir() -> None:
 
 def test_validate_talking_role_constraints_passes_when_nothing_exists() -> None:
     """Verify validation passes when talking/ has no skills or settings."""
-    from imbue.mng_claude_zygote.provisioning import validate_talking_role_constraints
-
     host = StubHost(
         command_results={"test -e": StubCommandResult(success=False)},
     )
@@ -1553,22 +1553,17 @@ def test_validate_talking_role_constraints_passes_when_nothing_exists() -> None:
 
 
 def test_validate_talking_role_constraints_raises_for_skills_directory() -> None:
-    """Verify validation raises when talking/skills/ exists."""
-    from imbue.mng_claude_zygote.provisioning import TalkingRoleConstraintError
-    from imbue.mng_claude_zygote.provisioning import validate_talking_role_constraints
-
+    """Verify validation raises with an actionable message when talking/skills/ exists."""
     host = StubHost(
         command_results={"talking/skills": StubCommandResult(success=True)},
     )
-    with pytest.raises(TalkingRoleConstraintError, match="skills"):
+    with pytest.raises(TalkingRoleConstraintError, match="skills") as exc_info:
         validate_talking_role_constraints(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
+    assert "Remove this path" in str(exc_info.value)
 
 
 def test_validate_talking_role_constraints_raises_for_settings_json() -> None:
     """Verify validation raises when talking/settings.json exists."""
-    from imbue.mng_claude_zygote.provisioning import TalkingRoleConstraintError
-    from imbue.mng_claude_zygote.provisioning import validate_talking_role_constraints
-
     host = StubHost(
         command_results={
             "talking/skills": StubCommandResult(success=False),
@@ -1576,18 +1571,6 @@ def test_validate_talking_role_constraints_raises_for_settings_json() -> None:
         },
     )
     with pytest.raises(TalkingRoleConstraintError, match="settings.json"):
-        validate_talking_role_constraints(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
-
-
-def test_validate_talking_role_constraints_error_message_is_actionable() -> None:
-    """Verify the error message tells the user to remove the offending path."""
-    from imbue.mng_claude_zygote.provisioning import TalkingRoleConstraintError
-    from imbue.mng_claude_zygote.provisioning import validate_talking_role_constraints
-
-    host = StubHost(
-        command_results={"talking/skills": StubCommandResult(success=True)},
-    )
-    with pytest.raises(TalkingRoleConstraintError, match="Remove this path"):
         validate_talking_role_constraints(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
 
 
