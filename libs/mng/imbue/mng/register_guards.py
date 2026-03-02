@@ -20,20 +20,20 @@ _docker_originals: dict[str, Any] = {}
 
 
 # async is required here because the original methods are async
-async def _guarded_modal_unary_call(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+async def _guarded_modal_unary_call(self, *args, **kwargs):
     enforce_sdk_guard("modal")
     original = _modal_originals["unary_call"]
     return await original(self, *args, **kwargs)
 
 
-async def _guarded_modal_unary_stream(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+async def _guarded_modal_unary_stream(self, *args, **kwargs):
     enforce_sdk_guard("modal")
     original = _modal_originals["unary_stream"]
     async for response in original(self, *args, **kwargs):
         yield response
 
 
-def _guarded_docker_send(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+def _guarded_docker_send(self, *args, **kwargs):
     enforce_sdk_guard("docker")
     original = _docker_originals["send_original_resolved"]
     return original(self, *args, **kwargs)
@@ -53,16 +53,16 @@ def _install_modal_guards() -> None:
     _modal_originals["unary_call"] = UnaryUnaryWrapper.__call__
     _modal_originals["unary_stream"] = UnaryStreamWrapper.unary_stream
 
-    UnaryUnaryWrapper.__call__ = _guarded_modal_unary_call  # type: ignore[assignment]
-    UnaryStreamWrapper.unary_stream = _guarded_modal_unary_stream  # type: ignore[assignment]
+    UnaryUnaryWrapper.__call__ = _guarded_modal_unary_call  # ty: ignore[invalid-assignment]
+    UnaryStreamWrapper.unary_stream = _guarded_modal_unary_stream  # ty: ignore[invalid-assignment]
 
 
 def _cleanup_modal_guards() -> None:
     if "unary_call" not in _modal_originals:
         return
 
-    UnaryUnaryWrapper.__call__ = _modal_originals["unary_call"]  # type: ignore[assignment]
-    UnaryStreamWrapper.unary_stream = _modal_originals["unary_stream"]  # type: ignore[assignment]
+    UnaryUnaryWrapper.__call__ = _modal_originals["unary_call"]
+    UnaryStreamWrapper.unary_stream = _modal_originals["unary_stream"]
     _modal_originals.clear()
 
 
@@ -79,7 +79,7 @@ def _install_docker_guards() -> None:
     if "send" in APIClient.__dict__:
         _docker_originals["send_original"] = APIClient.__dict__["send"]
 
-    APIClient.send = _guarded_docker_send  # type: ignore[method-assign]
+    APIClient.send = _guarded_docker_send  # ty: ignore[invalid-assignment]
 
 
 def _cleanup_docker_guards() -> None:
@@ -87,11 +87,11 @@ def _cleanup_docker_guards() -> None:
         return
 
     if _docker_originals["send_existed"]:
-        APIClient.send = _docker_originals["send_original"]  # type: ignore[method-assign]
+        APIClient.send = _docker_originals["send_original"]
     elif "send" in APIClient.__dict__:
         # No send was defined directly on APIClient before we patched it;
         # remove our shadow so MRO resolution goes back to the parent class.
-        del APIClient.send  # type: ignore[misc]
+        del APIClient.send
     else:
         # Our shadow was already removed (e.g. by another cleanup path).
         pass
