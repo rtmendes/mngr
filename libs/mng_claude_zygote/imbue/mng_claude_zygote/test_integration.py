@@ -153,33 +153,19 @@ def _create_test_llm_db(db_path: Path, rows: list[tuple[str, str, str, str, str,
         conn.commit()
 
 
-_CONV_WATCHER_WATCHDOG_MARKER = "# --- WATCHDOG-DEPENDENT CODE BELOW"
-
-
-def _strip_watchdog_from_conversation_watcher() -> str:
-    """Load conversation_watcher.py and return only the stdlib-only portion.
-
-    Uses the same marker-based approach as event_watcher.py tests.
-    """
-    source = load_zygote_resource("conversation_watcher.py")
-    marker_idx = source.find(_CONV_WATCHER_WATCHDOG_MARKER)
-    assert marker_idx != -1, "conversation_watcher.py is missing the WATCHDOG-DEPENDENT marker comment"
-    truncated = source[:marker_idx]
-    stripped_lines = [line for line in truncated.splitlines() if not line.startswith("from watchdog.")]
-    return "\n".join(stripped_lines)
-
-
 def _run_sync_script(conversations_file: Path, messages_file: Path, db_path: Path) -> int:
     """Run the conversation watcher's sync logic and return the count of synced events.
 
-    Loads the actual _sync_messages function from conversation_watcher.py
-    (stripped of watchdog dependencies) and runs it directly, testing the
-    real production algorithm.
+    Loads the actual production code from watcher_common.py and
+    conversation_watcher.py, strips watchdog-dependent portions,
+    and runs _sync_messages directly.
     """
-    setup = _strip_watchdog_from_conversation_watcher()
+    common_setup = _load_watcher_common_stdlib()
+    watcher_source = load_zygote_resource("conversation_watcher.py")
+    watcher_setup = _strip_to_stdlib_only(watcher_source)
     test_code = f"""
 import pathlib
-_log = _Logger(pathlib.Path("/tmp/test-conv-watcher.log"))
+_log = Logger(pathlib.Path("/tmp/test-conv-watcher.log"))
 count = _sync_messages(
     pathlib.Path("{db_path}"),
     pathlib.Path("{conversations_file}"),
@@ -189,7 +175,7 @@ count = _sync_messages(
 print(count)
 """
     result = subprocess.run(
-        [sys.executable, "-c", setup + test_code],
+        [sys.executable, "-c", common_setup + "\n" + watcher_setup + test_code],
         capture_output=True,
         text=True,
         timeout=10,
@@ -698,33 +684,47 @@ print(json.dumps({{
 _WATCHDOG_MARKER = "# --- WATCHDOG-DEPENDENT CODE BELOW"
 
 
-def _strip_watchdog_from_event_watcher() -> str:
-    """Load event_watcher.py and return only the stdlib-only portion.
+def _strip_to_stdlib_only(source: str) -> str:
+    """Strip watchdog and watcher_common imports, then truncate at marker.
 
-    The script contains a marker comment that separates stdlib-only
-    functions (above) from watchdog-dependent code (below). This function
-    loads the script, removes watchdog imports, and truncates at the marker.
-    Tests then exec the result to get the real production implementations
-    of _get_offset, _set_offset, _mtime_poll, _load_watcher_settings, etc.
+    Returns the stdlib-only portion of a watcher script that can be exec'd
+    without watchdog installed. Removes:
+    - ``from watchdog.*`` import lines
+    - ``from watcher_common import`` lines
+    - ``sys.path.insert`` lines (used to find watcher_common)
+    - Everything below the WATCHDOG-DEPENDENT marker
     """
-    source = load_zygote_resource("event_watcher.py")
     marker_idx = source.find(_WATCHDOG_MARKER)
-    assert marker_idx != -1, "event_watcher.py is missing the WATCHDOG-DEPENDENT marker comment"
-    truncated = source[:marker_idx]
-    # Remove watchdog imports and the _ChangeHandler class
-    stripped_lines = [line for line in truncated.splitlines() if not line.startswith("from watchdog.")]
+    truncated = source[:marker_idx] if marker_idx != -1 else source
+    stripped_lines = [
+        line
+        for line in truncated.splitlines()
+        if not line.startswith("from watchdog.")
+        and not line.startswith("from watcher_common")
+        and not line.startswith("sys.path.insert")
+        and not line.startswith("from __future__")
+    ]
     return "\n".join(stripped_lines)
+
+
+def _load_watcher_common_stdlib() -> str:
+    """Load the stdlib-only portion of watcher_common.py."""
+    source = load_zygote_resource("watcher_common.py")
+    return "from __future__ import annotations\n" + _strip_to_stdlib_only(source)
 
 
 def _run_event_watcher_test(test_code: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
     """Run a snippet of Python code that exercises event_watcher.py functions.
 
-    Loads the actual production code from event_watcher.py, strips out the
-    watchdog-dependent portions, and runs the provided test_code in that
-    context. This ensures tests always exercise the real implementation.
+    Loads the actual production code from watcher_common.py and event_watcher.py,
+    strips out watchdog-dependent portions, and runs the provided test_code.
     """
-    setup = _strip_watchdog_from_event_watcher()
-    full_script = setup + f"\nTMP = __import__('pathlib').Path('{tmp_path}')\n" + test_code
+    common_setup = _load_watcher_common_stdlib()
+    watcher_source = load_zygote_resource("event_watcher.py")
+    watcher_setup = _strip_to_stdlib_only(watcher_source)
+    full_script = (
+        common_setup + "\n" + watcher_setup + f"\nTMP = __import__('pathlib').Path('{tmp_path}')\n" + test_code
+    )
     return subprocess.run(
         [sys.executable, "-c", full_script],
         capture_output=True,
@@ -796,18 +796,18 @@ def test_event_watcher_mtime_poll_detects_new_file(tmp_path: Path) -> None:
         f"""
 logs_dir = Path("{logs_dir}")
 source_dir = Path("{source_dir}")
-log = _Logger(TMP / "test.log")
+log = Logger(TMP / "test.log")
 mtime_cache = {{}}
 
 # Initial scan: no files
-assert not _mtime_poll(logs_dir, ["messages"], mtime_cache, log)
+assert not mtime_poll_directories([logs_dir / "messages"], mtime_cache, log)
 
 # Create a file
 (source_dir / "events.jsonl").write_text('{{"test": true}}\\n')
-assert _mtime_poll(logs_dir, ["messages"], mtime_cache, log)
+assert mtime_poll_directories([logs_dir / "messages"], mtime_cache, log)
 
 # Same state: no change
-assert not _mtime_poll(logs_dir, ["messages"], mtime_cache, log)
+assert not mtime_poll_directories([logs_dir / "messages"], mtime_cache, log)
 print("OK")
 """,
         tmp_path,
@@ -829,16 +829,16 @@ def test_event_watcher_mtime_poll_detects_modification(tmp_path: Path) -> None:
 import time
 logs_dir = Path("{logs_dir}")
 events_file = Path("{events_file}")
-log = _Logger(TMP / "test.log")
+log = Logger(TMP / "test.log")
 mtime_cache = {{}}
 
-_mtime_poll(logs_dir, ["messages"], mtime_cache, log)
+mtime_poll_directories([logs_dir / "messages"], mtime_cache, log)
 
 time.sleep(0.05)
 with events_file.open("a") as f:
     f.write('{{"line": 2}}\\n')
 
-assert _mtime_poll(logs_dir, ["messages"], mtime_cache, log)
+assert mtime_poll_directories([logs_dir / "messages"], mtime_cache, log)
 print("OK")
 """,
         tmp_path,
@@ -859,12 +859,12 @@ def test_event_watcher_mtime_poll_detects_removal(tmp_path: Path) -> None:
         f"""
 logs_dir = Path("{logs_dir}")
 events_file = Path("{events_file}")
-log = _Logger(TMP / "test.log")
+log = Logger(TMP / "test.log")
 mtime_cache = {{}}
 
-_mtime_poll(logs_dir, ["messages"], mtime_cache, log)
+mtime_poll_directories([logs_dir / "messages"], mtime_cache, log)
 events_file.unlink()
-assert _mtime_poll(logs_dir, ["messages"], mtime_cache, log)
+assert mtime_poll_directories([logs_dir / "messages"], mtime_cache, log)
 print("OK")
 """,
         tmp_path,
@@ -934,7 +934,7 @@ subprocess.run = _mock_run
 
 events_file = Path("{events_file}")
 offsets_dir = Path("{offsets_dir}")
-log = _Logger(TMP / "test.log")
+log = Logger(TMP / "test.log")
 
 _check_and_send_new_events(events_file, "test_source", offsets_dir, "my-agent", log)
 
@@ -977,7 +977,7 @@ subprocess.run = _mock_run
 
 events_file = Path("{events_file}")
 offsets_dir = Path("{offsets_dir}")
-log = _Logger(TMP / "test.log")
+log = Logger(TMP / "test.log")
 
 _check_and_send_new_events(events_file, "test_source", offsets_dir, "my-agent", log)
 

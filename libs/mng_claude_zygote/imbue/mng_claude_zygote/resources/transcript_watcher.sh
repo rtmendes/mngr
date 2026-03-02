@@ -29,7 +29,7 @@ AGENT_DATA_DIR="${MNG_AGENT_STATE_DIR:?MNG_AGENT_STATE_DIR must be set}"
 HOST_DIR="${MNG_HOST_DIR:?MNG_HOST_DIR must be set}"
 INPUT_FILE="$AGENT_DATA_DIR/logs/claude_transcript/events.jsonl"
 OUTPUT_FILE="$AGENT_DATA_DIR/logs/common_transcript/events.jsonl"
-LOG_FILE="$HOST_DIR/logs/transcript_watcher/events.jsonl"
+LOG_FILE="$HOST_DIR/logs/transcript_watcher.log"
 
 # Read poll interval from settings.toml, fall back to default
 mkdir -p "$(dirname "$LOG_FILE")"

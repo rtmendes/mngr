@@ -828,8 +828,12 @@ def test_provision_changeling_scripts_uses_executable_mode() -> None:
     host = StubHost()
     provision_changeling_scripts(cast(Any, host), _DEFAULT_PROVISIONING)
 
-    for _, _, mode in host.written_files:
-        assert mode == "0755"
+    for path, _, mode in host.written_files:
+        # Script modules (non-executable) are provisioned with 0644
+        if path.name in ("watcher_common.py",):
+            assert mode == "0644", f"Expected 0644 for module {path.name}, got {mode}"
+        else:
+            assert mode == "0755", f"Expected 0755 for script {path.name}, got {mode}"
 
 
 def test_provision_llm_tools_creates_tools_dir() -> None:

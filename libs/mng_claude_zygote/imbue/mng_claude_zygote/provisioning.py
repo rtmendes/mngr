@@ -23,6 +23,9 @@ _SCRIPT_FILES: Final[tuple[str, ...]] = (
     "transcript_watcher.sh",
 )
 
+# Python modules provisioned alongside scripts (not executable, mode 0644)
+_SCRIPT_MODULES: Final[tuple[str, ...]] = ("watcher_common.py",)
+
 # Python tool files to provision to $MNG_HOST_DIR/commands/llm_tools/
 _LLM_TOOL_FILES: Final[tuple[str, ...]] = (
     "context_tool.py",
@@ -448,6 +451,12 @@ def provision_changeling_scripts(host: OnlineHostInterface, settings: Provisioni
         script_path = commands_dir / script_name
         with log_span("Writing {} to host", script_name):
             host.write_file(script_path, script_content.encode(), mode="0755")
+
+    for module_name in _SCRIPT_MODULES:
+        module_content = load_zygote_resource(module_name)
+        module_path = commands_dir / module_name
+        with log_span("Writing {} to host", module_name):
+            host.write_file(module_path, module_content.encode(), mode="0644")
 
 
 def provision_llm_tools(host: OnlineHostInterface, settings: ProvisioningSettings) -> None:
