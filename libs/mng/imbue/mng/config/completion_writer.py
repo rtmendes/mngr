@@ -237,12 +237,8 @@ def add_agent_name_to_cache(agent_name: str) -> None:
             if isinstance(names, list):
                 existing_names = [n for n in names if isinstance(n, str) and n]
 
-        if agent_name in existing_names:
-            return
-
-        existing_names.append(agent_name)
         cache_data = {
-            "names": sorted(set(existing_names)),
+            "names": sorted(set(existing_names) | {agent_name}),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         atomic_write(cache_path, json.dumps(cache_data))
