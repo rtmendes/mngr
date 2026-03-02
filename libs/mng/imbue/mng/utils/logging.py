@@ -12,7 +12,7 @@ from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.frozen_model import FrozenModel
-from imbue.imbue_common.logging import make_jsonl_log_formatter
+from imbue.imbue_common.logging import make_jsonl_file_sink
 from imbue.imbue_common.primitives import NonEmptyStr
 from imbue.mng.primitives import LogLevel
 
@@ -256,18 +256,22 @@ def setup_logging(
         log_source_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_source_dir / "events.jsonl"
 
+    # Use a callable sink (not a format function) to bypass loguru's colorizer,
+    # which would otherwise choke on angle brackets in serialized extra data.
     loguru_file_level = LEVEL_MAP[config.file_level]
+    jsonl_sink = make_jsonl_file_sink(
+        file_path=str(log_file),
+        event_type=config.event_type,
+        event_source=config.event_source,
+        command=command,
+        max_size_bytes=config.max_log_size_mb * 1024 * 1024,
+    )
     logger.add(
-        log_file,
+        jsonl_sink,
         level=loguru_file_level,
-        format=make_jsonl_log_formatter(
-            event_type=config.event_type,
-            event_source=config.event_source,
-            command=command,
-        ),
+        format="{message}",
         colorize=False,
         diagnose=False,
-        rotation=f"{config.max_log_size_mb} MB",
     )
 
 

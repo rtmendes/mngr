@@ -160,71 +160,148 @@ def generate_log_event_id() -> str:
     return f"evt-{uuid4().hex}"
 
 
-def make_jsonl_log_formatter(
+def _build_flat_log_dict(
+    record: Any,
     event_type: str,
     event_source: str,
     command: str | None,
-) -> Callable[..., str]:
-    """Create a loguru format function that produces flat JSONL with event envelope fields.
+) -> dict[str, Any]:
+    """Build a flat dict from a loguru record with envelope and metadata fields."""
+    event: dict[str, Any] = {
+        "timestamp": format_nanosecond_iso_timestamp(record["time"]),
+        "type": event_type,
+        "event_id": generate_log_event_id(),
+        "source": event_source,
+        "level": record["level"].name,
+        "message": record["message"],
+        "pid": os.getpid(),
+    }
+    if command is not None:
+        event["command"] = command
 
-    The returned callable builds a single flat JSON object from the loguru
-    record, combining the event envelope fields (timestamp, type, event_id,
-    source, level, message, pid, command) with flattened loguru metadata
-    (function, line, module, file, elapsed, exception, process, thread, extra).
+    # Flattened loguru metadata
+    event["function"] = record["function"]
+    event["line"] = record["line"]
+    event["module"] = record["module"]
+    event["logger_name"] = record["name"]
+    event["file_name"] = record["file"].name
+    event["file_path"] = record["file"].path
+    event["elapsed_seconds"] = record["elapsed"].total_seconds()
 
-    Braces in the returned string are doubled so loguru's format_map does not
-    interpret them as placeholders.
+    # Exception info (None when no exception)
+    exc = record["exception"]
+    if exc is not None:
+        event["exception"] = {
+            "type": exc.type.__name__ if exc.type else None,
+            "value": str(exc.value) if exc.value else None,
+            "traceback": bool(exc.traceback),
+        }
+    else:
+        event["exception"] = None
+
+    # Process and thread
+    event["process_name"] = record["process"].name
+    event["thread_name"] = record["thread"].name
+    event["thread_id"] = record["thread"].id
+
+    # Extra context (from logger.contextualize or logger.bind)
+    extra = dict(record["extra"])
+    if extra:
+        event["extra"] = extra
+
+    return event
+
+
+def make_jsonl_log_sink(
+    event_type: str,
+    event_source: str,
+    command: str | None,
+) -> Callable[..., None]:
+    """Create a loguru sink function that writes flat JSONL log lines.
+
+    The returned callable is used as a loguru sink (not a format function),
+    so it bypasses loguru's colorizer and format_map entirely. This avoids
+    issues with angle brackets in serialized extra data being misinterpreted
+    as color tags.
     """
     bound_type = event_type
     bound_source = event_source
     bound_command = command
 
-    def formatter(record: Any) -> str:
-        # Build the flat dict with envelope fields first, then loguru fields
-        event: dict[str, Any] = {
-            "timestamp": format_nanosecond_iso_timestamp(record["time"]),
-            "type": bound_type,
-            "event_id": generate_log_event_id(),
-            "source": bound_source,
-            "level": record["level"].name,
-            "message": record["message"],
-            "pid": os.getpid(),
-        }
-        if bound_command is not None:
-            event["command"] = bound_command
-
-        # Flattened loguru metadata
-        event["function"] = record["function"]
-        event["line"] = record["line"]
-        event["module"] = record["module"]
-        event["logger_name"] = record["name"]
-        event["file_name"] = record["file"].name
-        event["file_path"] = record["file"].path
-        event["elapsed_seconds"] = record["elapsed"].total_seconds()
-
-        # Exception info (None when no exception)
-        exc = record["exception"]
-        if exc is not None:
-            event["exception"] = {
-                "type": exc.type.__name__ if exc.type else None,
-                "value": str(exc.value) if exc.value else None,
-                "traceback": bool(exc.traceback),
-            }
-        else:
-            event["exception"] = None
-
-        # Process and thread
-        event["process_name"] = record["process"].name
-        event["thread_name"] = record["thread"].name
-        event["thread_id"] = record["thread"].id
-
-        # Extra context (from logger.contextualize or logger.bind)
-        extra = dict(record["extra"])
-        if extra:
-            event["extra"] = extra
-
+    def sink(message: Any) -> None:
+        record = message.record
+        event = _build_flat_log_dict(record, bound_type, bound_source, bound_command)
         json_line = json.dumps(event, separators=(",", ":"), default=str)
-        # Escape braces so loguru's format_map does not interpret them
-        return json_line.replace("{", "{{").replace("}", "}}") + "\n"
+        # Write to the file that loguru opened for us via message.record["extra"]
+        # Actually, since we're a sink function, we need to write ourselves.
+        # This is handled by the caller who wraps this sink with file I/O.
+        sys.stdout.write(json_line + "\n")
+        sys.stdout.flush()
 
-    return formatter
+    return sink
+
+
+def make_jsonl_file_sink(
+    file_path: str,
+    event_type: str,
+    event_source: str,
+    command: str | None,
+    max_size_bytes: int,
+) -> Callable[..., None]:
+    """Create a loguru sink function that writes flat JSONL to a rotating file.
+
+    Bypasses loguru's colorizer entirely by using a callable sink instead of
+    a format function. Handles file rotation when the file exceeds max_size_bytes.
+    """
+    bound_type = event_type
+    bound_source = event_source
+    bound_command = command
+    bound_path = file_path
+    bound_max_size = max_size_bytes
+
+    # Mutable state for the file handle
+    state: dict[str, Any] = {"file": None, "size": 0}
+
+    def _ensure_file() -> Any:
+        if state["file"] is None:
+            from pathlib import Path
+
+            Path(bound_path).parent.mkdir(parents=True, exist_ok=True)
+            state["file"] = open(bound_path, "a")
+            try:
+                state["size"] = Path(bound_path).stat().st_size
+            except OSError:
+                state["size"] = 0
+        return state["file"]
+
+    def _rotate_if_needed() -> None:
+        if state["size"] >= bound_max_size:
+            if state["file"] is not None:
+                state["file"].close()
+            from pathlib import Path
+
+            # Rotate: rename current file with numeric suffix
+            path = Path(bound_path)
+            rotation_idx = 1
+            while True:
+                rotated = path.with_name(f"{path.name}.{rotation_idx}")
+                if not rotated.exists():
+                    break
+                rotation_idx += 1
+            path.rename(rotated)
+            state["file"] = open(bound_path, "a")
+            state["size"] = 0
+
+    def sink(message: Any) -> None:
+        record = message.record
+        event = _build_flat_log_dict(record, bound_type, bound_source, bound_command)
+        json_line = json.dumps(event, separators=(",", ":"), default=str) + "\n"
+        line_bytes = len(json_line.encode("utf-8"))
+
+        _rotate_if_needed()
+        fh = _ensure_file()
+        fh.write(json_line)
+        fh.flush()
+        state["size"] += line_bytes
+
+    return sink

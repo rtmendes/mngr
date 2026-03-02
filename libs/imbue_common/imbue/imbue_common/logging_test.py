@@ -7,10 +7,10 @@ from typing import Any
 
 from loguru import logger
 
+from imbue.imbue_common.logging import _build_flat_log_dict
 from imbue.imbue_common.logging import format_nanosecond_iso_timestamp
 from imbue.imbue_common.logging import generate_log_event_id
 from imbue.imbue_common.logging import log_span
-from imbue.imbue_common.logging import make_jsonl_log_formatter
 from imbue.imbue_common.logging import setup_logging
 from imbue.mng.errors import BaseMngError
 
@@ -193,16 +193,12 @@ def test_generate_log_event_id_returns_unique_ids() -> None:
     assert len(id_a) == 4 + 32
 
 
-def test_make_jsonl_log_formatter_produces_flat_json_with_envelope_fields() -> None:
-    """The formatter should produce flat JSON with envelope and loguru fields at the top level."""
-    captured_lines: list[str] = []
-
-    formatter = make_jsonl_log_formatter(event_type="mng", event_source="mng", command="create")
+def test_build_flat_log_dict_produces_envelope_and_loguru_fields() -> None:
+    """_build_flat_log_dict should produce a flat dict with all expected fields."""
+    captured_dicts: list[dict[str, Any]] = []
 
     def sink(message: Any) -> None:
-        fmt = formatter(message.record)
-        # Simulate loguru's unescape
-        captured_lines.append(fmt.replace("{{", "{").replace("}}", "}"))
+        captured_dicts.append(_build_flat_log_dict(message.record, "mng", "mng", "create"))
 
     handler_id = logger.add(sink, level="TRACE", format="{message}")
     try:
@@ -210,7 +206,7 @@ def test_make_jsonl_log_formatter_produces_flat_json_with_envelope_fields() -> N
     finally:
         logger.remove(handler_id)
 
-    parsed = json.loads(captured_lines[0])
+    parsed = captured_dicts[0]
 
     # Envelope fields at top level
     assert parsed["type"] == "mng"
@@ -234,16 +230,18 @@ def test_make_jsonl_log_formatter_produces_flat_json_with_envelope_fields() -> N
     assert "thread_name" in parsed
     assert "thread_id" in parsed
 
+    # Serializable to JSON
+    json_line = json.dumps(parsed, separators=(",", ":"), default=str)
+    reparsed = json.loads(json_line)
+    assert reparsed["message"] == "Created agent test-agent"
 
-def test_make_jsonl_log_formatter_omits_command_when_none() -> None:
-    """When command is None, the command key should not appear in the JSON."""
-    captured_lines: list[str] = []
 
-    formatter = make_jsonl_log_formatter(event_type="event_watcher", event_source="event_watcher", command=None)
+def test_build_flat_log_dict_omits_command_when_none() -> None:
+    """When command is None, the command key should not appear in the dict."""
+    captured_dicts: list[dict[str, Any]] = []
 
     def sink(message: Any) -> None:
-        fmt = formatter(message.record)
-        captured_lines.append(fmt.replace("{{", "{").replace("}}", "}"))
+        captured_dicts.append(_build_flat_log_dict(message.record, "event_watcher", "event_watcher", None))
 
     handler_id = logger.add(sink, level="TRACE", format="{message}")
     try:
@@ -251,20 +249,16 @@ def test_make_jsonl_log_formatter_omits_command_when_none() -> None:
     finally:
         logger.remove(handler_id)
 
-    parsed = json.loads(captured_lines[0])
-    assert parsed["type"] == "event_watcher"
-    assert "command" not in parsed
+    assert captured_dicts[0]["type"] == "event_watcher"
+    assert "command" not in captured_dicts[0]
 
 
-def test_make_jsonl_log_formatter_includes_extra_context() -> None:
+def test_build_flat_log_dict_includes_extra_context() -> None:
     """Extra context from logger.contextualize should appear in the extra field."""
-    captured_lines: list[str] = []
-
-    formatter = make_jsonl_log_formatter(event_type="mng", event_source="mng", command="list")
+    captured_dicts: list[dict[str, Any]] = []
 
     def sink(message: Any) -> None:
-        fmt = formatter(message.record)
-        captured_lines.append(fmt.replace("{{", "{").replace("}}", "}"))
+        captured_dicts.append(_build_flat_log_dict(message.record, "mng", "mng", "list"))
 
     handler_id = logger.add(sink, level="TRACE", format="{message}")
     try:
@@ -273,19 +267,15 @@ def test_make_jsonl_log_formatter_includes_extra_context() -> None:
     finally:
         logger.remove(handler_id)
 
-    parsed = json.loads(captured_lines[0])
-    assert parsed["extra"]["host"] == "my-host"
+    assert captured_dicts[0]["extra"]["host"] == "my-host"
 
 
-def test_make_jsonl_log_formatter_handles_special_chars() -> None:
-    """Messages with quotes, newlines, and braces should be properly JSON-escaped."""
-    captured_lines: list[str] = []
-
-    formatter = make_jsonl_log_formatter(event_type="mng", event_source="mng", command=None)
+def test_build_flat_log_dict_handles_special_chars() -> None:
+    """Messages with quotes and newlines should serialize cleanly to JSON."""
+    captured_dicts: list[dict[str, Any]] = []
 
     def sink(message: Any) -> None:
-        fmt = formatter(message.record)
-        captured_lines.append(fmt.replace("{{", "{").replace("}}", "}"))
+        captured_dicts.append(_build_flat_log_dict(message.record, "mng", "mng", None))
 
     handler_id = logger.add(sink, level="TRACE", format="{message}")
     try:
@@ -293,6 +283,9 @@ def test_make_jsonl_log_formatter_handles_special_chars() -> None:
     finally:
         logger.remove(handler_id)
 
-    parsed = json.loads(captured_lines[0])
-    assert '"C:\\test"' in parsed["message"]
-    assert "\n" in parsed["message"]
+    d = captured_dicts[0]
+    assert '"C:\\test"' in d["message"]
+    assert "\n" in d["message"]
+    # Must round-trip through JSON
+    reparsed = json.loads(json.dumps(d, default=str))
+    assert reparsed["message"] == d["message"]
