@@ -9,6 +9,7 @@ import json
 import types
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -16,7 +17,7 @@ from imbue.mng_claude_zygote.provisioning import load_zygote_resource
 
 
 @pytest.fixture()
-def web_server_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+def web_server_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     """Load web_server.py as a module for testing.
 
     Sets environment variables via monkeypatch.setenv so the module can be
@@ -59,21 +60,21 @@ def _make_process_stub(
 # -- _html_escape tests --
 
 
-def test_html_escape_escapes_ampersand(web_server_module: types.ModuleType) -> None:
+def test_html_escape_escapes_ampersand(web_server_module: Any) -> None:
     assert web_server_module._html_escape("a&b") == "a&amp;b"
 
 
-def test_html_escape_escapes_angle_brackets(web_server_module: types.ModuleType) -> None:
+def test_html_escape_escapes_angle_brackets(web_server_module: Any) -> None:
     result = web_server_module._html_escape("<script>")
     assert "<" not in result
     assert ">" not in result
 
 
-def test_html_escape_escapes_quotes(web_server_module: types.ModuleType) -> None:
+def test_html_escape_escapes_quotes(web_server_module: Any) -> None:
     assert "&quot;" in web_server_module._html_escape('say "hello"')
 
 
-def test_html_escape_escapes_single_quotes(web_server_module: types.ModuleType) -> None:
+def test_html_escape_escapes_single_quotes(web_server_module: Any) -> None:
     result = web_server_module._html_escape("it's")
     # html.escape escapes single quotes as &#x27;
     assert "&#x27;" in result or "'" in result
@@ -82,13 +83,13 @@ def test_html_escape_escapes_single_quotes(web_server_module: types.ModuleType) 
 # -- _read_conversations tests --
 
 
-def test_read_conversations_empty_when_no_event_files(web_server_module: types.ModuleType) -> None:
+def test_read_conversations_empty_when_no_event_files(web_server_module: Any) -> None:
     # The module's paths point to tmp dirs that have no event files
     result = web_server_module._read_conversations()
     assert result == []
 
 
-def test_read_conversations_parses_conversation_events(web_server_module: types.ModuleType) -> None:
+def test_read_conversations_parses_conversation_events(web_server_module: Any) -> None:
     events_path = web_server_module.CONVERSATIONS_EVENTS_PATH
     events_path.parent.mkdir(parents=True, exist_ok=True)
     events_path.write_text(
@@ -112,7 +113,7 @@ def test_read_conversations_parses_conversation_events(web_server_module: types.
     assert result[0]["model"] == "claude-sonnet-4-6"
 
 
-def test_read_conversations_sorted_by_most_recent(web_server_module: types.ModuleType) -> None:
+def test_read_conversations_sorted_by_most_recent(web_server_module: Any) -> None:
     events_path = web_server_module.CONVERSATIONS_EVENTS_PATH
     events_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -147,7 +148,7 @@ def test_read_conversations_sorted_by_most_recent(web_server_module: types.Modul
 
 
 def test_read_conversations_updates_with_message_timestamps(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
 ) -> None:
     conv_path = web_server_module.CONVERSATIONS_EVENTS_PATH
     conv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,7 +186,7 @@ def test_read_conversations_updates_with_message_timestamps(
     assert result[0]["updated_at"] == "2026-03-01T00:00:00Z"
 
 
-def test_read_conversations_skips_malformed_lines(web_server_module: types.ModuleType) -> None:
+def test_read_conversations_skips_malformed_lines(web_server_module: Any) -> None:
     events_path = web_server_module.CONVERSATIONS_EVENTS_PATH
     events_path.parent.mkdir(parents=True, exist_ok=True)
     events_path.write_text(
@@ -212,7 +213,7 @@ def test_read_conversations_skips_malformed_lines(web_server_module: types.Modul
 # -- _detect_ttyd_port tests --
 
 
-def test_detect_ttyd_port_extracts_port_from_stderr(web_server_module: types.ModuleType) -> None:
+def test_detect_ttyd_port_extracts_port_from_stderr(web_server_module: Any) -> None:
     process_stub = SimpleNamespace(
         stderr=io.BytesIO(b"[INFO] Listening on port: 12345\n"),
         poll=lambda: None,
@@ -222,7 +223,7 @@ def test_detect_ttyd_port_extracts_port_from_stderr(web_server_module: types.Mod
 
 
 def test_detect_ttyd_port_returns_none_when_process_exits(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
 ) -> None:
     process_stub = SimpleNamespace(
         stderr=io.BytesIO(b""),
@@ -232,7 +233,7 @@ def test_detect_ttyd_port_returns_none_when_process_exits(
     assert result is None
 
 
-def test_detect_ttyd_port_ignores_non_port_lines(web_server_module: types.ModuleType) -> None:
+def test_detect_ttyd_port_ignores_non_port_lines(web_server_module: Any) -> None:
     process_stub = SimpleNamespace(
         stderr=io.BytesIO(b"[INFO] Starting server\n[INFO] Listening on port: 9999\n"),
         poll=lambda: None,
@@ -244,7 +245,7 @@ def test_detect_ttyd_port_ignores_non_port_lines(web_server_module: types.Module
 # -- _register_server tests --
 
 
-def test_register_server_appends_to_jsonl(web_server_module: types.ModuleType) -> None:
+def test_register_server_appends_to_jsonl(web_server_module: Any) -> None:
     web_server_module._register_server("web", 8080)
 
     content = web_server_module.SERVERS_JSONL_PATH.read_text()
@@ -253,7 +254,7 @@ def test_register_server_appends_to_jsonl(web_server_module: types.ModuleType) -
     assert record["url"] == "http://127.0.0.1:8080"
 
 
-def test_register_server_appends_multiple(web_server_module: types.ModuleType) -> None:
+def test_register_server_appends_multiple(web_server_module: Any) -> None:
     web_server_module._register_server("web", 8080)
     web_server_module._register_server("chat", 9090)
 
@@ -262,7 +263,7 @@ def test_register_server_appends_multiple(web_server_module: types.ModuleType) -
 
 
 def test_register_server_does_nothing_when_path_is_none(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
 ) -> None:
     original = web_server_module.SERVERS_JSONL_PATH
     web_server_module.SERVERS_JSONL_PATH = None
@@ -275,13 +276,13 @@ def test_register_server_does_nothing_when_path_is_none(
 # -- _TtydEntry tests --
 
 
-def test_ttyd_entry_is_alive_when_process_running(web_server_module: types.ModuleType) -> None:
+def test_ttyd_entry_is_alive_when_process_running(web_server_module: Any) -> None:
     process_stub = _make_process_stub(is_alive=True)
     entry = web_server_module._TtydEntry(process=process_stub, port=1234)
     assert entry.is_alive() is True
 
 
-def test_ttyd_entry_is_not_alive_when_process_exited(web_server_module: types.ModuleType) -> None:
+def test_ttyd_entry_is_not_alive_when_process_exited(web_server_module: Any) -> None:
     process_stub = _make_process_stub(is_alive=False)
     entry = web_server_module._TtydEntry(process=process_stub, port=1234)
     assert entry.is_alive() is False
@@ -290,7 +291,7 @@ def test_ttyd_entry_is_not_alive_when_process_exited(web_server_module: types.Mo
 # -- HTTP handler tests --
 
 
-def test_handler_class_has_get_and_post_methods(web_server_module: types.ModuleType) -> None:
+def test_handler_class_has_get_and_post_methods(web_server_module: Any) -> None:
     handler = web_server_module._WebServerHandler
     assert hasattr(handler, "do_GET")
     assert hasattr(handler, "do_POST")
@@ -300,7 +301,7 @@ def test_handler_class_has_get_and_post_methods(web_server_module: types.ModuleT
 
 
 def test_main_page_html_contains_conversation_dropdown(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
 ) -> None:
     rendered = web_server_module._MAIN_PAGE_HTML.format(agent_name="TestAgent")
     assert "conv-select" in rendered
@@ -309,7 +310,7 @@ def test_main_page_html_contains_conversation_dropdown(
     assert "agents-page" in rendered
 
 
-def test_agents_page_html_contains_agent_list(web_server_module: types.ModuleType) -> None:
+def test_agents_page_html_contains_agent_list(web_server_module: Any) -> None:
     rendered = web_server_module._AGENTS_PAGE_HTML.format(agent_name="TestAgent")
     assert "agent-list" in rendered
     assert "TestAgent" in rendered
@@ -317,14 +318,14 @@ def test_agents_page_html_contains_agent_list(web_server_module: types.ModuleTyp
 
 
 def test_main_page_uses_post_for_ensure_endpoints(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
 ) -> None:
     rendered = web_server_module._MAIN_PAGE_HTML.format(agent_name="Test")
     assert "method: 'POST'" in rendered
 
 
 def test_agents_page_uses_post_for_ensure_endpoints(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
 ) -> None:
     rendered = web_server_module._AGENTS_PAGE_HTML.format(agent_name="Test")
     assert "method: 'POST'" in rendered
@@ -334,7 +335,7 @@ def test_agents_page_uses_post_for_ensure_endpoints(
 
 
 def test_ensure_conversation_ttyd_returns_none_when_no_chat_script(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
 ) -> None:
     original = web_server_module.CHAT_SCRIPT_PATH
     web_server_module.CHAT_SCRIPT_PATH = None
@@ -353,7 +354,7 @@ def test_ensure_conversation_ttyd_returns_none_when_no_chat_script(
 # allowing us to verify cleanup behavior.
 
 
-def test_start_ttyd_reuses_alive_entry(web_server_module: types.ModuleType) -> None:
+def test_start_ttyd_reuses_alive_entry(web_server_module: Any) -> None:
     """Verify that an existing alive ttyd is reused without spawning a new one."""
     process_stub = _make_process_stub(is_alive=True)
     alive_entry = web_server_module._TtydEntry(process=process_stub, port=7777)
@@ -367,7 +368,7 @@ def test_start_ttyd_reuses_alive_entry(web_server_module: types.ModuleType) -> N
 
 
 def test_start_ttyd_removes_dead_entry_before_spawn(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify that a dead entry is removed when a new spawn is attempted."""
@@ -386,7 +387,7 @@ def test_start_ttyd_removes_dead_entry_before_spawn(
         web_server_module._ttyd_by_server_name.pop("test-dead-81723", None)
 
 
-def test_start_ttyd_enforces_max_limit(web_server_module: types.ModuleType) -> None:
+def test_start_ttyd_enforces_max_limit(web_server_module: Any) -> None:
     """Verify that the MAX_TTYD_PROCESSES limit is enforced."""
     original_max = web_server_module.MAX_TTYD_PROCESSES
     web_server_module.MAX_TTYD_PROCESSES = 2
@@ -408,7 +409,7 @@ def test_start_ttyd_enforces_max_limit(web_server_module: types.ModuleType) -> N
 
 
 def test_start_ttyd_cleans_dead_before_limit_check(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify that dead entries are cleaned up before checking the limit."""
@@ -439,7 +440,7 @@ def test_start_ttyd_cleans_dead_before_limit_check(
 
 
 def test_start_ttyd_sentinel_prevents_duplicate_spawn(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
 ) -> None:
     """Verify that a spawning sentinel prevents a second spawn for the same name."""
     web_server_module._ttyd_by_server_name["sentinel-test-57193"] = web_server_module._SPAWNING_SENTINEL
@@ -452,7 +453,7 @@ def test_start_ttyd_sentinel_prevents_duplicate_spawn(
 
 
 def test_start_ttyd_clears_sentinel_on_spawn_failure(
-    web_server_module: types.ModuleType,
+    web_server_module: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify that the sentinel is removed if Popen fails."""
