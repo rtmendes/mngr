@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from datetime import timezone
+from pathlib import Path
 from typing import Any
 from typing import Final
 from typing import ParamSpec
@@ -212,35 +213,6 @@ def _build_flat_log_dict(
     return event
 
 
-def make_jsonl_log_sink(
-    event_type: str,
-    event_source: str,
-    command: str | None,
-) -> Callable[..., None]:
-    """Create a loguru sink function that writes flat JSONL log lines.
-
-    The returned callable is used as a loguru sink (not a format function),
-    so it bypasses loguru's colorizer and format_map entirely. This avoids
-    issues with angle brackets in serialized extra data being misinterpreted
-    as color tags.
-    """
-    bound_type = event_type
-    bound_source = event_source
-    bound_command = command
-
-    def sink(message: Any) -> None:
-        record = message.record
-        event = _build_flat_log_dict(record, bound_type, bound_source, bound_command)
-        json_line = json.dumps(event, separators=(",", ":"), default=str)
-        # Write to the file that loguru opened for us via message.record["extra"]
-        # Actually, since we're a sink function, we need to write ourselves.
-        # This is handled by the caller who wraps this sink with file I/O.
-        sys.stdout.write(json_line + "\n")
-        sys.stdout.flush()
-
-    return sink
-
-
 def make_jsonl_file_sink(
     file_path: str,
     event_type: str,
@@ -264,8 +236,6 @@ def make_jsonl_file_sink(
 
     def _ensure_file() -> Any:
         if state["file"] is None:
-            from pathlib import Path
-
             Path(bound_path).parent.mkdir(parents=True, exist_ok=True)
             state["file"] = open(bound_path, "a")
             try:
@@ -278,8 +248,6 @@ def make_jsonl_file_sink(
         if state["size"] >= bound_max_size:
             if state["file"] is not None:
                 state["file"].close()
-            from pathlib import Path
-
             # Rotate: rename current file with numeric suffix
             path = Path(bound_path)
             rotation_idx = 1

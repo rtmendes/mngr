@@ -120,7 +120,7 @@ Logs are stored at:
 
 ### Rotation
 
-Logs are rotated by loguru when the file exceeds `max_log_size_mb`. Rotated files are renamed with a numeric suffix by loguru's built-in rotation mechanism.
+Logs are rotated when the file exceeds `max_log_size_mb`. The rotation is handled by the custom JSONL file sink (not loguru's built-in rotation, since we use a callable sink to bypass loguru's colorizer). Rotated files are renamed with a numeric suffix (e.g., `events.jsonl.1`, `events.jsonl.2`).
 
 ## Sensitive Data
 
