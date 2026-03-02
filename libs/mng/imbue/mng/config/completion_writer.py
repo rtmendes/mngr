@@ -229,7 +229,8 @@ def add_agent_name_to_cache(agent_name: str) -> None:
     caller.
     """
     try:
-        cache_path = get_completion_cache_dir() / AGENT_COMPLETIONS_CACHE_FILENAME
+        cache_dir = get_completion_cache_dir()
+        cache_path = cache_dir / AGENT_COMPLETIONS_CACHE_FILENAME
         existing_names: list[str] = []
         if cache_path.is_file():
             data = json.loads(cache_path.read_text())
@@ -237,10 +238,6 @@ def add_agent_name_to_cache(agent_name: str) -> None:
             if isinstance(names, list):
                 existing_names = [n for n in names if isinstance(n, str) and n]
 
-        cache_data = {
-            "names": sorted(set(existing_names) | {agent_name}),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        atomic_write(cache_path, json.dumps(cache_data))
+        write_agent_names_cache(cache_dir, existing_names + [agent_name])
     except (OSError, json.JSONDecodeError):
         logger.debug("Failed to add agent name to completion cache")
