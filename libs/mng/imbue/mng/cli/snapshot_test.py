@@ -605,19 +605,6 @@ def test_emit_destroy_result_human_format() -> None:
 # =============================================================================
 
 
-def test_emit_create_result_json_with_errors() -> None:
-    """_emit_create_result in JSON format should include errors when present."""
-    output_opts = OutputOptions(output_format=OutputFormat.JSON)
-    created = [{"snapshot_id": "snap-1", "host_id": "host-1", "provider": "local", "agent_names": []}]
-    errors = [{"host_id": "host-2", "error": "timeout"}]
-    with capture_stdout() as buf:
-        _emit_create_result(created, errors, output_opts)
-    data = json.loads(buf.getvalue().strip())
-    assert data["count"] == 1
-    assert data["error_count"] == 1
-    assert len(data["errors"]) == 1
-
-
 def test_emit_create_result_jsonl_with_errors() -> None:
     """_emit_create_result in JSONL format should include error count."""
     output_opts = OutputOptions(output_format=OutputFormat.JSONL)

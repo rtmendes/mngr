@@ -659,42 +659,8 @@ def test_emit_no_agents_found_jsonl_format() -> None:
 
 
 # =============================================================================
-# Tests for _emit_result
+# Tests for _emit_result (additional scenarios)
 # =============================================================================
-
-
-def test_emit_result_human_with_destroyed() -> None:
-    """_emit_result should show destroyed agents in HUMAN format."""
-    result = CleanupResult()
-    result.destroyed_agents = [AgentName("agent-1"), AgentName("agent-2")]
-    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
-    with capture_stdout() as buf:
-        _emit_result(result, output_opts)
-    output = buf.getvalue()
-    assert "Successfully destroyed 2 agent(s)" in output
-    assert "agent-1" in output
-    assert "agent-2" in output
-
-
-def test_emit_result_human_with_stopped() -> None:
-    """_emit_result should show stopped agents in HUMAN format."""
-    result = CleanupResult()
-    result.stopped_agents = [AgentName("stopped-1")]
-    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
-    with capture_stdout() as buf:
-        _emit_result(result, output_opts)
-    output = buf.getvalue()
-    assert "Successfully stopped 1 agent(s)" in output
-    assert "stopped-1" in output
-
-
-def test_emit_result_human_with_no_agents_affected() -> None:
-    """_emit_result should show no agents affected in HUMAN format."""
-    result = CleanupResult()
-    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
-    with capture_stdout() as buf:
-        _emit_result(result, output_opts)
-    assert "No agents were affected" in buf.getvalue()
 
 
 def test_emit_result_json_with_errors() -> None:
@@ -720,31 +686,4 @@ def test_emit_result_human_with_errors() -> None:
     output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
     with capture_stdout() as buf:
         _emit_result(result, output_opts)
-    # Errors go to logger (stderr), not stdout, but "No agents were affected" still shows
     assert "No agents were affected" in buf.getvalue()
-
-
-def test_emit_dry_run_output_human_stop_action() -> None:
-    """_emit_dry_run_output should show 'Would stop' for STOP action."""
-    agents = [
-        make_test_agent_info(name="stop-dry", state=AgentLifecycleState.RUNNING),
-        make_test_agent_info(name="stop-dry-2", state=AgentLifecycleState.RUNNING),
-    ]
-    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
-    with capture_stdout() as buf:
-        _emit_dry_run_output(agents, CleanupAction.STOP, output_opts)
-    output = buf.getvalue()
-    assert "Would stop 2 agent(s)" in output
-    assert "stop-dry" in output
-
-
-def test_emit_dry_run_output_human_destroy_action() -> None:
-    """_emit_dry_run_output should show 'Would destroy' for DESTROY action."""
-    agents = [
-        make_test_agent_info(name="destroy-dry", state=AgentLifecycleState.STOPPED),
-    ]
-    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
-    with capture_stdout() as buf:
-        _emit_dry_run_output(agents, CleanupAction.DESTROY, output_opts)
-    output = buf.getvalue()
-    assert "Would destroy 1 agent(s)" in output
