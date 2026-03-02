@@ -275,9 +275,8 @@ def test_ttyd_entry_is_not_alive_when_process_exited(web_server_module: types.Mo
 # -- HTTP handler routing tests --
 
 
-def test_handler_routes_root_to_main_page(web_server_module: types.ModuleType) -> None:
+def test_handler_class_has_get_and_post_methods(web_server_module: types.ModuleType) -> None:
     handler = web_server_module._WebServerHandler
-    # Verify the class exists and has the expected methods
     assert hasattr(handler, "do_GET")
     assert hasattr(handler, "do_POST")
 

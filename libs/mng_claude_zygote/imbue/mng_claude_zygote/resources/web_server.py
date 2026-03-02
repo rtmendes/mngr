@@ -889,13 +889,16 @@ def main() -> None:
     # Register this web server in servers.jsonl
     _register_server(WEB_SERVER_NAME, port)
 
-    # Handle shutdown signals
+    # Handle shutdown signals.
+    # server.shutdown() must be called from a different thread than
+    # serve_forever() to avoid deadlock (it waits for the serve loop
+    # to exit, which cannot happen if the signal handler is blocking
+    # the same thread).
     def _shutdown_handler(signum: int, frame: object) -> None:
         global _is_shutting_down
         _is_shutting_down = True
         _log("Shutting down...")
-        _cleanup_all_ttyd_processes()
-        server.shutdown()
+        threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, _shutdown_handler)
     signal.signal(signal.SIGINT, _shutdown_handler)
