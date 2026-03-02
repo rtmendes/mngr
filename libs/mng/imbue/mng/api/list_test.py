@@ -7,6 +7,7 @@ from datetime import timezone
 from io import StringIO
 from pathlib import Path
 
+import pytest
 from loguru import logger
 
 from imbue.mng.api.list import AgentErrorInfo
@@ -17,19 +18,26 @@ from imbue.mng.api.list import ProviderErrorInfo
 from imbue.mng.api.list import _agent_to_cel_context
 from imbue.mng.api.list import _apply_cel_filters
 from imbue.mng.api.list import _warn_on_duplicate_host_names
+from imbue.mng.api.list import list_agents
+from imbue.mng.api.list import load_all_agents_grouped_by_host
 from imbue.mng.config.completion_writer import AGENT_COMPLETIONS_CACHE_FILENAME
 from imbue.mng.config.completion_writer import write_agent_names_cache
+from imbue.mng.config.data_types import MngContext
+from imbue.mng.hosts.host import Host
 from imbue.mng.interfaces.data_types import AgentInfo
 from imbue.mng.interfaces.data_types import HostInfo
+from imbue.mng.interfaces.host import CreateAgentOptions
 from imbue.mng.primitives import AgentId
 from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import AgentName
 from imbue.mng.primitives import AgentReference
+from imbue.mng.primitives import AgentTypeName
 from imbue.mng.primitives import CommandString
 from imbue.mng.primitives import HostId
 from imbue.mng.primitives import HostName
 from imbue.mng.primitives import HostReference
 from imbue.mng.primitives import ProviderInstanceName
+from imbue.mng.providers.local.instance import LocalProviderInstance
 from imbue.mng.utils.cel_utils import compile_cel_filters
 
 # =============================================================================
@@ -447,3 +455,200 @@ def test_apply_cel_filters_no_filters_includes_all() -> None:
     host_info = _make_host_info()
     agent = _make_agent_info("any-agent", host_info)
     assert _apply_cel_filters(agent, [], []) is True
+
+
+# =============================================================================
+# list_agents Tests
+# =============================================================================
+
+
+def test_list_agents_batch_mode_no_agents_returns_empty_result(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """list_agents in batch mode (is_streaming=False) should return empty result when no agents exist."""
+    result = list_agents(
+        mng_ctx=temp_mng_ctx,
+        is_streaming=False,
+    )
+    assert result.agents == []
+    assert result.errors == []
+
+
+def test_list_agents_streaming_mode_no_agents_returns_empty_result(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """list_agents in streaming mode (is_streaming=True) should return empty result when no agents exist."""
+    result = list_agents(
+        mng_ctx=temp_mng_ctx,
+        is_streaming=True,
+    )
+    assert result.agents == []
+    assert result.errors == []
+
+
+@pytest.mark.tmux
+def test_list_agents_batch_mode_on_agent_callback_is_called(
+    temp_work_dir: Path,
+    temp_mng_ctx: MngContext,
+    local_provider: LocalProviderInstance,
+) -> None:
+    """list_agents should call on_agent for each found agent in batch mode."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    agent = host.create_agent_state(
+        work_dir_path=temp_work_dir,
+        options=CreateAgentOptions(
+            name=AgentName("list-callback-test"),
+            agent_type=AgentTypeName("generic"),
+            command=CommandString("sleep 847300"),
+        ),
+    )
+
+    host.start_agents([agent.id])
+
+    found_agents: list[AgentInfo] = []
+    result = list_agents(
+        mng_ctx=temp_mng_ctx,
+        is_streaming=False,
+        on_agent=lambda a: found_agents.append(a),
+    )
+
+    host.destroy_agent(agent)
+
+    assert len(result.agents) >= 1
+    assert len(found_agents) >= 1
+    found_names = [str(a.name) for a in found_agents]
+    assert "list-callback-test" in found_names
+
+
+@pytest.mark.tmux
+def test_list_agents_streaming_mode_on_agent_callback_is_called(
+    temp_work_dir: Path,
+    temp_mng_ctx: MngContext,
+    local_provider: LocalProviderInstance,
+) -> None:
+    """list_agents should call on_agent for each found agent in streaming mode."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    agent = host.create_agent_state(
+        work_dir_path=temp_work_dir,
+        options=CreateAgentOptions(
+            name=AgentName("list-stream-test"),
+            agent_type=AgentTypeName("generic"),
+            command=CommandString("sleep 847301"),
+        ),
+    )
+
+    host.start_agents([agent.id])
+
+    found_agents: list[AgentInfo] = []
+    result = list_agents(
+        mng_ctx=temp_mng_ctx,
+        is_streaming=True,
+        on_agent=lambda a: found_agents.append(a),
+    )
+
+    host.destroy_agent(agent)
+
+    assert len(result.agents) >= 1
+    assert len(found_agents) >= 1
+    found_names = [str(a.name) for a in found_agents]
+    assert "list-stream-test" in found_names
+
+
+@pytest.mark.tmux
+def test_list_agents_with_include_filter_excludes_non_matching(
+    temp_work_dir: Path,
+    temp_mng_ctx: MngContext,
+    local_provider: LocalProviderInstance,
+) -> None:
+    """list_agents with a CEL include filter should exclude non-matching agents."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    agent1 = host.create_agent_state(
+        work_dir_path=temp_work_dir,
+        options=CreateAgentOptions(
+            name=AgentName("list-include-yes"),
+            agent_type=AgentTypeName("generic"),
+            command=CommandString("sleep 847302"),
+        ),
+    )
+    agent2 = host.create_agent_state(
+        work_dir_path=temp_work_dir,
+        options=CreateAgentOptions(
+            name=AgentName("list-include-no"),
+            agent_type=AgentTypeName("generic"),
+            command=CommandString("sleep 847303"),
+        ),
+    )
+
+    host.start_agents([agent1.id, agent2.id])
+
+    result = list_agents(
+        mng_ctx=temp_mng_ctx,
+        is_streaming=False,
+        include_filters=('name == "list-include-yes"',),
+    )
+
+    host.destroy_agent(agent1)
+    host.destroy_agent(agent2)
+
+    result_names = [str(a.name) for a in result.agents]
+    assert "list-include-yes" in result_names
+    assert "list-include-no" not in result_names
+
+
+# =============================================================================
+# load_all_agents_grouped_by_host Tests
+# =============================================================================
+
+
+def test_load_all_agents_grouped_by_host_returns_empty_for_no_agents(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """load_all_agents_grouped_by_host should return empty dict when no agents exist."""
+    agents_by_host, providers = load_all_agents_grouped_by_host(temp_mng_ctx)
+    assert isinstance(agents_by_host, dict)
+    assert isinstance(providers, list)
+    # At least the local provider should be present
+    assert len(providers) > 0
+
+
+@pytest.mark.tmux
+def test_load_all_agents_grouped_by_host_groups_agents_by_host(
+    temp_work_dir: Path,
+    temp_mng_ctx: MngContext,
+    local_provider: LocalProviderInstance,
+) -> None:
+    """load_all_agents_grouped_by_host should return agents grouped by their host reference."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    agent = host.create_agent_state(
+        work_dir_path=temp_work_dir,
+        options=CreateAgentOptions(
+            name=AgentName("grouped-test"),
+            agent_type=AgentTypeName("generic"),
+            command=CommandString("sleep 847304"),
+        ),
+    )
+
+    agents_by_host, providers = load_all_agents_grouped_by_host(temp_mng_ctx)
+
+    host.destroy_agent(agent)
+
+    # There should be at least one host with agents
+    non_empty_hosts = {k: v for k, v in agents_by_host.items() if v}
+    assert len(non_empty_hosts) >= 1
+
+    # Find our agent in the results
+    found_agent = False
+    for _host_ref, agent_refs in agents_by_host.items():
+        for ref in agent_refs:
+            if str(ref.agent_name) == "grouped-test":
+                found_agent = True
+                break
+    assert found_agent

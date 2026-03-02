@@ -180,3 +180,48 @@ def test_message_sends_nothing_with_no_matching_agents(
 
     assert result.exit_code == 0
     assert "No agents found to send message to" in result.output
+
+
+def test_message_help_exits_zero(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that message --help works and exits 0."""
+    result = cli_runner.invoke(
+        message,
+        ["--help"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "message" in result.output.lower()
+
+
+def test_message_nonexistent_agent(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test message to a non-existent agent reports no agents found."""
+    result = cli_runner.invoke(
+        message,
+        ["nonexistent-agent-55231", "-m", "hello"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    # The message command reports "no agents found" rather than failing
+    assert result.exit_code == 0
+    assert "No agents found" in result.output
+
+
+def test_message_all_json_format_no_agents(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test message --all --format json with no agents."""
+    result = cli_runner.invoke(
+        message,
+        ["--all", "-m", "hello", "--format", "json"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0

@@ -1,8 +1,11 @@
 from pathlib import Path
 
 from imbue.mng.api.create import _write_host_env_vars
+from imbue.mng.api.create import resolve_target_host
 from imbue.mng.config.data_types import EnvVar
+from imbue.mng.config.data_types import MngContext
 from imbue.mng.interfaces.host import HostEnvironmentOptions
+from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.primitives import HostName
 from imbue.mng.providers.local.instance import LocalProviderInstance
 
@@ -87,3 +90,47 @@ def test_write_host_env_vars_skips_when_empty(
     # The host env file should not exist (no env vars written)
     host_env = host.get_env_vars()
     assert host_env == {}
+
+
+# =============================================================================
+# resolve_target_host Tests
+# =============================================================================
+
+
+def test_resolve_target_host_with_existing_host(
+    local_provider: LocalProviderInstance,
+    temp_mng_ctx: MngContext,
+    temp_host_dir: Path,
+) -> None:
+    """resolve_target_host should return the host directly when given an existing OnlineHostInterface."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, OnlineHostInterface)
+
+    resolved = resolve_target_host(host, temp_mng_ctx)
+    assert resolved.id == host.id
+
+
+def test_write_host_env_vars_later_env_file_overrides_earlier(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """_write_host_env_vars should let later env files override earlier ones."""
+    host = local_provider.create_host(HostName("localhost"))
+
+    env_file_1 = tmp_path / "first.env"
+    env_file_1.write_text("SHARED=from_first\nFIRST_ONLY=present\n")
+
+    env_file_2 = tmp_path / "second.env"
+    env_file_2.write_text("SHARED=from_second\nSECOND_ONLY=present\n")
+
+    environment = HostEnvironmentOptions(
+        env_files=(env_file_1, env_file_2),
+    )
+
+    _write_host_env_vars(host, environment)
+
+    host_env = host.get_env_vars()
+    assert host_env["SHARED"] == "from_second"
+    assert host_env["FIRST_ONLY"] == "present"
+    assert host_env["SECOND_ONLY"] == "present"

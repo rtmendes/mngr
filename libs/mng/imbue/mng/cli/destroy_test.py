@@ -1,13 +1,24 @@
 """Unit tests for the destroy CLI command."""
 
+import json
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from io import StringIO
+
 import pluggy
 from click.testing import CliRunner
 
 from imbue.mng.cli.destroy import DestroyCliOptions
 from imbue.mng.cli.destroy import _DestroyTargets
 from imbue.mng.cli.destroy import _OfflineHostToDestroy
+from imbue.mng.cli.destroy import _output
+from imbue.mng.cli.destroy import _output_result
 from imbue.mng.cli.destroy import destroy
 from imbue.mng.cli.destroy import get_agent_name_from_session
+from imbue.mng.config.data_types import OutputOptions
+from imbue.mng.primitives import AgentName
+from imbue.mng.primitives import OutputFormat
 
 
 def test_get_agent_name_from_session_extracts_name() -> None:
@@ -125,3 +136,176 @@ def test_destroy_nonexistent_agent(
     )
 
     assert result.exit_code != 0
+
+
+def test_destroy_help_exits_zero(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that destroy --help works and exits 0."""
+    result = cli_runner.invoke(
+        destroy,
+        ["--help"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "destroy" in result.output.lower()
+
+
+def test_destroy_all_dry_run_no_agents(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """--all --dry-run with no agents returns 0 and reports none found."""
+    result = cli_runner.invoke(
+        destroy,
+        ["--all", "--dry-run"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "No agents found" in result.output
+
+
+def test_destroy_all_force_no_agents(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """--all --force with no agents returns 0 and reports none found."""
+    result = cli_runner.invoke(
+        destroy,
+        ["--all", "--force"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "No agents found" in result.output
+
+
+def test_destroy_all_json_format_no_agents(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """--all --force --format json with no agents returns 0."""
+    result = cli_runner.invoke(
+        destroy,
+        ["--all", "--force", "--format", "json"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+
+
+def test_destroy_session_fails_with_invalid_prefix(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that --session fails when session doesn't match expected prefix format."""
+    result = cli_runner.invoke(
+        destroy,
+        ["--session", "not-mng-prefix"],
+        obj=plugin_manager,
+        catch_exceptions=True,
+    )
+    assert result.exit_code != 0
+    assert "does not match the expected format" in result.output
+
+
+def test_destroy_session_cannot_combine_with_agent_names(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that --session cannot be combined with agent names."""
+    result = cli_runner.invoke(
+        destroy,
+        ["my-agent", "--session", "mng-some-agent"],
+        obj=plugin_manager,
+        catch_exceptions=True,
+    )
+    assert result.exit_code != 0
+    assert "Cannot specify --session with agent names or --all" in result.output
+
+
+def test_destroy_session_cannot_combine_with_all(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that --session cannot be combined with --all."""
+    result = cli_runner.invoke(
+        destroy,
+        ["--session", "mng-some-agent", "--all"],
+        obj=plugin_manager,
+        catch_exceptions=True,
+    )
+    assert result.exit_code != 0
+    assert "Cannot specify --session with agent names or --all" in result.output
+
+
+# =============================================================================
+# Output helper function tests
+# =============================================================================
+
+
+@contextmanager
+def _capture_stdout() -> Iterator[StringIO]:
+    """Temporarily redirect sys.stdout to a StringIO buffer."""
+    buf = StringIO()
+    old_stdout = sys.stdout
+    sys.stdout = buf
+    try:
+        yield buf
+    finally:
+        sys.stdout = old_stdout
+
+
+def test_destroy_output_writes_in_human_format() -> None:
+    """Test _output writes in HUMAN format."""
+    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
+    with _capture_stdout() as buf:
+        _output("Destroyed something", output_opts)
+    assert "Destroyed something" in buf.getvalue()
+
+
+def test_destroy_output_silent_in_json_format() -> None:
+    """Test _output does not write in JSON format."""
+    output_opts = OutputOptions(output_format=OutputFormat.JSON)
+    with _capture_stdout() as buf:
+        _output("Should not appear", output_opts)
+    assert buf.getvalue() == ""
+
+
+def test_destroy_output_result_human_with_agents() -> None:
+    """Test _output_result in HUMAN format with destroyed agents."""
+    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
+    with _capture_stdout() as buf:
+        _output_result([AgentName("agent-a"), AgentName("agent-b")], output_opts)
+    assert "Successfully destroyed 2 agent(s)" in buf.getvalue()
+
+
+def test_destroy_output_result_json() -> None:
+    """Test _output_result in JSON format."""
+    output_opts = OutputOptions(output_format=OutputFormat.JSON)
+    with _capture_stdout() as buf:
+        _output_result([AgentName("agent-x")], output_opts)
+    data = json.loads(buf.getvalue().strip())
+    assert data["destroyed_agents"] == ["agent-x"]
+    assert data["count"] == 1
+
+
+def test_destroy_output_result_jsonl() -> None:
+    """Test _output_result in JSONL format."""
+    output_opts = OutputOptions(output_format=OutputFormat.JSONL)
+    with _capture_stdout() as buf:
+        _output_result([AgentName("agent-y")], output_opts)
+    data = json.loads(buf.getvalue().strip())
+    assert data["event"] == "destroy_result"
+    assert data["count"] == 1
+
+
+def test_destroy_output_result_format_template() -> None:
+    """Test _output_result with a format template."""
+    output_opts = OutputOptions(output_format=OutputFormat.HUMAN, format_template="{name}")
+    with _capture_stdout() as buf:
+        _output_result([AgentName("my-agent")], output_opts)
+    assert "my-agent" in buf.getvalue()

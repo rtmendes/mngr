@@ -14,6 +14,9 @@ from imbue.mng.api.gc import gc
 from imbue.mng.api.gc import gc_build_cache
 from imbue.mng.api.gc import gc_logs
 from imbue.mng.api.gc import gc_machines
+from imbue.mng.api.gc import gc_snapshots
+from imbue.mng.api.gc import gc_volumes
+from imbue.mng.api.gc import gc_work_dirs
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import MngError
 from imbue.mng.hosts.offline_host import OfflineHost
@@ -554,3 +557,120 @@ def test_gc_with_multiple_flags(temp_mng_ctx: MngContext, local_provider: LocalP
 
     assert len(result.logs_destroyed) == 1
     assert len(result.build_cache_destroyed) >= 1
+
+
+# =========================================================================
+# gc_work_dirs tests
+# =========================================================================
+
+
+def test_gc_work_dirs_no_orphans_on_fresh_provider(
+    temp_mng_ctx: MngContext, local_provider: LocalProviderInstance
+) -> None:
+    """gc_work_dirs should find no orphaned work dirs on a fresh local provider."""
+    result = GcResult()
+    gc_work_dirs(
+        mng_ctx=temp_mng_ctx,
+        providers=[local_provider],
+        dry_run=False,
+        error_behavior=ErrorBehavior.ABORT,
+        result=result,
+    )
+    assert len(result.work_dirs_destroyed) == 0
+
+
+# =========================================================================
+# gc_snapshots tests
+# =========================================================================
+
+
+def test_gc_snapshots_skips_provider_without_snapshot_support(
+    temp_mng_ctx: MngContext, local_provider: LocalProviderInstance
+) -> None:
+    """gc_snapshots should skip providers that do not support snapshots."""
+    result = GcResult()
+    gc_snapshots(
+        providers=[local_provider],
+        dry_run=False,
+        error_behavior=ErrorBehavior.ABORT,
+        result=result,
+    )
+    assert len(result.snapshots_destroyed) == 0
+    assert len(result.errors) == 0
+
+
+# =========================================================================
+# gc_volumes tests
+# =========================================================================
+
+
+def test_gc_volumes_skips_provider_without_volume_support(
+    temp_mng_ctx: MngContext, local_provider: LocalProviderInstance
+) -> None:
+    """gc_volumes should skip providers that do not support volumes."""
+    result = GcResult()
+    gc_volumes(
+        providers=[local_provider],
+        dry_run=False,
+        error_behavior=ErrorBehavior.ABORT,
+        result=result,
+    )
+    assert len(result.volumes_destroyed) == 0
+    assert len(result.errors) == 0
+
+
+# =========================================================================
+# gc() with work_dirs, snapshots, volumes flags
+# =========================================================================
+
+
+def test_gc_with_work_dirs_flag(temp_mng_ctx: MngContext, local_provider: LocalProviderInstance) -> None:
+    """gc() with is_work_dirs=True should run work directory garbage collection."""
+    resource_types = GcResourceTypes(is_work_dirs=True)
+    result = gc(
+        mng_ctx=temp_mng_ctx,
+        providers=[local_provider],
+        resource_types=resource_types,
+        dry_run=False,
+        error_behavior=ErrorBehavior.ABORT,
+    )
+    assert len(result.work_dirs_destroyed) == 0
+
+
+def test_gc_with_snapshots_flag(temp_mng_ctx: MngContext, local_provider: LocalProviderInstance) -> None:
+    """gc() with is_snapshots=True should run snapshot garbage collection."""
+    resource_types = GcResourceTypes(is_snapshots=True)
+    result = gc(
+        mng_ctx=temp_mng_ctx,
+        providers=[local_provider],
+        resource_types=resource_types,
+        dry_run=False,
+        error_behavior=ErrorBehavior.ABORT,
+    )
+    assert len(result.snapshots_destroyed) == 0
+
+
+def test_gc_with_volumes_flag(temp_mng_ctx: MngContext, local_provider: LocalProviderInstance) -> None:
+    """gc() with is_volumes=True should run volume garbage collection."""
+    resource_types = GcResourceTypes(is_volumes=True)
+    result = gc(
+        mng_ctx=temp_mng_ctx,
+        providers=[local_provider],
+        resource_types=resource_types,
+        dry_run=False,
+        error_behavior=ErrorBehavior.ABORT,
+    )
+    assert len(result.volumes_destroyed) == 0
+
+
+def test_gc_with_machines_flag(temp_mng_ctx: MngContext, local_provider: LocalProviderInstance) -> None:
+    """gc() with is_machines=True should run machine garbage collection."""
+    resource_types = GcResourceTypes(is_machines=True)
+    result = gc(
+        mng_ctx=temp_mng_ctx,
+        providers=[local_provider],
+        resource_types=resource_types,
+        dry_run=False,
+        error_behavior=ErrorBehavior.ABORT,
+    )
+    assert len(result.machines_destroyed) == 0

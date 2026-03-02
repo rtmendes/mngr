@@ -150,3 +150,46 @@ def test_emit_jsonl_exec_result(capsys: pytest.CaptureFixture[str]) -> None:
     assert output["event"] == "exec_result"
     assert output["agent"] == "test-agent"
     assert output["success"] is True
+
+
+def test_exec_help_exits_zero(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that exec --help works and exits 0."""
+    result = cli_runner.invoke(
+        exec_command,
+        ["--help"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "exec" in result.output.lower()
+
+
+def test_exec_all_with_no_agents(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test exec --all with no running agents exits 0."""
+    result = cli_runner.invoke(
+        exec_command,
+        ["--all", "echo hello"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+
+
+def test_exec_cannot_combine_agents_and_all(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that --all cannot be combined with agent names."""
+    result = cli_runner.invoke(
+        exec_command,
+        ["my-agent", "--all", "echo hello"],
+        obj=plugin_manager,
+        catch_exceptions=True,
+    )
+    assert result.exit_code != 0

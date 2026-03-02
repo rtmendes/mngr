@@ -330,3 +330,61 @@ def test_activity_sources_mutually_exclusive_with_add_remove(
 
     assert result.exit_code != 0
     assert "Cannot combine --activity-sources with --add-activity-source" in result.output
+
+
+def test_limit_help_exits_zero(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that limit --help works and exits 0."""
+    result = cli_runner.invoke(
+        limit,
+        ["--help"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "limit" in result.output.lower()
+
+
+def test_limit_nonexistent_agent(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test limit with a non-existent agent fails."""
+    result = cli_runner.invoke(
+        limit,
+        ["nonexistent-agent-77234", "--idle-timeout", "300"],
+        obj=plugin_manager,
+        catch_exceptions=True,
+    )
+    assert result.exit_code != 0
+
+
+def test_limit_all_dry_run_no_agents(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """--all --dry-run --idle-timeout with no agents reports none found."""
+    result = cli_runner.invoke(
+        limit,
+        ["--all", "--dry-run", "--idle-timeout", "300"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "No agents found to configure" in result.output
+
+
+def test_limit_all_json_format_no_agents(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """--all --format json --idle-timeout with no agents exits 0."""
+    result = cli_runner.invoke(
+        limit,
+        ["--all", "--format", "json", "--idle-timeout", "300"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0

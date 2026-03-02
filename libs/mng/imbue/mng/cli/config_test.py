@@ -1,15 +1,19 @@
 """Unit tests for config CLI command helper functions."""
 
+import json
 from pathlib import Path
 
+import pluggy
 import pytest
 import tomlkit
+from click.testing import CliRunner
 
 from imbue.mng.cli.config import _flatten_config
 from imbue.mng.cli.config import _format_value_for_display
 from imbue.mng.cli.config import _get_nested_value
 from imbue.mng.cli.config import _parse_value
 from imbue.mng.cli.config import _unset_nested_value
+from imbue.mng.cli.config import config
 from imbue.mng.cli.config import load_config_file_tomlkit
 from imbue.mng.cli.config import save_config_file
 from imbue.mng.cli.config import set_nested_value
@@ -225,3 +229,190 @@ def test_save_config_file_preserves_formatting(tmp_path: Path) -> None:
     content = config_path.read_text()
     assert "# This is a comment" in content
     assert 'prefix = "test-"' in content
+
+
+# =============================================================================
+# CLI command invocation tests
+# =============================================================================
+
+
+def test_config_help_exits_zero(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that `config --help` works and exits 0."""
+    result = cli_runner.invoke(
+        config,
+        ["--help"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "config" in result.output.lower()
+
+
+def test_config_get_nonexistent_key(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that `config get` with a nonexistent key returns error."""
+    result = cli_runner.invoke(
+        config,
+        ["get", "this.key.does.not.exist.anywhere"],
+        obj=plugin_manager,
+        catch_exceptions=True,
+    )
+    assert result.exit_code != 0
+
+
+def test_config_list_outputs_something(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that `config list` produces output."""
+    result = cli_runner.invoke(
+        config,
+        ["list"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    # Should contain some configuration information
+    assert len(result.output.strip()) > 0
+
+
+# =============================================================================
+# Additional helper function tests
+# =============================================================================
+
+
+def test_flatten_config_with_mixed_nested_and_flat_keys() -> None:
+    """Test _flatten_config with a mix of flat and nested keys."""
+    config_data = {
+        "prefix": "mng-",
+        "commands": {
+            "create": {"connect": True, "name_style": "english"},
+            "destroy": {"force": False},
+        },
+        "logging": {"console_level": "INFO"},
+    }
+    result = _flatten_config(config_data)
+    keys = [k for k, _ in result]
+    assert "prefix" in keys
+    assert "commands.create.connect" in keys
+    assert "commands.create.name_style" in keys
+    assert "commands.destroy.force" in keys
+    assert "logging.console_level" in keys
+
+
+def test_format_value_for_display_with_dict() -> None:
+    """Test _format_value_for_display with a dict value."""
+    result = _format_value_for_display({"key": "value"})
+    assert '"key"' in result
+    assert '"value"' in result
+
+
+def test_format_value_for_display_with_empty_list() -> None:
+    """Test _format_value_for_display with an empty list."""
+    result = _format_value_for_display([])
+    assert result == "[]"
+
+
+def test_format_value_for_display_with_integer() -> None:
+    """Test _format_value_for_display with an integer."""
+    result = _format_value_for_display(100)
+    assert result == "100"
+
+
+def test_save_and_load_config_file_roundtrip(tmp_path: Path) -> None:
+    """Test that save_config_file and load_config_file_tomlkit roundtrip correctly."""
+    config_path = tmp_path / "roundtrip.toml"
+
+    # Create a document with various value types
+    doc = tomlkit.document()
+    doc["prefix"] = "my-prefix-"
+    doc["enabled"] = True
+    doc["count"] = 42
+
+    # Create a nested table
+    commands = tomlkit.table()
+    create_opts = tomlkit.table()
+    create_opts["connect"] = False
+    create_opts["name_style"] = "english"
+    commands["create"] = create_opts
+    doc["commands"] = commands
+
+    # Save
+    save_config_file(config_path, doc)
+    assert config_path.exists()
+
+    # Load
+    loaded_doc = load_config_file_tomlkit(config_path)
+    loaded_data = loaded_doc.unwrap()
+
+    assert loaded_data["prefix"] == "my-prefix-"
+    assert loaded_data["enabled"] is True
+    assert loaded_data["count"] == 42
+    assert loaded_data["commands"]["create"]["connect"] is False
+    assert loaded_data["commands"]["create"]["name_style"] == "english"
+
+
+def test_config_list_json_format(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that `config list --format json` produces valid JSON."""
+    result = cli_runner.invoke(
+        config,
+        ["list", "--format", "json"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.output.strip())
+    assert "config" in data
+
+
+def test_config_path_outputs_paths(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that `config path` produces output about config paths."""
+    result = cli_runner.invoke(
+        config,
+        ["path"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "user" in result.output.lower()
+
+
+def test_config_path_scope_user(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that `config path --scope user` shows user config path."""
+    result = cli_runner.invoke(
+        config,
+        ["path", "--scope", "user"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert len(result.output.strip()) > 0
+
+
+def test_config_get_existing_key(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that `config get prefix` returns the prefix value."""
+    result = cli_runner.invoke(
+        config,
+        ["get", "prefix"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert len(result.output.strip()) > 0

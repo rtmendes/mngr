@@ -1,19 +1,32 @@
 """Unit tests for cleanup CLI helpers."""
 
 import json
+import sys
 from collections.abc import Callable
+from collections.abc import Iterator
+from contextlib import contextmanager
+from io import StringIO
 
 import pluggy
 import pytest
 from click.testing import CliRunner
 
+from imbue.mng.api.data_types import CleanupResult
 from imbue.mng.cli.cleanup import CleanupCliOptions
 from imbue.mng.cli.cleanup import _build_cel_filters_from_options
+from imbue.mng.cli.cleanup import _build_cleanup_status_text
+from imbue.mng.cli.cleanup import _create_cleanup_list_item
+from imbue.mng.cli.cleanup import _emit_dry_run_output
+from imbue.mng.cli.cleanup import _emit_result
 from imbue.mng.cli.cleanup import _selected_marker
 from imbue.mng.cli.cleanup import cleanup
 from imbue.mng.cli.conftest import make_test_agent_info
+from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.interfaces.data_types import AgentInfo
 from imbue.mng.primitives import AgentLifecycleState
+from imbue.mng.primitives import AgentName
+from imbue.mng.primitives import CleanupAction
+from imbue.mng.primitives import OutputFormat
 
 # =============================================================================
 # Tests for _build_cel_filters_from_options
@@ -353,3 +366,274 @@ def test_cleanup_dry_run_stop_json_format(
     output = json.loads(result.output.strip())
     assert output["action"] == "stop"
     assert output["dry_run"] is True
+
+
+# =============================================================================
+# --yes --force and no-agents output format tests
+# =============================================================================
+
+
+def test_cleanup_yes_force_no_agents(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    patch_find_agents: Callable[[list[AgentInfo]], None],
+) -> None:
+    """--yes --force with no agents returns 0 and reports no agents found."""
+    patch_find_agents([])
+
+    result = cli_runner.invoke(
+        cleanup,
+        ["--yes", "--force"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    assert "no agents found" in result.output.lower()
+
+
+def test_cleanup_json_output_no_agents(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    patch_find_agents: Callable[[list[AgentInfo]], None],
+) -> None:
+    """--format json with no agents emits JSON with empty agents list."""
+    patch_find_agents([])
+
+    result = cli_runner.invoke(
+        cleanup,
+        ["--yes", "--format", "json"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    output = json.loads(result.output.strip())
+    assert output["agents"] == []
+    assert output["message"] == "No agents found"
+
+
+def test_cleanup_jsonl_output_no_agents(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    patch_find_agents: Callable[[list[AgentInfo]], None],
+) -> None:
+    """--format jsonl with no agents emits a JSONL info event."""
+    patch_find_agents([])
+
+    result = cli_runner.invoke(
+        cleanup,
+        ["--yes", "--format", "jsonl"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    lines = [line for line in result.output.strip().split("\n") if line.strip()]
+    info_events = [json.loads(line) for line in lines if "info" in line]
+    assert len(info_events) >= 1
+    assert any(e.get("message") == "No agents found" for e in info_events)
+
+
+# =============================================================================
+# Tests for _build_cleanup_status_text
+# =============================================================================
+
+
+def test_build_cleanup_status_text_destroy_action() -> None:
+    """Test status text for destroy action."""
+    text = _build_cleanup_status_text(
+        search_query="",
+        hide_stopped=False,
+        selected_count=3,
+        total_count=10,
+        action=CleanupAction.DESTROY,
+    )
+    assert "3/10" in text
+    assert "destroy" in text
+
+
+def test_build_cleanup_status_text_stop_action() -> None:
+    """Test status text for stop action."""
+    text = _build_cleanup_status_text(
+        search_query="my-query",
+        hide_stopped=True,
+        selected_count=1,
+        total_count=5,
+        action=CleanupAction.STOP,
+    )
+    assert "1/5" in text
+    assert "stop" in text
+    assert "my-query" in text
+
+
+# =============================================================================
+# Tests for _create_cleanup_list_item
+# =============================================================================
+
+
+def test_create_cleanup_list_item_selected() -> None:
+    """Test creating a selected cleanup list item."""
+    agent = make_test_agent_info(name="test-agent", state=AgentLifecycleState.RUNNING)
+    item = _create_cleanup_list_item(agent, is_selected=True, name_width=20, state_width=10, provider_width=10)
+    # AttrMap wraps a SelectableIcon; verify the item was created successfully
+    assert item is not None
+
+
+def test_create_cleanup_list_item_not_selected() -> None:
+    """Test creating an unselected cleanup list item."""
+    agent = make_test_agent_info(name="other-agent", state=AgentLifecycleState.STOPPED)
+    item = _create_cleanup_list_item(agent, is_selected=False, name_width=20, state_width=10, provider_width=10)
+    assert item is not None
+
+
+# =============================================================================
+# Tests for _emit_result (direct function tests)
+# =============================================================================
+
+
+@contextmanager
+def _capture_stdout() -> Iterator[StringIO]:
+    """Temporarily redirect sys.stdout to a StringIO buffer."""
+    buf = StringIO()
+    old_stdout = sys.stdout
+    sys.stdout = buf
+    try:
+        yield buf
+    finally:
+        sys.stdout = old_stdout
+
+
+def test_emit_result_human_destroyed() -> None:
+    """Test _emit_result with destroyed agents in HUMAN format."""
+    result = CleanupResult(
+        destroyed_agents=[AgentName("agent-a"), AgentName("agent-b")],
+        stopped_agents=[],
+        errors=[],
+    )
+    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
+    with _capture_stdout() as buf:
+        _emit_result(result, output_opts)
+    output = buf.getvalue()
+    assert "Successfully destroyed 2 agent(s)" in output
+    assert "agent-a" in output
+    assert "agent-b" in output
+
+
+def test_emit_result_human_stopped() -> None:
+    """Test _emit_result with stopped agents in HUMAN format."""
+    result = CleanupResult(
+        destroyed_agents=[],
+        stopped_agents=[AgentName("stopped-agent")],
+        errors=[],
+    )
+    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
+    with _capture_stdout() as buf:
+        _emit_result(result, output_opts)
+    output = buf.getvalue()
+    assert "Successfully stopped 1 agent(s)" in output
+    assert "stopped-agent" in output
+
+
+def test_emit_result_human_no_agents() -> None:
+    """Test _emit_result with no agents affected in HUMAN format."""
+    result = CleanupResult(
+        destroyed_agents=[],
+        stopped_agents=[],
+        errors=[],
+    )
+    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
+    with _capture_stdout() as buf:
+        _emit_result(result, output_opts)
+    output = buf.getvalue()
+    assert "No agents were affected" in output
+
+
+def test_emit_result_json_format() -> None:
+    """Test _emit_result in JSON format."""
+    result = CleanupResult(
+        destroyed_agents=[AgentName("agent-x")],
+        stopped_agents=[],
+        errors=["some error"],
+    )
+    output_opts = OutputOptions(output_format=OutputFormat.JSON)
+    with _capture_stdout() as buf:
+        _emit_result(result, output_opts)
+    output = json.loads(buf.getvalue().strip())
+    assert output["destroyed_agents"] == ["agent-x"]
+    assert output["destroyed_count"] == 1
+    assert output["error_count"] == 1
+
+
+def test_emit_result_jsonl_format() -> None:
+    """Test _emit_result in JSONL format."""
+    result = CleanupResult(
+        destroyed_agents=[],
+        stopped_agents=[AgentName("agent-y")],
+        errors=[],
+    )
+    output_opts = OutputOptions(output_format=OutputFormat.JSONL)
+    with _capture_stdout() as buf:
+        _emit_result(result, output_opts)
+    output = json.loads(buf.getvalue().strip())
+    assert output["event"] == "cleanup_result"
+    assert output["stopped_agents"] == ["agent-y"]
+    assert output["stopped_count"] == 1
+
+
+# =============================================================================
+# Tests for _emit_dry_run_output (direct function tests)
+# =============================================================================
+
+
+def test_emit_dry_run_output_human_destroy() -> None:
+    """Test _emit_dry_run_output with destroy action in HUMAN format."""
+    agents = [
+        make_test_agent_info(name="dry-run-agent", state=AgentLifecycleState.RUNNING),
+    ]
+    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
+    with _capture_stdout() as buf:
+        _emit_dry_run_output(agents, CleanupAction.DESTROY, output_opts)
+    output = buf.getvalue()
+    assert "Would destroy" in output
+    assert "dry-run-agent" in output
+
+
+def test_emit_dry_run_output_human_stop() -> None:
+    """Test _emit_dry_run_output with stop action in HUMAN format."""
+    agents = [
+        make_test_agent_info(name="stop-target", state=AgentLifecycleState.RUNNING),
+    ]
+    output_opts = OutputOptions(output_format=OutputFormat.HUMAN)
+    with _capture_stdout() as buf:
+        _emit_dry_run_output(agents, CleanupAction.STOP, output_opts)
+    output = buf.getvalue()
+    assert "Would stop" in output
+    assert "stop-target" in output
+
+
+def test_emit_dry_run_output_json_format() -> None:
+    """Test _emit_dry_run_output in JSON format."""
+    agents = [
+        make_test_agent_info(name="json-dry", state=AgentLifecycleState.RUNNING),
+    ]
+    output_opts = OutputOptions(output_format=OutputFormat.JSON)
+    with _capture_stdout() as buf:
+        _emit_dry_run_output(agents, CleanupAction.DESTROY, output_opts)
+    output = json.loads(buf.getvalue().strip())
+    assert output["dry_run"] is True
+    assert output["action"] == "destroy"
+    assert len(output["agents"]) == 1
+
+
+def test_emit_dry_run_output_jsonl_format() -> None:
+    """Test _emit_dry_run_output in JSONL format."""
+    agents = [
+        make_test_agent_info(name="jsonl-dry", state=AgentLifecycleState.RUNNING),
+    ]
+    output_opts = OutputOptions(output_format=OutputFormat.JSONL)
+    with _capture_stdout() as buf:
+        _emit_dry_run_output(agents, CleanupAction.STOP, output_opts)
+    output = json.loads(buf.getvalue().strip())
+    assert output["event"] == "dry_run"
+    assert output["action"] == "stop"

@@ -52,3 +52,32 @@ def test_migrate_rejects_from_agent_option(
 
     assert result.exit_code != 0
     assert "--from-agent" in result.output
+
+
+def test_migrate_help_exits_zero(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that migrate --help works and exits 0."""
+    result = cli_runner.invoke(
+        migrate,
+        ["--help"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "migrate" in result.output.lower()
+
+
+def test_migrate_nonexistent_source_agent(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that migrate with nonexistent source agent fails."""
+    result = cli_runner.invoke(
+        migrate,
+        ["nonexistent-source-agent-99812"],
+        obj=plugin_manager,
+        catch_exceptions=True,
+    )
+    assert result.exit_code != 0

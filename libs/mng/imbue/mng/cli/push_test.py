@@ -56,3 +56,32 @@ def test_push_nonexistent_agent(
     )
 
     assert result.exit_code != 0
+
+
+def test_push_help_exits_zero(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that push --help works and exits 0."""
+    result = cli_runner.invoke(
+        push,
+        ["--help"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "push" in result.output.lower()
+
+
+def test_push_requires_target(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Test that push requires a target."""
+    result = cli_runner.invoke(
+        push,
+        [],
+        obj=plugin_manager,
+        catch_exceptions=True,
+    )
+    assert result.exit_code != 0
