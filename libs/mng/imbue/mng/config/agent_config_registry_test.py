@@ -12,7 +12,7 @@ from imbue.mng.errors import MngError
 def test_apply_custom_overrides_returns_parent_when_no_overrides() -> None:
     """_apply_custom_overrides_to_parent_config should return parent unchanged when custom has no overrides."""
     parent = AgentTypeConfig(cli_args=("--model", "opus"))
-    custom = AgentTypeConfig()  # No command, no cli_args, no permissions
+    custom = AgentTypeConfig()
 
     result = _apply_custom_overrides_to_parent_config(parent, custom)
 
