@@ -86,6 +86,7 @@ def _make_jsonl_file_sink(
         if state["size"] >= max_size_bytes:
             if state["file"] is not None:
                 state["file"].close()
+                state["file"] = None
             path = Path(file_path)
             rotation_idx = 1
             while True:
@@ -94,7 +95,6 @@ def _make_jsonl_file_sink(
                     break
                 rotation_idx += 1
             path.rename(rotated)
-            state["file"] = open(file_path, "a")
             state["size"] = 0
 
     def sink(message: Any) -> None:
