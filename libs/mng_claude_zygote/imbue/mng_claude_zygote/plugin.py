@@ -134,8 +134,8 @@ class ClaudeZygoteAgent(ClaudeAgent):
         Extends ClaudeAgent provisioning with:
         1. Settings loading from .changelings/settings.toml
         2. llm + plugin installation
-        3. Default content (CLAUDE.md, entrypoint files, skills) if missing
-        4. Symlinks for .changelings/entrypoint.md -> CLAUDE.local.md
+        3. Default content (GLOBAL.md, thinking/PROMPT.md, thinking/settings.json, skills)
+        4. Symlinks for Claude Code discovery (CLAUDE.md, settings, skills)
         5. Watcher scripts and chat utilities
         6. Event log directory structure (logs/<source>/events.jsonl)
         7. Default chat model configuration
@@ -156,8 +156,8 @@ class ClaudeZygoteAgent(ClaudeAgent):
         if config.install_llm:
             install_llm_toolchain(host, provisioning)
 
-        provision_default_content(host, self.work_dir, config.changelings_dir_name, provisioning)
-        create_changeling_symlinks(host, self.work_dir, config.changelings_dir_name, provisioning)
+        provision_default_content(host, self.work_dir, provisioning)
+        create_changeling_symlinks(host, self.work_dir, provisioning)
         provision_changeling_scripts(host, provisioning)
         provision_llm_tools(host, provisioning)
 
@@ -169,7 +169,7 @@ class ClaudeZygoteAgent(ClaudeAgent):
         chat_model = settings.chat.model if settings.chat.model is not None else config.default_chat_model
         write_default_chat_model(host, agent_state_dir, chat_model)
 
-        link_memory_directory(host, self.work_dir, config.changelings_dir_name, provisioning)
+        link_memory_directory(host, self.work_dir, provisioning)
 
         # Provision settings.toml to agent state dir so scripts can access it
         provision_settings_file(host, self.work_dir, config.changelings_dir_name, agent_state_dir)
