@@ -2,7 +2,6 @@ import os
 import shlex
 import sys
 from collections.abc import Callable
-from collections.abc import Sequence
 from pathlib import Path
 from typing import assert_never
 from typing import cast
@@ -36,7 +35,6 @@ from imbue.mng.api.providers import get_provider_instance
 from imbue.mng.cli.common_opts import CommonCliOptions
 from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import error_if_param_explicit
-from imbue.mng.cli.common_opts import is_param_explicit
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.env_utils import resolve_env_vars
 from imbue.mng.cli.help_formatter import CommandHelpMetadata
@@ -171,7 +169,6 @@ class CreateCliOptions(CommonCliOptions):
     snapshot_source: bool | None
     name: str | None
     agent_id: str | None
-    count: int
     name_style: str
     agent_command: str | None
     add_command: tuple[str, ...]
@@ -253,16 +250,8 @@ class CreateCliOptions(CommonCliOptions):
     multiple=True,
     help="Use a named template from create_templates config [repeatable, stacks in order]",
 )
-@optgroup.option("--name", help="Agent name (alternative to positional argument) [default: auto-generated]")
+@optgroup.option("-n", "--name", help="Agent name (alternative to positional argument) [default: auto-generated]")
 @optgroup.option("--agent-id", help="Explicit agent ID [default: auto-generated]")
-@optgroup.option(
-    "-n",
-    "--count",
-    type=click.IntRange(min=1),
-    default=1,
-    show_default=True,
-    help="Number of agents to create (automatically disables connect when > 1) [experimental]",
-)
 @optgroup.option(
     "--name-style",
     type=click.Choice(_make_name_style_choices(), case_sensitive=False),
@@ -561,34 +550,7 @@ def create(ctx: click.Context, **kwargs) -> None:
         )
 
     # Resolve defaults that depend on other args. error_if_param_explicit raises if the
-    # user explicitly passed a conflicting value. is_param_explicit checks without raising.
-    is_batch = opts.count > 1
-
-    # batch implies no explicit name (names are auto-generated)
-    if is_batch and opts.positional_name:
-        error_if_param_explicit(
-            ctx,
-            "positional_name",
-            "Cannot specify agent name with -n/--count > 1. Names are auto-generated for batch creation.",
-        )
-        opts = opts.model_copy_update(to_update(opts.field_ref().positional_name, None))
-
-    if is_batch and opts.name:
-        error_if_param_explicit(
-            ctx,
-            "name",
-            "Cannot specify --name with -n/--count > 1. Names are auto-generated for batch creation.",
-        )
-        opts = opts.model_copy_update(to_update(opts.field_ref().name, None))
-
-    # batch implies --no-reuse
-    if is_batch and opts.reuse:
-        error_if_param_explicit(
-            ctx,
-            "reuse",
-            "Cannot use --reuse with -n/--count > 1.",
-        )
-        opts = opts.model_copy_update(to_update(opts.field_ref().reuse, False))
+    # user explicitly passed a conflicting value.
 
     # --await-agent-stopped implies --no-connect
     if opts.await_agent_stopped and opts.connect:
@@ -598,20 +560,6 @@ def create(ctx: click.Context, **kwargs) -> None:
             "Cannot use --await-agent-stopped and --connect together. Pass --no-connect to just wait.",
         )
         opts = opts.model_copy_update(to_update(opts.field_ref().connect, False))
-
-    # batch implies --no-connect
-    if is_batch and opts.connect:
-        error_if_param_explicit(
-            ctx,
-            "connect",
-            "Cannot use --connect with -n/--count > 1. Batch create automatically disables connect.",
-        )
-        opts = opts.model_copy_update(to_update(opts.field_ref().connect, False))
-
-    # batch defaults to --await-ready (foreground, sequential, returns results).
-    # User can pass --no-await-ready explicitly for fire-and-forget.
-    if is_batch and not is_param_explicit(ctx, "await_ready"):
-        opts = opts.model_copy_update(to_update(opts.field_ref().await_ready, True))
 
     # --await-agent-stopped implies --await-ready
     if opts.await_agent_stopped and not opts.await_ready:
@@ -625,20 +573,14 @@ def create(ctx: click.Context, **kwargs) -> None:
     # Per-invocation setup (validation, editor session, source resolution, etc.)
     setup = _setup_create(mng_ctx, output_opts, opts, logging_config)
 
-    # Create agent(s)
-    results: list[CreateAgentResult] = []
-    for agent_idx in range(opts.count):
-        if is_batch:
-            logger.info("Creating agent ({}/{})...", agent_idx + 1, opts.count)
-        result = _create_one_agent(mng_ctx, output_opts, opts, setup)
-        if result is None:
-            continue
+    # Create agent
+    result = _create_one_agent(mng_ctx, output_opts, opts, setup)
+    if result is not None:
         create_result, connection_opts = result
-        results.append(create_result)
         _post_create_one_agent(create_result, connection_opts, opts, mng_ctx)
-
-    # Per-invocation wrap-up (editor cleanup, output)
-    _finish_create(results, setup, output_opts)
+        _finish_create(create_result, setup, output_opts)
+    else:
+        _finish_create(None, setup, output_opts)
 
 
 class _CreateSetup(FrozenModel):
@@ -922,45 +864,21 @@ def _post_create_one_agent(
 
 
 def _finish_create(
-    results: Sequence[CreateAgentResult],
+    result: CreateAgentResult | None,
     setup: _CreateSetup,
     output_opts: OutputOptions,
 ) -> None:
-    """Per-invocation wrap-up: editor cleanup, output results."""
+    """Per-invocation wrap-up: editor cleanup, output result."""
     # Ensure editor cleanup on all exit paths (may already be cleaned up by _create_one_agent)
     if setup.editor_session is not None and not setup.editor_session.is_finished():
         setup.editor_session.cleanup()
     if LoggingSuppressor.is_suppressed():
         LoggingSuppressor.disable_and_replay(clear_screen=True)
 
-    if not results:
+    if result is None:
         return
 
-    if output_opts.is_quiet:
-        return
-
-    agent_count = len(results)
-    match output_opts.output_format:
-        case OutputFormat.JSON:
-            if agent_count == 1:
-                emit_final_json({"agent_id": str(results[0].agent.id), "host_id": str(results[0].host.id)})
-            else:
-                result_data = [{"agent_id": str(r.agent.id), "host_id": str(r.host.id)} for r in results]
-                emit_final_json({"agents": result_data, "count": agent_count})
-        case OutputFormat.JSONL:
-            for result in results:
-                emit_event(
-                    "created",
-                    {"agent_id": str(result.agent.id), "host_id": str(result.host.id)},
-                    OutputFormat.JSONL,
-                )
-        case OutputFormat.HUMAN:
-            if agent_count == 1:
-                write_human_line("Done.")
-            else:
-                write_human_line("Created {} agents.", agent_count)
-        case _ as unreachable:
-            assert_never(unreachable)
+    _output_result(result, output_opts)
 
 
 def _on_editor_exit() -> None:
@@ -1745,7 +1663,7 @@ def _output_result(result: CreateAgentResult, opts: OutputOptions) -> None:
 _CREATE_HELP_METADATA = CommandHelpMetadata(
     key="create",
     one_line_description="Create and run an agent",
-    synopsis="""mng [create|c] [<AGENT_NAME>] [<AGENT_TYPE>] [-n <COUNT>] [-t <TEMPLATE>] [--in <PROVIDER>] [--host <HOST>] [--c WINDOW_NAME=COMMAND]
+    synopsis="""mng [create|c] [<AGENT_NAME>] [<AGENT_TYPE>] [-t <TEMPLATE>] [--in <PROVIDER>] [--host <HOST>] [--c WINDOW_NAME=COMMAND]
     [--label KEY=VALUE] [--tag KEY=VALUE] [--project <PROJECT>] [--from <SOURCE>] [--in-place|--copy|--clone|--worktree]
     [--[no-]rsync] [--rsync-args <ARGS>] [--base-branch <BRANCH>] [--new-branch [<BRANCH-NAME>]] [--[no-]ensure-clean]
     [--snapshot <ID>] [-b <BUILD_ARG>] [-s <START_ARG>]
@@ -1785,8 +1703,6 @@ the working directory is copied to the remote host.""",
         ("Create without connecting", "mng create my-agent --no-connect"),
         ("Add extra tmux windows", 'mng create my-agent -c server="npm run dev"'),
         ("Reuse existing agent or create if not found", "mng create my-agent --reuse"),
-        ("Create 5 agents on Modal", "mng create -n 5 --in modal"),
-        ("Create 3 agents locally", "mng create -n 3"),
     ),
     see_also=(
         ("connect", "Connect to an existing agent"),
