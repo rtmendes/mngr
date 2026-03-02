@@ -63,7 +63,15 @@ class LogEvent(EventEnvelope):
     level: NonEmptyStr = Field(description="Log level (e.g. DEBUG, INFO, WARNING, ERROR)")
     message: str = Field(description="The log message text")
     pid: PositiveInt = Field(description="Process ID of the emitting process")
+    # Omitted from serialization when None (matching the JSONL formatter behavior)
     command: str | None = Field(
         default=None,
         description="CLI subcommand that produced this log (e.g. 'create', 'list')",
     )
+
+    def to_jsonl_dict(self) -> dict[str, object]:
+        """Serialize to a dict suitable for JSONL output, omitting command when None."""
+        result = self.model_dump()
+        if result.get("command") is None:
+            del result["command"]
+        return result

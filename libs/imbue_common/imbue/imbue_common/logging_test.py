@@ -187,8 +187,10 @@ def test_generate_log_event_id_returns_unique_ids() -> None:
     id_a = generate_log_event_id()
     id_b = generate_log_event_id()
     assert id_a != id_b
-    assert id_a.startswith("log-")
-    assert id_b.startswith("log-")
+    assert id_a.startswith("evt-")
+    assert id_b.startswith("evt-")
+    # Should be evt- prefix + 32 hex chars (uuid4)
+    assert len(id_a) == 4 + 32
 
 
 def test_format_loguru_record_as_jsonl_event_produces_valid_json_after_unescape() -> None:

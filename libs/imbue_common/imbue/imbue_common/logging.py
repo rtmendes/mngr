@@ -12,6 +12,7 @@ from typing import Any
 from typing import Final
 from typing import ParamSpec
 from typing import TypeVar
+from uuid import uuid4
 
 from loguru import logger
 
@@ -134,10 +135,6 @@ def trace_span(message: str, *args: Any, _is_trace_span_enabled: bool = True, **
 
 # -- JSONL event envelope formatting for loguru file sinks --
 
-# Monotonic counter to guarantee unique event IDs within a single process,
-# even if two log events happen within the same nanosecond.
-_log_event_counter: int = 0
-
 
 @pure
 def format_nanosecond_iso_timestamp(dt: datetime) -> str:
@@ -146,10 +143,8 @@ def format_nanosecond_iso_timestamp(dt: datetime) -> str:
 
 
 def generate_log_event_id() -> str:
-    """Generate a unique event ID for a log event using timestamp + PID + counter."""
-    global _log_event_counter
-    _log_event_counter += 1
-    return f"log-{time.time_ns()}-{os.getpid()}-{_log_event_counter}"
+    """Generate a unique event ID using a random UUID4 hex with 'evt-' prefix."""
+    return f"evt-{uuid4().hex}"
 
 
 def format_loguru_record_as_jsonl_event(

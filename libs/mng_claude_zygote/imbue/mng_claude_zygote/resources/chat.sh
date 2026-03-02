@@ -41,9 +41,9 @@ iso_timestamp_ns() {
     date -u +"%Y-%m-%dT%H:%M:%S.%NZ"
 }
 
-# Generate a unique event ID (timestamp-based + random hex for uniqueness)
+# Generate a unique event ID (random UUID4 hex with evt- prefix)
 generate_event_id() {
-    echo "evt-$(date +%s%N)-$(head -c 4 /dev/urandom | xxd -p)"
+    echo "evt-$(head -c 16 /dev/urandom | xxd -p)"
 }
 
 # Log a message to the log file (not to stdout, since chat is interactive)
@@ -52,7 +52,10 @@ log() {
 }
 
 get_default_model() {
-    python3 -c "
+    local _stderr_file
+    _stderr_file=$(mktemp)
+    local _model
+    _model=$(python3 -c "
 import tomllib, pathlib, sys
 p = pathlib.Path('${MNG_AGENT_STATE_DIR}/settings.toml')
 try:
@@ -61,7 +64,12 @@ try:
 except Exception as e:
     print(f'WARNING: failed to load settings: {e}', file=sys.stderr)
     print('claude-opus-4-6')
-" 2>/dev/null || echo "claude-opus-4-6"
+" 2>"$_stderr_file") || true
+    if [ -s "$_stderr_file" ]; then
+        log_error "Failed to load settings: $(cat "$_stderr_file")"
+    fi
+    rm -f "$_stderr_file"
+    echo "${_model:-claude-opus-4-6}"
 }
 
 generate_cid() {

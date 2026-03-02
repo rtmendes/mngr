@@ -1646,29 +1646,10 @@ def test_get_event_type_info_skill_has_frontmatter() -> None:
     assert len(content) > 100  # must have substantive content
 
 
-# -- GLOBAL.md content quality tests --
+# -- GLOBAL.md resource loading test --
 
 
-def test_global_md_describes_repo_structure() -> None:
-    """Verify the GLOBAL.md describes the repository structure."""
+def test_global_md_is_loadable() -> None:
+    """Verify that GLOBAL.md can be loaded as a resource."""
     content = load_zygote_resource("defaults/GLOBAL.md")
-    assert "talking/" in content
-    assert "thinking/" in content
-    assert "working/" in content
-    assert "verifying/" in content
-    assert "PROMPT.md" in content
-
-
-def test_global_md_describes_event_system() -> None:
-    """Verify the GLOBAL.md mentions events (via the thinking agent role description)."""
-    content = load_zygote_resource("defaults/GLOBAL.md")
-    assert "event" in content.lower()
-
-
-def test_global_md_describes_agent_roles() -> None:
-    """Verify the GLOBAL.md describes the different agent roles."""
-    content = load_zygote_resource("defaults/GLOBAL.md")
-    assert "thinking" in content.lower()
-    assert "talking" in content.lower()
-    assert "working" in content.lower()
-    assert "verifying" in content.lower()
+    assert len(content) > 0

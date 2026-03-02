@@ -34,13 +34,13 @@ _log_jsonl() {
     local msg="$2"
     local ts
     ts=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
-    local ns_ts
-    ns_ts=$(date +%s%N)
+    local eid
+    eid="evt-$(head -c 16 /dev/urandom | xxd -p)"
     local escaped_msg
     escaped_msg=$(_json_escape "$msg")
     mkdir -p "$(dirname "$_MNG_LOG_FILE")"
-    printf '{"timestamp":"%s","type":"%s","event_id":"log-%s-%s","source":"%s","level":"%s","message":"%s","pid":%s}\n' \
-        "$ts" "$_MNG_LOG_TYPE" "$ns_ts" "$$" "$_MNG_LOG_SOURCE" "$level" "$escaped_msg" "$$" >> "$_MNG_LOG_FILE"
+    printf '{"timestamp":"%s","type":"%s","event_id":"%s","source":"%s","level":"%s","message":"%s","pid":%s}\n' \
+        "$ts" "$_MNG_LOG_TYPE" "$eid" "$_MNG_LOG_SOURCE" "$level" "$escaped_msg" "$$" >> "$_MNG_LOG_FILE"
 }
 
 log_info() {

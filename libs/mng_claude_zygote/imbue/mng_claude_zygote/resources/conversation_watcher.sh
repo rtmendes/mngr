@@ -34,6 +34,7 @@ LOG_FILE="$_MNG_LOG_FILE"
 
 # Read poll interval from settings.toml, fall back to default
 mkdir -p "$(dirname "$LOG_FILE")"
+_settings_stderr=$(mktemp)
 POLL_INTERVAL=$(python3 -c "
 import tomllib, pathlib, sys
 p = pathlib.Path('${MNG_AGENT_STATE_DIR}/settings.toml')
@@ -43,7 +44,12 @@ try:
 except Exception as e:
     print(f'WARNING: failed to load settings: {e}', file=sys.stderr)
     print(5)
-" 2>/dev/null || echo 5)
+" 2>"$_settings_stderr") || true
+if [ -s "$_settings_stderr" ]; then
+    log_error "Failed to load settings: $(cat "$_settings_stderr")"
+fi
+rm -f "$_settings_stderr"
+POLL_INTERVAL="${POLL_INTERVAL:-5}"
 
 log() {
     local ts

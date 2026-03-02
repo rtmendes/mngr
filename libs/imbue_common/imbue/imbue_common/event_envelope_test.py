@@ -128,8 +128,35 @@ def test_log_event_command_defaults_to_none() -> None:
         pid=PositiveInt(1000),
     )
     assert event.command is None
-    data = json.loads(event.model_dump_json())
-    assert data["command"] is None
+
+
+def test_log_event_to_jsonl_dict_omits_command_when_none() -> None:
+    event = LogEvent(
+        timestamp=_TS,
+        type=EventType("event_watcher"),
+        event_id=_EID,
+        source=EventSource("event_watcher"),
+        level=NonEmptyStr("DEBUG"),
+        message="Watching for events",
+        pid=PositiveInt(1000),
+    )
+    data = event.to_jsonl_dict()
+    assert "command" not in data
+
+
+def test_log_event_to_jsonl_dict_includes_command_when_set() -> None:
+    event = LogEvent(
+        timestamp=_TS,
+        type=EventType("mng"),
+        event_id=_EID,
+        source=_SRC,
+        level=NonEmptyStr("INFO"),
+        message="test",
+        pid=PositiveInt(1),
+        command="create",
+    )
+    data = event.to_jsonl_dict()
+    assert data["command"] == "create"
 
 
 def test_log_event_is_frozen() -> None:
