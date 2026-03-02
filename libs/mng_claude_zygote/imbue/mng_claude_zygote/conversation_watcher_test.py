@@ -8,7 +8,6 @@ import pytest
 from imbue.mng_claude_zygote.conftest import create_test_llm_db
 from imbue.mng_claude_zygote.conftest import write_changelings_settings_toml
 from imbue.mng_claude_zygote.conftest import write_conversation_event
-from imbue.mng_claude_zygote.resources.conversation_watcher import _get_existing_event_ids
 from imbue.mng_claude_zygote.resources.conversation_watcher import _get_llm_db_path
 from imbue.mng_claude_zygote.resources.conversation_watcher import _get_tracked_conversation_ids
 from imbue.mng_claude_zygote.resources.conversation_watcher import _load_poll_interval
@@ -89,30 +88,6 @@ def test_get_tracked_conversation_ids_handles_missing_key(tmp_path: Path) -> Non
 
     cids = _get_tracked_conversation_ids(conversations_file)
     assert cids == {"conv-ok"}
-
-
-# -- _get_existing_event_ids tests --
-
-
-def test_get_existing_event_ids_empty_file(tmp_path: Path) -> None:
-    messages_file = tmp_path / "messages.jsonl"
-    assert _get_existing_event_ids(messages_file) == set()
-
-
-def test_get_existing_event_ids_reads_ids(tmp_path: Path) -> None:
-    messages_file = tmp_path / "messages.jsonl"
-    messages_file.write_text(json.dumps({"event_id": "evt-1"}) + "\n" + json.dumps({"event_id": "evt-2"}) + "\n")
-
-    ids = _get_existing_event_ids(messages_file)
-    assert ids == {"evt-1", "evt-2"}
-
-
-def test_get_existing_event_ids_handles_malformed_lines(tmp_path: Path) -> None:
-    messages_file = tmp_path / "messages.jsonl"
-    messages_file.write_text("bad json\n" + json.dumps({"event_id": "evt-ok"}) + "\n")
-
-    ids = _get_existing_event_ids(messages_file)
-    assert ids == {"evt-ok"}
 
 
 # -- _sync_messages tests --

@@ -24,12 +24,14 @@ from loguru import logger
 
 try:
     from imbue.mng_claude_zygote.resources.watcher_common import load_watchers_section
+    from imbue.mng_claude_zygote.resources.watcher_common import read_event_ids_from_jsonl
     from imbue.mng_claude_zygote.resources.watcher_common import require_env
     from imbue.mng_claude_zygote.resources.watcher_common import run_watcher_loop
     from imbue.mng_claude_zygote.resources.watcher_common import setup_watcher_logging
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent))
     from watcher_common import load_watchers_section  # type: ignore[no-redef]
+    from watcher_common import read_event_ids_from_jsonl  # type: ignore[no-redef]
     from watcher_common import require_env  # type: ignore[no-redef]
     from watcher_common import run_watcher_loop  # type: ignore[no-redef]
     from watcher_common import setup_watcher_logging  # type: ignore[no-redef]
@@ -70,27 +72,6 @@ def _get_tracked_conversation_ids(conversations_file: Path) -> set[str]:
     return tracked_cids
 
 
-def _get_existing_event_ids(messages_file: Path) -> set[str]:
-    """Read event IDs already present in logs/messages/events.jsonl."""
-    file_event_ids: set[str] = set()
-    if not messages_file.is_file():
-        return file_event_ids
-    try:
-        with messages_file.open() as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    file_event_ids.add(json.loads(line)["event_id"])
-                except (json.JSONDecodeError, KeyError) as exc:
-                    logger.warning("Malformed message event line: {}", exc)
-                    continue
-    except OSError as exc:
-        logger.warning("Failed to read messages file: {}", exc)
-    return file_event_ids
-
-
 def _sync_messages(
     db_path: Path,
     conversations_file: Path,
@@ -114,7 +95,7 @@ def _sync_messages(
     if not tracked_cids:
         return 0
 
-    file_event_ids = _get_existing_event_ids(messages_file)
+    file_event_ids = read_event_ids_from_jsonl(messages_file)
 
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)

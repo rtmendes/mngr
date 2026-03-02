@@ -8,7 +8,6 @@ from typing import cast
 from imbue.mng_claude_zygote.conftest import write_changelings_settings_toml
 from imbue.mng_claude_zygote.resources.transcript_watcher import _convert_new_events
 from imbue.mng_claude_zygote.resources.transcript_watcher import _extract_text_content
-from imbue.mng_claude_zygote.resources.transcript_watcher import _get_existing_event_ids
 from imbue.mng_claude_zygote.resources.transcript_watcher import _has_tool_results_only
 from imbue.mng_claude_zygote.resources.transcript_watcher import _load_poll_interval
 from imbue.mng_claude_zygote.resources.transcript_watcher import _make_event_id
@@ -120,28 +119,6 @@ def test_make_event_id_format() -> None:
 def test_make_event_id_with_different_suffixes() -> None:
     assert _make_event_id("uuid-1", "assistant") == "uuid-1-assistant"
     assert _make_event_id("uuid-1", "tool_result-toolu_1") == "uuid-1-tool_result-toolu_1"
-
-
-# -- _get_existing_event_ids tests --
-
-
-def test_get_existing_event_ids_empty(tmp_path: Path) -> None:
-    output_file = tmp_path / "output.jsonl"
-    assert _get_existing_event_ids(output_file) == set()
-
-
-def test_get_existing_event_ids_reads_ids(tmp_path: Path) -> None:
-    output_file = tmp_path / "output.jsonl"
-    output_file.write_text(json.dumps({"event_id": "evt-1"}) + "\n" + json.dumps({"event_id": "evt-2"}) + "\n")
-    ids = _get_existing_event_ids(output_file)
-    assert ids == {"evt-1", "evt-2"}
-
-
-def test_get_existing_event_ids_handles_malformed_lines(tmp_path: Path) -> None:
-    output_file = tmp_path / "output.jsonl"
-    output_file.write_text("bad json\n" + json.dumps({"event_id": "evt-ok"}) + "\n")
-    ids = _get_existing_event_ids(output_file)
-    assert ids == {"evt-ok"}
 
 
 # -- _convert_new_events tests --

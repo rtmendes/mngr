@@ -15,6 +15,7 @@ from imbue.mng_claude_zygote.resources.watcher_common import ChangeHandler
 from imbue.mng_claude_zygote.resources.watcher_common import load_watchers_section
 from imbue.mng_claude_zygote.resources.watcher_common import mtime_poll_directories
 from imbue.mng_claude_zygote.resources.watcher_common import mtime_poll_files
+from imbue.mng_claude_zygote.resources.watcher_common import read_event_ids_from_jsonl
 from imbue.mng_claude_zygote.resources.watcher_common import require_env
 from imbue.mng_claude_zygote.resources.watcher_common import setup_watchdog_for_directories
 from imbue.mng_claude_zygote.resources.watcher_common import setup_watchdog_for_files
@@ -104,6 +105,25 @@ def test_load_watchers_section_handles_corrupt_file(tmp_path: Path) -> None:
 def test_load_watchers_section_returns_empty_for_missing_section(tmp_path: Path) -> None:
     write_changelings_settings_toml(tmp_path, "[other_section]\nkey = 1\n")
     assert load_watchers_section(tmp_path) == {}
+
+
+# -- read_event_ids_from_jsonl tests --
+
+
+def test_read_event_ids_from_jsonl_empty_file(tmp_path: Path) -> None:
+    assert read_event_ids_from_jsonl(tmp_path / "nonexistent.jsonl") == set()
+
+
+def test_read_event_ids_from_jsonl_reads_ids(tmp_path: Path) -> None:
+    jsonl_file = tmp_path / "events.jsonl"
+    jsonl_file.write_text(json.dumps({"event_id": "evt-1"}) + "\n" + json.dumps({"event_id": "evt-2"}) + "\n")
+    assert read_event_ids_from_jsonl(jsonl_file) == {"evt-1", "evt-2"}
+
+
+def test_read_event_ids_from_jsonl_handles_malformed_lines(tmp_path: Path) -> None:
+    jsonl_file = tmp_path / "events.jsonl"
+    jsonl_file.write_text("bad json\n" + json.dumps({"event_id": "evt-ok"}) + "\n")
+    assert read_event_ids_from_jsonl(jsonl_file) == {"evt-ok"}
 
 
 # -- require_env tests --

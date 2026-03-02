@@ -35,12 +35,14 @@ from loguru import logger
 
 try:
     from imbue.mng_claude_zygote.resources.watcher_common import load_watchers_section
+    from imbue.mng_claude_zygote.resources.watcher_common import read_event_ids_from_jsonl
     from imbue.mng_claude_zygote.resources.watcher_common import require_env
     from imbue.mng_claude_zygote.resources.watcher_common import run_watcher_loop
     from imbue.mng_claude_zygote.resources.watcher_common import setup_watcher_logging
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent))
     from watcher_common import load_watchers_section  # type: ignore[no-redef]
+    from watcher_common import read_event_ids_from_jsonl  # type: ignore[no-redef]
     from watcher_common import require_env  # type: ignore[no-redef]
     from watcher_common import run_watcher_loop  # type: ignore[no-redef]
     from watcher_common import setup_watcher_logging  # type: ignore[no-redef]
@@ -94,26 +96,6 @@ def _make_event_id(uuid: str, suffix: str) -> str:
     return f"{uuid}-{suffix}"
 
 
-def _get_existing_event_ids(output_file: Path) -> set[str]:
-    """Read event IDs already present in the output file."""
-    existing_ids: set[str] = set()
-    if not output_file.is_file():
-        return existing_ids
-    try:
-        with output_file.open() as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    existing_ids.add(json.loads(line)["event_id"])
-                except (json.JSONDecodeError, KeyError):
-                    continue
-    except OSError as exc:
-        logger.warning("Failed to read output file: {}", exc)
-    return existing_ids
-
-
 def _convert_new_events(
     input_file: Path,
     output_file: Path,
@@ -131,7 +113,7 @@ def _convert_new_events(
         logger.debug("Input file not found: {}", input_file)
         return 0
 
-    existing_ids = _get_existing_event_ids(output_file)
+    existing_ids = read_event_ids_from_jsonl(output_file)
 
     # Track tool_use_id -> tool_name from assistant messages so we can
     # label tool results with the correct tool name

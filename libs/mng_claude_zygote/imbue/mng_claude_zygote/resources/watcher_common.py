@@ -130,6 +130,31 @@ def require_env(name: str) -> str:
     return value
 
 
+def read_event_ids_from_jsonl(file_path: Path) -> set[str]:
+    """Read event_id values from a JSONL file into a set.
+
+    Skips lines that are empty, malformed JSON, or missing the event_id key.
+    Returns an empty set if the file does not exist.
+    """
+    event_ids: set[str] = set()
+    if not file_path.is_file():
+        return event_ids
+    try:
+        with file_path.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event_ids.add(json.loads(line)["event_id"])
+                except (json.JSONDecodeError, KeyError) as exc:
+                    logger.warning("Malformed event line in {}: {}", file_path, exc)
+                    continue
+    except OSError as exc:
+        logger.warning("Failed to read {}: {}", file_path, exc)
+    return event_ids
+
+
 def load_watchers_section(agent_work_dir: Path) -> dict[str, Any]:
     """Load the [watchers] section from .changelings/settings.toml.
 
