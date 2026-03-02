@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 from typing import Final
 
+from loguru import logger
 from pydantic import Field
 
 from imbue.mng import hookimpl
