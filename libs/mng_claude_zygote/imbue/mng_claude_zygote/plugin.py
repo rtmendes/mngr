@@ -12,6 +12,7 @@ from imbue.mng.agents.default_plugins.claude_agent import ClaudeAgentConfig
 from imbue.mng.config.agent_class_registry import get_agent_class
 from imbue.mng.config.data_types import AgentTypeConfig
 from imbue.mng.config.data_types import MngContext
+from imbue.mng.errors import MngError
 from imbue.mng.interfaces.agent import AgentInterface
 from imbue.mng.interfaces.host import CreateAgentOptions
 from imbue.mng.interfaces.host import OnlineHostInterface
@@ -239,7 +240,7 @@ def _is_claude_zygote_agent_type(agent_type_name: str) -> bool:
     """Check whether the given agent type name resolves to a ClaudeZygoteAgent subclass."""
     try:
         agent_class = get_agent_class(agent_type_name)
-    except Exception as e:
+    except MngError as e:
         logger.debug("Could not resolve agent type '{}': {}", agent_type_name, e)
         return False
     return issubclass(agent_class, ClaudeZygoteAgent)

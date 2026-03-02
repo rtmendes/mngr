@@ -150,7 +150,9 @@ def _poll_agent_list_forever() -> None:
                 text=True,
                 timeout=60,
             )
-            if result.returncode == 0 and result.stdout.strip():
+            if result.returncode != 0:
+                _log(f"mng list failed (exit {result.returncode}): {result.stderr.strip()}")
+            elif result.stdout.strip():
                 try:
                     data = json.loads(result.stdout)
                     agents_raw = data.get("agents", [])

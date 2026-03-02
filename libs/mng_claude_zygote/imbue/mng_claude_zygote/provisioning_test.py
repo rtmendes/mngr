@@ -1660,10 +1660,11 @@ def test_global_md_describes_repo_structure() -> None:
 
 
 def test_global_md_describes_agent_management() -> None:
-    """Verify the GLOBAL.md describes agent management."""
+    """Verify the GLOBAL.md describes how sub-agents are managed."""
     content = load_zygote_resource("defaults/GLOBAL.md")
-    assert "mng" in content
+    assert "Sub-agents" in content
     assert "delegate-task" in content
+    assert "mng create" in content
 
 
 def test_global_md_describes_agent_roles() -> None:
