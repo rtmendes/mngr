@@ -1537,3 +1537,153 @@ def test_provision_default_content_writes_to_thinking_dir() -> None:
     written_paths = [str(path) for path, _ in host.written_text_files]
     assert any("thinking/PROMPT.md" in p for p in written_paths)
     assert any("thinking/settings.json" in p for p in written_paths)
+
+
+# -- validate_talking_role_constraints tests --
+
+
+def test_validate_talking_role_constraints_passes_when_nothing_exists() -> None:
+    """Verify validation passes when talking/ has no skills or settings."""
+    from imbue.mng_claude_zygote.provisioning import validate_talking_role_constraints
+
+    host = StubHost(
+        command_results={"test -e": StubCommandResult(success=False)},
+    )
+    validate_talking_role_constraints(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
+
+
+def test_validate_talking_role_constraints_raises_for_skills_directory() -> None:
+    """Verify validation raises when talking/skills/ exists."""
+    from imbue.mng_claude_zygote.provisioning import TalkingRoleConstraintError
+    from imbue.mng_claude_zygote.provisioning import validate_talking_role_constraints
+
+    host = StubHost(
+        command_results={"talking/skills": StubCommandResult(success=True)},
+    )
+    with pytest.raises(TalkingRoleConstraintError, match="skills"):
+        validate_talking_role_constraints(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
+
+
+def test_validate_talking_role_constraints_raises_for_settings_json() -> None:
+    """Verify validation raises when talking/settings.json exists."""
+    from imbue.mng_claude_zygote.provisioning import TalkingRoleConstraintError
+    from imbue.mng_claude_zygote.provisioning import validate_talking_role_constraints
+
+    host = StubHost(
+        command_results={
+            "talking/skills": StubCommandResult(success=False),
+            "talking/settings.json": StubCommandResult(success=True),
+        },
+    )
+    with pytest.raises(TalkingRoleConstraintError, match="settings.json"):
+        validate_talking_role_constraints(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
+
+
+def test_validate_talking_role_constraints_error_message_is_actionable() -> None:
+    """Verify the error message tells the user to remove the offending path."""
+    from imbue.mng_claude_zygote.provisioning import TalkingRoleConstraintError
+    from imbue.mng_claude_zygote.provisioning import validate_talking_role_constraints
+
+    host = StubHost(
+        command_results={"talking/skills": StubCommandResult(success=True)},
+    )
+    with pytest.raises(TalkingRoleConstraintError, match="Remove this path"):
+        validate_talking_role_constraints(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
+
+
+# -- talking/PROMPT.md default content tests --
+
+
+def test_default_talking_prompt_describes_voice_role() -> None:
+    """Verify the default talking/PROMPT.md describes the talking role."""
+    content = load_zygote_resource("defaults/talking/PROMPT.md")
+    assert "talking" in content.lower()
+    assert "voice" in content.lower() or "reply" in content.lower() or "conversation" in content.lower()
+
+
+def test_provision_default_content_writes_talking_prompt() -> None:
+    """Verify provision_default_content writes talking/PROMPT.md when missing."""
+    host = StubHost(
+        command_results={"test -f": StubCommandResult(success=False)},
+    )
+    provision_default_content(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
+
+    written_paths = [str(path) for path, _ in host.written_text_files]
+    assert any("talking/PROMPT.md" in p for p in written_paths)
+
+
+# -- chat.sh system prompt tests --
+
+
+def test_chat_script_references_talking_prompt() -> None:
+    """Verify chat.sh references the talking/PROMPT.md file."""
+    content = load_zygote_resource("chat.sh")
+    assert "talking/PROMPT.md" in content
+    assert "MNG_AGENT_WORK_DIR" in content
+
+
+def test_chat_script_passes_system_prompt_to_llm() -> None:
+    """Verify chat.sh passes the system prompt via -s flag to llm."""
+    content = load_zygote_resource("chat.sh")
+    assert "-s " in content or '-s "' in content
+
+
+# -- skill content quality tests --
+
+
+def test_delegate_task_skill_has_frontmatter_and_mng_commands() -> None:
+    """Verify the delegate-task skill has YAML frontmatter and references mng create."""
+    content = load_zygote_resource("defaults/thinking/skills/delegate-task/SKILL.md")
+    assert content.startswith("---")
+    assert "name: delegate-task" in content
+    assert "description:" in content
+    assert "mng create" in content
+
+
+def test_list_event_types_skill_has_frontmatter_and_event_sources() -> None:
+    """Verify the list-event-types skill has YAML frontmatter and describes event sources."""
+    content = load_zygote_resource("defaults/thinking/skills/list-event-types/SKILL.md")
+    assert content.startswith("---")
+    assert "name: list-event-types" in content
+    assert "messages" in content
+    assert "mng_agents" in content
+    assert "scheduled" in content
+    assert "stop" in content
+
+
+def test_get_event_type_info_skill_has_frontmatter() -> None:
+    """Verify the get-event-type-info skill has YAML frontmatter and content."""
+    content = load_zygote_resource("defaults/thinking/skills/get-event-type-info/SKILL.md")
+    assert content.startswith("---")
+    assert "name: get-event-type-info" in content
+    assert len(content) > 100  # no longer empty
+
+
+# -- GLOBAL.md content quality tests --
+
+
+def test_global_md_describes_repo_structure() -> None:
+    """Verify the GLOBAL.md describes the repository structure."""
+    content = load_zygote_resource("defaults/GLOBAL.md")
+    assert "talking/" in content
+    assert "thinking/" in content
+    assert "working/" in content
+    assert "verifying/" in content
+    assert "PROMPT.md" in content
+
+
+def test_global_md_describes_event_system() -> None:
+    """Verify the GLOBAL.md describes the event system."""
+    content = load_zygote_resource("defaults/GLOBAL.md")
+    assert "event" in content.lower()
+    assert "messages" in content
+    assert "mng_agents" in content
+
+
+def test_global_md_describes_agent_roles() -> None:
+    """Verify the GLOBAL.md describes the different agent roles."""
+    content = load_zygote_resource("defaults/GLOBAL.md")
+    assert "thinking" in content.lower()
+    assert "talking" in content.lower()
+    assert "working" in content.lower()
+    assert "verifying" in content.lower()

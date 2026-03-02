@@ -20,6 +20,7 @@ from imbue.mng_claude_zygote.provisioning import link_memory_directory
 from imbue.mng_claude_zygote.provisioning import provision_changeling_scripts
 from imbue.mng_claude_zygote.provisioning import provision_default_content
 from imbue.mng_claude_zygote.provisioning import provision_llm_tools
+from imbue.mng_claude_zygote.provisioning import validate_talking_role_constraints
 from imbue.mng_claude_zygote.provisioning import warn_if_mng_unavailable
 from imbue.mng_claude_zygote.settings import load_settings_from_host
 from imbue.mng_claude_zygote.settings import provision_settings_file
@@ -145,6 +146,7 @@ class ClaudeZygoteAgent(ClaudeAgent):
         provisioning = settings.provisioning
 
         warn_if_mng_unavailable(host, mng_ctx.pm, provisioning)
+        validate_talking_role_constraints(host, self.work_dir, provisioning)
 
         if config.install_llm:
             install_llm_toolchain(host, provisioning)

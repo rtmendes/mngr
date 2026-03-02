@@ -35,6 +35,10 @@ _DEFAULT_WORK_DIR_FILES: Final[tuple[tuple[str, str], ...]] = (
     ("settings.json", "settings.json"),
 )
 
+# Default content files for the talking agent (user-facing conversation voice).
+# Tuples of (resource path under defaults/, target path relative to work dir).
+_DEFAULT_TALKING_DIR_FILES: Final[tuple[tuple[str, str], ...]] = (("talking/PROMPT.md", "talking/PROMPT.md"),)
+
 # Default content files for the thinking agent (inner monologue).
 # Tuples of (resource path under defaults/, target path relative to work dir).
 _DEFAULT_THINKING_DIR_FILES: Final[tuple[tuple[str, str], ...]] = (
@@ -110,6 +114,51 @@ def _write_default_if_missing(
         host.write_text_file(target_path, content)
 
 
+class TalkingRoleConstraintError(Exception):
+    """Raised when the talking role directory contains skills or settings.
+
+    The talking role is intentionally restricted to only a PROMPT.md file.
+    It cannot have skills or settings because the talking agent runs via the
+    ``llm`` tool (not Claude Code), and those files would have no effect.
+    """
+
+
+# Restricted files/dirs that must not exist under the talking/ role directory.
+_TALKING_FORBIDDEN: Final[tuple[str, ...]] = ("skills", "settings.json")
+
+
+def validate_talking_role_constraints(
+    host: OnlineHostInterface,
+    work_dir: Path,
+    settings: ProvisioningSettings,
+) -> None:
+    """Raise if the talking/ role directory contains skills or settings.
+
+    The talking agent runs via the ``llm`` tool, not Claude Code, so it cannot
+    use Claude Code skills or settings. If the user has created either of these,
+    we raise ``TalkingRoleConstraintError`` to surface the misconfiguration early
+    rather than silently ignoring the files.
+    """
+    talking_dir = work_dir / "talking"
+    for name in _TALKING_FORBIDDEN:
+        target = talking_dir / name
+        # Use -e so we catch both files and directories (including symlinks)
+        check = _execute_with_timing(
+            host,
+            f"test -e {shlex.quote(str(target))}",
+            hard_timeout=settings.fs_hard_timeout_seconds,
+            warn_threshold=settings.fs_warn_threshold_seconds,
+            label="talking constraint check",
+        )
+        if check.success:
+            raise TalkingRoleConstraintError(
+                f"The talking/ role directory must not contain '{name}'. "
+                f"Found: {target}. "
+                "The talking agent runs via the llm tool and cannot use Claude Code "
+                "skills or settings. Remove this path and try again."
+            )
+
+
 def provision_default_content(
     host: OnlineHostInterface,
     work_dir: Path,
@@ -120,6 +169,7 @@ def provision_default_content(
     Populates sensible defaults for:
     - GLOBAL.md (shared project instructions for all agents)
     - settings.json (shared Claude settings for all agents)
+    - talking/PROMPT.md (talking agent prompt, used as llm system prompt)
     - thinking/PROMPT.md (primary/inner monologue agent prompt)
     - thinking/settings.json (primary agent Claude settings)
     - thinking/skills/<name>/SKILL.md (skills for the thinking agent)
@@ -129,6 +179,10 @@ def provision_default_content(
     any customizations the user has already made.
     """
     for resource_name, relative_path in _DEFAULT_WORK_DIR_FILES:
+        target_path = work_dir / relative_path
+        _write_default_if_missing(host, target_path, f"defaults/{resource_name}", settings)
+
+    for resource_name, relative_path in _DEFAULT_TALKING_DIR_FILES:
         target_path = work_dir / relative_path
         _write_default_if_missing(host, target_path, f"defaults/{resource_name}", settings)
 

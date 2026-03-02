@@ -1,46 +1,39 @@
 ---
 name: send-message-to-user
-description: Start a new conversation thread with a user or inject an agent-initiated message. Use when you need to respond to a user or proactively start a conversation.
+description: Send a message to the user in a conversation thread. Use to reply in an existing conversation, start a new conversation, or proactively reach out.
 ---
 
+# Sending messages to the user
 
-## Conversations
+You communicate with users through conversation threads. Each thread has a unique `conversation_id`. You can send messages in two ways:
 
-Conversations are managed via the `chat` script:
+## Replying in an existing conversation
 
-- `$MNG_HOST_DIR/commands/chat.sh --new "message"` - start a new conversation
-- `$MNG_HOST_DIR/commands/chat.sh --resume <id>` - resume an existing conversation
-- `$MNG_HOST_DIR/commands/chat.sh --list` - list all conversations
-
-
-
-# Starting a New Conversation
-
-This skill creates a new conversation thread in the changeling's chat system.
-
-## When to use
-
-- A user message arrived that warrants a response in a new conversation (rather than replying in an existing one)
-- You want to proactively reach out to the user about something
-- You need to start a conversation with context from an event you processed
-
-## How to create a conversation
-
-Run the chat script with `--new --as-agent` and provide the message as an argument:
+When responding to a user message (or following up in a thread you already know about), inject your message into that conversation:
 
 ```bash
 $MNG_HOST_DIR/commands/chat.sh --new --as-agent "Your message here"
 ```
 
-This will:
-1. Generate a unique conversation ID
-2. Append a `conversation_created` event to `logs/conversations/events.jsonl`
-3. Inject the message into the conversation via `llm inject`
-4. The conversation will appear in the chat interface for the user to see and reply to
+This creates a new conversation and injects your message. To find the right conversation to reference, use the `list-conversations` skill or check the `conversation_id` from the event you are responding to.
+
+## Starting a new conversation
+
+When you want to proactively reach out (e.g. to notify the user about completed work, ask a question, or share an update):
+
+```bash
+$MNG_HOST_DIR/commands/chat.sh --new --as-agent "Your message here"
+```
+
+## Choosing which conversation to use
+
+- If you are responding to a user message, always reference the `conversation_id` from the event. Start a new conversation with `--new --as-agent` and mention which thread you are following up from if relevant.
+- If you are proactively notifying the user, start a new conversation unless there is an obvious existing thread where the update belongs.
+- If you are unsure, default to starting a new conversation. Short, focused threads are easier for users to follow than long, multi-topic ones.
 
 ## Guidelines
 
-- Keep initial messages clear and concise
-- Reference the event or context that triggered the conversation when relevant
-- If responding to a user message from another conversation, mention which conversation you are following up from
-- The conversation watcher will automatically sync any replies back to the event log
+- Keep messages concise and actionable.
+- When notifying about completed work, include a summary and any relevant URLs (e.g. links to sub-agents or PRs).
+- When asking questions, be specific about what you need to know.
+- Reference the event or context that triggered the message when it helps the user understand why you are reaching out.
