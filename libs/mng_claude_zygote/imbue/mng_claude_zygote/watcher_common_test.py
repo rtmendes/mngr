@@ -10,6 +10,7 @@ from typing import cast
 import pytest
 from loguru import logger
 
+from imbue.mng_claude_zygote.conftest import write_changelings_settings_toml
 from imbue.mng_claude_zygote.resources.watcher_common import ChangeHandler
 from imbue.mng_claude_zygote.resources.watcher_common import load_watchers_section
 from imbue.mng_claude_zygote.resources.watcher_common import mtime_poll_directories
@@ -90,24 +91,18 @@ def test_load_watchers_section_returns_empty_when_no_file(tmp_path: Path) -> Non
 
 
 def test_load_watchers_section_reads_watchers_table(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text("[watchers]\nconversation_poll_interval_seconds = 15\n")
+    write_changelings_settings_toml(tmp_path, "[watchers]\nconversation_poll_interval_seconds = 15\n")
     result = load_watchers_section(tmp_path)
     assert result["conversation_poll_interval_seconds"] == 15
 
 
 def test_load_watchers_section_handles_corrupt_file(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text("this is not valid toml {{{")
+    write_changelings_settings_toml(tmp_path, "this is not valid toml {{{")
     assert load_watchers_section(tmp_path) == {}
 
 
 def test_load_watchers_section_returns_empty_for_missing_section(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text("[other_section]\nkey = 1\n")
+    write_changelings_settings_toml(tmp_path, "[other_section]\nkey = 1\n")
     assert load_watchers_section(tmp_path) == {}
 
 

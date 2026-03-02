@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 from typing import cast
 
+from imbue.mng_claude_zygote.conftest import write_changelings_settings_toml
 from imbue.mng_claude_zygote.resources.transcript_watcher import _convert_new_events
 from imbue.mng_claude_zygote.resources.transcript_watcher import _extract_text_content
 from imbue.mng_claude_zygote.resources.transcript_watcher import _get_existing_event_ids
@@ -20,16 +21,12 @@ def test_load_poll_interval_defaults_when_no_file(tmp_path: Path) -> None:
 
 
 def test_load_poll_interval_reads_from_file(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text("[watchers]\ntranscript_poll_interval_seconds = 20\n")
+    write_changelings_settings_toml(tmp_path, "[watchers]\ntranscript_poll_interval_seconds = 20\n")
     assert _load_poll_interval(tmp_path) == 20
 
 
 def test_load_poll_interval_handles_corrupt_file(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text("this is not valid toml {{{")
+    write_changelings_settings_toml(tmp_path, "this is not valid toml {{{")
     assert _load_poll_interval(tmp_path) == 5
 
 

@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from imbue.mng_claude_zygote.conftest import write_changelings_settings_toml
 from imbue.mng_claude_zygote.resources import event_watcher as event_watcher_module
 from imbue.mng_claude_zygote.resources.event_watcher import _WatcherSettings
 from imbue.mng_claude_zygote.resources.event_watcher import _check_all_sources
@@ -72,10 +73,8 @@ def test_load_settings_defaults_when_no_file(tmp_path: Path) -> None:
 
 
 def test_load_settings_reads_from_file(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text(
-        '[watchers]\nevent_poll_interval_seconds = 10\nwatched_event_sources = ["messages", "stop"]\n'
+    write_changelings_settings_toml(
+        tmp_path, '[watchers]\nevent_poll_interval_seconds = 10\nwatched_event_sources = ["messages", "stop"]\n'
     )
     settings = _load_watcher_settings(tmp_path)
     assert settings.poll_interval == 10
@@ -83,17 +82,13 @@ def test_load_settings_reads_from_file(tmp_path: Path) -> None:
 
 
 def test_load_settings_handles_corrupt_file(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text("this is not valid toml {{{")
+    write_changelings_settings_toml(tmp_path, "this is not valid toml {{{")
     settings = _load_watcher_settings(tmp_path)
     assert settings.poll_interval == 3
 
 
 def test_load_settings_handles_partial_config(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text("[watchers]\nevent_poll_interval_seconds = 7\n")
+    write_changelings_settings_toml(tmp_path, "[watchers]\nevent_poll_interval_seconds = 7\n")
     settings = _load_watcher_settings(tmp_path)
     assert settings.poll_interval == 7
     assert settings.sources == ["messages", "scheduled", "mng_agents", "stop"]

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from imbue.mng_claude_zygote.conftest import create_test_llm_db
+from imbue.mng_claude_zygote.conftest import write_changelings_settings_toml
 from imbue.mng_claude_zygote.conftest import write_conversation_event
 from imbue.mng_claude_zygote.resources.conversation_watcher import _get_existing_event_ids
 from imbue.mng_claude_zygote.resources.conversation_watcher import _get_llm_db_path
@@ -21,23 +22,17 @@ def test_load_poll_interval_defaults_when_no_file(tmp_path: Path) -> None:
 
 
 def test_load_poll_interval_reads_from_file(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text("[watchers]\nconversation_poll_interval_seconds = 15\n")
+    write_changelings_settings_toml(tmp_path, "[watchers]\nconversation_poll_interval_seconds = 15\n")
     assert _load_poll_interval(tmp_path) == 15
 
 
 def test_load_poll_interval_handles_corrupt_file(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text("this is not valid toml {{{")
+    write_changelings_settings_toml(tmp_path, "this is not valid toml {{{")
     assert _load_poll_interval(tmp_path) == 5
 
 
 def test_load_poll_interval_handles_empty_watchers_section(tmp_path: Path) -> None:
-    changelings_dir = tmp_path / ".changelings"
-    changelings_dir.mkdir()
-    (changelings_dir / "settings.toml").write_text("[watchers]\n")
+    write_changelings_settings_toml(tmp_path, "[watchers]\n")
     assert _load_poll_interval(tmp_path) == 5
 
 
