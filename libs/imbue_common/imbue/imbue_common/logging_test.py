@@ -1,9 +1,15 @@
 """Tests for logging module."""
 
+import json
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 
 from loguru import logger
 
+from imbue.imbue_common.logging import format_loguru_record_as_jsonl_event
+from imbue.imbue_common.logging import format_nanosecond_iso_timestamp
+from imbue.imbue_common.logging import generate_log_event_id
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.logging import setup_logging
 from imbue.mng.errors import BaseMngError
@@ -158,3 +164,122 @@ def test_log_span_context_does_not_leak_outside_span() -> None:
         assert "scope_var" not in captured_extras[2]
     finally:
         logger.remove(handler_id)
+
+
+# =============================================================================
+# Tests for JSONL event formatting
+# =============================================================================
+
+
+def test_format_nanosecond_iso_timestamp_produces_correct_format() -> None:
+    dt = datetime(2026, 3, 1, 12, 30, 45, 123456, tzinfo=timezone.utc)
+    result = format_nanosecond_iso_timestamp(dt)
+    assert result == "2026-03-01T12:30:45.123456000Z"
+
+
+def test_format_nanosecond_iso_timestamp_zero_microseconds() -> None:
+    dt = datetime(2026, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
+    result = format_nanosecond_iso_timestamp(dt)
+    assert result == "2026-01-01T00:00:00.000000000Z"
+
+
+def test_generate_log_event_id_returns_unique_ids() -> None:
+    id_a = generate_log_event_id()
+    id_b = generate_log_event_id()
+    assert id_a != id_b
+    assert id_a.startswith("log-")
+    assert id_b.startswith("log-")
+
+
+def test_format_loguru_record_as_jsonl_event_produces_valid_json_after_unescape() -> None:
+    """The format function returns double-braced output; after loguru's format_map
+    unescapes {{ -> { and }} -> }, the result must be valid JSON."""
+    captured_format_strings: list[str] = []
+
+    def sink(message: Any) -> None:
+        record = message.record
+        fmt = format_loguru_record_as_jsonl_event(
+            record=record,
+            event_type="mng",
+            event_source="mng",
+            command="create",
+        )
+        captured_format_strings.append(fmt)
+
+    handler_id = logger.add(sink, level="TRACE", format="{message}")
+    try:
+        logger.info("Created agent {}", "test-agent")
+    finally:
+        logger.remove(handler_id)
+
+    assert len(captured_format_strings) == 1
+    # Simulate loguru's unescape by replacing {{ -> { and }} -> }
+    raw = captured_format_strings[0]
+    unescaped = raw.replace("{{", "{").replace("}}", "}")
+    parsed = json.loads(unescaped)
+
+    assert parsed["type"] == "mng"
+    assert parsed["source"] == "mng"
+    assert parsed["level"] == "INFO"
+    assert parsed["message"] == "Created agent test-agent"
+    assert parsed["command"] == "create"
+    assert "timestamp" in parsed
+    assert "event_id" in parsed
+    assert "pid" in parsed
+
+
+def test_format_loguru_record_as_jsonl_event_omits_command_key_when_none() -> None:
+    """When command is None, the command key should not appear in the JSON."""
+    captured_format_strings: list[str] = []
+
+    def sink(message: Any) -> None:
+        record = message.record
+        fmt = format_loguru_record_as_jsonl_event(
+            record=record,
+            event_type="event_watcher",
+            event_source="event_watcher",
+            command=None,
+        )
+        captured_format_strings.append(fmt)
+
+    handler_id = logger.add(sink, level="TRACE", format="{message}")
+    try:
+        logger.debug("Watching events")
+    finally:
+        logger.remove(handler_id)
+
+    raw = captured_format_strings[0]
+    unescaped = raw.replace("{{", "{").replace("}}", "}")
+    parsed = json.loads(unescaped)
+
+    assert parsed["type"] == "event_watcher"
+    assert "command" not in parsed
+
+
+def test_format_loguru_record_as_jsonl_event_handles_special_chars_in_message() -> None:
+    """Messages with quotes, newlines, and braces should be properly JSON-escaped."""
+    captured_format_strings: list[str] = []
+
+    def sink(message: Any) -> None:
+        record = message.record
+        fmt = format_loguru_record_as_jsonl_event(
+            record=record,
+            event_type="mng",
+            event_source="mng",
+            command=None,
+        )
+        captured_format_strings.append(fmt)
+
+    handler_id = logger.add(sink, level="TRACE", format="{message}")
+    try:
+        logger.info('Path is "C:\\Users\\test"\nLine 2\t{{braces}}')
+    finally:
+        logger.remove(handler_id)
+
+    raw = captured_format_strings[0]
+    unescaped = raw.replace("{{", "{").replace("}}", "}")
+    parsed = json.loads(unescaped)
+    assert '"C:\\Users\\test"' in parsed["message"]
+    assert "\n" in parsed["message"]
+    assert "\t" in parsed["message"]
+    assert "{braces}" in parsed["message"]

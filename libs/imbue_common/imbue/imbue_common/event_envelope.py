@@ -5,6 +5,8 @@ consistent envelope fields across all event sources. See the style guide
 section "Event logging to disk" for conventions.
 """
 
+from pydantic import Field
+
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.primitives import NonEmptyStr
 
@@ -46,3 +48,21 @@ class EventEnvelope(FrozenModel):
     type: EventType
     event_id: EventId
     source: EventSource
+
+
+class LogEvent(EventEnvelope):
+    """A diagnostic log event using the standard event envelope.
+
+    Used by both Python (loguru) and bash scripts to emit structured log
+    lines to logs/<source>/events.jsonl files. The type field identifies
+    the program (e.g. 'mng', 'changelings', 'event_watcher'), while source
+    identifies the component that produced the log.
+    """
+
+    level: str = Field(description="Log level (e.g. DEBUG, INFO, WARNING, ERROR)")
+    message: str = Field(description="The log message text")
+    pid: int = Field(description="Process ID of the emitting process")
+    command: str | None = Field(
+        default=None,
+        description="CLI subcommand that produced this log (e.g. 'create', 'list')",
+    )

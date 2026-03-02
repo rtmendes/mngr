@@ -1,10 +1,13 @@
 import functools
 import inspect
+import json
+import os
 import sys
 import time
 from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any
 from typing import Final
 from typing import ParamSpec
@@ -127,3 +130,56 @@ def trace_span(message: str, *args: Any, _is_trace_span_enabled: bool = True, **
                 elapsed = time.monotonic() - start_time
                 done_message = message + " [done in {:.5f} sec]"
                 logger.trace(done_message, *args, elapsed)
+
+
+# -- JSONL event envelope formatting for loguru file sinks --
+
+# Monotonic counter to guarantee unique event IDs within a single process,
+# even if two log events happen within the same nanosecond.
+_log_event_counter: int = 0
+
+
+@pure
+def format_nanosecond_iso_timestamp(dt: datetime) -> str:
+    """Format a datetime as ISO 8601 with nanosecond precision in UTC."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond * 1000:09d}Z"
+
+
+def generate_log_event_id() -> str:
+    """Generate a unique event ID for a log event using timestamp + PID + counter."""
+    global _log_event_counter
+    _log_event_counter += 1
+    return f"log-{time.time_ns()}-{os.getpid()}-{_log_event_counter}"
+
+
+def format_loguru_record_as_jsonl_event(
+    record: Any,
+    event_type: str,
+    event_source: str,
+    command: str | None,
+) -> str:
+    """Format a loguru record as a JSONL line using the event envelope schema.
+
+    Returns a format string with braces doubled ({{ / }}) so that loguru's
+    format_map does not interpret them as placeholders. The final output
+    after loguru processing is valid single-line JSON.
+    """
+    iso_ts = format_nanosecond_iso_timestamp(record["time"])
+    event_id = generate_log_event_id()
+
+    event_dict: dict[str, Any] = {
+        "timestamp": iso_ts,
+        "type": event_type,
+        "event_id": event_id,
+        "source": event_source,
+        "level": record["level"].name,
+        "message": record["message"],
+        "pid": os.getpid(),
+    }
+    if command is not None:
+        event_dict["command"] = command
+
+    json_line = json.dumps(event_dict, separators=(",", ":"))
+    # Escape braces so loguru's format_map does not interpret them
+    escaped = json_line.replace("{", "{{").replace("}", "}}")
+    return escaped + "\n"
