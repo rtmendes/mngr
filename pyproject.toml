@@ -159,6 +159,10 @@ omit = [
     "libs/mng_kanpan/imbue/mng_kanpan/cli.py",
     # don't bother with anything in scripts
     "scripts/*",
+    # Standalone resource scripts with PEP 723 dependencies (watchdog) that
+    # cannot be imported in the test process
+    "libs/mng_claude_zygote/imbue/mng_claude_zygote/resources/event_watcher.py",
+    "libs/mng_claude_zygote/imbue/mng_claude_zygote/resources/conversation_watcher.py",
 ]
 
 [tool.importlinter]
