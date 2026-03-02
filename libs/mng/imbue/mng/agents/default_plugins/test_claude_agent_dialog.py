@@ -12,6 +12,7 @@ from imbue.mng.utils.testing import cleanup_tmux_session
 
 
 @pytest.mark.acceptance
+@pytest.mark.tmux
 def test_send_message_raises_dialog_detected_when_dialog_visible(
     local_provider: LocalProviderInstance, tmp_path: Path, temp_mng_ctx: MngContext
 ) -> None:
@@ -38,6 +39,7 @@ def test_send_message_raises_dialog_detected_when_dialog_visible(
 
 
 @pytest.mark.acceptance
+@pytest.mark.tmux
 def test_send_message_does_not_raise_dialog_detected_when_no_dialog(
     local_provider: LocalProviderInstance, tmp_path: Path, temp_mng_ctx: MngContext
 ) -> None:
