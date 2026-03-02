@@ -8,6 +8,7 @@ from pydantic import Field
 from imbue.mng import hookimpl
 from imbue.mng.agents.default_plugins.claude_agent import ClaudeAgent
 from imbue.mng.agents.default_plugins.claude_agent import ClaudeAgentConfig
+from imbue.mng.config.agent_class_registry import get_agent_class
 from imbue.mng.config.data_types import AgentTypeConfig
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.interfaces.agent import AgentInterface
@@ -233,22 +234,37 @@ def register_agent_type() -> tuple[str, type[AgentInterface], type[AgentTypeConf
     return ("claude-zygote", ClaudeZygoteAgent, ClaudeZygoteConfig)
 
 
+def _is_claude_zygote_agent_type(agent_type_name: str) -> bool:
+    """Check whether the given agent type name resolves to a ClaudeZygoteAgent subclass."""
+    try:
+        agent_class = get_agent_class(agent_type_name)
+    except Exception:
+        return False
+    return issubclass(agent_class, ClaudeZygoteAgent)
+
+
 @hookimpl
 def override_command_options(
     command_name: str,
     command_class: type,
     params: dict[str, Any],
 ) -> None:
-    """Add changeling tmux windows when creating claude-zygote agents.
+    """Add changeling tmux windows when creating claude-zygote agents (or subtypes).
 
     Injects: agent ttyd, conversation watcher, event watcher, web server,
     chat ttyd, and agent-tmux ttyd.
+
+    Matches any agent type whose registered class is ClaudeZygoteAgent or
+    a subclass of it (e.g. elena-code, custom changeling types).
     """
     if command_name != "create":
         return
 
     agent_type = get_agent_type_from_params(params)
-    if agent_type != "claude-zygote":
+    if agent_type is None:
+        return
+
+    if not _is_claude_zygote_agent_type(agent_type):
         return
 
     inject_changeling_windows(params)
