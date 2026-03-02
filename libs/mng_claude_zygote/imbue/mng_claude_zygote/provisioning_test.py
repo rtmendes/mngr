@@ -1658,12 +1658,11 @@ def test_global_md_describes_repo_structure() -> None:
     assert "PROMPT.md" in content
 
 
-def test_global_md_describes_event_system() -> None:
-    """Verify the GLOBAL.md describes the event system."""
+def test_global_md_describes_changeling_framework() -> None:
+    """Verify the GLOBAL.md describes the changeling framework and agent management."""
     content = load_zygote_resource("defaults/GLOBAL.md")
-    assert "event" in content.lower()
-    assert "messages" in content
-    assert "mng_agents" in content
+    assert "changelings" in content.lower()
+    assert "mng" in content
 
 
 def test_global_md_describes_agent_roles() -> None:
