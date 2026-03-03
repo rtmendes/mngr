@@ -7,17 +7,26 @@ import pytest
 from inline_snapshot import snapshot
 
 from imbue.mng.api.connect import build_ssh_base_args
+from imbue.mng.api.events import EventRecord
+from imbue.mng.api.events import EventSourceInfo
 from imbue.mng.api.events import EventsTarget
 from imbue.mng.api.events import _FollowState
 from imbue.mng.api.events import _build_tail_args
 from imbue.mng.api.events import _check_for_new_content
+from imbue.mng.api.events import _discover_event_sources_via_volume
 from imbue.mng.api.events import _extract_filename
+from imbue.mng.api.events import _parse_discovered_files
 from imbue.mng.api.events import _parse_file_listing_output
+from imbue.mng.api.events import _sort_rotated_files_oldest_first
 from imbue.mng.api.events import apply_head_or_tail
 from imbue.mng.api.events import follow_event_file
 from imbue.mng.api.events import list_event_files
+from imbue.mng.api.events import parse_event_line
+from imbue.mng.api.events import read_all_historical_events
 from imbue.mng.api.events import read_event_content
 from imbue.mng.api.events import resolve_events_target
+from imbue.mng.api.events import sort_events_by_timestamp
+from imbue.mng.api.events import stream_all_events
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import MngError
 from imbue.mng.errors import UserInputError
@@ -25,6 +34,7 @@ from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.primitives import AgentId
 from imbue.mng.primitives import HostName
 from imbue.mng.providers.local.volume import LocalVolume
+from imbue.mng.utils.cel_utils import compile_cel_filters
 
 
 class _StopFollow(Exception):
@@ -616,3 +626,446 @@ def test_build_ssh_base_args_raises_when_no_known_hosts(
     # Local hosts have no ssh_known_hosts_file configured, so this should raise
     with pytest.raises(MngError, match="known_hosts"):
         build_ssh_base_args(host)
+
+
+# =============================================================================
+# parse_event_line tests
+# =============================================================================
+
+
+def test_parse_event_line_valid_json_with_all_fields() -> None:
+    line = '{"timestamp":"2026-03-01T12:00:00Z","type":"test","event_id":"evt-abc123","source":"messages","message":"hello"}'
+    record = parse_event_line(line, source_hint="fallback")
+    assert record is not None
+    assert record.timestamp == "2026-03-01T12:00:00Z"
+    assert record.event_id == "evt-abc123"
+    assert record.source == "messages"
+    assert record.data["message"] == "hello"
+    assert record.raw_line == line.strip()
+
+
+def test_parse_event_line_missing_event_id_generates_hash() -> None:
+    line = '{"timestamp":"2026-03-01T12:00:00Z","type":"test","source":"messages"}'
+    record = parse_event_line(line, source_hint="fallback")
+    assert record is not None
+    assert record.event_id.startswith("hash-")
+    assert len(record.event_id) > 10
+
+
+def test_parse_event_line_missing_source_uses_hint() -> None:
+    line = '{"timestamp":"2026-03-01T12:00:00Z","type":"test","event_id":"evt-abc"}'
+    record = parse_event_line(line, source_hint="my_source")
+    assert record is not None
+    assert record.source == "my_source"
+
+
+def test_parse_event_line_missing_timestamp_returns_none() -> None:
+    line = '{"type":"test","event_id":"evt-abc","source":"messages"}'
+    record = parse_event_line(line, source_hint="fallback")
+    assert record is None
+
+
+def test_parse_event_line_malformed_json_returns_none() -> None:
+    record = parse_event_line("not json at all", source_hint="fallback")
+    assert record is None
+
+
+def test_parse_event_line_empty_string_returns_none() -> None:
+    record = parse_event_line("", source_hint="fallback")
+    assert record is None
+
+
+def test_parse_event_line_whitespace_only_returns_none() -> None:
+    record = parse_event_line("   \n  ", source_hint="fallback")
+    assert record is None
+
+
+# =============================================================================
+# sort_events_by_timestamp tests
+# =============================================================================
+
+
+def test_sort_events_by_timestamp_orders_chronologically() -> None:
+    events = [
+        EventRecord(raw_line="c", timestamp="2026-03-03T00:00:00Z", event_id="c", source="s", data={}),
+        EventRecord(raw_line="a", timestamp="2026-03-01T00:00:00Z", event_id="a", source="s", data={}),
+        EventRecord(raw_line="b", timestamp="2026-03-02T00:00:00Z", event_id="b", source="s", data={}),
+    ]
+    sorted_events = sort_events_by_timestamp(events)
+    assert [e.event_id for e in sorted_events] == ["a", "b", "c"]
+
+
+def test_sort_events_by_timestamp_stable_for_equal_timestamps() -> None:
+    events = [
+        EventRecord(raw_line="x", timestamp="2026-03-01T00:00:00Z", event_id="x", source="s", data={}),
+        EventRecord(raw_line="y", timestamp="2026-03-01T00:00:00Z", event_id="y", source="s", data={}),
+    ]
+    sorted_events = sort_events_by_timestamp(events)
+    assert [e.event_id for e in sorted_events] == ["x", "y"]
+
+
+# =============================================================================
+# _sort_rotated_files_oldest_first tests
+# =============================================================================
+
+
+def test_sort_rotated_files_oldest_first() -> None:
+    files = ["events.jsonl.1", "events.jsonl.3", "events.jsonl.2"]
+    result = _sort_rotated_files_oldest_first(files)
+    assert result == snapshot(["events.jsonl.3", "events.jsonl.2", "events.jsonl.1"])
+
+
+def test_sort_rotated_files_empty_list() -> None:
+    assert _sort_rotated_files_oldest_first([]) == []
+
+
+def test_sort_rotated_files_ignores_non_matching() -> None:
+    files = ["events.jsonl.1", "events.jsonl", "other.log"]
+    result = _sort_rotated_files_oldest_first(files)
+    assert result == snapshot(["events.jsonl.1"])
+
+
+# =============================================================================
+# _parse_discovered_files tests
+# =============================================================================
+
+
+def test_parse_discovered_files_groups_by_directory() -> None:
+    find_output = (
+        "/tmp/events/messages/events.jsonl\n/tmp/events/messages/events.jsonl.1\n/tmp/events/logs/mng/events.jsonl\n"
+    )
+    sources = _parse_discovered_files(find_output, "/tmp/events")
+    assert len(sources) == 2
+    # Sources are sorted by path
+    assert sources[0].source_path == "logs/mng"
+    assert sources[0].is_current_file_present is True
+    assert sources[0].rotated_files == ()
+    assert sources[1].source_path == "messages"
+    assert sources[1].is_current_file_present is True
+    assert sources[1].rotated_files == ("events.jsonl.1",)
+
+
+def test_parse_discovered_files_handles_empty_output() -> None:
+    sources = _parse_discovered_files("", "/tmp/events")
+    assert sources == []
+
+
+def test_parse_discovered_files_only_rotated_file() -> None:
+    find_output = "/tmp/events/old_source/events.jsonl.1\n"
+    sources = _parse_discovered_files(find_output, "/tmp/events")
+    assert len(sources) == 1
+    assert sources[0].is_current_file_present is False
+    assert sources[0].rotated_files == ("events.jsonl.1",)
+
+
+# =============================================================================
+# discover_event_sources via volume tests
+# =============================================================================
+
+
+def test_discover_event_sources_via_volume(tmp_path: Path) -> None:
+    """Verify _discover_event_sources_via_volume finds all event sources recursively."""
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    # Create multiple source directories
+    (events_dir / "messages").mkdir()
+    (events_dir / "messages" / "events.jsonl").write_text('{"timestamp":"2026-01-01T00:00:00Z"}\n')
+    (events_dir / "messages" / "events.jsonl.1").write_text('{"timestamp":"2025-12-01T00:00:00Z"}\n')
+
+    (events_dir / "logs" / "mng").mkdir(parents=True)
+    (events_dir / "logs" / "mng" / "events.jsonl").write_text('{"timestamp":"2026-01-02T00:00:00Z"}\n')
+
+    volume = LocalVolume(root_path=events_dir)
+    sources = _discover_event_sources_via_volume(volume)
+
+    assert len(sources) == 2
+    source_paths = [s.source_path for s in sources]
+    assert "messages" in source_paths
+    assert "logs/mng" in source_paths
+
+    messages_source = next(s for s in sources if s.source_path == "messages")
+    assert messages_source.is_current_file_present is True
+    assert messages_source.rotated_files == ("events.jsonl.1",)
+
+
+def test_discover_event_sources_via_volume_empty_dir(tmp_path: Path) -> None:
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    volume = LocalVolume(root_path=events_dir)
+    sources = _discover_event_sources_via_volume(volume)
+    assert sources == []
+
+
+# =============================================================================
+# read_all_historical_events tests
+# =============================================================================
+
+
+def test_read_all_historical_events_merges_and_sorts(tmp_path: Path) -> None:
+    """Verify events from multiple sources are merged and sorted by timestamp."""
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    # Source A: events at T=1 and T=3
+    (events_dir / "source_a").mkdir()
+    (events_dir / "source_a" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"a1","source":"source_a"}\n'
+        '{"timestamp":"2026-01-03T00:00:00Z","event_id":"a3","source":"source_a"}\n'
+    )
+
+    # Source B: event at T=2
+    (events_dir / "source_b").mkdir()
+    (events_dir / "source_b" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-02T00:00:00Z","event_id":"b2","source":"source_b"}\n'
+    )
+
+    volume = LocalVolume(root_path=events_dir)
+    target = EventsTarget(volume=volume, display_name="test")
+
+    sources = [
+        EventSourceInfo(source_path="source_a", rotated_files=(), is_current_file_present=True),
+        EventSourceInfo(source_path="source_b", rotated_files=(), is_current_file_present=True),
+    ]
+
+    events, offsets = read_all_historical_events(target, sources, [], [])
+
+    assert [e.event_id for e in events] == ["a1", "b2", "a3"]
+    assert "source_a" in offsets
+    assert "source_b" in offsets
+
+
+def test_read_all_historical_events_includes_rotated_files(tmp_path: Path) -> None:
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    (events_dir / "src").mkdir()
+    (events_dir / "src" / "events.jsonl.1").write_text(
+        '{"timestamp":"2025-12-01T00:00:00Z","event_id":"old1","source":"src"}\n'
+    )
+    (events_dir / "src" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"new1","source":"src"}\n'
+    )
+
+    volume = LocalVolume(root_path=events_dir)
+    target = EventsTarget(volume=volume, display_name="test")
+
+    sources = [
+        EventSourceInfo(source_path="src", rotated_files=("events.jsonl.1",), is_current_file_present=True),
+    ]
+
+    events, _ = read_all_historical_events(target, sources, [], [])
+
+    assert [e.event_id for e in events] == ["old1", "new1"]
+
+
+def test_read_all_historical_events_with_cel_filter(tmp_path: Path) -> None:
+    """Verify CEL filter is applied to events."""
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    (events_dir / "messages").mkdir()
+    (events_dir / "messages" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"m1","source":"messages","type":"msg"}\n'
+    )
+    (events_dir / "logs").mkdir()
+    (events_dir / "logs" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-02T00:00:00Z","event_id":"l1","source":"logs","type":"log"}\n'
+    )
+
+    volume = LocalVolume(root_path=events_dir)
+    target = EventsTarget(volume=volume, display_name="test")
+
+    sources = [
+        EventSourceInfo(source_path="messages", rotated_files=(), is_current_file_present=True),
+        EventSourceInfo(source_path="logs", rotated_files=(), is_current_file_present=True),
+    ]
+
+    includes, excludes = compile_cel_filters(['source == "messages"'], [])
+    events, _ = read_all_historical_events(target, sources, includes, excludes)
+
+    assert len(events) == 1
+    assert events[0].event_id == "m1"
+
+
+# =============================================================================
+# stream_all_events tests
+# =============================================================================
+
+
+class _StopStream(Exception):
+    """Raised by test callbacks to break out of stream_all_events."""
+
+
+def test_stream_all_events_emits_sorted_events_from_multiple_sources(tmp_path: Path) -> None:
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    (events_dir / "alpha").mkdir()
+    (events_dir / "alpha" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"a1","source":"alpha"}\n'
+        '{"timestamp":"2026-01-03T00:00:00Z","event_id":"a3","source":"alpha"}\n'
+    )
+    (events_dir / "beta").mkdir()
+    (events_dir / "beta" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-02T00:00:00Z","event_id":"b2","source":"beta"}\n'
+    )
+
+    volume = LocalVolume(root_path=events_dir)
+    target = EventsTarget(volume=volume, display_name="test")
+
+    captured: list[str] = []
+
+    stream_all_events(
+        target=target,
+        on_event=lambda e: captured.append(e.event_id),
+        cel_include_filters=[],
+        cel_exclude_filters=[],
+        tail_count=None,
+        head_count=None,
+        is_follow=False,
+    )
+
+    assert captured == ["a1", "b2", "a3"]
+
+
+def test_stream_all_events_head_mode(tmp_path: Path) -> None:
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    (events_dir / "src").mkdir()
+    (events_dir / "src" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"e1","source":"src"}\n'
+        '{"timestamp":"2026-01-02T00:00:00Z","event_id":"e2","source":"src"}\n'
+        '{"timestamp":"2026-01-03T00:00:00Z","event_id":"e3","source":"src"}\n'
+    )
+
+    volume = LocalVolume(root_path=events_dir)
+    target = EventsTarget(volume=volume, display_name="test")
+
+    captured: list[str] = []
+
+    stream_all_events(
+        target=target,
+        on_event=lambda e: captured.append(e.event_id),
+        cel_include_filters=[],
+        cel_exclude_filters=[],
+        tail_count=None,
+        head_count=2,
+        is_follow=False,
+    )
+
+    assert captured == ["e1", "e2"]
+
+
+def test_stream_all_events_tail_mode(tmp_path: Path) -> None:
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    (events_dir / "src").mkdir()
+    (events_dir / "src" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"e1","source":"src"}\n'
+        '{"timestamp":"2026-01-02T00:00:00Z","event_id":"e2","source":"src"}\n'
+        '{"timestamp":"2026-01-03T00:00:00Z","event_id":"e3","source":"src"}\n'
+    )
+
+    volume = LocalVolume(root_path=events_dir)
+    target = EventsTarget(volume=volume, display_name="test")
+
+    captured: list[str] = []
+
+    stream_all_events(
+        target=target,
+        on_event=lambda e: captured.append(e.event_id),
+        cel_include_filters=[],
+        cel_exclude_filters=[],
+        tail_count=2,
+        head_count=None,
+        is_follow=False,
+    )
+
+    assert captured == ["e2", "e3"]
+
+
+def test_stream_all_events_deduplicates(tmp_path: Path) -> None:
+    """Verify that events with the same event_id are not emitted twice."""
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    # Same event_id appears in both the rotated file and the current file
+    (events_dir / "src").mkdir()
+    (events_dir / "src" / "events.jsonl.1").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"dup1","source":"src"}\n'
+    )
+    (events_dir / "src" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"dup1","source":"src"}\n'
+        '{"timestamp":"2026-01-02T00:00:00Z","event_id":"unique1","source":"src"}\n'
+    )
+
+    volume = LocalVolume(root_path=events_dir)
+    target = EventsTarget(volume=volume, display_name="test")
+
+    captured: list[str] = []
+
+    stream_all_events(
+        target=target,
+        on_event=lambda e: captured.append(e.event_id),
+        cel_include_filters=[],
+        cel_exclude_filters=[],
+        tail_count=None,
+        head_count=None,
+        is_follow=False,
+    )
+
+    # dup1 should appear only once even though it's in both files
+    assert captured.count("dup1") == 1
+    assert "unique1" in captured
+
+
+def test_stream_all_events_empty_events_dir(tmp_path: Path) -> None:
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    volume = LocalVolume(root_path=events_dir)
+    target = EventsTarget(volume=volume, display_name="test")
+
+    captured: list[str] = []
+
+    stream_all_events(
+        target=target,
+        on_event=lambda e: captured.append(e.event_id),
+        cel_include_filters=[],
+        cel_exclude_filters=[],
+        tail_count=None,
+        head_count=None,
+        is_follow=False,
+    )
+
+    assert captured == []
+
+
+# =============================================================================
+# resolve_events_target populates new fields
+# =============================================================================
+
+
+def test_resolve_events_target_populates_provider_and_host_id(
+    temp_mng_ctx: MngContext,
+    local_provider,
+) -> None:
+    """Verify resolve_events_target sets provider, host_id, events_subpath for refresh capability."""
+    per_host_dir = local_provider.host_dir
+    agent_id = _create_agent_data_json(per_host_dir, "test-refresh-agent-93718", "sleep 93718")
+
+    agent_events_dir = per_host_dir / "agents" / str(agent_id) / "events"
+    agent_events_dir.mkdir(parents=True, exist_ok=True)
+    (agent_events_dir / "messages").mkdir()
+    (agent_events_dir / "messages" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"e1","source":"messages"}\n'
+    )
+
+    target = resolve_events_target("test-refresh-agent-93718", temp_mng_ctx)
+
+    assert target.provider is not None
+    assert target.host_id is not None
+    assert target.events_subpath is not None

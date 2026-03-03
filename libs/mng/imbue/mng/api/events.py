@@ -1,8 +1,14 @@
+import hashlib
+import json
+import re
 import shlex
 import subprocess
 import threading
+import time
 from collections.abc import Callable
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 from typing import Final
 from typing import IO
 
@@ -27,10 +33,20 @@ from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.interfaces.volume import Volume
 from imbue.mng.primitives import HostId
 from imbue.mng.providers.base_provider import BaseProviderInstance
+from imbue.mng.utils.cel_utils import apply_cel_filters_to_context
 from imbue.mng.utils.interactive_subprocess import popen_interactive_subprocess
 from imbue.mng.utils.polling import run_periodically
 
 FOLLOW_POLL_INTERVAL_SECONDS: Final[float] = 1.0
+SOURCE_SCAN_INTERVAL_SECONDS: Final[float] = 10.0
+ONLINE_CHECK_INTERVAL_SECONDS: Final[float] = 30.0
+_EVENTS_JSONL_FILENAME: Final[str] = "events.jsonl"
+_ROTATED_FILE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^events\.jsonl\.(\d+)$")
+
+
+# =============================================================================
+# Data types
+# =============================================================================
 
 
 class EventsTarget(FrozenModel):
@@ -42,6 +58,13 @@ class EventsTarget(FrozenModel):
     )
     events_path: Path | None = Field(default=None, description="Absolute path to the events directory on the host")
     display_name: str = Field(description="Human-readable name for the target (agent or host)")
+    provider: BaseProviderInstance | None = Field(
+        default=None, description="Provider instance for re-checking online status"
+    )
+    host_id: HostId | None = Field(default=None, description="Host ID for re-checking online status")
+    events_subpath: Path | None = Field(
+        default=None, description="Events subpath relative to host_dir for refreshing the target"
+    )
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -53,6 +76,40 @@ class EventsTarget(FrozenModel):
         if is_host_set != is_path_set:
             raise MngError("online_host and events_path must both be set or both be None")
         return self
+
+
+class EventRecord(FrozenModel):
+    """A single parsed event from a JSONL event file."""
+
+    raw_line: str = Field(description="The original JSONL line")
+    timestamp: str = Field(description="ISO 8601 timestamp from the event envelope")
+    event_id: str = Field(description="Unique event ID from the envelope")
+    source: str = Field(description="Event source (subdirectory name)")
+    data: dict[str, Any] = Field(description="Full parsed JSON dict for CEL filtering")
+
+
+class EventSourceInfo(FrozenModel):
+    """Describes a discovered event source (a subdirectory containing events.jsonl)."""
+
+    source_path: str = Field(description="Path relative to events dir, e.g. 'messages' or 'logs/mng'")
+    rotated_files: tuple[str, ...] = Field(
+        description="Sorted rotated file names, oldest first (e.g. events.jsonl.3, events.jsonl.2, events.jsonl.1)"
+    )
+    is_current_file_present: bool = Field(default=True, description="Whether events.jsonl exists in this source")
+
+
+class _AllEventsStreamState(MutableModel):
+    """Mutable state for the all-events streaming loop."""
+
+    emitted_event_ids: set[str] = Field(
+        default_factory=set, description="Event IDs already emitted, for deduplication"
+    )
+    source_byte_offsets: dict[str, int] = Field(
+        default_factory=dict, description="Map from source_path to byte offset already read in current events.jsonl"
+    )
+    is_online: bool = Field(default=False, description="Whether the target is currently considered online")
+    last_source_scan_time: float = Field(default=0.0, description="Monotonic time of last directory scan")
+    last_online_check_time: float = Field(default=0.0, description="Monotonic time of last online/offline check")
 
 
 class EventFileEntry(FrozenModel):
@@ -103,8 +160,9 @@ def resolve_events_target(
                 events_volume = agent_volume.scoped("events")
 
             # Try to get the online host for direct access
+            agent_events_subpath = Path("agents") / str(agent_ref.agent_id) / "events"
             online_host, events_path = _try_get_online_host_for_events(
-                provider, host_ref.host_id, Path("agents") / str(agent_ref.agent_id) / "events"
+                provider, host_ref.host_id, agent_events_subpath
             )
 
             if events_volume is None and online_host is None:
@@ -118,6 +176,9 @@ def resolve_events_target(
             online_host=online_host,
             events_path=events_path,
             display_name=f"agent '{agent_ref.agent_name}'",
+            provider=provider,
+            host_id=host_ref.host_id,
+            events_subpath=agent_events_subpath,
         )
 
     # Try finding as a host
@@ -141,7 +202,8 @@ def resolve_events_target(
                 events_volume = host_volume.volume.scoped("events")
 
             # Try to get the online host for direct access
-            online_host, events_path = _try_get_online_host_for_events(provider, host_ref.host_id, Path("events"))
+            host_events_subpath = Path("events")
+            online_host, events_path = _try_get_online_host_for_events(provider, host_ref.host_id, host_events_subpath)
 
             if events_volume is None and online_host is None:
                 raise MngError(
@@ -154,6 +216,9 @@ def resolve_events_target(
             online_host=online_host,
             events_path=events_path,
             display_name=f"host '{host_ref.host_name}'",
+            provider=provider,
+            host_id=host_ref.host_id,
+            events_subpath=host_events_subpath,
         )
 
     raise UserInputError(f"No agent or host found with name or ID: {identifier}")
@@ -491,3 +556,538 @@ def _build_tail_args(event_file_path: Path, tail_count: int | None) -> list[str]
         args.extend(["-n", "+1"])
     args.extend(["-f", str(event_file_path)])
     return args
+
+
+# =============================================================================
+# Event parsing and sorting
+# =============================================================================
+
+
+@pure
+def parse_event_line(line: str, source_hint: str) -> EventRecord | None:
+    """Parse a single JSONL line into an EventRecord.
+
+    Returns None if the line cannot be parsed (malformed JSON, missing required fields).
+    Uses source_hint as fallback if 'source' field is missing from the JSON.
+    Generates a deterministic fallback event_id from the line hash if missing.
+    """
+    stripped = line.strip()
+    if not stripped:
+        return None
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        logger.trace("Skipped malformed JSONL line: {}", stripped[:100])
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    timestamp = data.get("timestamp", "")
+    if not timestamp:
+        return None
+
+    event_id = data.get("event_id", "")
+    if not event_id:
+        # Generate deterministic fallback from line content
+        event_id = "hash-" + hashlib.sha256(stripped.encode()).hexdigest()[:24]
+
+    source = data.get("source", source_hint)
+
+    return EventRecord(
+        raw_line=stripped,
+        timestamp=timestamp,
+        event_id=event_id,
+        source=source,
+        data=data,
+    )
+
+
+@pure
+def sort_events_by_timestamp(events: Sequence[EventRecord]) -> list[EventRecord]:
+    """Sort events by their timestamp field (lexicographic on ISO 8601 works correctly)."""
+    return sorted(events, key=lambda e: e.timestamp)
+
+
+@pure
+def _sort_rotated_files_oldest_first(filenames: Sequence[str]) -> list[str]:
+    """Sort rotated file names so oldest (highest number) comes first.
+
+    Input: ['events.jsonl.1', 'events.jsonl.3', 'events.jsonl.2']
+    Output: ['events.jsonl.3', 'events.jsonl.2', 'events.jsonl.1']
+    """
+    numbered: list[tuple[int, str]] = []
+    for name in filenames:
+        match = _ROTATED_FILE_PATTERN.match(name)
+        if match:
+            numbered.append((int(match.group(1)), name))
+    # Sort by number descending (highest number = oldest)
+    numbered.sort(key=lambda pair: pair[0], reverse=True)
+    return [name for _, name in numbered]
+
+
+# =============================================================================
+# Event source discovery
+# =============================================================================
+
+
+def discover_event_sources(target: EventsTarget) -> list[EventSourceInfo]:
+    """Find all event sources (subdirectories containing events.jsonl files)."""
+    if target.online_host is not None and target.events_path is not None:
+        return _discover_event_sources_via_host(target.online_host, target.events_path)
+
+    if target.volume is not None:
+        return _discover_event_sources_via_volume(target.volume)
+
+    raise MngError(f"Cannot discover event sources for {target.display_name}: no volume or online host available")
+
+
+def _discover_event_sources_via_host(
+    online_host: OnlineHostInterface,
+    events_path: Path,
+) -> list[EventSourceInfo]:
+    """Find all events.jsonl files recursively under events_path via host commands."""
+    with log_span("Discovering event sources via host"):
+        cmd = f"find {shlex.quote(str(events_path))} -name 'events.jsonl*' -type f 2>/dev/null | sort; true"
+        result = online_host.execute_command(cmd, timeout_seconds=15.0)
+        if not result.stdout.strip():
+            return []
+
+        return _parse_discovered_files(result.stdout, str(events_path))
+
+
+@pure
+def _parse_discovered_files(find_output: str, events_path_str: str) -> list[EventSourceInfo]:
+    """Parse find command output into EventSourceInfo objects.
+
+    Groups files by their parent directory (relative to events_path) and identifies
+    rotated files vs the current events.jsonl.
+    """
+    # Normalize the base path for stripping
+    base = events_path_str.rstrip("/") + "/"
+
+    # Group files by their parent directory relative to events_path
+    files_by_dir: dict[str, list[str]] = {}
+    for line in find_output.strip().split("\n"):
+        file_path = line.strip()
+        if not file_path:
+            continue
+
+        # Strip the base path to get the relative path
+        if file_path.startswith(base):
+            relative = file_path[len(base) :]
+        else:
+            continue
+
+        # Split into directory and filename
+        if "/" in relative:
+            dir_part = relative.rsplit("/", 1)[0]
+            file_part = relative.rsplit("/", 1)[1]
+        else:
+            dir_part = ""
+            file_part = relative
+
+        # Only include events.jsonl files (current or rotated)
+        if file_part == _EVENTS_JSONL_FILENAME or _ROTATED_FILE_PATTERN.match(file_part):
+            if dir_part not in files_by_dir:
+                files_by_dir[dir_part] = []
+            files_by_dir[dir_part].append(file_part)
+
+    # Build EventSourceInfo for each directory
+    sources: list[EventSourceInfo] = []
+    for dir_path, filenames in sorted(files_by_dir.items()):
+        rotated = [f for f in filenames if _ROTATED_FILE_PATTERN.match(f)]
+        is_current_present = _EVENTS_JSONL_FILENAME in filenames
+        sources.append(
+            EventSourceInfo(
+                source_path=dir_path,
+                rotated_files=tuple(_sort_rotated_files_oldest_first(rotated)),
+                is_current_file_present=is_current_present,
+            )
+        )
+
+    return sources
+
+
+def _discover_event_sources_via_volume(volume: Volume) -> list[EventSourceInfo]:
+    """Find all events.jsonl files recursively in the volume."""
+    with log_span("Discovering event sources via volume"):
+        all_files = _recursive_listdir_via_volume(volume, "")
+        return _group_volume_files_into_sources(all_files)
+
+
+def _recursive_listdir_via_volume(volume: Volume, path: str) -> list[tuple[str, str]]:
+    """Recursively list all files under a volume path.
+
+    Returns list of (dir_path, filename) tuples.
+    """
+    result: list[tuple[str, str]] = []
+    try:
+        entries = volume.listdir(path)
+    except (MngError, OSError) as e:
+        logger.trace("Failed to list volume directory '{}': {}", path, e)
+        return result
+
+    for entry in entries:
+        if entry.file_type == VolumeFileType.FILE:
+            filename = _extract_filename(entry.path)
+            # Only include events.jsonl files
+            if filename == _EVENTS_JSONL_FILENAME or _ROTATED_FILE_PATTERN.match(filename):
+                result.append((path, filename))
+        elif entry.file_type == VolumeFileType.DIRECTORY:
+            child_path = entry.path if entry.path else path
+            result.extend(_recursive_listdir_via_volume(volume, child_path))
+        else:
+            pass
+
+    return result
+
+
+@pure
+def _group_volume_files_into_sources(files: Sequence[tuple[str, str]]) -> list[EventSourceInfo]:
+    """Group (dir_path, filename) tuples into EventSourceInfo objects."""
+    files_by_dir: dict[str, list[str]] = {}
+    for dir_path, filename in files:
+        if dir_path not in files_by_dir:
+            files_by_dir[dir_path] = []
+        files_by_dir[dir_path].append(filename)
+
+    sources: list[EventSourceInfo] = []
+    for dir_path, filenames in sorted(files_by_dir.items()):
+        rotated = [f for f in filenames if _ROTATED_FILE_PATTERN.match(f)]
+        is_current_present = _EVENTS_JSONL_FILENAME in filenames
+        sources.append(
+            EventSourceInfo(
+                source_path=dir_path,
+                rotated_files=tuple(_sort_rotated_files_oldest_first(rotated)),
+                is_current_file_present=is_current_present,
+            )
+        )
+
+    return sources
+
+
+# =============================================================================
+# Reading events from sources
+# =============================================================================
+
+
+def _read_events_from_file(
+    target: EventsTarget,
+    # Path to the file relative to the events directory (e.g. "messages/events.jsonl")
+    relative_file_path: str,
+    source_hint: str,
+) -> tuple[list[EventRecord], int]:
+    """Read and parse all events from a single JSONL file.
+
+    Returns (events, byte_length) where byte_length is the size of the raw content.
+    """
+    try:
+        content = read_event_content(target, relative_file_path)
+    except (MngError, OSError) as e:
+        logger.trace("Failed to read event file '{}': {}", relative_file_path, e)
+        return [], 0
+
+    events: list[EventRecord] = []
+    for line in content.split("\n"):
+        record = parse_event_line(line, source_hint)
+        if record is not None:
+            events.append(record)
+
+    return events, len(content.encode("utf-8"))
+
+
+def read_all_historical_events(
+    target: EventsTarget,
+    sources: Sequence[EventSourceInfo],
+    cel_include_filters: Sequence[Any],
+    cel_exclude_filters: Sequence[Any],
+) -> tuple[list[EventRecord], dict[str, int]]:
+    """Read all events from all sources (rotated files and current files).
+
+    Returns (sorted_events, byte_offsets) where byte_offsets maps source_path to the
+    byte length of the current events.jsonl (for subsequent tailing).
+    """
+    all_events: list[EventRecord] = []
+    byte_offsets: dict[str, int] = {}
+
+    for source in sources:
+        source_hint = source.source_path
+
+        # Read rotated files (oldest first)
+        for rotated_file in source.rotated_files:
+            relative_path = f"{source.source_path}/{rotated_file}" if source.source_path else rotated_file
+            events, _ = _read_events_from_file(target, relative_path, source_hint)
+            all_events.extend(events)
+
+        # Read current file
+        if source.is_current_file_present:
+            relative_path = (
+                f"{source.source_path}/{_EVENTS_JSONL_FILENAME}" if source.source_path else _EVENTS_JSONL_FILENAME
+            )
+            events, byte_length = _read_events_from_file(target, relative_path, source_hint)
+            all_events.extend(events)
+            byte_offsets[source.source_path] = byte_length
+        else:
+            byte_offsets[source.source_path] = 0
+
+    # Sort by timestamp
+    sorted_events = sort_events_by_timestamp(all_events)
+
+    # Apply CEL filters
+    if cel_include_filters or cel_exclude_filters:
+        sorted_events = [
+            event
+            for event in sorted_events
+            if apply_cel_filters_to_context(
+                event.data,
+                cel_include_filters,
+                cel_exclude_filters,
+                error_context_description=f"event {event.event_id}",
+            )
+        ]
+
+    return sorted_events, byte_offsets
+
+
+# =============================================================================
+# Streaming all events
+# =============================================================================
+
+
+def stream_all_events(
+    target: EventsTarget,
+    on_event: Callable[[EventRecord], None],
+    cel_include_filters: Sequence[Any],
+    cel_exclude_filters: Sequence[Any],
+    tail_count: int | None,
+    head_count: int | None,
+    is_follow: bool,
+) -> None:
+    """Stream all events from all sources, handling online/offline transitions.
+
+    Phase 1: Read all historical events (rotated files + current files)
+    Phase 2: Tail all current files for new events (if is_follow=True)
+    """
+    state = _AllEventsStreamState(
+        is_online=target.online_host is not None,
+        last_source_scan_time=time.monotonic(),
+        last_online_check_time=time.monotonic(),
+    )
+
+    # Phase 1: Read all historical events
+    with log_span("Reading historical events for {}", target.display_name):
+        sources = discover_event_sources(target)
+        all_events, byte_offsets = read_all_historical_events(
+            target, sources, cel_include_filters, cel_exclude_filters
+        )
+        state.source_byte_offsets = byte_offsets
+
+    # Apply head/tail truncation
+    if head_count is not None:
+        all_events = all_events[:head_count]
+    elif tail_count is not None:
+        all_events = all_events[-tail_count:]
+    else:
+        pass
+
+    # Emit historical events (deduplicating by event_id)
+    for event in all_events:
+        if event.event_id in state.emitted_event_ids:
+            continue
+        state.emitted_event_ids.add(event.event_id)
+        on_event(event)
+
+    if head_count is not None:
+        # Head mode: done after emitting
+        return
+
+    if not is_follow:
+        return
+
+    # Phase 2: Tailing (follow mode)
+    # Use a mutable container so the polling callback can update the target
+    target_holder: list[EventsTarget] = [target]
+
+    run_periodically(
+        fn=lambda: _poll_all_sources(
+            target_holder,
+            state,
+            on_event,
+            cel_include_filters,
+            cel_exclude_filters,
+        ),
+        interval=FOLLOW_POLL_INTERVAL_SECONDS,
+    )
+
+
+def _poll_all_sources(
+    target_holder: list[EventsTarget],
+    state: _AllEventsStreamState,
+    on_event: Callable[[EventRecord], None],
+    cel_include_filters: Sequence[Any],
+    cel_exclude_filters: Sequence[Any],
+) -> None:
+    """Single poll iteration for the follow loop."""
+    target = target_holder[0]
+    now = time.monotonic()
+
+    # Periodically re-scan for new event sources
+    if now - state.last_source_scan_time > SOURCE_SCAN_INTERVAL_SECONDS:
+        _rescan_for_new_sources(target, state, on_event, cel_include_filters, cel_exclude_filters)
+        state.last_source_scan_time = now
+
+    # Check each known source for new content
+    for source_path in list(state.source_byte_offsets.keys()):
+        _poll_source_for_new_events(target, source_path, state, on_event, cel_include_filters, cel_exclude_filters)
+
+    # Periodically check online/offline transitions
+    if now - state.last_online_check_time > ONLINE_CHECK_INTERVAL_SECONDS:
+        _check_online_offline_transition(target_holder, state)
+        state.last_online_check_time = now
+
+
+def _rescan_for_new_sources(
+    target: EventsTarget,
+    state: _AllEventsStreamState,
+    on_event: Callable[[EventRecord], None],
+    cel_include_filters: Sequence[Any],
+    cel_exclude_filters: Sequence[Any],
+) -> None:
+    """Re-scan for new event source directories and process any new ones found."""
+    try:
+        current_sources = discover_event_sources(target)
+    except (MngError, OSError) as e:
+        logger.trace("Failed to re-scan event sources: {}", e)
+        return
+
+    for source in current_sources:
+        if source.source_path not in state.source_byte_offsets:
+            # New source found -- read all its historical events
+            logger.debug("Discovered new event source: {}", source.source_path)
+            _process_new_source(target, source, state, on_event, cel_include_filters, cel_exclude_filters)
+
+
+def _process_new_source(
+    target: EventsTarget,
+    source: EventSourceInfo,
+    state: _AllEventsStreamState,
+    on_event: Callable[[EventRecord], None],
+    cel_include_filters: Sequence[Any],
+    cel_exclude_filters: Sequence[Any],
+) -> None:
+    """Read all events from a newly discovered source and emit them."""
+    events, byte_offsets = read_all_historical_events(target, [source], cel_include_filters, cel_exclude_filters)
+
+    for event in events:
+        if event.event_id not in state.emitted_event_ids:
+            state.emitted_event_ids.add(event.event_id)
+            on_event(event)
+
+    # Record byte offset for the new source
+    state.source_byte_offsets[source.source_path] = byte_offsets.get(source.source_path, 0)
+
+
+def _poll_source_for_new_events(
+    target: EventsTarget,
+    source_path: str,
+    state: _AllEventsStreamState,
+    on_event: Callable[[EventRecord], None],
+    cel_include_filters: Sequence[Any],
+    cel_exclude_filters: Sequence[Any],
+) -> None:
+    """Check a single source for new events appended to its current events.jsonl."""
+    previous_offset = state.source_byte_offsets.get(source_path, 0)
+    relative_file_path = f"{source_path}/{_EVENTS_JSONL_FILENAME}" if source_path else _EVENTS_JSONL_FILENAME
+
+    try:
+        content = read_event_content(target, relative_file_path)
+    except (MngError, OSError) as e:
+        logger.trace("Failed to read source '{}' during follow: {}", source_path, e)
+        return
+
+    content_bytes = content.encode("utf-8")
+    current_length = len(content_bytes)
+
+    if current_length < previous_offset:
+        # File was rotated/truncated -- re-read from beginning, dedup via event_ids
+        logger.debug("Event file for source '{}' was rotated, re-reading from start", source_path)
+        previous_offset = 0
+
+    if current_length <= previous_offset:
+        return
+
+    # Extract only the new bytes
+    new_content = content_bytes[previous_offset:].decode("utf-8", errors="replace")
+
+    # Parse and emit new events
+    for line in new_content.split("\n"):
+        record = parse_event_line(line, source_path)
+        if record is None:
+            continue
+        if record.event_id in state.emitted_event_ids:
+            continue
+        if cel_include_filters or cel_exclude_filters:
+            if not apply_cel_filters_to_context(
+                record.data,
+                cel_include_filters,
+                cel_exclude_filters,
+                error_context_description=f"event {record.event_id}",
+            ):
+                continue
+        state.emitted_event_ids.add(record.event_id)
+        on_event(record)
+
+    state.source_byte_offsets[source_path] = current_length
+
+
+# =============================================================================
+# Online/offline transitions
+# =============================================================================
+
+
+def refresh_events_target(
+    target: EventsTarget,
+) -> EventsTarget:
+    """Re-check whether the host is online/offline and return an updated EventsTarget."""
+    if target.provider is None or target.host_id is None or target.events_subpath is None:
+        return target
+
+    online_host, events_path = _try_get_online_host_for_events(target.provider, target.host_id, target.events_subpath)
+
+    return EventsTarget(
+        volume=target.volume,
+        online_host=online_host,
+        events_path=events_path,
+        display_name=target.display_name,
+        provider=target.provider,
+        host_id=target.host_id,
+        events_subpath=target.events_subpath,
+    )
+
+
+def _check_online_offline_transition(
+    target_holder: list[EventsTarget],
+    state: _AllEventsStreamState,
+) -> None:
+    """Check if the target's online/offline status has changed and update accordingly."""
+    target = target_holder[0]
+    if target.provider is None or target.host_id is None:
+        return
+
+    try:
+        new_target = refresh_events_target(target)
+    except (MngError, OSError) as e:
+        logger.trace("Failed to check online status: {}", e)
+        return
+
+    was_online = state.is_online
+    is_now_online = new_target.online_host is not None
+
+    if was_online != is_now_online:
+        logger.debug(
+            "Target {} {}",
+            target.display_name,
+            "came online" if is_now_online else "went offline",
+        )
+        state.is_online = is_now_online
+        target_holder[0] = new_target

@@ -17,6 +17,7 @@ from imbue.mng.primitives import OutputFormat
 def _make_events_opts(
     target: str = "my-agent",
     event_filename: str | None = None,
+    filter: str | None = None,
     follow: bool = False,
     tail: int | None = None,
     head: int | None = None,
@@ -34,6 +35,7 @@ def _make_events_opts(
         disable_plugin=(),
         target=target,
         event_filename=event_filename,
+        filter=filter,
         follow=follow,
         tail=tail,
         head=head,
@@ -188,3 +190,28 @@ def test_emit_event_content_json_format(capsys: pytest.CaptureFixture[str]) -> N
     data = json.loads(captured.out.strip())
     assert data["event_file"] == "output.log"
     assert data["content"] == "log content"
+
+
+# =============================================================================
+# New CLI behavior tests
+# =============================================================================
+
+
+def test_events_cli_options_with_filter() -> None:
+    """Verify the filter field can be set."""
+    opts = _make_events_opts(filter='source == "messages"')
+    assert opts.filter == 'source == "messages"'
+
+
+def test_events_cli_rejects_filter_with_event_filename(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Verify that --filter cannot be used with a specific event file."""
+    result = cli_runner.invoke(
+        events,
+        ["my-agent", "output.log", "--filter", 'source == "x"'],
+        obj=plugin_manager,
+    )
+    assert result.exit_code != 0
+    assert "Cannot use --filter with a specific event file" in result.output
