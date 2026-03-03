@@ -926,17 +926,17 @@ _BRACKET_PATTERN = re.compile(r"^([^\[]+)(?:\[([^\]]+)\])?$")
 class _CelSortKeyExtractor:
     """Extracts a sort key from an (agent, cel_context) pair for a single CEL expression."""
 
-    _program: Any
-    _is_descending: bool
+    program: Any
+    is_descending: bool
 
     def __call__(self, pair: tuple[AgentInfo, dict[str, Any]]) -> tuple[int, str]:
         _, ctx = pair
-        value = evaluate_cel_sort_key(self._program, ctx)
+        value = evaluate_cel_sort_key(self.program, ctx)
         if value is None:
             # For ascending: (1, "") puts None at end
             # For descending (reverse=True): (0, "") puts None at end
-            return (1, "") if not self._is_descending else (0, "")
-        return (0, str(value)) if not self._is_descending else (1, str(value))
+            return (1, "") if not self.is_descending else (0, "")
+        return (0, str(value)) if not self.is_descending else (1, str(value))
 
 
 def _sort_agents_by_cel(
@@ -961,8 +961,8 @@ def _sort_agents_by_cel(
     # Sort by each key in reverse order of significance (stable sort preserves earlier orderings)
     for program, is_descending in reversed(compiled_sort_keys):
         extractor = _CelSortKeyExtractor()
-        extractor._program = program
-        extractor._is_descending = is_descending
+        extractor.program = program
+        extractor.is_descending = is_descending
         paired.sort(key=extractor, reverse=is_descending)
 
     return [agent for agent, _ in paired]
