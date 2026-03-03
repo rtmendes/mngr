@@ -2,6 +2,8 @@ import os
 import shlex
 import sys
 from collections.abc import Callable
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import assert_never
 from typing import cast
@@ -735,19 +737,20 @@ def _create_agent(
             agent, host = reuse_result
             logger.info("Reusing existing agent: {}", agent.name)
 
-            try:
+            # Handle --edit-message if editor session was started,
+            # or send initial message directly if --message/--message-file was provided
+            with _editor_cleanup_scope(setup.editor_session):
                 if setup.editor_session is not None:
-                    _handle_editor_message(editor_session=setup.editor_session, agent=agent)
+                    _handle_editor_message(
+                        editor_session=setup.editor_session,
+                        agent=agent,
+                    )
                 elif setup.initial_message is not None:
+                    # Send initial message directly (from --message or --message-file)
                     logger.info("Sending message to agent")
                     agent.send_message(setup.initial_message)
                 else:
                     pass
-            finally:
-                if setup.editor_session is not None and not setup.editor_session.is_finished():
-                    setup.editor_session.cleanup()
-                if LoggingSuppressor.is_suppressed():
-                    LoggingSuppressor.disable_and_replay(clear_screen=True)
 
             return CreateAgentResult(agent=agent, host=host), connection_opts
 
@@ -828,8 +831,8 @@ def _create_agent(
         )
         return None
 
-    # Foreground creation
-    try:
+    # Call the API create function (synchronously)
+    with _editor_cleanup_scope(setup.editor_session):
         create_result = api_create(
             source_location=setup.source_location,
             target_host=resolved_target_host,
@@ -839,14 +842,12 @@ def _create_agent(
             created_branch_name=early_created_branch_name,
         )
 
-        # Send edited message if editor session was started
+        # If --edit-message was used, wait for editor and send the message
         if setup.editor_session is not None:
-            _handle_editor_message(editor_session=setup.editor_session, agent=create_result.agent)
-    finally:
-        if setup.editor_session is not None and not setup.editor_session.is_finished():
-            setup.editor_session.cleanup()
-        if LoggingSuppressor.is_suppressed():
-            LoggingSuppressor.disable_and_replay(clear_screen=True)
+            _handle_editor_message(
+                editor_session=setup.editor_session,
+                agent=create_result.agent,
+            )
 
     return create_result, connection_opts
 
@@ -901,6 +902,22 @@ def _on_editor_exit() -> None:
     LoggingSuppressor.disable_and_replay(clear_screen=True)
 
 
+@contextmanager
+def _editor_cleanup_scope(editor_session: EditorSession | None) -> Iterator[None]:
+    """Ensure editor session cleanup and logging suppressor restoration on exit.
+
+    Safe to nest: EditorSession.cleanup() is idempotent, and
+    LoggingSuppressor.disable_and_replay() is a no-op when not suppressed.
+    """
+    try:
+        yield
+    finally:
+        if editor_session is not None:
+            editor_session.cleanup()
+        if LoggingSuppressor.is_suppressed():
+            LoggingSuppressor.disable_and_replay(clear_screen=True)
+
+
 def _handle_editor_message(
     editor_session: EditorSession,
     agent: AgentInterface,
@@ -917,7 +934,7 @@ def _handle_editor_message(
     as soon as the editor process exits. By the time wait_for_result() returns,
     the callback has already restored logging.
     """
-    try:
+    with _editor_cleanup_scope(editor_session):
         with log_span("Waiting for editor to finish..."):
             edited_message = editor_session.wait_for_result()
 
@@ -931,13 +948,6 @@ def _handle_editor_message(
         logger.info("Sending edited message...")
         agent.send_message(edited_message)
         logger.debug("Message sent successfully")
-
-    finally:
-        editor_session.cleanup()
-        # Make sure suppression is disabled even if an exception occurred
-        # (e.g., if the callback wasn't called for some reason)
-        if LoggingSuppressor.is_suppressed():
-            LoggingSuppressor.disable_and_replay(clear_screen=True)
 
 
 def _create_agent_in_background(
