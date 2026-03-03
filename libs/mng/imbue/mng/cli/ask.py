@@ -95,8 +95,8 @@ _QUERY_PREFIX: Final[str] = (
     "response: mng list --watch 5\n\n"
     #
     "user: How do I list all agents that are running or waiting?\n"
-    'response: mng list --include \'state == "RUNNING" || state == "WAITING"\'\n'
-    "Note: the lifecycle field is `state` (not `status`), and values are uppercase.\n\n"
+    "response: Use a CEL filter on the `state` field:\n"
+    '    mng list --include \'state == "RUNNING" || state == "WAITING"\'\n\n'
     #
     "user: How do I message only agents with a specific tag?\n"
     "response: Use a CEL filter:\n"
