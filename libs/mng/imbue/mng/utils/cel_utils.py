@@ -153,5 +153,6 @@ def evaluate_cel_sort_key(
     """
     try:
         return program.evaluate(cel_context)
-    except CELEvalError:
+    except CELEvalError as e:
+        logger.trace("CEL sort key evaluation failed: {}", e)
         return None
