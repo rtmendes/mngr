@@ -377,7 +377,7 @@ class AgentReference(FrozenModel):
 
     @property
     def created_branch_name(self) -> str | None:
-        """Return the git branch name that was created for this agent, or None if not available."""
+        """Return the git branch name that was created for this agent, or None if not set."""
         value = self.certified_data.get("created_branch_name")
         if value is not None:
             return str(value)
