@@ -1025,6 +1025,11 @@ def _start_tail_thread(
     if is_local and target.events_path is not None:
         # Use pygtail for local filesystem tailing
         events_file_path = target.events_path / source_path / _EVENTS_JSONL_FILENAME
+
+        # Pre-write the pygtail offset file so it starts from exactly where
+        # the historical read left off, avoiding a gap between Phase 1 and Phase 2
+        _write_pygtail_offset_file(events_file_path, source_path, offset_dir_path, initial_byte_offset)
+
         thread = threading.Thread(
             target=_tail_source_thread_local,
             args=(
@@ -1057,6 +1062,31 @@ def _start_tail_thread(
     return thread
 
 
+def _pygtail_offset_file_path(source_path: str, offset_dir_path: Path) -> str:
+    """Return the path to the pygtail offset file for a given source."""
+    offset_file_name = source_path.replace("/", "_") if source_path else "root"
+    return str(offset_dir_path / f"{offset_file_name}.offset")
+
+
+def _write_pygtail_offset_file(
+    events_file_path: Path,
+    source_path: str,
+    offset_dir_path: Path,
+    byte_offset: int,
+) -> None:
+    """Pre-write a pygtail offset file so tailing starts from the given byte position.
+
+    Pygtail's offset file format is: inode\\noffset\\n
+    This ensures no gap between the historical read (Phase 1) and the tail (Phase 2).
+    """
+    offset_file = _pygtail_offset_file_path(source_path, offset_dir_path)
+    try:
+        inode = events_file_path.stat().st_ino
+        Path(offset_file).write_text(f"{inode}\n{byte_offset}\n")
+    except OSError as e:
+        logger.trace("Failed to pre-write pygtail offset file for '{}': {}", source_path, e)
+
+
 def _tail_source_thread_local(
     events_file_path: Path,
     source_path: str,
@@ -1067,21 +1097,19 @@ def _tail_source_thread_local(
     offset_dir_path: Path,
 ) -> None:
     """Thread function that tails a local events.jsonl via pygtail."""
-    # Use a sanitized source path for the offset file name
-    offset_file_name = source_path.replace("/", "_") if source_path else "root"
-    offset_file = str(offset_dir_path / f"{offset_file_name}.offset")
+    offset_file = _pygtail_offset_file_path(source_path, offset_dir_path)
 
     while not stop_event.is_set():
         try:
             # Create a new Pygtail instance each iteration. Pygtail reads from
             # offset_file on construction, so subsequent iterations pick up where
-            # the previous one left off. On the first iteration, read_from_end=True
-            # skips already-processed historical content.
+            # the previous one left off. The offset file is pre-written by
+            # _write_pygtail_offset_file before the thread starts.
             tail = Pygtail(
                 str(events_file_path),
                 offset_file=offset_file,
                 save_on_end=True,
-                read_from_end=True,
+                read_from_end=False,
                 full_lines=True,
                 copytruncate=False,
             )

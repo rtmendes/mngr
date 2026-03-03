@@ -82,7 +82,7 @@ def events(ctx: click.Context, **kwargs: Any) -> None:
         ctx=ctx,
         command_name="events",
         command_class=EventsCliOptions,
-        is_format_template_supported=True,
+        is_format_template_supported=False,
     )
 
     # Validate mutually exclusive options
@@ -125,13 +125,6 @@ def _handle_specific_file(
 ) -> None:
     """View a specific event file by name."""
     assert opts.event_filename is not None
-
-    # Format templates only apply to file listing, not to viewing file content
-    if output_opts.format_template is not None:
-        raise UserInputError(
-            "Format template strings are only supported when listing event files (without a filename argument). "
-            "Use --format human, --format json, or --format jsonl when viewing event content."
-        )
 
     if opts.follow:
         # Follow mode: poll and print new content
