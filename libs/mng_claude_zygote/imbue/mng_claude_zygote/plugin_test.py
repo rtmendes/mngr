@@ -12,8 +12,6 @@ from imbue.mng.interfaces.host import NamedCommand
 from imbue.mng_claude_zygote.plugin import AGENT_TMUX_TTYD_COMMAND
 from imbue.mng_claude_zygote.plugin import AGENT_TMUX_TTYD_WINDOW_NAME
 from imbue.mng_claude_zygote.plugin import AGENT_TTYD_COMMAND
-from imbue.mng_claude_zygote.plugin import AGENT_TTYD_SERVER_NAME
-from imbue.mng_claude_zygote.plugin import AGENT_TTYD_WINDOW_NAME
 from imbue.mng_claude_zygote.plugin import CHAT_TTYD_COMMAND
 from imbue.mng_claude_zygote.plugin import CHAT_TTYD_WINDOW_NAME
 from imbue.mng_claude_zygote.plugin import CONV_WATCHER_COMMAND
@@ -25,7 +23,6 @@ from imbue.mng_claude_zygote.plugin import EVENT_WATCHER_WINDOW_NAME
 from imbue.mng_claude_zygote.plugin import WEB_SERVER_COMMAND
 from imbue.mng_claude_zygote.plugin import WEB_SERVER_WINDOW_NAME
 from imbue.mng_claude_zygote.plugin import get_agent_type_from_params
-from imbue.mng_claude_zygote.plugin import inject_agent_ttyd
 from imbue.mng_claude_zygote.plugin import inject_changeling_windows
 from imbue.mng_claude_zygote.plugin import override_command_options
 from imbue.mng_claude_zygote.plugin import register_agent_type
@@ -95,11 +92,6 @@ def test_adds_all_changeling_windows(zygote_create_params: dict[str, Any]) -> No
     assert len(zygote_create_params["add_command"]) == _CHANGELING_WINDOW_COUNT
 
 
-def test_adds_agent_ttyd(zygote_create_params: dict[str, Any]) -> None:
-    assert AGENT_TTYD_WINDOW_NAME in zygote_create_params["add_command"][0]
-    assert AGENT_TTYD_COMMAND in zygote_create_params["add_command"][0]
-
-
 def test_adds_conv_watcher_window(zygote_create_params: dict[str, Any]) -> None:
     entries = [c for c in zygote_create_params["add_command"] if CONV_WATCHER_WINDOW_NAME in c]
     assert len(entries) == 1
@@ -165,22 +157,6 @@ def test_preserves_existing_add_commands() -> None:
     assert params["add_command"][0] == 'monitor="htop"'
 
 
-# -- inject_agent_ttyd tests (direct function) --
-
-
-def test_inject_agent_ttyd_adds_command() -> None:
-    params: dict[str, Any] = {}
-    inject_agent_ttyd(params)
-    assert len(params["add_command"]) == 1
-    assert AGENT_TTYD_WINDOW_NAME in params["add_command"][0]
-
-
-def test_inject_agent_ttyd_preserves_existing() -> None:
-    params: dict[str, Any] = {"add_command": ('foo="bar"',)}
-    inject_agent_ttyd(params)
-    assert len(params["add_command"]) == 2
-
-
 # -- inject_changeling_windows tests --
 
 
@@ -201,22 +177,8 @@ def test_inject_changeling_windows_preserves_existing() -> None:
 # -- Agent ttyd command content tests --
 
 
-def test_agent_ttyd_command_is_parseable_as_named_command() -> None:
-    params: dict[str, Any] = {}
-    inject_agent_ttyd(params)
-    named_cmd = NamedCommand.from_string(params["add_command"][0])
-    assert named_cmd.window_name == AGENT_TTYD_WINDOW_NAME
-    assert str(named_cmd.command) == AGENT_TTYD_COMMAND
-
-
 def test_agent_ttyd_command_uses_random_port() -> None:
     assert "ttyd -p 0" in AGENT_TTYD_COMMAND
-
-
-def test_agent_ttyd_command_writes_server_log() -> None:
-    assert "servers.jsonl" in AGENT_TTYD_COMMAND
-    assert AGENT_TTYD_SERVER_NAME in AGENT_TTYD_COMMAND
-    assert "MNG_AGENT_STATE_DIR" in AGENT_TTYD_COMMAND
 
 
 def test_agent_ttyd_command_watches_stderr_for_port() -> None:
