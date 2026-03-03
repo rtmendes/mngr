@@ -112,7 +112,7 @@ def test_ssh_info_serialization() -> None:
 # =============================================================================
 
 
-def test_host_info_minimal_creation() -> None:
+def test_host_details_minimal_creation() -> None:
     """Test that HostDetails can be created with minimal required fields."""
     host_details = HostDetails(
         id=HostId.generate(),
@@ -132,7 +132,7 @@ def test_host_info_minimal_creation() -> None:
     assert host_details.snapshots == []
 
 
-def test_host_info_with_extended_fields() -> None:
+def test_host_details_with_extended_fields() -> None:
     """Test that HostDetails can be created with all extended fields."""
     boot_time = datetime.now(timezone.utc)
     ssh_info = SSHInfo(
@@ -171,7 +171,7 @@ def test_host_info_with_extended_fields() -> None:
     assert host_details.snapshots == []
 
 
-def test_host_info_serialization_with_extended_fields() -> None:
+def test_host_details_serialization_with_extended_fields() -> None:
     """Test that HostDetails with extended fields serializes correctly."""
     boot_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
     ssh_info = SSHInfo(

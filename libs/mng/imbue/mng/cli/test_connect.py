@@ -464,7 +464,7 @@ def test_handle_search_key_other() -> None:
 # =============================================================================
 
 
-def test_create_selectable_agent_item_displays_agent_info() -> None:
+def test_create_selectable_agent_item_displays_agent_details() -> None:
     """Test that _create_selectable_agent_item creates a selectable widget."""
     agent = make_test_agent_details("test-agent", AgentLifecycleState.RUNNING)
 
