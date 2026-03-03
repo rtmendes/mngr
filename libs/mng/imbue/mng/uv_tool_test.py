@@ -71,6 +71,12 @@ def test_requirement_to_with_arg_editable() -> None:
     assert _requirement_to_with_arg(req) == ("--with-editable", "/path/to/plugin")
 
 
+def test_requirement_to_with_arg_directory() -> None:
+    """Directory should produce --with-editable path."""
+    req = ToolRequirement(name="my-plugin", directory="/path/to/plugin")
+    assert _requirement_to_with_arg(req) == ("--with-editable", "/path/to/plugin")
+
+
 def test_requirement_to_with_arg_git() -> None:
     """Git should produce --with 'name @ git+url'."""
     req = ToolRequirement(name="my-plugin", git="https://github.com/user/repo.git")
@@ -148,6 +154,15 @@ def test_read_receipt_with_specifier(tmp_path: Path) -> None:
     assert receipt.extras[0].specifier == ">=2.0"
 
 
+def test_read_receipt_with_directory_base(tmp_path: Path) -> None:
+    """read_receipt should parse a directory field on the base requirement."""
+    receipt_path = tmp_path / "uv-receipt.toml"
+    receipt_path.write_text('[tool]\nrequirements = [{ name = "mng", directory = "/path/to/mng" }]\n')
+
+    receipt = read_receipt(receipt_path)
+    assert receipt.base.directory == "/path/to/mng"
+
+
 def test_read_receipt_with_git(tmp_path: Path) -> None:
     """read_receipt should parse git URLs in extras."""
     receipt_path = tmp_path / "uv-receipt.toml"
@@ -222,6 +237,13 @@ def test_build_uv_tool_install_command_with_extras() -> None:
     )
 
 
+def test_build_uv_tool_install_command_editable_base() -> None:
+    """_build_uv_tool_install_command with directory base should use --editable."""
+    base = ToolRequirement(name="mng", directory="/path/to/mng")
+    cmd = _build_uv_tool_install_command(base, [])
+    assert cmd == ("uv", "tool", "install", "--editable", "/path/to/mng", "--reinstall")
+
+
 # =============================================================================
 # Tests for build_uv_tool_install_add / add_path / add_git / remove
 # =============================================================================
@@ -229,10 +251,11 @@ def test_build_uv_tool_install_command_with_extras() -> None:
 
 def _make_receipt(
     base_specifier: str | None = None,
+    base_directory: str | None = None,
     extras: list[ToolRequirement] | None = None,
 ) -> ToolReceipt:
     """Create a ToolReceipt for testing."""
-    base = ToolRequirement(name="mng", specifier=base_specifier)
+    base = ToolRequirement(name="mng", specifier=base_specifier, directory=base_directory)
     return ToolReceipt(base=base, extras=extras or [])
 
 

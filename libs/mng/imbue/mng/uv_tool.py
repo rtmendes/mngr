@@ -27,7 +27,8 @@ class ToolRequirement(FrozenModel):
 
     name: str = Field(description="Package name")
     specifier: str | None = Field(default=None, description="Version specifier (e.g. '>=1.0')")
-    editable: str | None = Field(default=None, description="Local editable path")
+    editable: str | None = Field(default=None, description="Local editable path (from --with-editable)")
+    directory: str | None = Field(default=None, description="Local directory path (from -e / --editable on the base)")
     git: str | None = Field(default=None, description="Git URL")
 
 
@@ -46,6 +47,9 @@ def _requirement_to_with_arg(req: ToolRequirement) -> tuple[str, str]:
     """
     if req.editable is not None:
         return ("--with-editable", req.editable)
+
+    if req.directory is not None:
+        return ("--with-editable", req.directory)
 
     if req.git is not None:
         return ("--with", f"{req.name} @ git+{req.git}")
@@ -121,8 +125,15 @@ def _build_uv_tool_install_command(
     """Build a full ``uv tool install`` command from the base + extras.
 
     Always includes ``--reinstall`` so that ``uv tool`` actually re-resolves.
+    When the base was installed from a local directory (``-e``), the command
+    uses ``--editable <directory>`` instead of the package name.
     """
-    cmd: list[str] = ["uv", "tool", "install", build_base_specifier(base), "--reinstall"]
+    cmd: list[str] = ["uv", "tool", "install"]
+    if base.directory is not None:
+        cmd.extend(["--editable", base.directory])
+    else:
+        cmd.append(build_base_specifier(base))
+    cmd.append("--reinstall")
     for req in extras:
         flag, value = _requirement_to_with_arg(req)
         cmd.extend([flag, value])
