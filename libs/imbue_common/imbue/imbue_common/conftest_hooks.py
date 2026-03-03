@@ -45,7 +45,9 @@ from imbue.imbue_common.resource_guards import _pytest_runtest_makereport
 from imbue.imbue_common.resource_guards import _pytest_runtest_setup
 from imbue.imbue_common.resource_guards import _pytest_runtest_teardown
 from imbue.imbue_common.resource_guards import cleanup_resource_guard_wrappers
+from imbue.imbue_common.resource_guards import cleanup_sdk_resource_guards
 from imbue.imbue_common.resource_guards import create_resource_guard_wrappers
+from imbue.imbue_common.resource_guards import create_sdk_resource_guards
 
 # Directory for test output files (slow tests, coverage summaries).
 # Relative to wherever pytest is invoked from.
@@ -272,6 +274,9 @@ def _pytest_sessionstart(session: pytest.Session) -> None:
     # Create resource guard wrappers (workers reuse the controller's via env var).
     create_resource_guard_wrappers()
 
+    # Install SDK-level guards (each process patches independently, no shared state)
+    create_sdk_resource_guards()
+
 
 @pytest.hookimpl(trylast=True)
 def _pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
@@ -281,6 +286,7 @@ def _pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     is always visible in CI output, even when the suite exceeds the limit.
     """
     # Clean up resource guard wrappers
+    cleanup_sdk_resource_guards()
     cleanup_resource_guard_wrappers()
 
     # Print test durations before checking the time limit, so they are
