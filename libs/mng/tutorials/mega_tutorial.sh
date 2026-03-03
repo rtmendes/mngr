@@ -310,13 +310,6 @@ mng --help
 
 
 ##############################################################################
-# OPENING AGENTS IN THE BROWSER
-#   Some agents expose web interfaces. "mng open" launches them in your
-#   browser, so you can interact with agents visually.
-##############################################################################
-
-
-##############################################################################
 # PUSHING FILES TO AGENTS
 #   Push local files or git commits to a running agent. This is how you
 #   sync your local changes to an agent's workspace.
@@ -395,8 +388,8 @@ mng --help
 
 
 ##############################################################################
-# VIEWING LOGS
-#   View log files for agents and hosts. Useful for debugging and
+# VIEWING EVENTS AND LOGS
+#   View event stream and log files for agents and hosts. Useful for debugging and
 #   monitoring what your agents are up to.
 ##############################################################################
 
