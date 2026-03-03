@@ -80,9 +80,8 @@ def require_uv_tool_receipt() -> Path:
     receipt = get_receipt_path()
     if receipt is None:
         raise AbortError(
-            "mng is not installed via 'uv tool install'. "
-            "Plugin management only works with the uv-tool-installed version of mng. "
-            "If you manage your own virtualenv, install plugins directly with pip or uv."
+            "The current mng instance is not installed via 'uv tool install'. "
+            "To add or remove plugins, simply use whatever commands you use to manage Python dependencies."
         )
     return receipt
 

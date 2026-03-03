@@ -101,7 +101,7 @@ def test_get_receipt_path_returns_none_in_dev_mode() -> None:
 
 def test_require_uv_tool_receipt_raises_in_dev_mode() -> None:
     """require_uv_tool_receipt should raise AbortError outside a uv tool venv."""
-    with pytest.raises(AbortError, match="not installed via"):
+    with pytest.raises(AbortError, match="not installed via 'uv tool install'"):
         require_uv_tool_receipt()
 
 
