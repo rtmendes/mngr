@@ -8,7 +8,7 @@
 #      $MNG_AGENT_STATE_DIR/active file)
 #   2. Transcript streaming: launches stream_transcript.sh which watches
 #      all session JSONL files and streams new lines to
-#      $MNG_AGENT_STATE_DIR/logs/claude_transcript/events.jsonl
+#      $MNG_AGENT_STATE_DIR/events/claude_transcript/events.jsonl
 #
 # Usage: claude_background_tasks.sh <tmux_session_name>
 #
@@ -38,12 +38,12 @@ echo $$ > "$_MNG_ACT_LOCK"
 
 # Ensure required directories exist
 mkdir -p "$MNG_AGENT_STATE_DIR/activity"
-mkdir -p "$MNG_AGENT_STATE_DIR/logs"
+mkdir -p "$MNG_AGENT_STATE_DIR/events"
 
 # Configure and source the shared logging library
 _MNG_LOG_TYPE="claude_background_tasks"
-_MNG_LOG_SOURCE="claude_background_tasks"
-_MNG_LOG_FILE="$MNG_HOST_DIR/logs/claude_background_tasks/events.jsonl"
+_MNG_LOG_SOURCE="logs/claude_background_tasks"
+_MNG_LOG_FILE="$MNG_HOST_DIR/events/logs/claude_background_tasks/events.jsonl"
 # shellcheck source=mng_log.sh
 source "$MNG_HOST_DIR/commands/mng_log.sh"
 

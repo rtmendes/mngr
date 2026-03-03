@@ -2,7 +2,7 @@
 # Robust transcript streaming for Claude agents.
 #
 # Watches ALL Claude session JSONL files and appends new lines to
-# logs/claude_transcript/events.jsonl. Designed to handle:
+# events/claude_transcript/events.jsonl. Designed to handle:
 #   - Any session file being written to at any time (not just the "current" one)
 #   - Restarts (reconciles per-session offsets against the output file)
 #   - Late-appearing session files (re-checks each poll cycle, no timeouts)
@@ -23,8 +23,8 @@
 set -euo pipefail
 
 SESSION_HISTORY="${MNG_AGENT_STATE_DIR:?MNG_AGENT_STATE_DIR must be set}/claude_session_id_history"
-OUTPUT_FILE="$MNG_AGENT_STATE_DIR/logs/claude_transcript/events.jsonl"
-OFFSET_DIR="$MNG_AGENT_STATE_DIR/logs/claude_transcript/.offsets"
+OUTPUT_FILE="$MNG_AGENT_STATE_DIR/events/claude_transcript/events.jsonl"
+OFFSET_DIR="$MNG_AGENT_STATE_DIR/events/claude_transcript/.offsets"
 POLL_INTERVAL=1
 
 mkdir -p "$(dirname "$OUTPUT_FILE")" "$OFFSET_DIR"
@@ -32,8 +32,8 @@ touch "$OUTPUT_FILE"
 
 # Configure and source the shared logging library
 _MNG_LOG_TYPE="stream_transcript"
-_MNG_LOG_SOURCE="stream_transcript"
-_MNG_LOG_FILE="$MNG_HOST_DIR/logs/stream_transcript/events.jsonl"
+_MNG_LOG_SOURCE="logs/stream_transcript"
+_MNG_LOG_FILE="$MNG_HOST_DIR/events/logs/stream_transcript/events.jsonl"
 # shellcheck source=mng_log.sh
 source "$MNG_HOST_DIR/commands/mng_log.sh"
 
