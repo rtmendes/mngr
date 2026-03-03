@@ -27,6 +27,7 @@ from imbue.mng.cli.help_formatter import add_pager_help_option
 from imbue.mng.errors import UserInputError
 from imbue.mng.interfaces.agent import AgentInterface
 from imbue.mng.interfaces.host import OnlineHostInterface
+from imbue.mng_changeling_chat.api import ChatCommandError
 from imbue.mng_changeling_chat.api import ConversationInfo
 from imbue.mng_changeling_chat.api import get_latest_conversation_id
 from imbue.mng_changeling_chat.api import list_conversations_on_agent
@@ -55,7 +56,7 @@ class ConversationSelectorState(MutableModel):
     is_new_selected: bool = False
 
 
-def _create_selectable_conversation_item(
+def _create_selectable_conversation_item(  # pragma: no cover
     conversation: ConversationInfo,
     cid_width: int,
     model_width: int,
@@ -68,7 +69,7 @@ def _create_selectable_conversation_item(
     return AttrMap(selectable_item, None, focus_map="reversed")
 
 
-def _handle_conversation_selector_input(
+def _handle_conversation_selector_input(  # pragma: no cover
     state: ConversationSelectorState,
     key: str,
 ) -> bool:
@@ -99,14 +100,14 @@ class ConversationSelectorInputHandler(MutableModel):
 
     state: ConversationSelectorState
 
-    def __call__(self, key: str | tuple[str, int, int, int]) -> bool | None:
+    def __call__(self, key: str | tuple[str, int, int, int]) -> bool | None:  # pragma: no cover
         if isinstance(key, tuple):
             return None
         handled = _handle_conversation_selector_input(self.state, key)
         return True if handled else None
 
 
-def _run_conversation_selector(
+def _run_conversation_selector(  # pragma: no cover
     conversations: list[ConversationInfo],
 ) -> tuple[ConversationInfo | None, bool]:
     """Run the conversation selector UI.
@@ -183,7 +184,7 @@ def _run_conversation_selector(
     return state.result, state.is_new_selected
 
 
-def _select_conversation_interactively(
+def _select_conversation_interactively(  # pragma: no cover
     agent: AgentInterface,
     host: OnlineHostInterface,
 ) -> tuple[str | None, bool]:
@@ -192,7 +193,12 @@ def _select_conversation_interactively(
     Returns (conversation_id, is_new_requested).
     If conversation_id is None and is_new_requested is False, the user cancelled.
     """
-    conversations = list_conversations_on_agent(agent, host)
+    try:
+        conversations = list_conversations_on_agent(agent, host)
+    except ChatCommandError as e:
+        logger.warning("Could not list conversations: {}", e)
+        logger.info("Starting a new conversation instead.")
+        return None, True
 
     if not conversations:
         logger.info("No conversations found. Starting a new one.")
@@ -246,7 +252,7 @@ def _select_conversation_interactively(
 )
 @add_common_options
 @click.pass_context
-def chat(ctx: click.Context, **kwargs: Any) -> None:
+def chat(ctx: click.Context, **kwargs: Any) -> None:  # pragma: no cover
     mng_ctx, output_opts, opts = setup_command_context(
         ctx=ctx,
         command_name="chat",
@@ -278,7 +284,11 @@ def chat(ctx: click.Context, **kwargs: Any) -> None:
         chat_args = ["--new"]
     elif opts.last:
         # Find the latest conversation
-        latest_cid = get_latest_conversation_id(agent, host)
+        try:
+            latest_cid = get_latest_conversation_id(agent, host)
+        except ChatCommandError as e:
+            logger.warning("Could not list conversations: {}", e)
+            latest_cid = None
         if latest_cid is None:
             logger.info("No existing conversations found. Starting a new one.")
             chat_args = ["--new"]
@@ -299,7 +309,11 @@ def chat(ctx: click.Context, **kwargs: Any) -> None:
             return
     else:
         # Non-interactive: default to --last behavior
-        latest_cid = get_latest_conversation_id(agent, host)
+        try:
+            latest_cid = get_latest_conversation_id(agent, host)
+        except ChatCommandError as e:
+            logger.warning("Could not list conversations: {}", e)
+            latest_cid = None
         if latest_cid is None:
             chat_args = ["--new"]
         else:

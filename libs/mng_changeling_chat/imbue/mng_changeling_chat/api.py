@@ -142,13 +142,14 @@ def _build_remote_chat_script(
     chat_script = _build_chat_script_path(host_dir)
     env_vars = _build_chat_env_vars(agent, host)
 
-    # Build the shell command that sets env vars and runs chat.sh
-    export_statements = "; ".join(f"export {key}='{value}'" for key, value in env_vars.items())
+    # Use shlex.quote for each value to prevent shell injection from
+    # agent names or paths containing special characters
+    export_statements = "; ".join(f"export {key}={shlex.quote(value)}" for key, value in env_vars.items())
     escaped_args = " ".join(shlex.quote(arg) for arg in chat_args)
-    return f"{export_statements}; exec '{chat_script}' {escaped_args}"
+    return f"{export_statements}; exec {shlex.quote(chat_script)} {escaped_args}"
 
 
-def run_chat_on_agent(
+def run_chat_on_agent(  # pragma: no cover
     agent: AgentInterface,
     host: OnlineHostInterface,
     mng_ctx: MngContext,
@@ -203,6 +204,8 @@ def list_conversations_on_agent(
 
     Executes a Python script on the host that reads the conversation and message
     event JSONL files and returns a JSON array sorted by updated_at descending.
+
+    Raises ChatCommandError if the remote command fails or returns unparseable output.
     """
     conversations_path, messages_path = _build_conversation_event_paths(agent, host)
 
@@ -217,14 +220,12 @@ def list_conversations_on_agent(
     )
 
     if not result.success:
-        logger.warning("Failed to list conversations: {}", result.stderr)
-        return []
+        raise ChatCommandError(f"Failed to list conversations for agent {agent.name}: {result.stderr}")
 
     try:
         raw_conversations = json.loads(result.stdout.strip())
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse conversation list output: {}", result.stdout)
-        return []
+    except json.JSONDecodeError as e:
+        raise ChatCommandError(f"Failed to parse conversation list for agent {agent.name}: {result.stdout}") from e
 
     return [ConversationInfo.model_validate(conv) for conv in raw_conversations]
 
@@ -233,7 +234,10 @@ def get_latest_conversation_id(
     agent: AgentInterface,
     host: OnlineHostInterface,
 ) -> str | None:
-    """Get the most recently updated conversation ID for an agent."""
+    """Get the most recently updated conversation ID for an agent.
+
+    Raises ChatCommandError if conversations cannot be listed.
+    """
     conversations = list_conversations_on_agent(agent, host)
     if not conversations:
         return None

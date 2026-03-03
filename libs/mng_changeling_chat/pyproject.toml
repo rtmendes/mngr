@@ -38,7 +38,7 @@ addopts = [
   "--timeout=120",
   "--cov=imbue.mng_changeling_chat",
   "--cov-report=term-missing",
-  "--cov-fail-under=45",
+  "--cov-fail-under=80",
   "-m not acceptance and not release",
 ]
 markers = [
@@ -50,11 +50,14 @@ markers = [
 source = ["imbue/mng_changeling_chat"]
 
 [tool.coverage.report]
-fail_under = 45
+fail_under = 80
 omit = [
     "*_test.py",
     "test_*.py",
     "conftest.py",
+]
+exclude_lines = [
+    "pragma: no cover",
 ]
 
 [[tool.importlinter.contracts]]

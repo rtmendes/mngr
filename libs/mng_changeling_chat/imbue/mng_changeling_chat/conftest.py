@@ -37,6 +37,7 @@ class _TestAgent(BaseAgent):
 def local_host_and_agent(
     local_provider: LocalProviderInstance,
     temp_mng_ctx: MngContext,
+    tmp_path: Path,
 ) -> tuple[Host, _TestAgent]:
     """Create a local host and test agent for chat plugin tests."""
     host = Host(
@@ -45,11 +46,14 @@ def local_host_and_agent(
         provider_instance=local_provider,
         mng_ctx=temp_mng_ctx,
     )
+    # Use a real temp directory so host.execute_command(cwd=work_dir) works
+    work_dir = tmp_path / "agent_work"
+    work_dir.mkdir()
     agent = _TestAgent(
         id=AgentId(f"agent-{uuid4().hex}"),
         name=AgentName("test-agent"),
         agent_type=AgentTypeName("test"),
-        work_dir=Path("/tmp/work"),
+        work_dir=work_dir,
         create_time=datetime.now(timezone.utc),
         host_id=host.id,
         mng_ctx=temp_mng_ctx,
