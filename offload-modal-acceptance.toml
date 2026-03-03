@@ -19,7 +19,7 @@ timeout_secs = 600
 type = "default"
 discover_command = "uv run pytest --collect-only -q 2>/dev/null {filters} | grep '::'"
 # Run tests in the sandbox (source is baked into /app)
-run_command = "cd /code/mng && if [ \"${APPLY_PATCH}\" = \"1\" ]; then git apply /offload-upload/patch --allow-empty && uv sync --all-packages; fi && uv run pytest -v --tb=short --no-cov -p no:xdist -o addopts= --junitxml={result_file} {tests}"
+run_command = "cd /code/mng && if [ ! -f /tmp/.patch_applied ]; then git apply /offload-upload/patch --allow-empty && uv sync --all-packages && touch /tmp/.patch_applied; fi && uv run pytest -v --tb=short --no-cov -p no:xdist -o addopts= --junitxml={result_file} {tests}"
 test_id_format = "{name}"
 
 [groups.all]
