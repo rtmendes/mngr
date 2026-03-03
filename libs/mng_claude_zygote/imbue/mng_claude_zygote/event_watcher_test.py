@@ -9,12 +9,20 @@ from typing import Any
 
 import pytest
 
+from imbue.mng_claude_zygote.conftest import EventWatcherSubprocessCapture
 from imbue.mng_claude_zygote.conftest import write_changelings_settings_toml
+from imbue.mng_claude_zygote.data_types import WatcherSettings
 from imbue.mng_claude_zygote.resources import event_watcher as event_watcher_module
+from imbue.mng_claude_zygote.resources.event_watcher import _DEFAULT_BURST_SIZE
+from imbue.mng_claude_zygote.resources.event_watcher import _DEFAULT_CEL_FILTER
+from imbue.mng_claude_zygote.resources.event_watcher import _DEFAULT_HIGH_RATE_WARNING_THRESHOLD
+from imbue.mng_claude_zygote.resources.event_watcher import _DEFAULT_MAX_MESSAGES_PER_MINUTE
 from imbue.mng_claude_zygote.resources.event_watcher import _DeliveryState
 from imbue.mng_claude_zygote.resources.event_watcher import _EventWatcherSettings
 from imbue.mng_claude_zygote.resources.event_watcher import _SendRateTracker
 from imbue.mng_claude_zygote.resources.event_watcher import _TokenBucket
+from imbue.mng_claude_zygote.resources.event_watcher import _compute_rate_warning
+from imbue.mng_claude_zygote.resources.event_watcher import _filter_catchup_events
 from imbue.mng_claude_zygote.resources.event_watcher import _format_delivery_message
 from imbue.mng_claude_zygote.resources.event_watcher import _format_time_since_last
 from imbue.mng_claude_zygote.resources.event_watcher import _load_delivery_state
@@ -23,36 +31,16 @@ from imbue.mng_claude_zygote.resources.event_watcher import _save_delivery_state
 from imbue.mng_claude_zygote.resources.event_watcher import _send_message
 from imbue.mng_claude_zygote.resources.event_watcher import _should_skip_for_catchup
 
-
-class _SubprocessCapture:
-    """Records calls to subprocess.run for assertion in tests."""
-
-    def __init__(self, *, returncode: int = 0, stderr: str = "") -> None:
-        self.calls: list[tuple[list[str], dict[str, Any]]] = []
-        self._returncode = returncode
-        self._stderr = stderr
-
-    def run(self, cmd: list[str], **kwargs: Any) -> types.SimpleNamespace:
-        self.calls.append((cmd, kwargs))
-        return types.SimpleNamespace(returncode=self._returncode, stdout="", stderr=self._stderr)
+# -- Default sync verification --
 
 
-@pytest.fixture()
-def mock_subprocess_success(monkeypatch: pytest.MonkeyPatch) -> _SubprocessCapture:
-    """Replace event_watcher's subprocess with a recording stub (returncode=0)."""
-    capture = _SubprocessCapture(returncode=0)
-    mock_sp = types.SimpleNamespace(run=capture.run, TimeoutExpired=subprocess.TimeoutExpired)
-    monkeypatch.setattr(event_watcher_module, "subprocess", mock_sp)
-    return capture
-
-
-@pytest.fixture()
-def mock_subprocess_failure(monkeypatch: pytest.MonkeyPatch) -> _SubprocessCapture:
-    """Replace event_watcher's subprocess with a recording stub (returncode=1)."""
-    capture = _SubprocessCapture(returncode=1, stderr="send failed")
-    mock_sp = types.SimpleNamespace(run=capture.run, TimeoutExpired=subprocess.TimeoutExpired)
-    monkeypatch.setattr(event_watcher_module, "subprocess", mock_sp)
-    return capture
+def test_defaults_match_between_data_types_and_event_watcher() -> None:
+    """Verify that event_watcher.py constants stay in sync with WatcherSettings defaults."""
+    model_defaults = WatcherSettings()
+    assert model_defaults.event_cel_filter == _DEFAULT_CEL_FILTER
+    assert model_defaults.event_burst_size == _DEFAULT_BURST_SIZE
+    assert model_defaults.max_event_messages_per_minute == _DEFAULT_MAX_MESSAGES_PER_MINUTE
+    assert model_defaults.high_rate_warning_threshold_per_minute == _DEFAULT_HIGH_RATE_WARNING_THRESHOLD
 
 
 # -- _load_watcher_settings tests --
@@ -140,7 +128,7 @@ def test_save_delivery_state_creates_parent_directories(tmp_path: Path) -> None:
 # -- _TokenBucket tests --
 
 
-def test_token_bucket_allows_burst(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_token_bucket_allows_burst() -> None:
     bucket = _TokenBucket(burst_size=3, rate_per_second=0.0)
     assert bucket.consume() is True
     assert bucket.consume() is True
@@ -148,7 +136,7 @@ def test_token_bucket_allows_burst(monkeypatch: pytest.MonkeyPatch) -> None:
     assert bucket.consume() is False
 
 
-def test_token_bucket_refills_over_time(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_token_bucket_refills_over_time() -> None:
     # Use a very high rate so refill is immediate after any delay
     bucket = _TokenBucket(burst_size=1, rate_per_second=100.0)
     assert bucket.consume() is True
@@ -196,7 +184,7 @@ def test_send_rate_tracker_counts_sends() -> None:
     assert tracker.messages_per_minute() == 3.0
 
 
-def test_send_rate_tracker_prunes_old_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_send_rate_tracker_prunes_old_entries() -> None:
     tracker = _SendRateTracker()
 
     # Record a send "in the past" by manipulating the internal list
@@ -228,9 +216,10 @@ def test_skip_catchup_returns_true_when_timestamp_before_last() -> None:
     assert _should_skip_for_catchup({"event_id": "evt-other", "timestamp": "2026-01-01T00:00:00Z"}, state) is True
 
 
-def test_skip_catchup_returns_true_when_timestamp_equals_last() -> None:
+def test_skip_catchup_returns_false_when_timestamp_equals_last() -> None:
+    """Same-timestamp events should NOT be skipped (at-least-once semantics)."""
     state = _DeliveryState(last_event_id="evt-old", last_timestamp="2026-01-01T00:00:00Z")
-    assert _should_skip_for_catchup({"event_id": "evt-other", "timestamp": "2026-01-01T00:00:00Z"}, state) is True
+    assert _should_skip_for_catchup({"event_id": "evt-other", "timestamp": "2026-01-01T00:00:00Z"}, state) is False
 
 
 def test_skip_catchup_returns_false_when_timestamp_after_last() -> None:
@@ -238,19 +227,74 @@ def test_skip_catchup_returns_false_when_timestamp_after_last() -> None:
     assert _should_skip_for_catchup({"event_id": "evt-new", "timestamp": "2026-01-02T00:00:00Z"}, state) is False
 
 
+# -- _filter_catchup_events tests --
+
+
+def test_filter_catchup_events_skips_old_events() -> None:
+    state = _DeliveryState(last_event_id="evt-1", last_timestamp="2026-01-01T00:00:00Z")
+    pending = [
+        json.dumps({"event_id": "evt-1", "timestamp": "2026-01-01T00:00:00Z"}),
+        json.dumps({"event_id": "evt-2", "timestamp": "2026-01-02T00:00:00Z"}),
+    ]
+    deliverable, last_parsed, is_catching_up = _filter_catchup_events(pending, state, is_catching_up=True)
+    assert len(deliverable) == 1
+    assert last_parsed["event_id"] == "evt-2"
+    assert is_catching_up is False
+
+
+def test_filter_catchup_events_passes_all_when_not_catching_up() -> None:
+    state = _DeliveryState()
+    pending = [
+        json.dumps({"event_id": "evt-1", "timestamp": "2026-01-01T00:00:00Z"}),
+        json.dumps({"event_id": "evt-2", "timestamp": "2026-01-02T00:00:00Z"}),
+    ]
+    deliverable, last_parsed, is_catching_up = _filter_catchup_events(pending, state, is_catching_up=False)
+    assert len(deliverable) == 2
+    assert is_catching_up is False
+
+
+def test_filter_catchup_events_skips_malformed_lines() -> None:
+    state = _DeliveryState()
+    pending = [
+        "not json at all",
+        json.dumps({"event_id": "evt-1", "timestamp": "2026-01-01T00:00:00Z"}),
+    ]
+    deliverable, last_parsed, is_catching_up = _filter_catchup_events(pending, state, is_catching_up=False)
+    assert len(deliverable) == 1
+    assert last_parsed["event_id"] == "evt-1"
+
+
+# -- _compute_rate_warning tests --
+
+
+def test_compute_rate_warning_returns_none_below_threshold() -> None:
+    tracker = _SendRateTracker()
+    assert _compute_rate_warning(tracker, threshold=10) is None
+
+
+def test_compute_rate_warning_returns_warning_above_threshold() -> None:
+    tracker = _SendRateTracker()
+    for _ in range(12):
+        tracker.record_send()
+    warning = _compute_rate_warning(tracker, threshold=10)
+    assert warning is not None
+    assert "High event rate" in warning
+    assert "12" in warning
+
+
 # -- _format_time_since_last tests --
 
 
-def test_format_time_seconds() -> None:
-    assert _format_time_since_last(30.0) == "30s"
-
-
-def test_format_time_minutes() -> None:
-    assert _format_time_since_last(120.0) == "2.0m"
-
-
-def test_format_time_hours() -> None:
-    assert _format_time_since_last(7200.0) == "2.0h"
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (30.0, "30s"),
+        (120.0, "2.0m"),
+        (7200.0, "2.0h"),
+    ],
+)
+def test_format_time_since_last(seconds: float, expected: str) -> None:
+    assert _format_time_since_last(seconds) == expected
 
 
 # -- _format_delivery_message tests --
@@ -298,7 +342,7 @@ def test_format_delivery_message_with_rate_warning() -> None:
 # -- _send_message tests --
 
 
-def test_send_message_returns_true_on_success(mock_subprocess_success: _SubprocessCapture) -> None:
+def test_send_message_returns_true_on_success(mock_subprocess_success: EventWatcherSubprocessCapture) -> None:
     assert _send_message("my-agent", "hello") is True
     assert len(mock_subprocess_success.calls) == 1
     cmd = mock_subprocess_success.calls[0][0]
@@ -307,7 +351,7 @@ def test_send_message_returns_true_on_success(mock_subprocess_success: _Subproce
     assert "my-agent" in cmd
 
 
-def test_send_message_returns_false_on_failure(mock_subprocess_failure: _SubprocessCapture) -> None:
+def test_send_message_returns_false_on_failure(mock_subprocess_failure: EventWatcherSubprocessCapture) -> None:
     assert _send_message("my-agent", "hello") is False
 
 

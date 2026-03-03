@@ -23,6 +23,7 @@ Environment:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 import sys
@@ -46,6 +47,9 @@ except ImportError:
 
 
 # -- Constants --
+# NOTE: These defaults must be kept in sync with the Field defaults in
+# data_types.py WatcherSettings. They are duplicated here because this
+# script runs standalone on the host and cannot import from data_types.py.
 
 _DEFAULT_CEL_FILTER: Final[str] = (
     '!source.startsWith("logs/") || (source.startsWith("logs/") && (level == "ERROR" || level == "WARNING"))'
@@ -68,20 +72,14 @@ _DELIVERY_POLL_INTERVAL_SECONDS: Final[float] = 0.5
 # -- Settings --
 
 
+@dataclasses.dataclass(frozen=True)
 class _EventWatcherSettings:
     """Parsed event watcher settings from settings.toml."""
 
-    def __init__(
-        self,
-        cel_filter: str = _DEFAULT_CEL_FILTER,
-        burst_size: int = _DEFAULT_BURST_SIZE,
-        max_messages_per_minute: int = _DEFAULT_MAX_MESSAGES_PER_MINUTE,
-        high_rate_warning_threshold: int = _DEFAULT_HIGH_RATE_WARNING_THRESHOLD,
-    ) -> None:
-        self.cel_filter = cel_filter
-        self.burst_size = burst_size
-        self.max_messages_per_minute = max_messages_per_minute
-        self.high_rate_warning_threshold = high_rate_warning_threshold
+    cel_filter: str = _DEFAULT_CEL_FILTER
+    burst_size: int = _DEFAULT_BURST_SIZE
+    max_messages_per_minute: int = _DEFAULT_MAX_MESSAGES_PER_MINUTE
+    high_rate_warning_threshold: int = _DEFAULT_HIGH_RATE_WARNING_THRESHOLD
 
 
 def _load_watcher_settings(agent_work_dir: Path) -> _EventWatcherSettings:
@@ -102,18 +100,13 @@ def _load_watcher_settings(agent_work_dir: Path) -> _EventWatcherSettings:
 # -- Delivery state --
 
 
+@dataclasses.dataclass
 class _DeliveryState:
     """Tracks which events have been delivered for at-least-once semantics."""
 
-    def __init__(
-        self,
-        last_event_id: str = "",
-        last_timestamp: str = "",
-        last_delivery_monotonic: float = 0.0,
-    ) -> None:
-        self.last_event_id = last_event_id
-        self.last_timestamp = last_timestamp
-        self.last_delivery_monotonic = last_delivery_monotonic
+    last_event_id: str = ""
+    last_timestamp: str = ""
+    last_delivery_monotonic: float = 0.0
 
 
 def _load_delivery_state(state_file: Path) -> _DeliveryState:
@@ -209,7 +202,9 @@ class _SendRateTracker:
 def _should_skip_for_catchup(line_json: dict[str, Any], delivery_state: _DeliveryState) -> bool:
     """Return True if this event was already delivered in a prior run and should be skipped.
 
-    Compares by event_id (exact match) and timestamp (skip if <= last delivered).
+    Uses < for timestamp comparison (not <=) to ensure at-least-once semantics:
+    events sharing the same timestamp as the last delivered event may be
+    re-delivered on restart, which is acceptable for at-least-once delivery.
     """
     if not delivery_state.last_event_id and not delivery_state.last_timestamp:
         return False
@@ -219,7 +214,7 @@ def _should_skip_for_catchup(line_json: dict[str, Any], delivery_state: _Deliver
         return True
 
     timestamp = line_json.get("timestamp", "")
-    if timestamp and delivery_state.last_timestamp and timestamp <= delivery_state.last_timestamp:
+    if timestamp and delivery_state.last_timestamp and timestamp < delivery_state.last_timestamp:
         return True
 
     return False
@@ -343,8 +338,82 @@ def _drain_stderr(
             stripped = line.strip()
             if stripped:
                 logger.warning("mng events stderr: {}", stripped)
-    except Exception:
-        pass
+    except Exception as exc:
+        if not stop_event.is_set():
+            logger.debug("Stderr reader error: {}", exc)
+
+
+# -- Delivery loop helpers --
+
+
+def _filter_catchup_events(
+    pending: list[str],
+    delivery_state: _DeliveryState,
+    is_catching_up: bool,
+) -> tuple[list[str], dict[str, Any], bool]:
+    """Parse JSONL lines and filter out already-delivered events during catch-up.
+
+    Returns (deliverable_lines, last_parsed_event, is_still_catching_up).
+    """
+    deliverable_lines: list[str] = []
+    last_parsed: dict[str, Any] = {}
+
+    for line in pending:
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("Skipping malformed JSONL line: {}", line[:200])
+            continue
+
+        if is_catching_up and _should_skip_for_catchup(parsed, delivery_state):
+            continue
+
+        # Once we see a non-skipped event, catch-up is done
+        is_catching_up = False
+        deliverable_lines.append(line)
+        last_parsed = parsed
+
+    return deliverable_lines, last_parsed, is_catching_up
+
+
+def _compute_rate_warning(
+    rate_tracker: _SendRateTracker,
+    threshold: int,
+) -> str | None:
+    """Return a rate warning string if the send rate exceeds the threshold."""
+    current_rate = rate_tracker.messages_per_minute()
+    if current_rate >= threshold:
+        return f"High event rate: {current_rate:.0f} messages/min (threshold: {threshold}/min)"
+    return None
+
+
+def _deliver_batch(
+    deliverable_lines: list[str],
+    last_parsed: dict[str, Any],
+    agent_name: str,
+    delivery_state: _DeliveryState,
+    state_file: Path,
+    rate_tracker: _SendRateTracker,
+    event_buffer: list[str],
+    buffer_lock: threading.Lock,
+    time_since_last: float | None,
+    rate_warning: str | None,
+) -> None:
+    """Format, send, and persist a batch of events. On failure, put events back in buffer."""
+    message = _format_delivery_message(deliverable_lines, time_since_last, rate_warning)
+    logger.info("Sending {} event(s) to '{}'", len(deliverable_lines), agent_name)
+
+    if _send_message(agent_name, message):
+        rate_tracker.record_send()
+        delivery_state.last_event_id = last_parsed.get("event_id", "")
+        delivery_state.last_timestamp = last_parsed.get("timestamp", "")
+        delivery_state.last_delivery_monotonic = time.monotonic()
+        _save_delivery_state(state_file, delivery_state)
+        logger.info("Delivered {} event(s), state updated", len(deliverable_lines))
+    else:
+        logger.warning("Failed to deliver {} event(s), will retry", len(deliverable_lines))
+        with buffer_lock:
+            event_buffer[0:0] = deliverable_lines
 
 
 # -- Delivery loop --
@@ -394,63 +463,39 @@ def _run_delivery_loop(
             continue
 
         # Parse and filter for catch-up
-        deliverable_lines: list[str] = []
-        last_parsed: dict[str, Any] = {}
-        for line in pending:
-            try:
-                parsed = json.loads(line)
-            except json.JSONDecodeError:
-                logger.warning("Skipping malformed JSONL line: {}", line[:200])
-                continue
-
-            if is_catching_up and _should_skip_for_catchup(parsed, delivery_state):
-                continue
-
-            # Once we see a non-skipped event, catch-up is done
-            is_catching_up = False
-            deliverable_lines.append(line)
-            last_parsed = parsed
+        deliverable_lines, last_parsed, is_catching_up = _filter_catchup_events(
+            pending, delivery_state, is_catching_up
+        )
 
         if not deliverable_lines:
             continue
 
         # Consume a rate-limit token
         if not token_bucket.consume():
-            # No token available (shouldn't happen since we waited above, but be safe)
             with buffer_lock:
                 event_buffer[0:0] = deliverable_lines
             continue
 
-        # Compute time since last message
+        # Compute delivery metadata
         time_since_last: float | None = None
         if delivery_state.last_delivery_monotonic > 0:
             time_since_last = time.monotonic() - delivery_state.last_delivery_monotonic
 
-        # Check if rate warning is needed
-        rate_warning: str | None = None
-        current_rate = rate_tracker.messages_per_minute()
-        if current_rate >= settings.high_rate_warning_threshold:
-            rate_warning = (
-                f"High event rate: {current_rate:.0f} messages/min "
-                f"(threshold: {settings.high_rate_warning_threshold}/min)"
-            )
+        rate_warning = _compute_rate_warning(rate_tracker, settings.high_rate_warning_threshold)
 
-        # Format and send
-        message = _format_delivery_message(deliverable_lines, time_since_last, rate_warning)
-        logger.info("Sending {} event(s) to '{}'", len(deliverable_lines), agent_name)
-
-        if _send_message(agent_name, message):
-            rate_tracker.record_send()
-            delivery_state.last_event_id = last_parsed.get("event_id", "")
-            delivery_state.last_timestamp = last_parsed.get("timestamp", "")
-            delivery_state.last_delivery_monotonic = time.monotonic()
-            _save_delivery_state(state_file, delivery_state)
-            logger.info("Delivered {} event(s), state updated", len(deliverable_lines))
-        else:
-            # Put events back for retry
-            logger.warning("Failed to deliver {} event(s), will retry", len(deliverable_lines))
-            with buffer_lock:
-                event_buffer[0:0] = deliverable_lines
+        # Send the batch
+        _deliver_batch(
+            deliverable_lines=deliverable_lines,
+            last_parsed=last_parsed,
+            agent_name=agent_name,
+            delivery_state=delivery_state,
+            state_file=state_file,
+            rate_tracker=rate_tracker,
+            event_buffer=event_buffer,
+            buffer_lock=buffer_lock,
+            time_since_last=time_since_last,
+            rate_warning=rate_warning,
+        )
 
 
 # -- Main --
