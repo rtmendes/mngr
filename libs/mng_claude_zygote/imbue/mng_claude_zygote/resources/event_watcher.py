@@ -29,6 +29,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from typing import Final
@@ -143,13 +144,21 @@ class _TokenBucket:
     """Token bucket rate limiter.
 
     Starts with burst_size tokens. Tokens refill at rate_per_second.
+    Accepts an optional time_source for deterministic testing.
     """
 
-    def __init__(self, burst_size: int, rate_per_second: float) -> None:
+    def __init__(
+        self,
+        burst_size: int,
+        rate_per_second: float,
+        # Callable returning monotonic seconds, injectable for testing
+        time_source: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._burst_size = burst_size
         self._rate_per_second = rate_per_second
         self._tokens = float(burst_size)
-        self._last_refill_time = time.monotonic()
+        self._time_source = time_source
+        self._last_refill_time = time_source()
 
     def consume(self) -> bool:
         """Try to consume one token. Returns True if a token was available."""
@@ -170,7 +179,7 @@ class _TokenBucket:
         return deficit / self._rate_per_second
 
     def _refill(self) -> None:
-        now = time.monotonic()
+        now = self._time_source()
         elapsed = now - self._last_refill_time
         self._last_refill_time = now
         self._tokens = min(float(self._burst_size), self._tokens + elapsed * self._rate_per_second)
@@ -527,6 +536,7 @@ def main() -> None:
     stop_event = threading.Event()
     event_buffer: list[str] = []
     buffer_lock = threading.Lock()
+    active_proc: subprocess.Popen[str] | None = None
 
     # Start the long-lived delivery thread
     delivery_thread = threading.Thread(
@@ -538,12 +548,12 @@ def main() -> None:
 
     try:
         while not stop_event.is_set():
-            proc = _start_events_subprocess(agent_name, settings.cel_filter)
+            active_proc = _start_events_subprocess(agent_name, settings.cel_filter)
 
             # Reader thread feeds subprocess stdout into the shared buffer
             reader_thread = threading.Thread(
                 target=_read_events_from_subprocess,
-                args=(proc, event_buffer, buffer_lock, stop_event),
+                args=(active_proc, event_buffer, buffer_lock, stop_event),
                 daemon=True,
             )
             reader_thread.start()
@@ -551,14 +561,15 @@ def main() -> None:
             # Stderr drain thread
             stderr_thread = threading.Thread(
                 target=_drain_stderr,
-                args=(proc, stop_event),
+                args=(active_proc, stop_event),
                 daemon=True,
             )
             stderr_thread.start()
 
             # Wait for subprocess to exit
-            proc.wait()
-            logger.warning("mng events subprocess exited with code {}", proc.returncode)
+            active_proc.wait()
+            logger.warning("mng events subprocess exited with code {}", active_proc.returncode)
+            active_proc = None
 
             if stop_event.is_set():
                 break
@@ -570,6 +581,12 @@ def main() -> None:
         logger.info("Event watcher stopping (KeyboardInterrupt)")
     finally:
         stop_event.set()
+        if active_proc is not None and active_proc.poll() is None:
+            active_proc.terminate()
+            try:
+                active_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                active_proc.kill()
 
 
 if __name__ == "__main__":

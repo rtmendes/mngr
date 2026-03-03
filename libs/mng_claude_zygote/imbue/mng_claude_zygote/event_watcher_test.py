@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import threading
 import time
 import types
 from pathlib import Path
@@ -22,6 +23,7 @@ from imbue.mng_claude_zygote.resources.event_watcher import _EventWatcherSetting
 from imbue.mng_claude_zygote.resources.event_watcher import _SendRateTracker
 from imbue.mng_claude_zygote.resources.event_watcher import _TokenBucket
 from imbue.mng_claude_zygote.resources.event_watcher import _compute_rate_warning
+from imbue.mng_claude_zygote.resources.event_watcher import _deliver_batch
 from imbue.mng_claude_zygote.resources.event_watcher import _filter_catchup_events
 from imbue.mng_claude_zygote.resources.event_watcher import _format_delivery_message
 from imbue.mng_claude_zygote.resources.event_watcher import _format_time_since_last
@@ -30,6 +32,22 @@ from imbue.mng_claude_zygote.resources.event_watcher import _load_watcher_settin
 from imbue.mng_claude_zygote.resources.event_watcher import _save_delivery_state
 from imbue.mng_claude_zygote.resources.event_watcher import _send_message
 from imbue.mng_claude_zygote.resources.event_watcher import _should_skip_for_catchup
+
+# -- Controllable clock for deterministic TokenBucket tests --
+
+
+class _FakeClock:
+    """Controllable time source for deterministic testing of _TokenBucket."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self._now = start
+
+    def __call__(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
 
 # -- Default sync verification --
 
@@ -125,11 +143,12 @@ def test_save_delivery_state_creates_parent_directories(tmp_path: Path) -> None:
     assert state_file.exists()
 
 
-# -- _TokenBucket tests --
+# -- _TokenBucket tests (using injected clock for determinism) --
 
 
 def test_token_bucket_allows_burst() -> None:
-    bucket = _TokenBucket(burst_size=3, rate_per_second=0.0)
+    clock = _FakeClock()
+    bucket = _TokenBucket(burst_size=3, rate_per_second=0.0, time_source=clock)
     assert bucket.consume() is True
     assert bucket.consume() is True
     assert bucket.consume() is True
@@ -137,32 +156,39 @@ def test_token_bucket_allows_burst() -> None:
 
 
 def test_token_bucket_refills_over_time() -> None:
-    # Use a very high rate so refill is immediate after any delay
-    bucket = _TokenBucket(burst_size=1, rate_per_second=100.0)
+    clock = _FakeClock()
+    bucket = _TokenBucket(burst_size=1, rate_per_second=10.0, time_source=clock)
     assert bucket.consume() is True
     assert bucket.consume() is False
-    # After a tiny sleep, should have refilled
-    time.sleep(0.02)
+
+    # Advance clock enough to refill one token (0.1s at 10/s = 1 token)
+    clock.advance(0.1)
     assert bucket.consume() is True
 
 
 def test_token_bucket_time_until_token_when_empty() -> None:
-    bucket = _TokenBucket(burst_size=1, rate_per_second=10.0)
+    clock = _FakeClock()
+    bucket = _TokenBucket(burst_size=1, rate_per_second=10.0, time_source=clock)
     bucket.consume()
     wait = bucket.time_until_token()
     assert wait > 0
-    assert wait <= 0.15
+    assert wait <= 0.11
 
 
 def test_token_bucket_time_until_token_when_available() -> None:
-    bucket = _TokenBucket(burst_size=3, rate_per_second=1.0)
+    clock = _FakeClock()
+    bucket = _TokenBucket(burst_size=3, rate_per_second=1.0, time_source=clock)
     assert bucket.time_until_token() == 0.0
 
 
 def test_token_bucket_does_not_exceed_burst_size() -> None:
-    bucket = _TokenBucket(burst_size=2, rate_per_second=1000.0)
-    time.sleep(0.01)
-    # Even after time passes, should not exceed burst_size
+    clock = _FakeClock()
+    bucket = _TokenBucket(burst_size=2, rate_per_second=1000.0, time_source=clock)
+
+    # Advance clock significantly
+    clock.advance(10.0)
+
+    # Even after lots of time, should not exceed burst_size
     assert bucket.consume() is True
     assert bucket.consume() is True
     assert bucket.consume() is False
@@ -371,3 +397,86 @@ def test_send_message_returns_false_on_os_error(monkeypatch: pytest.MonkeyPatch)
     mock_sp = types.SimpleNamespace(run=os_error_run, TimeoutExpired=subprocess.TimeoutExpired)
     monkeypatch.setattr(event_watcher_module, "subprocess", mock_sp)
     assert _send_message("my-agent", "hello") is False
+
+
+# -- _deliver_batch tests --
+
+
+def test_deliver_batch_updates_state_on_success(
+    tmp_path: Path,
+    mock_subprocess_success: EventWatcherSubprocessCapture,
+) -> None:
+    state_file = tmp_path / "state.json"
+    delivery_state = _DeliveryState(last_delivery_monotonic=time.monotonic() - 10.0)
+    rate_tracker = _SendRateTracker()
+    event_buffer: list[str] = []
+    buffer_lock = threading.Lock()
+
+    event_line = json.dumps({"event_id": "evt-42", "timestamp": "2026-03-01T12:00:00Z"})
+    last_parsed = json.loads(event_line)
+
+    _deliver_batch(
+        deliverable_lines=[event_line],
+        last_parsed=last_parsed,
+        agent_name="test-agent",
+        delivery_state=delivery_state,
+        state_file=state_file,
+        rate_tracker=rate_tracker,
+        event_buffer=event_buffer,
+        buffer_lock=buffer_lock,
+        time_since_last=10.0,
+        rate_warning=None,
+    )
+
+    # Verify state was updated
+    assert delivery_state.last_event_id == "evt-42"
+    assert delivery_state.last_timestamp == "2026-03-01T12:00:00Z"
+    assert delivery_state.last_delivery_monotonic > 0
+
+    # Verify state was persisted
+    loaded = _load_delivery_state(state_file)
+    assert loaded.last_event_id == "evt-42"
+
+    # Verify rate tracker recorded the send
+    assert rate_tracker.messages_per_minute() == 1.0
+
+    # Verify mng message was called
+    assert len(mock_subprocess_success.calls) == 1
+
+
+def test_deliver_batch_puts_events_back_on_failure(
+    tmp_path: Path,
+    mock_subprocess_failure: EventWatcherSubprocessCapture,
+) -> None:
+    state_file = tmp_path / "state.json"
+    delivery_state = _DeliveryState()
+    rate_tracker = _SendRateTracker()
+    event_buffer: list[str] = []
+    buffer_lock = threading.Lock()
+
+    event_lines = ['{"event_id": "evt-1"}', '{"event_id": "evt-2"}']
+
+    _deliver_batch(
+        deliverable_lines=event_lines,
+        last_parsed={"event_id": "evt-2"},
+        agent_name="test-agent",
+        delivery_state=delivery_state,
+        state_file=state_file,
+        rate_tracker=rate_tracker,
+        event_buffer=event_buffer,
+        buffer_lock=buffer_lock,
+        time_since_last=None,
+        rate_warning=None,
+    )
+
+    # Verify events were put back in buffer (at the front)
+    assert event_buffer == event_lines
+
+    # Verify state was NOT updated
+    assert delivery_state.last_event_id == ""
+
+    # Verify rate tracker did NOT record a send
+    assert rate_tracker.messages_per_minute() == 0.0
+
+    # Verify state file was NOT created
+    assert not state_file.exists()
