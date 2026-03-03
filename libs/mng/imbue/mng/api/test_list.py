@@ -14,7 +14,7 @@ from imbue.mng.api.list import ErrorInfo
 from imbue.mng.api.list import HostErrorInfo
 from imbue.mng.api.list import ListResult
 from imbue.mng.api.list import ProviderErrorInfo
-from imbue.mng.api.list import _agent_to_cel_context
+from imbue.mng.api.list import _agent_details_to_cel_context
 from imbue.mng.api.list import _apply_cel_filters
 from imbue.mng.api.list import list_agents
 from imbue.mng.config.data_types import MngContext
@@ -110,8 +110,8 @@ def test_list_result_defaults_to_empty_lists() -> None:
     assert result.errors == []
 
 
-def test_agent_to_cel_context_basic_fields() -> None:
-    """Test that _agent_to_cel_context converts basic AgentDetails fields."""
+def test_agent_details_to_cel_context_basic_fields() -> None:
+    """Test that _agent_details_to_cel_context converts basic AgentDetails fields."""
     host_info = HostDetails(
         id=HostId.generate(),
         name="test-host",
@@ -129,7 +129,7 @@ def test_agent_to_cel_context_basic_fields() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     assert context["resource_type"] == "agent"
     assert context["type"] == "claude"
@@ -139,8 +139,8 @@ def test_agent_to_cel_context_basic_fields() -> None:
     assert "age" in context
 
 
-def test_agent_to_cel_context_with_runtime() -> None:
-    """Test that _agent_to_cel_context includes runtime when available."""
+def test_agent_details_to_cel_context_with_runtime() -> None:
+    """Test that _agent_details_to_cel_context includes runtime when available."""
     host_info = HostDetails(
         id=HostId.generate(),
         name="test-host",
@@ -159,13 +159,13 @@ def test_agent_to_cel_context_with_runtime() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     assert context["runtime"] == 123.45
 
 
-def test_agent_to_cel_context_with_activity_time() -> None:
-    """Test that _agent_to_cel_context computes idle from activity times."""
+def test_agent_details_to_cel_context_with_activity_time() -> None:
+    """Test that _agent_details_to_cel_context computes idle from activity times."""
     host_info = HostDetails(
         id=HostId.generate(),
         name="test-host",
@@ -185,15 +185,15 @@ def test_agent_to_cel_context_with_activity_time() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     # Idle should be computed and be very small (just computed)
     assert "idle" in context
     assert context["idle"] >= 0
 
 
-def test_agent_to_cel_context_with_state() -> None:
-    """Test that _agent_to_cel_context flattens state enum to lowercase string."""
+def test_agent_details_to_cel_context_with_state() -> None:
+    """Test that _agent_details_to_cel_context flattens state enum to lowercase string."""
     host_info = HostDetails(
         id=HostId.generate(),
         name="test-host",
@@ -211,7 +211,7 @@ def test_agent_to_cel_context_with_state() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     assert context["state"] == AgentLifecycleState.STOPPED.value
 
@@ -505,8 +505,8 @@ def test_list_agents_with_error_behavior_continue(
 # =============================================================================
 
 
-def test_agent_to_cel_context_with_host_state() -> None:
-    """Test that _agent_to_cel_context includes host.state field."""
+def test_agent_details_to_cel_context_with_host_state() -> None:
+    """Test that _agent_details_to_cel_context includes host.state field."""
     host_info = HostDetails(
         id=HostId.generate(),
         name="test-host",
@@ -525,13 +525,13 @@ def test_agent_to_cel_context_with_host_state() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     assert context["host"]["state"] == HostState.RUNNING.value
 
 
-def test_agent_to_cel_context_with_host_resources() -> None:
-    """Test that _agent_to_cel_context includes host.resource fields."""
+def test_agent_details_to_cel_context_with_host_resources() -> None:
+    """Test that _agent_details_to_cel_context includes host.resource fields."""
     resources = HostResources(cpu=CpuResources(count=4), memory_gb=16.0, disk_gb=100.0)
     host_info = HostDetails(
         id=HostId.generate(),
@@ -551,14 +551,14 @@ def test_agent_to_cel_context_with_host_resources() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     assert context["host"]["resource"]["memory_gb"] == 16.0
     assert context["host"]["resource"]["disk_gb"] == 100.0
 
 
-def test_agent_to_cel_context_with_host_ssh() -> None:
-    """Test that _agent_to_cel_context includes host.ssh fields."""
+def test_agent_details_to_cel_context_with_host_ssh() -> None:
+    """Test that _agent_details_to_cel_context includes host.ssh fields."""
     ssh_info = SSHInfo(
         user="root",
         host="example.com",
@@ -584,7 +584,7 @@ def test_agent_to_cel_context_with_host_ssh() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     assert context["host"]["ssh"]["user"] == "root"
     assert context["host"]["ssh"]["host"] == "example.com"
@@ -652,8 +652,8 @@ def test_apply_cel_filters_with_host_resource_filter() -> None:
     assert result is True
 
 
-def test_agent_to_cel_context_with_host_lock_fields() -> None:
-    """Test that _agent_to_cel_context includes host.is_locked and host.locked_time fields."""
+def test_agent_details_to_cel_context_with_host_lock_fields() -> None:
+    """Test that _agent_details_to_cel_context includes host.is_locked and host.locked_time fields."""
     lock_time = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
     host_info = HostDetails(
         id=HostId.generate(),
@@ -674,14 +674,14 @@ def test_agent_to_cel_context_with_host_lock_fields() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     assert context["host"]["is_locked"] is True
     assert context["host"]["locked_time"] is not None
 
 
-def test_agent_to_cel_context_with_host_not_locked() -> None:
-    """Test that _agent_to_cel_context includes is_locked=False when no lock file exists."""
+def test_agent_details_to_cel_context_with_host_not_locked() -> None:
+    """Test that _agent_details_to_cel_context includes is_locked=False when no lock file exists."""
     host_info = HostDetails(
         id=HostId.generate(),
         name="test-host",
@@ -701,7 +701,7 @@ def test_agent_to_cel_context_with_host_not_locked() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     assert context["host"]["is_locked"] is False
     assert context["host"]["locked_time"] is None
@@ -805,8 +805,8 @@ def test_apply_cel_filters_with_host_tags_filter() -> None:
 # =============================================================================
 
 
-def test_agent_to_cel_context_with_idle_mode() -> None:
-    """Test that _agent_to_cel_context includes idle_mode field."""
+def test_agent_details_to_cel_context_with_idle_mode() -> None:
+    """Test that _agent_details_to_cel_context includes idle_mode field."""
     host_info = HostDetails(
         id=HostId.generate(),
         name="test-host",
@@ -825,13 +825,13 @@ def test_agent_to_cel_context_with_idle_mode() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     assert context["idle_mode"] == IdleMode.AGENT.value
 
 
-def test_agent_to_cel_context_with_idle_seconds() -> None:
-    """Test that _agent_to_cel_context includes idle_seconds field."""
+def test_agent_details_to_cel_context_with_idle_seconds() -> None:
+    """Test that _agent_details_to_cel_context includes idle_seconds field."""
     host_info = HostDetails(
         id=HostId.generate(),
         name="test-host",
@@ -850,7 +850,7 @@ def test_agent_to_cel_context_with_idle_seconds() -> None:
         host=host_info,
     )
 
-    context = _agent_to_cel_context(agent_info)
+    context = _agent_details_to_cel_context(agent_info)
 
     assert context["idle_seconds"] == 300.5
 

@@ -15,7 +15,7 @@ from imbue.mng.api.list import ErrorInfo
 from imbue.mng.api.list import HostErrorInfo
 from imbue.mng.api.list import ListResult
 from imbue.mng.api.list import ProviderErrorInfo
-from imbue.mng.api.list import _agent_to_cel_context
+from imbue.mng.api.list import _agent_details_to_cel_context
 from imbue.mng.api.list import _apply_cel_filters
 from imbue.mng.api.list import _warn_on_duplicate_host_names
 from imbue.mng.api.list import list_agents
@@ -267,15 +267,15 @@ def test_list_result_allows_appending() -> None:
 
 
 # =============================================================================
-# _agent_to_cel_context Tests
+# _agent_details_to_cel_context Tests
 # =============================================================================
 
 
-def test_agent_to_cel_context_basic_fields() -> None:
-    """_agent_to_cel_context should convert AgentDetails to a dict with basic fields."""
+def test_agent_details_to_cel_context_basic_fields() -> None:
+    """_agent_details_to_cel_context should convert AgentDetails to a dict with basic fields."""
     host_info = _make_host_info()
     agent = _make_agent_info("my-agent", host_info)
-    context = _agent_to_cel_context(agent)
+    context = _agent_details_to_cel_context(agent)
 
     assert context["name"] == "my-agent"
     assert context["type"] == "claude"
@@ -283,8 +283,8 @@ def test_agent_to_cel_context_basic_fields() -> None:
     assert context["command"] == "sleep 100"
 
 
-def test_agent_to_cel_context_computes_age() -> None:
-    """_agent_to_cel_context should compute 'age' from create_time."""
+def test_agent_details_to_cel_context_computes_age() -> None:
+    """_agent_details_to_cel_context should compute 'age' from create_time."""
     host_info = _make_host_info()
     create_time = datetime.now(timezone.utc) - timedelta(hours=2)
     agent = AgentDetails(
@@ -298,7 +298,7 @@ def test_agent_to_cel_context_computes_age() -> None:
         state=AgentLifecycleState.RUNNING,
         host=host_info,
     )
-    context = _agent_to_cel_context(agent)
+    context = _agent_details_to_cel_context(agent)
 
     assert "age" in context
     # Age should be approximately 7200 seconds (2 hours), with some tolerance
@@ -306,8 +306,8 @@ def test_agent_to_cel_context_computes_age() -> None:
     assert context["age"] < 7400
 
 
-def test_agent_to_cel_context_computes_runtime() -> None:
-    """_agent_to_cel_context should set 'runtime' from runtime_seconds."""
+def test_agent_details_to_cel_context_computes_runtime() -> None:
+    """_agent_details_to_cel_context should set 'runtime' from runtime_seconds."""
     host_info = _make_host_info()
     agent = AgentDetails(
         id=AgentId.generate(),
@@ -321,13 +321,13 @@ def test_agent_to_cel_context_computes_runtime() -> None:
         runtime_seconds=3600.0,
         host=host_info,
     )
-    context = _agent_to_cel_context(agent)
+    context = _agent_details_to_cel_context(agent)
 
     assert context["runtime"] == 3600.0
 
 
-def test_agent_to_cel_context_computes_idle() -> None:
-    """_agent_to_cel_context should compute 'idle' from activity times."""
+def test_agent_details_to_cel_context_computes_idle() -> None:
+    """_agent_details_to_cel_context should compute 'idle' from activity times."""
     host_info = _make_host_info()
     activity_time = datetime.now(timezone.utc) - timedelta(minutes=5)
     agent = AgentDetails(
@@ -342,7 +342,7 @@ def test_agent_to_cel_context_computes_idle() -> None:
         user_activity_time=activity_time,
         host=host_info,
     )
-    context = _agent_to_cel_context(agent)
+    context = _agent_details_to_cel_context(agent)
 
     assert "idle" in context
     # Idle should be approximately 300 seconds (5 minutes)
@@ -350,15 +350,15 @@ def test_agent_to_cel_context_computes_idle() -> None:
     assert context["idle"] < 320
 
 
-def test_agent_to_cel_context_normalizes_host_provider() -> None:
-    """_agent_to_cel_context should rename host.provider_name to host.provider."""
+def test_agent_details_to_cel_context_normalizes_host_provider() -> None:
+    """_agent_details_to_cel_context should rename host.provider_name to host.provider."""
     host_info = HostDetails(
         id=HostId.generate(),
         name="test-host",
         provider_name=ProviderInstanceName("modal"),
     )
     agent = _make_agent_info("test-agent", host_info)
-    context = _agent_to_cel_context(agent)
+    context = _agent_details_to_cel_context(agent)
 
     assert "host" in context
     host = context["host"]
