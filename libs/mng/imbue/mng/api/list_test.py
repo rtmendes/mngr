@@ -99,7 +99,7 @@ def _capture_loguru_warnings() -> Iterator[StringIO]:
         logger.remove(sink_id)
 
 
-def testwarn_on_duplicate_host_names_no_warning_for_unique_names() -> None:
+def test_warn_on_duplicate_host_names_no_warning_for_unique_names() -> None:
     """warn_on_duplicate_host_names should not warn when all host names are unique."""
     ref_alpha = _make_host_ref("host-alpha")
     ref_beta = _make_host_ref("host-beta")
@@ -116,7 +116,7 @@ def testwarn_on_duplicate_host_names_no_warning_for_unique_names() -> None:
     assert "Duplicate host name" not in log_output.getvalue()
 
 
-def testwarn_on_duplicate_host_names_warns_on_duplicate_within_same_provider() -> None:
+def test_warn_on_duplicate_host_names_warns_on_duplicate_within_same_provider() -> None:
     """warn_on_duplicate_host_names should warn when the same name appears twice on the same provider."""
     ref_dup_1 = _make_host_ref("duplicated-name", "modal")
     ref_dup_2 = _make_host_ref("duplicated-name", "modal")
@@ -136,7 +136,7 @@ def testwarn_on_duplicate_host_names_warns_on_duplicate_within_same_provider() -
     assert "modal" in output
 
 
-def testwarn_on_duplicate_host_names_no_warning_for_same_name_on_different_providers() -> None:
+def test_warn_on_duplicate_host_names_no_warning_for_same_name_on_different_providers() -> None:
     """warn_on_duplicate_host_names should not warn when the same name exists on different providers."""
     ref_modal = _make_host_ref("shared-name", "modal")
     ref_docker = _make_host_ref("shared-name", "docker")
@@ -151,7 +151,7 @@ def testwarn_on_duplicate_host_names_no_warning_for_same_name_on_different_provi
     assert "Duplicate host name" not in log_output.getvalue()
 
 
-def testwarn_on_duplicate_host_names_empty_input() -> None:
+def test_warn_on_duplicate_host_names_empty_input() -> None:
     """warn_on_duplicate_host_names should not warn with an empty input."""
     with _capture_loguru_warnings() as log_output:
         warn_on_duplicate_host_names({})
@@ -159,7 +159,7 @@ def testwarn_on_duplicate_host_names_empty_input() -> None:
     assert "Duplicate host name" not in log_output.getvalue()
 
 
-def testwarn_on_duplicate_host_names_no_warning_when_destroyed_host_shares_name() -> None:
+def test_warn_on_duplicate_host_names_no_warning_when_destroyed_host_shares_name() -> None:
     """warn_on_duplicate_host_names should not warn when a destroyed host (no agents) shares a name with an active host."""
     ref_destroyed = _make_host_ref("reused-name", "modal")
     ref_active = _make_host_ref("reused-name", "modal")
