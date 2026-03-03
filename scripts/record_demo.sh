@@ -32,15 +32,15 @@
 
 set -euo pipefail
 
+if [ "${1:-}" = "--help" ]; then
+    head -31 "$0" | tail -30
+    exit 0
+fi
+
 if [ $# -lt 2 ]; then
     echo "Usage: $0 <demo_script> <output_name> [options]"
     echo "Run '$0 --help' for more information."
     exit 1
-fi
-
-if [ "$1" = "--help" ]; then
-    head -35 "$0" | tail -33
-    exit 0
 fi
 
 DEMO_SCRIPT="$1"
@@ -116,14 +116,14 @@ python3 -c "
 import json
 import sys
 
-with open('$CAST_FILE') as f:
+with open(sys.argv[1]) as f:
     # Skip header
     next(f)
     for line in f:
         event = json.loads(line)
         if event[1] == 'o':
             sys.stdout.write(event[2])
-" > "$TXT_FILE"
+" "$CAST_FILE" > "$TXT_FILE"
 
 echo "Text dump: $TXT_FILE"
 

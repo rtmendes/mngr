@@ -164,11 +164,13 @@ The script produces three files in `.demos/` (or the directory specified by `--o
 | `--cols N` | 100 | Terminal width |
 | `--rows N` | 30 | Terminal height |
 | `--theme THEME` | monokai | GIF color theme |
+| `--font-size N` | 16 | Font size in pixels for GIF |
 | `--speed N` | 1 | Playback speed multiplier |
 | `--idle-limit N` | 2 | Max idle time between events (seconds) |
 | `--last-frame N` | 3 | How long the final frame displays (seconds) |
 | `--out-dir DIR` | .demos | Output directory |
 | `--no-gif` | | Skip GIF conversion (faster for iteration) |
+| `--no-loop` | | Disable GIF looping |
 
 ## Step 4: Verify
 
@@ -226,39 +228,36 @@ Common problems and fixes:
 
 ## Step 6: Upload to PR (Optional)
 
-If the demos should be attached to a GitHub PR:
+If the demos should be attached to a GitHub PR, you need to make the GIF accessible via URL. Note that the default output directory `.demos/` is gitignored, so **do not try to commit files from there**.
+
+**Option A: Output GIFs to a committed directory**
+
+Use `--out-dir` to write GIFs to a directory that is not gitignored (e.g., `docs/demos/`), commit them, and reference via raw GitHub URL:
 
 ```bash
-# Upload the GIF to GitHub and get a URL
-# (GitHub accepts image uploads via the API or by dragging into a comment)
+# Record directly to a committed directory
+./scripts/record_demo.sh .demos/scripts/demo1.sh feature-demo --out-dir docs/demos
 
-# Option 1: Add a comment to the PR with the GIF embedded
-gh pr comment <PR_NUMBER> --body "$(cat <<'EOF'
+# Commit the GIF (not the .cast or .txt files)
+git add docs/demos/feature-demo.gif
+git commit -m "Add demo GIF for feature"
+
+# Reference in PR comment using raw GitHub URL
+REPO="owner/repo"
+BRANCH="$(git branch --show-current)"
+GIF_URL="https://raw.githubusercontent.com/$REPO/$BRANCH/docs/demos/feature-demo.gif"
+
+gh pr comment <PR_NUMBER> --body "$(cat <<EOF
 ## Demo
 
-![Demo recording](<GIF_URL>)
-
-<details>
-<summary>Additional demos</summary>
-
-![Demo 2](<GIF_URL_2>)
-
-</details>
+![Demo recording]($GIF_URL)
 EOF
 )"
 ```
 
-To upload images to GitHub, you can use the GitHub API:
+**Option B: Upload via GitHub's attachment API**
 
-```bash
-# Upload a GIF to a GitHub issue/PR comment
-# GitHub renders images from URLs, so you need to host the GIF somewhere accessible.
-# Options:
-# 1. Commit the GIF to the repo (in .demos/) and reference it via raw URL
-# 2. Upload to GitHub via the releases API or issue comment attachment API
-```
-
-The simplest approach is to commit the GIFs to `.demos/` in the repo and reference them in PR comments using the raw GitHub URL.
+GitHub allows uploading images by posting them as assets. This avoids committing binary files to the repo. Use `gh` to create a release asset or attach to an issue/PR comment via the API.
 
 ## Tips
 
@@ -266,7 +265,7 @@ The simplest approach is to commit the GIFs to `.demos/` in the repo and referen
 - **Keep demos focused.** One concept per demo. If you need to show multiple things, make multiple short demos rather than one long one.
 - **Use `--speed 1.5` or `--speed 2`** if the demo has natural pauses that would make it feel slow.
 - **For data verification demos**, use colorized output when possible (e.g., `jq` with colors, `grep --color`). This makes the GIF more readable.
-- **Clean up**: Add `.demos/` to `.gitignore` if you do not want to commit the recordings. If you do commit them, only commit the `.gif` files (not `.cast` or `.txt`).
+- **Output directory**: The default `.demos/` directory is gitignored. To commit GIFs, use `--out-dir` to write to a non-gitignored path (e.g., `docs/demos/`). Only commit `.gif` files, not `.cast` or `.txt`.
 
 ## Alternative: Generating .cast Files Programmatically
 
