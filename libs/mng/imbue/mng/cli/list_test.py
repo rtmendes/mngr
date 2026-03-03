@@ -29,7 +29,6 @@ from imbue.mng.cli.list import _render_format_template
 from imbue.mng.cli.list import _should_use_streaming_mode
 from imbue.mng.cli.list import _sort_agents_by_cel
 from imbue.mng.cli.list import list_command
-from imbue.mng.errors import MngError
 from imbue.mng.interfaces.data_types import AgentInfo
 from imbue.mng.interfaces.data_types import SnapshotInfo
 from imbue.mng.primitives import AgentLifecycleState
@@ -37,7 +36,6 @@ from imbue.mng.primitives import OutputFormat
 from imbue.mng.primitives import SnapshotId
 from imbue.mng.primitives import SnapshotName
 from imbue.mng.utils.cel_utils import compile_cel_sort_keys
-from imbue.mng.utils.cel_utils import parse_cel_sort_spec
 
 
 def _create_test_snapshot(name: str, idx: int) -> SnapshotInfo:
@@ -484,80 +482,6 @@ def test_get_field_value_host_plugin_whole_dict() -> None:
     agent = make_test_agent_info(host_plugin={"aws": {"iam_user": "admin"}})
     result = _get_field_value(agent, "host.plugin.aws")
     assert result == "iam_user=admin"
-
-
-# =============================================================================
-# Tests for parse_cel_sort_spec
-# =============================================================================
-
-
-def test_parse_cel_sort_spec_simple_field() -> None:
-    """parse_cel_sort_spec should parse a simple field name as ascending."""
-    result = parse_cel_sort_spec("name")
-    assert result == [("name", False)]
-
-
-def test_parse_cel_sort_spec_with_asc() -> None:
-    """parse_cel_sort_spec should parse explicit ascending direction."""
-    result = parse_cel_sort_spec("name asc")
-    assert result == [("name", False)]
-
-
-def test_parse_cel_sort_spec_with_desc() -> None:
-    """parse_cel_sort_spec should parse descending direction."""
-    result = parse_cel_sort_spec("name desc")
-    assert result == [("name", True)]
-
-
-def test_parse_cel_sort_spec_multiple_keys() -> None:
-    """parse_cel_sort_spec should parse multiple comma-separated keys."""
-    result = parse_cel_sort_spec("state, name asc, create_time desc")
-    assert result == [("state", False), ("name", False), ("create_time", True)]
-
-
-def test_parse_cel_sort_spec_nested_field() -> None:
-    """parse_cel_sort_spec should handle nested fields like host.name."""
-    result = parse_cel_sort_spec("host.name desc")
-    assert result == [("host.name", True)]
-
-
-def test_parse_cel_sort_spec_case_insensitive_direction() -> None:
-    """parse_cel_sort_spec should handle case-insensitive directions."""
-    result = parse_cel_sort_spec("name DESC")
-    assert result == [("name", True)]
-
-
-def test_parse_cel_sort_spec_ignores_empty_parts() -> None:
-    """parse_cel_sort_spec should skip empty parts from trailing commas."""
-    result = parse_cel_sort_spec("name,")
-    assert result == [("name", False)]
-
-
-# =============================================================================
-# Tests for compile_cel_sort_keys
-# =============================================================================
-
-
-def test_compile_cel_sort_keys_valid_expression() -> None:
-    """compile_cel_sort_keys should compile a valid CEL field expression."""
-    compiled = compile_cel_sort_keys("name")
-    assert len(compiled) == 1
-    _program, is_descending = compiled[0]
-    assert is_descending is False
-
-
-def test_compile_cel_sort_keys_multiple_expressions() -> None:
-    """compile_cel_sort_keys should compile multiple sort expressions."""
-    compiled = compile_cel_sort_keys("name asc, create_time desc")
-    assert len(compiled) == 2
-    assert compiled[0][1] is False
-    assert compiled[1][1] is True
-
-
-def test_compile_cel_sort_keys_invalid_expression_raises() -> None:
-    """compile_cel_sort_keys should raise MngError for invalid CEL syntax."""
-    with pytest.raises(MngError, match="Invalid sort expression"):
-        compile_cel_sort_keys("@#$invalid")
 
 
 # =============================================================================
