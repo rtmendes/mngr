@@ -193,7 +193,7 @@ def temp_git_repo(tmp_path: Path, setup_git_config: None) -> Path:
 def disable_modal_for_subprocesses(
     project_config_dir: Path, monkeypatch: pytest.MonkeyPatch, temp_git_repo: Path
 ) -> Path:
-    """Disable the Modal provider for subprocesses spawned during a test.
+    """Disable the Modal and Docker providers for subprocesses spawned during a test.
 
     Writes a settings.local.toml inside a temporary git repo's config directory
     and chdir's into that repo. Spawned subprocesses inherit the CWD, so the
@@ -201,10 +201,10 @@ def disable_modal_for_subprocesses(
 
     Use this when a test spawns a child process that runs ``mng`` commands
     and would otherwise fail because Modal credentials are not available in
-    the test environment.
+    the test environment, or would create Docker state containers that leak.
     """
     settings_path = project_config_dir / "settings.local.toml"
-    settings_path.write_text("[providers.modal]\nis_enabled = false\n")
+    settings_path.write_text("[providers.modal]\nis_enabled = false\n\n[providers.docker]\nis_enabled = false\n")
     monkeypatch.chdir(temp_git_repo)
     return settings_path
 
