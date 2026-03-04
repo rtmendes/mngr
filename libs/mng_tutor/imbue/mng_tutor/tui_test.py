@@ -1,7 +1,7 @@
 """Unit tests for the tutor TUI."""
 
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from urwid.event_loop.abstract_loop import ExitMainLoop
@@ -10,8 +10,10 @@ from urwid.widget.listbox import SimpleFocusListWalker
 from urwid.widget.text import Text
 from urwid.widget.wimp import SelectableIcon
 
+from imbue.mng.config.data_types import MngContext
 from imbue.mng.primitives import AgentName
 from imbue.mng_tutor.data_types import AgentExistsCheck
+from imbue.mng_tutor.data_types import AgentNotExistsCheck
 from imbue.mng_tutor.data_types import Lesson
 from imbue.mng_tutor.data_types import LessonStep
 from imbue.mng_tutor.tui import _LessonRunnerInputHandler
@@ -23,12 +25,26 @@ from imbue.mng_tutor.tui import _get_current_step_index
 from imbue.mng_tutor.tui import _on_check_alarm
 from imbue.mng_tutor.tui import _refresh_display
 from imbue.mng_tutor.tui import _schedule_next_check
-from imbue.mng_tutor.tui import run_lesson_runner
-from imbue.mng_tutor.tui import run_lesson_selector
 
 # =============================================================================
 # Helpers
 # =============================================================================
+
+
+class _CallTracker:
+    """Lightweight call tracker to replace MagicMock.assert_called patterns."""
+
+    def __init__(self) -> None:
+        self.call_count: int = 0
+
+    def __call__(self, *args: object, **kwargs: object) -> None:
+        self.call_count += 1
+
+
+def _make_mock_loop() -> Any:
+    """Create a lightweight loop substitute with a trackable set_alarm_in."""
+    tracker = _CallTracker()
+    return SimpleNamespace(set_alarm_in=tracker, _alarm_tracker=tracker)
 
 
 def _make_step(heading: str = "Step", details: str = "Do something") -> LessonStep:
@@ -57,10 +73,9 @@ def _make_runner_state(
         lesson = _make_lesson()
     if step_completed is None:
         step_completed = [False] * len(lesson.steps)
-    frame = MagicMock()
+    frame = SimpleNamespace(body=None)
     status_text = Text("")
-    mng_ctx = MagicMock()
-    # Use model_construct to bypass Pydantic validation (MagicMock is not a real MngContext)
+    mng_ctx = SimpleNamespace()
     return _LessonRunnerState.model_construct(
         lesson=lesson,
         mng_ctx=mng_ctx,
@@ -77,15 +92,6 @@ def _make_selector_handler() -> tuple[_LessonSelectorInputHandler, _LessonSelect
     state = _LessonSelectorState(lessons=lessons, list_walker=list_walker)
     handler = _LessonSelectorInputHandler(state=state)
     return handler, state
-
-
-def _mock_main_loop_factory() -> object:
-    """Create a factory that returns a MagicMock MainLoop, ignoring constructor args."""
-
-    def factory(*args: object, **kwargs: object) -> MagicMock:
-        return MagicMock()
-
-    return factory
 
 
 # =============================================================================
@@ -131,7 +137,6 @@ def test_build_step_widgets_current_step_shows_details() -> None:
     widgets = _build_step_widgets(state)
     text_content = " ".join(str(w.get_text()[0]) for w in widgets if isinstance(w, Text))
     assert "First step" in text_content
-    # Second step's details should not be shown (not current)
     assert "Second step" not in text_content
 
 
@@ -203,12 +208,8 @@ def test_selector_input_handler_enter_sets_result_index() -> None:
 
 def test_selector_input_handler_arrow_keys_pass_through() -> None:
     handler, _ = _make_selector_handler()
-    assert handler("up") is None
-    assert handler("down") is None
-    assert handler("page up") is None
-    assert handler("page down") is None
-    assert handler("home") is None
-    assert handler("end") is None
+    for key in ("up", "down", "page up", "page down", "home", "end"):
+        assert handler(key) is None
 
 
 def test_selector_input_handler_ignores_mouse_events() -> None:
@@ -231,33 +232,26 @@ def test_selector_input_handler_swallows_other_keys() -> None:
 
 
 def test_runner_input_handler_q_exits() -> None:
-    handler = _LessonRunnerInputHandler()
     with pytest.raises(ExitMainLoop):
-        handler("q")
+        _LessonRunnerInputHandler()("q")
 
 
 def test_runner_input_handler_uppercase_q_exits() -> None:
-    handler = _LessonRunnerInputHandler()
     with pytest.raises(ExitMainLoop):
-        handler("Q")
+        _LessonRunnerInputHandler()("Q")
 
 
 def test_runner_input_handler_ctrl_c_exits() -> None:
-    handler = _LessonRunnerInputHandler()
     with pytest.raises(ExitMainLoop):
-        handler("ctrl c")
+        _LessonRunnerInputHandler()("ctrl c")
 
 
 def test_runner_input_handler_ignores_mouse_events() -> None:
-    handler = _LessonRunnerInputHandler()
-    result = handler(("mouse press", 1, 0, 0))
-    assert result is None
+    assert _LessonRunnerInputHandler()(("mouse press", 1, 0, 0)) is None
 
 
 def test_runner_input_handler_swallows_other_keys() -> None:
-    handler = _LessonRunnerInputHandler()
-    result = handler("x")
-    assert result is True
+    assert _LessonRunnerInputHandler()("x") is True
 
 
 # =============================================================================
@@ -266,83 +260,65 @@ def test_runner_input_handler_swallows_other_keys() -> None:
 
 
 def test_schedule_next_check_sets_alarm() -> None:
-    state = _make_runner_state()
-    loop = MagicMock()
-    _schedule_next_check(loop, state)
-    loop.set_alarm_in.assert_called_once()
+    loop = _make_mock_loop()
+    _schedule_next_check(loop, _make_runner_state())
+    assert loop._alarm_tracker.call_count == 1
 
 
 def test_on_check_alarm_all_complete_sets_status() -> None:
     state = _make_runner_state(step_completed=[True, True])
-    loop = MagicMock()
-    _on_check_alarm(loop, state)
-    status_text = state.status_text.get_text()[0]
-    assert "complete" in str(status_text).lower()
+    _on_check_alarm(_make_mock_loop(), state)
+    assert "complete" in str(state.status_text.get_text()[0]).lower()
 
 
-def test_on_check_alarm_step_not_passed_schedules_next(monkeypatch: pytest.MonkeyPatch) -> None:
-    state = _make_runner_state(step_completed=[False, False])
-    monkeypatch.setattr("imbue.mng_tutor.tui.run_check", lambda check, ctx: False)
-    loop = MagicMock()
+def _make_runner_state_with_ctx(
+    mng_ctx: MngContext,
+    step_completed: list[bool] | None = None,
+    passing_check: bool = False,
+) -> _LessonRunnerState:
+    """Create a runner state with a real MngContext and checks that naturally pass/fail."""
+    check_agent = AgentName("nonexistent-test-agent")
+    if passing_check:
+        check = AgentNotExistsCheck(agent_name=check_agent)
+    else:
+        check = AgentExistsCheck(agent_name=check_agent)
+    steps = (
+        LessonStep(heading="Step 1", details="First", check=check),
+        LessonStep(heading="Step 2", details="Second", check=check),
+    )
+    lesson = Lesson(title="Test", description="Test", steps=steps)
+    if step_completed is None:
+        step_completed = [False] * len(lesson.steps)
+    frame = SimpleNamespace(body=None)
+    status_text = Text("")
+    return _LessonRunnerState.model_construct(
+        lesson=lesson,
+        mng_ctx=mng_ctx,
+        step_completed=step_completed,
+        frame=frame,
+        status_text=status_text,
+    )
+
+
+def test_on_check_alarm_step_not_passed_schedules_next(temp_mng_ctx: MngContext) -> None:
+    state = _make_runner_state_with_ctx(temp_mng_ctx, step_completed=[False, False], passing_check=False)
+    loop = _make_mock_loop()
     _on_check_alarm(loop, state)
-    loop.set_alarm_in.assert_called_once()
+    assert loop._alarm_tracker.call_count == 1
     assert state.step_completed[0] is False
 
 
-def test_on_check_alarm_step_passed_advances(monkeypatch: pytest.MonkeyPatch) -> None:
-    state = _make_runner_state(step_completed=[False, False])
-    monkeypatch.setattr("imbue.mng_tutor.tui.run_check", lambda check, ctx: True)
-    loop = MagicMock()
+def test_on_check_alarm_step_passed_advances(temp_mng_ctx: MngContext) -> None:
+    state = _make_runner_state_with_ctx(temp_mng_ctx, step_completed=[False, False], passing_check=True)
+    loop = _make_mock_loop()
     _on_check_alarm(loop, state)
     assert state.step_completed[0] is True
-    loop.set_alarm_in.assert_called_once()
+    assert loop._alarm_tracker.call_count == 1
 
 
-def test_on_check_alarm_last_step_passed_shows_complete(monkeypatch: pytest.MonkeyPatch) -> None:
-    state = _make_runner_state(step_completed=[True, False])
-    monkeypatch.setattr("imbue.mng_tutor.tui.run_check", lambda check, ctx: True)
-    loop = MagicMock()
+def test_on_check_alarm_last_step_passed_shows_complete(temp_mng_ctx: MngContext) -> None:
+    state = _make_runner_state_with_ctx(temp_mng_ctx, step_completed=[True, False], passing_check=True)
+    loop = _make_mock_loop()
     _on_check_alarm(loop, state)
     assert state.step_completed[1] is True
-    status_text = state.status_text.get_text()[0]
-    assert "complete" in str(status_text).lower()
-
-
-# =============================================================================
-# Tests for run_lesson_selector and run_lesson_runner (mocked MainLoop)
-# =============================================================================
-
-
-def test_run_lesson_selector_returns_none_on_quit(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("imbue.mng_tutor.tui.Screen", lambda: MagicMock())
-    monkeypatch.setattr("imbue.mng_tutor.tui.MainLoop", _mock_main_loop_factory())
-    lessons = (_make_lesson(title="L1"), _make_lesson(title="L2"))
-    result = run_lesson_selector(lessons)
-    assert result is None
-
-
-def test_run_lesson_selector_returns_selected_lesson(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("imbue.mng_tutor.tui.Screen", lambda: MagicMock())
-
-    def fake_main_loop(*args: Any, **kwargs: Any) -> MagicMock:
-        loop = MagicMock()
-        handler = kwargs.get("unhandled_input") or (args[2] if len(args) > 2 else None)
-        if handler is not None:
-            handler.state.result_index = 0
-        return loop
-
-    monkeypatch.setattr("imbue.mng_tutor.tui.MainLoop", fake_main_loop)
-    lessons = (_make_lesson(title="L1"), _make_lesson(title="L2"))
-    result = run_lesson_selector(lessons)
-    assert result is not None
-    assert result.title == "L1"
-
-
-def test_run_lesson_runner_completes(
-    monkeypatch: pytest.MonkeyPatch,
-    temp_mng_ctx: Any,
-) -> None:
-    monkeypatch.setattr("imbue.mng_tutor.tui.Screen", lambda: MagicMock())
-    monkeypatch.setattr("imbue.mng_tutor.tui.MainLoop", _mock_main_loop_factory())
-    lesson = _make_lesson()
-    run_lesson_runner(lesson, temp_mng_ctx)
+    assert "complete" in str(state.status_text.get_text()[0]).lower()

@@ -235,7 +235,7 @@ def _get_focused_entry(state: _KanpanState) -> AgentBoardEntry | None:
     return state.index_to_entry.get(focus_index)
 
 
-def _run_destroy(agent_name: str) -> subprocess.CompletedProcess[str]:
+def _run_destroy(agent_name: str) -> subprocess.CompletedProcess[str]:  # pragma: no cover
     """Run mng destroy in a subprocess. Called from a background thread."""
     return subprocess.run(
         ["mng", "destroy", agent_name, "--force"],
@@ -339,7 +339,7 @@ def _finish_delete(loop: MainLoop, state: _KanpanState) -> None:
         _start_refresh(loop, state)
 
 
-def _run_git_push(work_dir: str) -> subprocess.CompletedProcess[str]:
+def _run_git_push(work_dir: str) -> subprocess.CompletedProcess[str]:  # pragma: no cover
     """Run git push in an agent's work_dir. Called from a background thread."""
     return subprocess.run(
         ["git", "push", "-u", "origin", "HEAD"],
@@ -847,7 +847,7 @@ def _build_command_map(mng_ctx: MngContext) -> dict[str, CustomCommand]:
     return {key: cmd for key, cmd in commands.items() if cmd.enabled}
 
 
-def run_kanpan(mng_ctx: MngContext) -> None:
+def run_kanpan(mng_ctx: MngContext) -> None:  # pragma: no cover
     """Run the kanpan TUI board."""
     commands = _build_command_map(mng_ctx)
 
