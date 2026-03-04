@@ -221,8 +221,8 @@ def safe_emit_agent_discovered(
             provider_name=provider_name,
         )
         emit_agent_discovered(config, discovered)
-    except Exception:
-        logger.trace("Failed to emit agent discovery event")
+    except Exception as e:
+        logger.trace("Failed to emit agent discovery event: {}", e)
 
 
 def emit_host_discovered(config: MngConfig, host: DiscoveredHost) -> None:
@@ -277,6 +277,32 @@ def parse_discovery_event_line(
             return FullDiscoverySnapshotEvent.model_validate(data)
         case _:
             return None
+
+
+def find_latest_full_snapshot_offset(events_path: Path) -> int:
+    """Reverse-scan the events file to find the byte offset of the latest DISCOVERY_FULL event.
+
+    Returns 0 if no full snapshot event is found (meaning the entire file should be read).
+    """
+    if not events_path.exists():
+        return 0
+
+    # Read all lines and find the last DISCOVERY_FULL line offset
+    last_full_offset = 0
+    current_offset = 0
+    with open(events_path) as f:
+        for line in f:
+            stripped = line.strip()
+            if stripped:
+                try:
+                    data = json.loads(stripped)
+                    if data.get("type") == DiscoveryEventType.DISCOVERY_FULL:
+                        last_full_offset = current_offset
+                except json.JSONDecodeError:
+                    pass
+            current_offset += len(line)
+
+    return last_full_offset
 
 
 def extract_agents_and_hosts_from_full_listing(

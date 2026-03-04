@@ -21,7 +21,10 @@ from tabulate import tabulate
 
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.pure import pure
+from imbue.mng.api.discovery_events import extract_agents_and_hosts_from_full_listing
+from imbue.mng.api.discovery_events import find_latest_full_snapshot_offset
 from imbue.mng.api.discovery_events import get_discovery_events_path
+from imbue.mng.api.discovery_events import write_full_discovery_snapshot
 from imbue.mng.api.list import ErrorInfo
 from imbue.mng.api.list import list_agents as api_list_agents
 from imbue.mng.cli.common_opts import CommonCliOptions
@@ -1239,6 +1242,9 @@ def _stream_tail_events_file(
         try:
             if events_path.exists():
                 file_size = events_path.stat().st_size
+                # Handle file truncation (reset to start)
+                if file_size < current_offset:
+                    current_offset = 0
                 if file_size > current_offset:
                     with open(events_path) as f:
                         f.seek(current_offset)
@@ -1248,9 +1254,23 @@ def _stream_tail_events_file(
                         if stop_event.is_set():
                             break
                         _stream_emit_line(line, emitted_event_ids, emit_lock)
-        except OSError:
-            logger.trace("OSError while tailing discovery events file")
+        except OSError as e:
+            logger.trace("OSError while tailing discovery events file: {}", e)
         stop_event.wait(timeout=1.0)
+
+
+def _write_unfiltered_full_snapshot(mng_ctx: MngContext, error_behavior: ErrorBehavior) -> None:
+    """Run an unfiltered list and write a full discovery snapshot event.
+
+    Full snapshots must be unfiltered so they can be used for state reconstruction.
+    """
+    result = api_list_agents(
+        mng_ctx=mng_ctx,
+        is_streaming=False,
+        error_behavior=error_behavior,
+    )
+    discovered_agents, discovered_hosts = extract_agents_and_hosts_from_full_listing(result.agents)
+    write_full_discovery_snapshot(mng_ctx.config, discovered_agents, discovered_hosts)
 
 
 def _list_stream(
@@ -1262,27 +1282,25 @@ def _list_stream(
 ) -> None:
     """Stream discovery events to stdout as JSONL.
 
-    1. Run list_agents() to get the current state, write a full snapshot, and emit it
+    1. Run an unfiltered list_agents(), write a full snapshot, emit from the latest snapshot
     2. Tail the events file for new events written by other mng processes
-    3. Periodically re-poll list_agents() and write new full snapshots
+    3. Periodically re-poll (unfiltered) and write new full snapshots
     """
     events_path = get_discovery_events_path(mng_ctx.config)
     emitted_event_ids: set[str] = set()
     emit_lock = Lock()
 
-    # Phase 1: initial list, write full snapshot, emit it
-    api_list_agents(
-        mng_ctx=mng_ctx,
-        is_streaming=False,
-        include_filters=include_filters,
-        exclude_filters=exclude_filters,
-        provider_names=provider_names,
-        error_behavior=error_behavior,
-    )
-    # list_agents writes a full snapshot to the events file.
-    # Read existing events from the file and emit them all
+    # Phase 1: write an unfiltered full snapshot, then emit from the latest snapshot
+    try:
+        _write_unfiltered_full_snapshot(mng_ctx, error_behavior)
+    except Exception as e:
+        logger.trace("Failed to write initial full snapshot: {}", e)
+
+    # Reverse-scan to find the latest full snapshot, read from there
     if events_path.exists():
+        snapshot_offset = find_latest_full_snapshot_offset(events_path)
         with open(events_path) as f:
+            f.seek(snapshot_offset)
             for line in f:
                 _stream_emit_line(line, emitted_event_ids, emit_lock)
 
@@ -1298,25 +1316,17 @@ def _list_stream(
     )
     tail.start()
 
-    # Phase 3: periodically re-poll and write full snapshots
+    # Phase 3: periodically re-poll (unfiltered) and write full snapshots
     try:
         while not stop_event.is_set():
             stop_event.wait(timeout=_STREAM_POLL_INTERVAL_SECONDS)
             if stop_event.is_set():
                 break
             try:
-                api_list_agents(
-                    mng_ctx=mng_ctx,
-                    is_streaming=False,
-                    include_filters=include_filters,
-                    exclude_filters=exclude_filters,
-                    provider_names=provider_names,
-                    error_behavior=error_behavior,
-                )
-                # list_agents writes a full snapshot event to the file.
-                # The tail thread will pick it up and emit it.
-            except Exception:
-                logger.trace("Stream poll failed")
+                _write_unfiltered_full_snapshot(mng_ctx, error_behavior)
+                # The tail thread will pick up the new snapshot and emit it
+            except Exception as e:
+                logger.trace("Stream poll failed: {}", e)
     except KeyboardInterrupt:
         pass
     finally:
