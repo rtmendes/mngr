@@ -307,6 +307,10 @@ class SnapshotName(str):
         )
 
 
+class CertifiedDataError(Exception):
+    """Raised when certified_data contains an unexpected type for a field."""
+
+
 class DiscoveredHost(FrozenModel):
     """Lightweight host data collected during discovery (without connecting to the host)."""
 
@@ -379,10 +383,12 @@ class DiscoveredAgent(FrozenModel):
     def created_branch_name(self) -> str | None:
         """Return the git branch name that was created for this agent, or None if not set."""
         match self.certified_data.get("created_branch_name"):
+            case str(value):
+                return value
             case None:
                 return None
-            case value:
-                return str(value)
+            case unexpected:
+                raise CertifiedDataError(f"Expected str or None for created_branch_name, got {type(unexpected)}")
 
     @property
     def labels(self) -> dict[str, str]:
