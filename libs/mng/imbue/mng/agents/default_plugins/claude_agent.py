@@ -503,8 +503,7 @@ class ClaudeAgent(BaseAgent):
         """Return the per-agent Claude config directory path.
 
         This directory replaces ~/.claude/ for this agent when CLAUDE_CONFIG_DIR
-        is set. It lives under the agent's state dir following the existing
-        plugin/<name>/ convention.
+        is set. Located at $MNG_AGENT_STATE_DIR/plugin/claude/anthropic/.
         """
         return self._get_agent_dir() / "plugin" / "claude" / "anthropic"
 
