@@ -2,6 +2,7 @@ import json
 import sys
 import threading
 from io import StringIO
+from pathlib import Path
 from threading import Lock
 
 import pluggy
@@ -12,6 +13,8 @@ from imbue.mng.api.discovery_events import DiscoveryEventType
 from imbue.mng.api.discovery_events import emit_agent_discovered
 from imbue.mng.api.discovery_events import get_discovery_events_path
 from imbue.mng.api.discovery_events import make_agent_discovery_event
+from imbue.mng.cli.list import _poll_events_file_for_changes
+from imbue.mng.cli.list import _run_event_driven_watch
 from imbue.mng.cli.list import _stream_emit_line
 from imbue.mng.cli.list import _stream_tail_events_file
 from imbue.mng.cli.list import list_command
@@ -131,3 +134,109 @@ def test_stream_with_include_raises_usage_error(cli_runner: CliRunner, plugin_ma
 def test_stream_with_watch_raises_usage_error(cli_runner: CliRunner, plugin_manager: pluggy.PluginManager) -> None:
     result = cli_runner.invoke(list_command, ["--stream", "--watch", "5"], obj=plugin_manager)
     assert result.exit_code != 0
+
+
+# === Watch mode (event-driven) tests ===
+
+
+def test_poll_events_file_detects_size_change(tmp_path: Path) -> None:
+    """_poll_events_file_for_changes should set the changed flag when the file grows."""
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text('{"type":"test"}\n')
+    initial_size = events_path.stat().st_size
+
+    changed_flag = threading.Event()
+    stop_event = threading.Event()
+
+    # Start polling in a background thread
+    poller = threading.Thread(
+        target=_poll_events_file_for_changes,
+        args=(events_path, initial_size, changed_flag, stop_event, 100),
+        daemon=True,
+    )
+    poller.start()
+
+    # Append new content to trigger the change
+    with open(events_path, "a") as f:
+        f.write('{"type":"new"}\n')
+
+    poll_until(lambda: changed_flag.is_set(), timeout=5.0)
+    stop_event.set()
+    poller.join(timeout=2.0)
+
+    assert changed_flag.is_set()
+
+
+def test_poll_events_file_respects_stop_event(tmp_path: Path) -> None:
+    """_poll_events_file_for_changes should return when stop_event is set."""
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text('{"type":"test"}\n')
+    initial_size = events_path.stat().st_size
+
+    changed_flag = threading.Event()
+    stop_event = threading.Event()
+
+    poller = threading.Thread(
+        target=_poll_events_file_for_changes,
+        args=(events_path, initial_size, changed_flag, stop_event, 1000),
+        daemon=True,
+    )
+    poller.start()
+
+    # Stop the poller without changing the file
+    stop_event.set()
+    poller.join(timeout=5.0)
+
+    assert not changed_flag.is_set()
+    assert not poller.is_alive()
+
+
+@pytest.mark.timeout(10)
+def test_run_event_driven_watch_calls_on_refresh_when_file_changes(tmp_path: Path) -> None:
+    """_run_event_driven_watch should call on_refresh when the events file changes."""
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text('{"type":"initial"}\n')
+
+    stop_event = threading.Event()
+    refresh_called = threading.Event()
+
+    def on_refresh() -> None:
+        refresh_called.set()
+        stop_event.set()
+
+    # Run the watch in a background thread with a short max interval
+    watch_thread = threading.Thread(
+        target=_run_event_driven_watch,
+        args=(events_path, 2, stop_event, on_refresh),
+        daemon=True,
+    )
+    watch_thread.start()
+
+    # Small delay to let the watch start polling
+    threading.Event().wait(timeout=0.2)
+
+    # Append new content to trigger a refresh
+    with open(events_path, "a") as f:
+        f.write('{"type":"change"}\n')
+
+    watch_thread.join(timeout=8.0)
+    assert refresh_called.is_set()
+
+
+def test_run_event_driven_watch_respects_stop_event(tmp_path: Path) -> None:
+    """_run_event_driven_watch should exit when stop_event is set."""
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text('{"type":"initial"}\n')
+
+    stop_event = threading.Event()
+    refresh_count = [0]
+
+    def on_refresh() -> None:
+        refresh_count[0] += 1
+
+    # Set stop immediately
+    stop_event.set()
+
+    _run_event_driven_watch(events_path, 60, stop_event, on_refresh)
+
+    assert refresh_count[0] == 0

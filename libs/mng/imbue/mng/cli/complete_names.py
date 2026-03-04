@@ -28,7 +28,7 @@ def _get_discovery_events_path() -> Path:
     """
     env_host_dir = os.environ.get("MNG_HOST_DIR")
     if env_host_dir:
-        base_dir = Path(env_host_dir)
+        base_dir = Path(env_host_dir).expanduser()
     else:
         root_name = os.environ.get("MNG_ROOT_NAME", "mng")
         base_dir = Path(f"~/.{root_name}").expanduser()
