@@ -2457,7 +2457,7 @@ log "=== Shutdown script completed ==="
         """Construct HostDetails from cached host record and SSH-collected data."""
         # SSH info from host connector (local data, no SSH needed)
         ssh_info: SSHInfo | None = None
-        ssh_connection = host._get_ssh_connection_info()
+        ssh_connection = host.get_ssh_connection_info()
         if ssh_connection is not None:
             user, hostname, port, key_path = ssh_connection
             ssh_info = SSHInfo(

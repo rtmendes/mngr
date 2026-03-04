@@ -135,14 +135,14 @@ def test_extract_agents_and_hosts_returns_empty_ssh_for_local() -> None:
 class _FakeHostWithSSH:
     """Minimal stub for testing _build_ssh_info_from_host with SSH info."""
 
-    def _get_ssh_connection_info(self) -> tuple[str, str, int, Path]:
+    def get_ssh_connection_info(self) -> tuple[str, str, int, Path]:
         return ("root", "remote.example.com", 2222, Path("/tmp/key"))
 
 
 class _FakeLocalHost:
     """Minimal stub for testing _build_ssh_info_from_host without SSH info."""
 
-    def _get_ssh_connection_info(self) -> None:
+    def get_ssh_connection_info(self) -> None:
         return None
 
 

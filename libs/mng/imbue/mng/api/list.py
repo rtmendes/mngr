@@ -35,7 +35,6 @@ from imbue.mng.hosts.host import Host
 from imbue.mng.interfaces.agent import AgentInterface
 from imbue.mng.interfaces.data_types import AgentDetails
 from imbue.mng.interfaces.data_types import HostDetails
-from imbue.mng.primitives import SSHInfo
 from imbue.mng.interfaces.host import HostInterface
 from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.interfaces.provider_instance import ProviderInstanceInterface
@@ -49,6 +48,7 @@ from imbue.mng.primitives import ErrorBehavior
 from imbue.mng.primitives import HostId
 from imbue.mng.primitives import HostState
 from imbue.mng.primitives import ProviderInstanceName
+from imbue.mng.primitives import SSHInfo
 from imbue.mng.providers.base_provider import BaseProviderInstance
 from imbue.mng.utils.cel_utils import apply_cel_filters_to_context
 from imbue.mng.utils.cel_utils import compile_cel_filters
@@ -359,7 +359,7 @@ def _build_host_details_from_host(
     is_locked: bool | None = None
     locked_time: datetime | None = None
     if isinstance(host, Host):
-        ssh_connection = host._get_ssh_connection_info()
+        ssh_connection = host.get_ssh_connection_info()
         if ssh_connection is not None:
             user, hostname, port, key_path = ssh_connection
             ssh_info = SSHInfo(

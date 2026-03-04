@@ -137,7 +137,7 @@ def discovered_host_from_agent_details(agent_details: AgentDetails) -> Discovere
 
 def _build_ssh_info_from_host(host: OnlineHostInterface) -> SSHInfo | None:
     """Build SSHInfo from an online host's SSH connection info, or None for local hosts."""
-    ssh_connection = host._get_ssh_connection_info()
+    ssh_connection = host.get_ssh_connection_info()
     if ssh_connection is None:
         return None
     user, hostname, port, key_path = ssh_connection
