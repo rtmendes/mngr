@@ -342,6 +342,17 @@ def _list_impl(ctx: click.Context, **kwargs) -> None:
 
     # Dispatch to the appropriate output path
     if opts.stream:
+        # Stream mode emits unfiltered snapshots for state reconstruction,
+        # so filtering and sorting options are not supported
+        is_any_filter_set = bool(include_filters_tuple or exclude_filters_tuple or provider_names or limit)
+        if is_any_filter_set:
+            raise click.UsageError(
+                "--stream emits unfiltered snapshots and cannot be combined with "
+                "--include, --exclude, --running, --stopped, --local, --remote, "
+                "--provider, --project, --label, --tag, or --limit"
+            )
+        if opts.watch:
+            raise click.UsageError("--stream and --watch cannot be used together")
         _list_stream(
             mng_ctx=mng_ctx,
             error_behavior=error_behavior,
@@ -1223,8 +1234,8 @@ def _stream_emit_line(
             return
         if event_id:
             emitted_event_ids.add(event_id)
-    sys.stdout.write(stripped + "\n")
-    sys.stdout.flush()
+        sys.stdout.write(stripped + "\n")
+        sys.stdout.flush()
 
 
 def _stream_tail_events_file(

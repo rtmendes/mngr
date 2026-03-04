@@ -217,11 +217,11 @@ def safe_emit_agent_discovered(
     agent_name: AgentName,
     host: OnlineHostInterface,
 ) -> None:
-    """Build and emit an agent discovery event, logging and swallowing any errors.
+    """Build and emit an agent discovery event, swallowing I/O errors.
 
     This is the standard integration point for commands that modify agents.
     Extracts provider_name from the host automatically.
-    It never raises -- failures are logged at trace level.
+    OSError from file I/O is caught and logged at trace level.
     """
     try:
         discovered = build_discovered_agent(
