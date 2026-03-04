@@ -1732,7 +1732,7 @@ def test_get_files_for_deploy_includes_claude_json(temp_mng_ctx: MngContext, tmp
     # Local content is NOT preserved (generated defaults used for caching)
     assert "test" not in claude_json_data
     # Dialog-suppression fields are always present in the generated defaults
-    assert claude_json_data["bypassPermissionsModeAccepted"] is True
+    assert "bypassPermissionsModeAccepted" not in claude_json_data
     assert claude_json_data["effortCalloutDismissed"] is True
 
 

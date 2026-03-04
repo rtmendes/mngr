@@ -174,9 +174,10 @@ def _build_claude_json_for_agent(
     """Build .claude.json data for the per-agent config dir.
 
     Uses the local file as a base when sync_local is True and the file exists,
-    otherwise uses generated defaults. Always sets dialog-suppression fields
-    (bypassPermissionsModeAccepted and effortCalloutDismissed) to prevent
-    startup dialogs from intercepting automated input via tmux send-keys.
+    otherwise uses generated defaults. Always sets effortCalloutDismissed to
+    prevent the effort callout from intercepting automated input via tmux
+    send-keys. The bypass-permissions prompt is suppressed via
+    skipDangerousModePermissionPrompt in settings.json instead.
 
     Returns the dict so callers can do further modifications (e.g. keychain merge)
     before serializing.
@@ -186,7 +187,6 @@ def _build_claude_json_for_agent(
         data: dict[str, Any] = json.loads(local_path.read_text())
     else:
         data = _generate_claude_json(version, current_time=current_time)
-    data["bypassPermissionsModeAccepted"] = True
     data["effortCalloutDismissed"] = True
     # Add trust for work_dir so Claude doesn't show the trust dialog
     # (which would intercept tmux send-keys input):
@@ -1061,8 +1061,8 @@ class ClaudeAgent(BaseAgent):
         """
         data = _generate_claude_json(config.version)
 
-        # Always set dialog suppression
-        data["bypassPermissionsModeAccepted"] = True
+        # Always set dialog suppression (bypass-permissions prompt is handled by
+        # skipDangerousModePermissionPrompt in settings.json)
         data["effortCalloutDismissed"] = True
 
         # Add trust for work_dir
@@ -1239,7 +1239,6 @@ def _generate_claude_json(version: str | None, current_time: datetime | None = N
         "lastOnboardingVersion": version,
         "lastReleaseNotesSeen": version,
         "effortCalloutDismissed": True,
-        "bypassPermissionsModeAccepted": True,
         "officialMarketplaceAutoInstallAttempted": True,
         "officialMarketplaceAutoInstalled": True,
         "autoUpdatesProtectedForNative": True,
