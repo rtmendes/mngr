@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import getpass
 import hashlib
 import json
@@ -177,11 +178,11 @@ def _build_claude_json_for_agent(
 ) -> dict[str, Any]:
     """Build .claude.json data for the per-agent config dir.
 
-    Uses the local file as a base when sync_local is True and the file exists,
-    otherwise uses generated defaults. Always sets effortCalloutDismissed to
-    prevent the effort callout from intercepting automated input via tmux
-    send-keys. The bypass-permissions prompt is suppressed via
-    skipDangerousModePermissionPrompt in settings.json instead.
+    Used for remote hosts and deploys where all dialogs must be suppressed
+    to prevent them from intercepting automated tmux input. Uses the local
+    file as a base when sync_local is True and the file exists, otherwise
+    uses generated defaults. Forces bypassPermissionsModeAccepted and
+    effortCalloutDismissed.
 
     Returns the dict so callers can do further modifications (e.g. keychain merge)
     before serializing.
@@ -191,6 +192,7 @@ def _build_claude_json_for_agent(
         data: dict[str, Any] = json.loads(local_path.read_text())
     else:
         data = _generate_claude_json(version, current_time=current_time)
+    data["bypassPermissionsModeAccepted"] = True
     data["effortCalloutDismissed"] = True
     # Add trust for work_dir so Claude doesn't show the trust dialog
     # (which would intercept tmux send-keys input):
@@ -1059,24 +1061,24 @@ class ClaudeAgent(BaseAgent):
     ) -> dict[str, Any]:
         """Build the per-agent .claude.json for local hosts.
 
-        Generates a standalone config with trust entries, dialog dismissals,
-        and onboarding markers. Copies primaryApiKey from the global config
-        if available.
+        Starts from the user's global ~/.claude.json to preserve all existing
+        dialog states (trust, effort callout, bypass permissions, onboarding).
+        Only adds per-agent identity: worktree source project config and
+        primaryApiKey. Falls back to generated defaults if no global config exists.
+
+        Trust for work_dir is only added when trust_working_directory is True
+        or when using worktree mode (where trust is inherited from the source).
+        Otherwise Claude Code will prompt the user, matching pre-per-agent behavior.
         """
-        data = _generate_claude_json(config.version)
-
-        # Always set dialog suppression (bypass-permissions prompt is handled by
-        # skipDangerousModePermissionPrompt in settings.json)
-        data["effortCalloutDismissed"] = True
-
-        # Add trust for work_dir
-        projects = data.setdefault("projects", {})
-        projects[str(self.work_dir.resolve())] = {"hasTrustDialogAccepted": True}
-
-        # Read the global config once for both source project config and primaryApiKey
         global_config = read_claude_config(get_claude_config_path())
+        if global_config:
+            data = global_config
+        else:
+            data = _generate_claude_json(config.version)
 
-        # For worktree mode, copy source project config from the global config
+        projects = data.setdefault("projects", {})
+
+        # For worktree mode, copy source project config (trust inherited from source)
         if options.git and options.git.copy_mode == WorkDirCopyMode.WORKTREE:
             git_common_dir = find_git_common_dir(self.work_dir, self.mng_ctx.concurrency_group)
             if git_common_dir is not None:
@@ -1085,10 +1087,18 @@ class ClaudeAgent(BaseAgent):
                 source_config = find_project_config(global_projects, source_path)
                 if source_config is not None:
                     projects[str(source_path)] = source_config
+                    # Extend trust to the worktree (same as extend_claude_trust_to_worktree
+                    # did for the global config in the old code)
+                    worktree_path_str = str(self.work_dir.resolve())
+                    if worktree_path_str not in projects:
+                        worktree_config = copy.deepcopy(source_config)
+                        worktree_config["_mngCreated"] = True
+                        worktree_config["_mngSourcePath"] = str(source_path)
+                        projects[worktree_path_str] = worktree_config
 
-        # Copy primaryApiKey from global config if available
-        if global_config.get("primaryApiKey"):
-            data["primaryApiKey"] = global_config["primaryApiKey"]
+        # Only add trust for work_dir when explicitly requested
+        if config.trust_working_directory:
+            projects.setdefault(str(self.work_dir.resolve()), {})["hasTrustDialogAccepted"] = True
 
         return data
 
@@ -1243,6 +1253,7 @@ def _generate_claude_json(version: str | None, current_time: datetime | None = N
         "lastOnboardingVersion": version,
         "lastReleaseNotesSeen": version,
         "effortCalloutDismissed": True,
+        "bypassPermissionsModeAccepted": True,
         "officialMarketplaceAutoInstallAttempted": True,
         "officialMarketplaceAutoInstalled": True,
         "autoUpdatesProtectedForNative": True,

@@ -598,11 +598,11 @@ def setup_claude_trust_config_for_subprocess(
         # Skip first-run prompts that block the TUI:
         # - hasCompletedOnboarding: skips theme picker
         # - numStartups: signals this isn't a first run
+        # - bypassPermissionsModeAccepted: skips permissions mode prompt
         # - effortCalloutDismissed: skips effort callout that could intercept keystrokes
-        # Note: bypass-permissions prompt is suppressed via skipDangerousModePermissionPrompt
-        # in settings.json, not here.
         "hasCompletedOnboarding": True,
         "numStartups": 1,
+        "bypassPermissionsModeAccepted": True,
         "effortCalloutDismissed": True,
     }
 
