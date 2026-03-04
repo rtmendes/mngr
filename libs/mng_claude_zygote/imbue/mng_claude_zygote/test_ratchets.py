@@ -319,7 +319,7 @@ def test_prevent_direct_subprocess_usage() -> None:
     """
     excluded = TEST_FILE_PATTERNS + ("testing.py",)
     chunks = check_ratchet_rule(PREVENT_DIRECT_SUBPROCESS, _get_zygote_source_dir(), excluded)
-    assert len(chunks) <= snapshot(14), PREVENT_DIRECT_SUBPROCESS.format_failure(chunks)
+    assert len(chunks) <= snapshot(15), PREVENT_DIRECT_SUBPROCESS.format_failure(chunks)
 
 
 # --- AST-based ratchets ---

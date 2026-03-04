@@ -530,14 +530,14 @@ class ClaudeAgent(BaseAgent):
         EffortCalloutIndicator(),
     )
 
-    def _preflight_send_message(self, session_name: str) -> None:
+    def _preflight_send_message(self, tmux_target: str) -> None:
         """Check for blocking dialogs before sending a message.
 
         Captures the tmux pane and checks for known dialog indicators
         (permission prompts, trust dialogs, theme selection, effort callout).
         Raises DialogDetectedError if any are found.
         """
-        content = self._capture_pane_content(session_name)
+        content = self._capture_pane_content(tmux_target)
         if content is None:
             return
 

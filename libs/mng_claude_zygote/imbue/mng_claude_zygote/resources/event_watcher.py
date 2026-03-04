@@ -329,6 +329,59 @@ def _write_notification_event(events_dir: Path, message: str, level: str = "WARN
         logger.error("Failed to write notification event: {}", exc)
 
 
+_CHAT_NOTIFICATION_CONVERSATION_ID: Final[str] = "mng-system-notifications"
+_CHAT_NOTIFICATION_TIMEOUT_SECONDS: Final[float] = 30.0
+
+
+def _send_chat_notification(message: str) -> bool:
+    """Send a notification as a chat message via ``llm``.
+
+    Creates (or continues) a conversation with a fixed ID so that all
+    system notifications appear in the same thread. The message is sent
+    as the user prompt; the model response is discarded.
+
+    Returns True on success, False if ``llm`` is not available or fails.
+    This is best-effort: the caller should not depend on success.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "llm",
+                "chat",
+                "--cid",
+                _CHAT_NOTIFICATION_CONVERSATION_ID,
+                "-m",
+                "echo",
+                message,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_CHAT_NOTIFICATION_TIMEOUT_SECONDS,
+        )
+        if result.returncode == 0:
+            logger.info("Sent chat notification via llm")
+            return True
+        logger.warning("llm chat returned non-zero: {}", result.stderr)
+    except FileNotFoundError:
+        logger.warning("llm command not found, skipping chat notification")
+    except subprocess.TimeoutExpired:
+        logger.warning("Timed out sending chat notification via llm")
+    except OSError as exc:
+        logger.warning("Failed to invoke llm for chat notification: {}", exc)
+    return False
+
+
+def _notify_user(events_dir: Path, message: str, level: str = "WARNING") -> None:
+    """Notify the user about a delivery issue.
+
+    Uses two mechanisms for reliability:
+    1. Writes a structured event to events/monitor/events.jsonl (always persisted)
+    2. Sends a chat message via ``llm`` (best-effort, visible in chat interface)
+    """
+    _write_notification_event(events_dir, message, level=level)
+    _send_chat_notification(message)
+
+
 def _compute_backoff_seconds(consecutive_failures: int) -> float:
     """Compute exponential backoff duration based on the number of consecutive failures."""
     return min(_BACKOFF_BASE_SECONDS * (2 ** (consecutive_failures - 1)), _BACKOFF_MAX_SECONDS)
@@ -570,7 +623,7 @@ def _run_delivery_loop(
 
         if success:
             if has_notified_user:
-                _write_notification_event(
+                _notify_user(
                     events_dir,
                     f"Event delivery to agent '{agent_name}' has recovered "
                     f"after {consecutive_failures} consecutive failures.",
@@ -587,7 +640,7 @@ def _run_delivery_loop(
                 agent_name,
             )
             if consecutive_failures >= settings.max_delivery_retries and not has_notified_user:
-                _write_notification_event(
+                _notify_user(
                     events_dir,
                     f"Event delivery to agent '{agent_name}' has failed "
                     f"{consecutive_failures} consecutive times. "

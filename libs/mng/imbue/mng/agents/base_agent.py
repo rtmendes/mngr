@@ -317,7 +317,7 @@ class BaseAgent(AgentInterface):
         """
         return None
 
-    def _preflight_send_message(self, session_name: str) -> None:
+    def _preflight_send_message(self, tmux_target: str) -> None:
         """Run preflight checks before sending a message.
 
         Called at the start of send_message. Default is a no-op.
@@ -325,7 +325,7 @@ class BaseAgent(AgentInterface):
         and raise an appropriate error to abort the send.
         """
 
-    def _raise_send_timeout(self, session_name: str, timeout_reason: str) -> NoReturn:
+    def _raise_send_timeout(self, tmux_target: str, timeout_reason: str) -> NoReturn:
         """Raise a SendMessageError for a send timeout."""
         raise SendMessageError(str(self.name), timeout_reason)
 
@@ -353,14 +353,14 @@ class BaseAgent(AgentInterface):
         """Capture the current tmux pane content for this agent."""
         return self._capture_pane_content(self.tmux_target)
 
-    def _send_message_simple(self, session_name: str, message: str) -> None:
-        """Send a message without marker-based synchronization."""
-        send_msg_cmd = f"tmux send-keys -t '{session_name}' -l {shlex.quote(message)}"
+    def _send_message_simple(self, tmux_target: str, message: str) -> None:
+        """Send a message directly without waiting for paste confirmation."""
+        send_msg_cmd = f"tmux send-keys -t '{tmux_target}' -l {shlex.quote(message)}"
         result = self.host.execute_command(send_msg_cmd)
         if not result.success:
             raise SendMessageError(str(self.name), f"tmux send-keys failed: {result.stderr or result.stdout}")
 
-        send_enter_cmd = f"tmux send-keys -t '{session_name}' Enter"
+        send_enter_cmd = f"tmux send-keys -t '{tmux_target}' Enter"
         result = self.host.execute_command(send_enter_cmd)
         if not result.success:
             raise SendMessageError(str(self.name), f"tmux send-keys Enter failed: {result.stderr or result.stdout}")

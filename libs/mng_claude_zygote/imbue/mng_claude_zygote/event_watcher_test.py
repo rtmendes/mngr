@@ -32,6 +32,7 @@ from imbue.mng_claude_zygote.resources.event_watcher import _format_time_since_l
 from imbue.mng_claude_zygote.resources.event_watcher import _load_delivery_state
 from imbue.mng_claude_zygote.resources.event_watcher import _load_watcher_settings
 from imbue.mng_claude_zygote.resources.event_watcher import _save_delivery_state
+from imbue.mng_claude_zygote.resources.event_watcher import _send_chat_notification
 from imbue.mng_claude_zygote.resources.event_watcher import _send_message
 from imbue.mng_claude_zygote.resources.event_watcher import _should_skip_for_catchup
 from imbue.mng_claude_zygote.resources.event_watcher import _write_notification_event
@@ -509,6 +510,28 @@ def test_write_notification_event_creates_file(tmp_path: Path) -> None:
     assert event["message"] == "Test notification"
     assert "event_id" in event
     assert "timestamp" in event
+
+
+# -- _send_chat_notification tests --
+
+
+def test_send_chat_notification_returns_true_on_success(
+    mock_subprocess_success: EventWatcherSubprocessCapture,
+) -> None:
+    """_send_chat_notification returns True when llm succeeds."""
+    assert _send_chat_notification("test message") is True
+    assert len(mock_subprocess_success.calls) == 1
+    cmd = mock_subprocess_success.calls[0][0]
+    assert "llm" in cmd
+    assert "chat" in cmd
+    assert "mng-system-notifications" in cmd
+
+
+def test_send_chat_notification_returns_false_on_failure(
+    mock_subprocess_failure: EventWatcherSubprocessCapture,
+) -> None:
+    """_send_chat_notification returns False when llm fails."""
+    assert _send_chat_notification("test message") is False
 
 
 # -- _compute_backoff_seconds tests --
