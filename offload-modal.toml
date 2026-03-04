@@ -6,13 +6,8 @@ stream_output = true
 sandbox_project_root = "/code/mng"
 
 [provider]
-type = "default"
-prepare_command = "uv run @modal_sandbox.py prepare --cached libs/mng/imbue/mng/resources/Dockerfile"
-create_command = "uv run @modal_sandbox.py create {image_id}" #g Image Id gets injected, also --copy-dirs
-exec_command = "uv run @modal_sandbox.py exec {sandbox_id} {command}"
-destroy_command = "uv run @modal_sandbox.py destroy {sandbox_id}"
-download_command = "uv run @modal_sandbox.py download {sandbox_id} {paths}"
-timeout_secs = 600
+type = "modal"
+dockerfile = "libs/mng/imbue/mng/resources/Dockerfile"
 
 [framework]
 type = "default"
@@ -22,7 +17,7 @@ run_command = "cd /code/mng && if [ ! -f /tmp/.patch_applied ]; then git apply /
 test_id_format = "{name}"
 
 [groups.all]
-retry_count = 4
+retry_count = 0
 # Exclude acceptance and release tests
 filters = "-m 'not acceptance and not release'"
 
