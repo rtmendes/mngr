@@ -356,6 +356,22 @@ def _read_macos_keychain_credential(label: str, concurrency_group: ConcurrencyGr
     return result.stdout.strip()
 
 
+def _delete_macos_keychain_credential(label: str, concurrency_group: ConcurrencyGroup) -> bool:
+    """Delete a credential from the macOS keychain by label.
+
+    Returns True if the credential was deleted, False if it didn't exist or deletion failed.
+    """
+    account = getpass.getuser()
+    try:
+        result = concurrency_group.run_process_to_completion(
+            ["security", "delete-generic-password", "-s", label, "-a", account],
+            is_checked_after=False,
+        )
+    except ProcessSetupError:
+        return False
+    return result.returncode == 0
+
+
 def _compute_keychain_label_suffix(config_dir: Path) -> str:
     """Compute the keychain label suffix Claude Code uses for a given CLAUDE_CONFIG_DIR.
 
@@ -947,8 +963,8 @@ class ClaudeAgent(BaseAgent):
         config = self._get_claude_config()
         config_dir = self.get_claude_config_dir()
 
-        # Create the config directory
-        host.execute_command(f"mkdir -p {shlex.quote(str(config_dir))}", timeout_seconds=5.0)
+        # Create the config directory (0700: contains credentials and session data)
+        host.execute_command(f"mkdir -p -m 0700 {shlex.quote(str(config_dir))}", timeout_seconds=5.0)
 
         if host.is_local:
             self._setup_local_config_dir(host, options, config, config_dir)
@@ -1154,23 +1170,34 @@ class ClaudeAgent(BaseAgent):
         _provision_background_scripts(host)
 
     def on_destroy(self, host: OnlineHostInterface) -> None:
-        """Clean up Claude trust entries for this agent's work directory.
+        """Clean up per-agent credentials and trust entries.
 
-        With per-agent config dirs, trust entries live in the agent's state
-        directory which gets deleted along with the rest of the agent state.
-        For backward compatibility, also attempt to clean up the global config
-        for agents created before per-agent config dirs existed.
+        For agents with per-agent config dirs: cleans up macOS keychain entries
+        (the config dir itself is deleted with the agent state).
+        For legacy agents without per-agent config dirs: cleans up the global
+        ~/.claude.json trust entry.
         """
         config_dir = self.get_claude_config_dir()
         per_agent_config_exists = host.execute_command(
             f"test -d {shlex.quote(str(config_dir))}", timeout_seconds=5.0
         ).success
 
-        if not per_agent_config_exists:
+        if per_agent_config_exists and is_macos():
+            # Clean up per-agent keychain entries
+            suffix = _compute_keychain_label_suffix(config_dir)
+            cg = self.mng_ctx.concurrency_group
+            if _delete_macos_keychain_credential(f"Claude Code{suffix}", cg):
+                logger.debug("Removed per-agent API key keychain entry")
+            if _delete_macos_keychain_credential(f"Claude Code-credentials{suffix}", cg):
+                logger.debug("Removed per-agent OAuth credentials keychain entry")
+        elif not per_agent_config_exists:
             # Legacy agent without per-agent config dir -- clean up global file
             removed = remove_claude_trust_for_path(get_claude_config_path(), self.work_dir)
             if removed:
                 logger.debug("Removed Claude trust entry for {} from global config", self.work_dir)
+        else:
+            # Per-agent config dir on non-macOS: config dir is deleted with agent state, nothing extra to clean up
+            pass
 
 
 def _generate_claude_home_settings() -> dict[str, Any]:
