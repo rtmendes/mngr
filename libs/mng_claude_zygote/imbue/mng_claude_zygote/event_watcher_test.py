@@ -597,7 +597,7 @@ def test_separate_chat_events_holds_user_message_without_assistant() -> None:
 
 
 def test_separate_chat_events_releases_pair() -> None:
-    """User + assistant for the same conversation are both delivered."""
+    """User + assistant for the same conversation are both delivered, user first."""
     held: dict[str, tuple[list[str], float]] = {}
     lines = [
         _make_message_event("user", event_id="evt-u1"),
@@ -606,10 +606,13 @@ def test_separate_chat_events_releases_pair() -> None:
     result = _separate_chat_events(lines, held)
     assert len(result) == 2
     assert len(held) == 0
+    # User message must come before assistant message
+    assert json.loads(result[0])["role"] == "user"
+    assert json.loads(result[1])["role"] == "assistant"
 
 
 def test_separate_chat_events_releases_previously_held_on_assistant() -> None:
-    """Previously held user messages are released when assistant arrives."""
+    """Previously held user messages are released when assistant arrives, user first."""
     user_line = _make_message_event("user", event_id="evt-u1")
     held: dict[str, tuple[list[str], float]] = {"conv-1": ([user_line], time.monotonic())}
     lines = [_make_message_event("assistant", event_id="evt-a1")]
@@ -617,6 +620,9 @@ def test_separate_chat_events_releases_previously_held_on_assistant() -> None:
     # Both the previously held user message and the assistant message should be delivered
     assert len(result) == 2
     assert "conv-1" not in held
+    # User message must come before assistant message
+    assert json.loads(result[0])["role"] == "user"
+    assert json.loads(result[1])["role"] == "assistant"
 
 
 def test_separate_chat_events_timeout_releases_held() -> None:

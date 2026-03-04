@@ -484,7 +484,7 @@ def _separate_chat_events(
     """
     ready: list[str] = []
     new_user_messages: dict[str, list[str]] = {}
-    assistant_cids: set[str] = set()
+    new_assistant_messages: dict[str, list[str]] = {}
 
     now = time.monotonic()
 
@@ -506,18 +506,21 @@ def _separate_chat_events(
         if role == "user" and cid:
             new_user_messages.setdefault(cid, []).append(line)
         elif role == "assistant" and cid:
-            assistant_cids.add(cid)
-            ready.append(line)
+            new_assistant_messages.setdefault(cid, []).append(line)
         else:
             ready.append(line)
 
-    # Release held messages for conversations that now have an assistant response
-    for cid in assistant_cids:
+    # Release paired messages: user messages first, then assistant messages
+    for cid, assistant_lines in new_assistant_messages.items():
+        # Release any previously held user messages for this conversation
         if cid in held_user_messages:
             held_lines, _ = held_user_messages.pop(cid)
             ready.extend(held_lines)
+        # Release new user messages for this conversation
         if cid in new_user_messages:
             ready.extend(new_user_messages.pop(cid))
+        # Then the assistant messages
+        ready.extend(assistant_lines)
 
     # Release timed-out held messages
     timed_out_cids = [
@@ -692,11 +695,19 @@ def _run_delivery_loop(
         if not deliverable_lines:
             continue
 
-        # Recompute last_parsed since chat separation may have changed the line set
-        try:
-            last_parsed = json.loads(deliverable_lines[-1])
-        except json.JSONDecodeError:
-            pass
+        # Recompute last_parsed: find the chronologically latest event since
+        # chat separation may have reordered lines (user messages before assistant)
+        # or released held messages from earlier batches.
+        latest_ts = ""
+        for line in deliverable_lines:
+            try:
+                parsed = json.loads(line)
+                ts = parsed.get("timestamp", "")
+                if ts >= latest_ts:
+                    latest_ts = ts
+                    last_parsed = parsed
+            except json.JSONDecodeError:
+                continue
 
         # Consume a rate-limit token
         if not token_bucket.consume():
