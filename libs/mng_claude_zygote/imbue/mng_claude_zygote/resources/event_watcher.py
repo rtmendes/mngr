@@ -56,7 +56,10 @@ except ImportError:
 # script runs standalone on the host and cannot import from data_types.py.
 
 _DEFAULT_CEL_FILTER: Final[str] = (
+    'source != "claude_transcript" && source != "common_transcript"'
+    " && ("
     '!source.startsWith("logs/") || (source.startsWith("logs/") && (level == "ERROR" || level == "WARNING"))'
+    ")"
 )
 
 _DEFAULT_BURST_SIZE: Final[int] = 5

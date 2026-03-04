@@ -247,7 +247,10 @@ class WatcherSettings(FrozenModel):
     )
     event_cel_filter: str = Field(
         default=(
+            'source != "claude_transcript" && source != "common_transcript"'
+            " && ("
             '!source.startsWith("logs/") || (source.startsWith("logs/") && (level == "ERROR" || level == "WARNING"))'
+            ")"
         ),
         description="CEL filter expression passed to 'mng events --filter'. "
         "Controls which event sources the event watcher receives.",
