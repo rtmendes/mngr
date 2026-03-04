@@ -2,11 +2,18 @@
 
 import json
 import shlex
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
+from imbue.mng.config.data_types import AgentTypeConfig
 from imbue.mng.hosts.host import Host
+from imbue.mng.primitives import AgentId
+from imbue.mng.primitives import AgentName
+from imbue.mng.primitives import AgentTypeName
 from imbue.mng_changeling_chat.api import ChatCommandError
 from imbue.mng_changeling_chat.api import _build_chat_env_vars
 from imbue.mng_changeling_chat.api import _build_chat_script_path
@@ -57,7 +64,6 @@ def test_build_remote_chat_script_uses_shlex_quote_for_env_values(
 
     script = _build_remote_chat_script(host.host_dir, agent, host, ["--new"])
 
-    # Values should be shlex.quoted, not bare single-quoted
     env_vars = _build_chat_env_vars(agent, host)
     for key, value in env_vars.items():
         assert f"export {key}={shlex.quote(value)}" in script
@@ -83,7 +89,6 @@ def test_build_remote_chat_script_quotes_conversation_id_with_special_chars(
 
     script = _build_remote_chat_script(host.host_dir, agent, host, ["--resume", dangerous_id])
 
-    # The shlex.quote output for the dangerous string should be in the script
     expected_quoted = shlex.quote(dangerous_id)
     assert expected_quoted in script
 
@@ -209,7 +214,6 @@ def test_list_conversations_uses_message_timestamps_for_updated_at(
         ],
     )
 
-    # The older conversation has a more recent message
     _create_message_events(
         host,
         agent,
@@ -226,7 +230,6 @@ def test_list_conversations_uses_message_timestamps_for_updated_at(
     result = list_conversations_on_agent(agent, host)
 
     assert len(result) == 2
-    # The older conversation should be first because it has a more recent message
     assert result[0].conversation_id == "conv-old-but-active"
     assert result[0].updated_at == "2026-03-02T15:00:00Z"
 
@@ -235,17 +238,6 @@ def test_list_conversations_raises_on_command_failure(
     local_host_and_agent: tuple[Host, _TestAgent],
 ) -> None:
     host, agent = local_host_and_agent
-
-    # Create the event directory but with a malformed work_dir that causes failure
-    # We simulate failure by creating agent with a non-existent cwd
-    from datetime import datetime
-    from datetime import timezone
-    from uuid import uuid4
-
-    from imbue.mng.config.data_types import AgentTypeConfig
-    from imbue.mng.primitives import AgentId
-    from imbue.mng.primitives import AgentName
-    from imbue.mng.primitives import AgentTypeName
 
     bad_agent = _TestAgent(
         id=AgentId(f"agent-{uuid4().hex}"),
@@ -259,8 +251,6 @@ def test_list_conversations_raises_on_command_failure(
         host=host,
     )
 
-    # The command runs python3 -c with the script, but cwd is /nonexistent/...
-    # which should cause the command to fail
     with pytest.raises(ChatCommandError, match="Failed to list conversations"):
         list_conversations_on_agent(bad_agent, host)
 

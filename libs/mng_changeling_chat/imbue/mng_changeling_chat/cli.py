@@ -1,4 +1,3 @@
-import sys
 from typing import Any
 
 import click
@@ -215,6 +214,58 @@ def _select_conversation_interactively(  # pragma: no cover
     return None, False
 
 
+def resolve_chat_args(
+    opts: ChatCliOptions,
+    agent: AgentInterface,
+    host: OnlineHostInterface,
+    is_interactive: bool,
+) -> list[str] | None:
+    """Determine the chat.sh arguments from CLI options and agent state.
+
+    Returns the args list, or None if the user cancelled interactive selection.
+    """
+    # Validate mutually exclusive options
+    exclusive_count = sum([opts.new, opts.last, opts.conversation is not None])
+    if exclusive_count > 1:
+        raise UserInputError("Only one of --new, --last, or --conversation can be specified")
+
+    if opts.new:
+        return ["--new"]
+    elif opts.last:
+        return _resolve_latest_conversation_args(agent, host)
+    elif opts.conversation is not None:
+        return ["--resume", opts.conversation]
+    elif is_interactive:
+        # Interactive mode: show conversation selector
+        conversation_id, is_new_requested = _select_conversation_interactively(agent, host)  # pragma: no cover
+        if is_new_requested:  # pragma: no cover
+            return ["--new"]  # pragma: no cover
+        elif conversation_id is not None:  # pragma: no cover
+            return ["--resume", conversation_id]  # pragma: no cover
+        else:
+            return None  # pragma: no cover
+    else:
+        return _resolve_latest_conversation_args(agent, host)
+
+
+def _resolve_latest_conversation_args(
+    agent: AgentInterface,
+    host: OnlineHostInterface,
+) -> list[str]:
+    """Resolve chat args for --last mode (or non-interactive default)."""
+    try:
+        latest_cid = get_latest_conversation_id(agent, host)
+    except ChatCommandError as e:
+        logger.warning("Could not list conversations: {}", e)
+        latest_cid = None
+    if latest_cid is None:
+        logger.info("No existing conversations found. Starting a new one.")
+        return ["--new"]
+    else:
+        logger.info("Resuming latest conversation: {}", latest_cid)
+        return ["--resume", latest_cid]
+
+
 @click.command()
 @click.argument("agent", default=None, required=False)
 @optgroup.group("General")
@@ -259,11 +310,6 @@ def chat(ctx: click.Context, **kwargs: Any) -> None:  # pragma: no cover
         command_class=ChatCliOptions,
     )
 
-    # Validate mutually exclusive options
-    exclusive_count = sum([opts.new, opts.last, opts.conversation is not None])
-    if exclusive_count > 1:
-        raise UserInputError("Only one of --new, --last, or --conversation can be specified")
-
     # Find the agent
     result = find_agent_for_command(
         mng_ctx=mng_ctx,
@@ -278,46 +324,10 @@ def chat(ctx: click.Context, **kwargs: Any) -> None:  # pragma: no cover
     agent, host = result
 
     # Determine chat mode and build args
-    chat_args: list[str]
-
-    if opts.new:
-        chat_args = ["--new"]
-    elif opts.last:
-        # Find the latest conversation
-        try:
-            latest_cid = get_latest_conversation_id(agent, host)
-        except ChatCommandError as e:
-            logger.warning("Could not list conversations: {}", e)
-            latest_cid = None
-        if latest_cid is None:
-            logger.info("No existing conversations found. Starting a new one.")
-            chat_args = ["--new"]
-        else:
-            logger.info("Resuming latest conversation: {}", latest_cid)
-            chat_args = ["--resume", latest_cid]
-    elif opts.conversation is not None:
-        chat_args = ["--resume", opts.conversation]
-    elif sys.stdin.isatty():
-        # Interactive mode: show conversation selector
-        conversation_id, is_new_requested = _select_conversation_interactively(agent, host)
-        if is_new_requested:
-            chat_args = ["--new"]
-        elif conversation_id is not None:
-            chat_args = ["--resume", conversation_id]
-        else:
-            logger.info("No conversation selected")
-            return
-    else:
-        # Non-interactive: default to --last behavior
-        try:
-            latest_cid = get_latest_conversation_id(agent, host)
-        except ChatCommandError as e:
-            logger.warning("Could not list conversations: {}", e)
-            latest_cid = None
-        if latest_cid is None:
-            chat_args = ["--new"]
-        else:
-            chat_args = ["--resume", latest_cid]
+    chat_args = resolve_chat_args(opts, agent, host, is_interactive=mng_ctx.is_interactive)
+    if chat_args is None:
+        logger.info("No conversation selected")
+        return
 
     logger.info("Connecting to chat for agent: {}", agent.name)
     run_chat_on_agent(

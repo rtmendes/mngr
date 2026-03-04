@@ -129,6 +129,7 @@ print(json.dumps(result))
 """
 
 
+@pure
 def _build_remote_chat_script(
     host_dir: Path,
     agent: AgentInterface,
