@@ -213,7 +213,7 @@ class DockerProviderInstance(BaseProviderInstance):
         """Get the state volume backed by the singleton state container."""
         user_id = str(self.mng_ctx.get_profile_user_id())
         prefix = self.mng_ctx.config.prefix
-        state_container = ensure_state_container(self._docker_client, prefix, user_id)
+        state_container = ensure_state_container(self._docker_client, prefix, user_id, provider_name=str(self.name))
         return DockerVolume(container=state_container)
 
     @cached_property
