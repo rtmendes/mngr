@@ -20,3 +20,17 @@ refresh_afterwards = true
 ```
 
 Each entry defines a keybinding (the table key, e.g. `c`) that appears in the status bar and runs with the `MNG_AGENT_NAME` environment variable set to the focused agent's name. Custom commands override builtins when they share the same key. Set `enabled = false` to disable a builtin.
+
+## Refresh cooldown
+
+Kanpan rate-limits refreshes to avoid hammering the GitHub API. Two cooldown durations are configurable:
+
+```toml
+[plugins.kanpan]
+# Minimum seconds between automatic refreshes (after delete, push, custom commands, etc.)
+auto_refresh_cooldown_seconds = 60.0
+# Minimum seconds between manual refreshes (pressing 'r')
+manual_refresh_cooldown_seconds = 5.0
+```
+
+When a refresh is requested within the cooldown window, it is deferred until the cooldown expires. A manual refresh with a shorter cooldown will replace a pending automatic refresh if it would fire sooner.
