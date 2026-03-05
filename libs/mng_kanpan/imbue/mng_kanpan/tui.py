@@ -180,13 +180,7 @@ class _SelectableRow(Columns):
             self.entry, mark
         )
         if self.section == BoardSection.MUTED:
-            if isinstance(name_markup, list):
-                plain = "".join(seg if isinstance(seg, str) else seg[1] for seg in name_markup)
-            elif isinstance(name_markup, tuple):
-                plain = name_markup[1]
-            else:
-                plain = name_markup
-            name_markup = ("muted", plain)
+            name_markup = _flatten_markup_to_muted(name_markup)
         self.name_text.set_text(name_markup)
 
 
@@ -901,6 +895,19 @@ def _get_push_cell_text(entry: AgentBoardEntry) -> str:
     return f"[{entry.commits_ahead} unpushed]"
 
 
+def _flatten_markup_to_muted(
+    markup: str | tuple[Hashable, str] | list[str | tuple[Hashable, str]],
+) -> tuple[Hashable, str]:
+    """Flatten rich urwid text markup to a plain string wrapped in the 'muted' attribute."""
+    if isinstance(markup, list):
+        plain = "".join(seg if isinstance(seg, str) else seg[1] for seg in markup)
+    elif isinstance(markup, tuple):
+        plain = markup[1]
+    else:
+        plain = markup
+    return ("muted", plain)
+
+
 def _get_name_cell_markup(
     entry: AgentBoardEntry, mark: PendingMark | None = None
 ) -> str | tuple[Hashable, str] | list[str | tuple[Hashable, str]]:
@@ -989,15 +996,9 @@ def _build_agent_row(
 
     # Muted agents: flatten all markup to gray
     if section == BoardSection.MUTED:
-        cell_markup: dict[str, str | tuple[Hashable, str] | list[str | tuple[Hashable, str]]] = {}
-        for k, v in raw_markup.items():
-            if isinstance(v, list):
-                plain = "".join(seg if isinstance(seg, str) else seg[1] for seg in v)
-                cell_markup[k] = ("muted", plain)
-            elif isinstance(v, tuple):
-                cell_markup[k] = ("muted", v[1])
-            else:
-                cell_markup[k] = ("muted", v)
+        cell_markup: dict[str, str | tuple[Hashable, str] | list[str | tuple[Hashable, str]]] = {
+            k: _flatten_markup_to_muted(v) for k, v in raw_markup.items()
+        }
     else:
         cell_markup = raw_markup
 
