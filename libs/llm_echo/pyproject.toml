@@ -1,0 +1,15 @@
+[project]
+name = "llm-echo"
+version = "0.1.0"
+description = "An llm plugin that provides an echo model for testing - returns a configurable response for any input"
+requires-python = ">=3.11"
+dependencies = [
+    "llm>=0.22",
+]
+
+[project.entry-points.llm]
+echo = "llm_echo"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
