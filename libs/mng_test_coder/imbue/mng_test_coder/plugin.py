@@ -8,6 +8,7 @@ from pydantic import Field
 from imbue.mng import hookimpl
 from imbue.mng.config.data_types import AgentTypeConfig
 from imbue.mng.config.data_types import MngContext
+from imbue.mng.errors import MngError
 from imbue.mng.interfaces.agent import AgentInterface
 from imbue.mng.interfaces.host import CreateAgentOptions
 from imbue.mng.interfaces.host import OnlineHostInterface
@@ -16,6 +17,12 @@ from imbue.mng_claude_zygote.plugin import ClaudeZygoteAgent
 from imbue.mng_claude_zygote.plugin import ClaudeZygoteConfig
 
 _ECHO_MODEL_NAME = "echo"
+
+
+class TestCoderProvisioningError(MngError, RuntimeError):
+    """Raised when test-coder agent provisioning fails."""
+
+    ...
 
 
 class TestCoderConfig(ClaudeZygoteConfig):
@@ -83,7 +90,7 @@ class TestCoderAgent(ClaudeZygoteAgent):
     def _get_test_coder_config(self) -> TestCoderConfig:
         """Get the test-coder-specific config."""
         if not isinstance(self.agent_config, TestCoderConfig):
-            raise RuntimeError(
+            raise TestCoderProvisioningError(
                 f"TestCoderAgent requires TestCoderConfig, got {type(self.agent_config).__name__}. "
                 "This indicates the agent type was registered with the wrong config class."
             )
@@ -105,7 +112,7 @@ def _install_llm_echo_plugin(host: OnlineHostInterface) -> None:
         timeout_seconds=120.0,
     )
     if not result.success:
-        raise RuntimeError(f"Failed to install llm-echo: {result.stderr}")
+        raise TestCoderProvisioningError(f"Failed to install llm-echo: {result.stderr}")
 
     logger.info("llm-echo plugin installed successfully")
 
@@ -126,7 +133,7 @@ def _configure_echo_model_as_default(host: OnlineHostInterface, work_dir: Path) 
         timeout_seconds=10.0,
     )
     if not mkdir_result.success:
-        raise RuntimeError(f"Failed to create settings directory {settings_dir}: {mkdir_result.stderr}")
+        raise TestCoderProvisioningError(f"Failed to create settings directory {settings_dir}: {mkdir_result.stderr}")
     host.write_text_file(settings_path, settings_content)
     logger.info("Configured echo model as default chat model")
 

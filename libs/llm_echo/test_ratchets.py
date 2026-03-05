@@ -7,7 +7,7 @@ from imbue.imbue_common.ratchet_testing import standard_ratchet_checks as rc
 from imbue.imbue_common.ratchet_testing.ratchets import check_no_ruff_errors
 from imbue.imbue_common.ratchet_testing.ratchets import check_no_type_errors
 
-_DIR = Path(__file__).parent.parent.parent
+_DIR = Path(__file__).parent
 
 pytestmark = pytest.mark.xdist_group(name="ratchets")
 
@@ -28,7 +28,7 @@ def test_prevent_eval_usage() -> None:
 
 
 def test_prevent_while_true() -> None:
-    rc.check_while_true(_DIR, snapshot(1))
+    rc.check_while_true(_DIR, snapshot(0))
 
 
 def test_prevent_time_sleep() -> None:
@@ -93,7 +93,7 @@ def test_prevent_setattr() -> None:
 
 
 def test_prevent_asyncio_import() -> None:
-    rc.check_asyncio_import(_DIR, snapshot(1))
+    rc.check_asyncio_import(_DIR, snapshot(0))
 
 
 def test_prevent_pandas_import() -> None:
@@ -208,7 +208,7 @@ def test_prevent_os_fork() -> None:
 
 
 def test_prevent_direct_subprocess_usage() -> None:
-    rc.check_direct_subprocess(_DIR, snapshot(2))
+    rc.check_direct_subprocess(_DIR, snapshot(0))
 
 
 # --- AST-based ratchets ---

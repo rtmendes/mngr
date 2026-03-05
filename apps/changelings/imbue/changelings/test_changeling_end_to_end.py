@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from imbue.changelings.conftest import extract_response
-from imbue.changelings.conftest import run_mng
+from imbue.changelings.testing import extract_response
+from imbue.changelings.testing import run_mng
 
 
 @pytest.mark.release

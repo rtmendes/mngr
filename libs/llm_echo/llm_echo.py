@@ -19,6 +19,7 @@ The responses file format is:
 
 import json
 import os
+from collections.abc import Callable
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -82,5 +83,5 @@ def _resolve_response(user_message: str) -> str:
 
 
 @llm.hookimpl
-def register_models(register):  # type: ignore[no-untyped-def]
+def register_models(register: Callable[..., None]) -> None:
     register(EchoModel())
