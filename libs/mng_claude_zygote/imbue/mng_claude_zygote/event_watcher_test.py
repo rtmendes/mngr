@@ -548,13 +548,13 @@ def test_get_system_notifications_cid_returns_none_when_empty_file(tmp_path: Pat
 # -- _send_chat_notification tests --
 
 
-def _setup_conversations_file(tmp_path: Path, cid: str = "sys-notif-test") -> Path:
+def _setup_conversations_file(tmp_path: Path, conversation_id: str = "sys-notif-test") -> Path:
     """Create a conversations events file with one entry and return events_dir."""
     events_dir = tmp_path / "events"
     conv_dir = events_dir / "conversations"
     conv_dir.mkdir(parents=True)
     events_file = conv_dir / "events.jsonl"
-    events_file.write_text(json.dumps({"conversation_id": cid, "type": "conversation_created"}) + "\n")
+    events_file.write_text(json.dumps({"conversation_id": conversation_id, "type": "conversation_created"}) + "\n")
     return events_dir
 
 
@@ -609,12 +609,12 @@ def test_compute_backoff_seconds_caps_at_max() -> None:
 # -- _separate_chat_events tests --
 
 
-def _make_message_event(role: str, cid: str = "conv-1", event_id: str = "evt-1") -> str:
+def _make_message_event(role: str, conversation_id: str = "conv-1", event_id: str = "evt-1") -> str:
     return json.dumps(
         {
             "source": "messages",
             "role": role,
-            "conversation_id": cid,
+            "conversation_id": conversation_id,
             "event_id": event_id,
             "timestamp": "2026-03-01T12:00:00Z",
         }
@@ -695,9 +695,9 @@ def test_separate_chat_events_different_conversations() -> None:
     """Messages from different conversations are handled independently."""
     held: dict[str, tuple[list[str], float]] = {}
     lines = [
-        _make_message_event("user", cid="conv-1", event_id="evt-u1"),
-        _make_message_event("user", cid="conv-2", event_id="evt-u2"),
-        _make_message_event("assistant", cid="conv-1", event_id="evt-a1"),
+        _make_message_event("user", conversation_id="conv-1", event_id="evt-u1"),
+        _make_message_event("user", conversation_id="conv-2", event_id="evt-u2"),
+        _make_message_event("assistant", conversation_id="conv-1", event_id="evt-a1"),
     ]
     result = _separate_chat_events(lines, held)
     # conv-1 pair should be delivered, conv-2 user should be held

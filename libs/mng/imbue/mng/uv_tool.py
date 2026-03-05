@@ -40,24 +40,24 @@ class ToolReceipt(FrozenModel):
 
 
 @pure
-def _requirement_to_with_arg(req: ToolRequirement) -> tuple[str, str]:
+def _requirement_to_with_arg(requirement: ToolRequirement) -> tuple[str, str]:
     """Convert a requirement to a (flag, value) pair for ``uv tool install``.
 
     Returns either ``("--with", specifier)`` or ``("--with-editable", path)``.
     """
-    if req.editable is not None:
-        return ("--with-editable", req.editable)
+    if requirement.editable is not None:
+        return ("--with-editable", requirement.editable)
 
-    if req.directory is not None:
-        return ("--with-editable", req.directory)
+    if requirement.directory is not None:
+        return ("--with-editable", requirement.directory)
 
-    if req.git is not None:
-        return ("--with", f"{req.name} @ git+{req.git}")
+    if requirement.git is not None:
+        return ("--with", f"{requirement.name} @ git+{requirement.git}")
 
-    if req.specifier is not None:
-        return ("--with", f"{req.name}{req.specifier}")
+    if requirement.specifier is not None:
+        return ("--with", f"{requirement.name}{requirement.specifier}")
 
-    return ("--with", req.name)
+    return ("--with", requirement.name)
 
 
 def get_receipt_path() -> Path | None:
@@ -95,9 +95,9 @@ def read_receipt(receipt_path: Path) -> ToolReceipt:
     requirements = [ToolRequirement(**r) for r in raw_reqs]
 
     base = ToolRequirement(name="mng")
-    for req in requirements:
-        if req.name == "mng":
-            base = req
+    for requirement in requirements:
+        if requirement.name == "mng":
+            base = requirement
             break
 
     extras = [r for r in requirements if r.name != "mng"]
@@ -133,8 +133,8 @@ def _build_uv_tool_install_command(
     else:
         cmd.append(build_base_specifier(base))
     cmd.append("--reinstall")
-    for req in extras:
-        flag, value = _requirement_to_with_arg(req)
+    for requirement in extras:
+        flag, value = _requirement_to_with_arg(requirement)
         cmd.extend([flag, value])
     return tuple(cmd)
 
