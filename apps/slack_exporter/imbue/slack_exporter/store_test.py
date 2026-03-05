@@ -8,7 +8,7 @@ from imbue.slack_exporter.primitives import SlackUserId
 from imbue.slack_exporter.store import StreamType
 from imbue.slack_exporter.store import load_existing_channels
 from imbue.slack_exporter.store import load_existing_message_state
-from imbue.slack_exporter.store import load_existing_user_ids
+from imbue.slack_exporter.store import load_existing_users
 from imbue.slack_exporter.store import save_channel_events
 from imbue.slack_exporter.store import save_message_events
 from imbue.slack_exporter.store import save_user_events
@@ -59,15 +59,25 @@ def test_load_existing_message_state_tracks_latest_timestamp(temp_output_dir: Pa
     assert len(keys) == 2
 
 
-def test_load_existing_user_ids_returns_empty_when_missing(temp_output_dir: Path) -> None:
-    result = load_existing_user_ids(temp_output_dir)
-    assert result == set()
+def test_load_existing_users_returns_empty_when_missing(temp_output_dir: Path) -> None:
+    result = load_existing_users(temp_output_dir)
+    assert result == {}
 
 
-def test_load_existing_user_ids_returns_from_created_stream(temp_output_dir: Path) -> None:
+def test_load_existing_users_returns_from_created_stream(temp_output_dir: Path) -> None:
     save_user_events(temp_output_dir, StreamType.CREATED, [make_user_event("U111"), make_user_event("U222")])
-    result = load_existing_user_ids(temp_output_dir)
-    assert result == {SlackUserId("U111"), SlackUserId("U222")}
+    result = load_existing_users(temp_output_dir)
+    assert SlackUserId("U111") in result
+    assert SlackUserId("U222") in result
+
+
+def test_load_existing_users_updated_overrides_created(temp_output_dir: Path) -> None:
+    created = make_user_event("U111")
+    updated = make_user_event("U111")
+    save_user_events(temp_output_dir, StreamType.CREATED, [created])
+    save_user_events(temp_output_dir, StreamType.UPDATED, [updated])
+    result = load_existing_users(temp_output_dir)
+    assert len(result) == 1
 
 
 def test_save_channel_events_creates_directory_structure(temp_output_dir: Path) -> None:

@@ -13,6 +13,7 @@ from imbue.slack_exporter.data_types import ExporterSettings
 from imbue.slack_exporter.data_types import MessageEvent
 from imbue.slack_exporter.data_types import ReplyEvent
 from imbue.slack_exporter.data_types import SlackApiCaller
+from imbue.slack_exporter.data_types import UserEvent
 from imbue.slack_exporter.data_types import make_event_id
 from imbue.slack_exporter.data_types import make_iso_timestamp
 from imbue.slack_exporter.latchkey import fetch_paginated
@@ -23,7 +24,7 @@ from imbue.slack_exporter.store import StreamType
 from imbue.slack_exporter.store import load_existing_channels
 from imbue.slack_exporter.store import load_existing_message_state
 from imbue.slack_exporter.store import load_existing_reply_keys
-from imbue.slack_exporter.store import load_existing_user_ids
+from imbue.slack_exporter.store import load_existing_users
 from imbue.slack_exporter.store import save_channel_events
 from imbue.slack_exporter.store import save_message_events
 from imbue.slack_exporter.store import save_reply_events
@@ -39,7 +40,7 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     """Run the full export process: load state, resolve channels, fetch new messages, save."""
     existing_channel_by_id = load_existing_channels(settings.output_dir)
     state_by_channel_id, known_message_keys = load_existing_message_state(settings.output_dir)
-    existing_user_ids = load_existing_user_ids(settings.output_dir)
+    existing_user_by_id = load_existing_users(settings.output_dir)
     known_reply_keys = load_existing_reply_keys(settings.output_dir)
 
     channel_id_by_name: dict[SlackChannelName, SlackChannelId] = {
@@ -70,13 +71,26 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     for event in fresh_channels:
         channel_id_by_name[event.channel_name] = event.channel_id
 
-    # Fetch users (only save newly seen users for now)
+    # Fetch users and split into created vs updated
     fresh_users = fetch_user_list(api_caller)
-    new_users = [u for u in fresh_users if u.user_id not in existing_user_ids]
+    new_users: list[UserEvent] = []
+    updated_users: list[UserEvent] = []
+    for user in fresh_users:
+        existing = existing_user_by_id.get(user.user_id)
+        if existing is None:
+            new_users.append(user)
+        elif existing.raw != user.raw:
+            updated_users.append(user)
+        else:
+            pass
+
     save_user_events(settings.output_dir, StreamType.CREATED, new_users)
-    save_user_events(settings.output_dir, StreamType.UPDATED, new_users)
+    all_changed_users = list(new_users) + list(updated_users)
+    save_user_events(settings.output_dir, StreamType.UPDATED, all_changed_users)
     if new_users:
         logger.info("Saved %d new users", len(new_users))
+    if updated_users:
+        logger.info("Saved %d updated users", len(updated_users))
 
     # Fetch messages and replies for all configured channels
     for channel_config in settings.channels:

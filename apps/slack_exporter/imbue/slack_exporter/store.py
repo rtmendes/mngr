@@ -110,15 +110,15 @@ def load_existing_message_state(
     return state_by_channel_id, known_message_keys
 
 
-def load_existing_user_ids(output_dir: Path) -> set[SlackUserId]:
-    """Load the set of user IDs from both created and updated streams."""
-    user_ids: set[SlackUserId] = set()
+def load_existing_users(output_dir: Path) -> dict[SlackUserId, UserEvent]:
+    """Load existing user events, keeping the latest per user_id (updated overrides created)."""
+    user_by_id: dict[SlackUserId, UserEvent] = {}
     for stream in StreamType:
         for record in _load_jsonl_records(_events_path(output_dir, DataType.USERS, stream)):
             event = UserEvent.model_validate(record)
-            user_ids.add(event.user_id)
-    logger.info("Loaded %d known users from store", len(user_ids))
-    return user_ids
+            user_by_id[event.user_id] = event
+    logger.info("Loaded %d users from store", len(user_by_id))
+    return user_by_id
 
 
 def save_channel_events(output_dir: Path, stream: StreamType, events: Sequence[ChannelEvent]) -> None:
