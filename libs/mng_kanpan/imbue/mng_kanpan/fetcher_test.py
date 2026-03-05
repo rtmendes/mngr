@@ -11,8 +11,8 @@ from imbue.mng_kanpan.fetcher import _build_pr_branch_index
 from imbue.mng_kanpan.fetcher import _find_git_cwd
 from imbue.mng_kanpan.fetcher import _pr_priority
 from imbue.mng_kanpan.fetcher import _resolve_agent_branch
+from imbue.mng_kanpan.fetcher import fetch_agent_snapshot
 from imbue.mng_kanpan.fetcher import fetch_board_snapshot
-from imbue.mng_kanpan.fetcher import fetch_local_snapshot
 from imbue.mng_kanpan.github import FetchPrsResult
 from imbue.mng_kanpan.testing import make_agent_details
 from imbue.mng_kanpan.testing import make_pr_info
@@ -183,8 +183,8 @@ def test_fetch_board_snapshot_with_list_errors() -> None:
     assert "ConnectionError" in snapshot.errors[0]
 
 
-def test_fetch_local_snapshot_entries_have_no_pr() -> None:
-    """fetch_local_snapshot should return entries with pr=None and create_pr_url=None."""
+def test_fetch_agent_snapshot_entries_have_no_pr() -> None:
+    """fetch_agent_snapshot should return entries with pr=None and create_pr_url=None."""
     agent1 = make_agent_details(name="agent-1", state=AgentLifecycleState.RUNNING, provider_name="modal")
 
     mock_list_result = MagicMock()
@@ -195,7 +195,7 @@ def test_fetch_local_snapshot_entries_have_no_pr() -> None:
     mng_ctx.concurrency_group = MagicMock()
 
     with patch("imbue.mng_kanpan.fetcher.list_agents", return_value=mock_list_result):
-        snapshot = fetch_local_snapshot(mng_ctx)
+        snapshot = fetch_agent_snapshot(mng_ctx)
 
     assert len(snapshot.entries) == 1
     assert snapshot.entries[0].name == AgentName("agent-1")

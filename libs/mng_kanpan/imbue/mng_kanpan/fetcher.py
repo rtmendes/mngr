@@ -21,18 +21,18 @@ from imbue.mng.primitives import default_branch_name
 from imbue.mng.utils.git_utils import get_current_git_branch
 from imbue.mng_kanpan.data_types import AgentBoardEntry
 from imbue.mng_kanpan.data_types import BoardSnapshot
+from imbue.mng_kanpan.data_types import GitHubData
 from imbue.mng_kanpan.data_types import PrInfo
 from imbue.mng_kanpan.data_types import PrState
-from imbue.mng_kanpan.data_types import RemoteData
 from imbue.mng_kanpan.github import fetch_all_prs
 
 PLUGIN_NAME = "kanpan"
 
 
-def fetch_local_snapshot(mng_ctx: MngContext) -> BoardSnapshot:
-    """Fetch local state only: agents, git branches, commits ahead, mute state.
+def fetch_agent_snapshot(mng_ctx: MngContext) -> BoardSnapshot:
+    """Fetch agent state: agents, git branches, commits ahead, mute state.
 
-    Entries have pr=None and create_pr_url=None. This is cheap (no GitHub API calls).
+    Entries have pr=None and create_pr_url=None (no GitHub API calls).
     """
     start_time = time.monotonic()
     errors: list[str] = []
@@ -71,10 +71,10 @@ def fetch_local_snapshot(mng_ctx: MngContext) -> BoardSnapshot:
     )
 
 
-def fetch_remote_data(mng_ctx: MngContext, agents: list[AgentDetails]) -> RemoteData:
+def fetch_github_data(mng_ctx: MngContext, agents: list[AgentDetails]) -> GitHubData:
     """Fetch GitHub PR data and build the PR-to-branch index.
 
-    Returns a RemoteData containing pr_by_branch, repo_path, and any errors.
+    Returns a GitHubData containing pr_by_branch, repo_path, and any errors.
     """
     cg = mng_ctx.concurrency_group
     errors: list[str] = []
@@ -89,7 +89,7 @@ def fetch_remote_data(mng_ctx: MngContext, agents: list[AgentDetails]) -> Remote
 
     repo_path = _get_github_repo_path(gh_cwd, cg) if gh_cwd is not None else None
 
-    return RemoteData(
+    return GitHubData(
         pr_by_branch=pr_by_branch,
         repo_path=repo_path,
         prs_loaded=prs_loaded,
@@ -98,7 +98,7 @@ def fetch_remote_data(mng_ctx: MngContext, agents: list[AgentDetails]) -> Remote
 
 
 @pure
-def enrich_snapshot_with_remote_data(snapshot: BoardSnapshot, remote: RemoteData) -> BoardSnapshot:
+def enrich_snapshot_with_github_data(snapshot: BoardSnapshot, remote: GitHubData) -> BoardSnapshot:
     """Enrich a local-only snapshot with GitHub PR data.
 
     For each entry, looks up PR by branch name and attaches pr and create_pr_url.
@@ -141,7 +141,7 @@ def fetch_board_snapshot(mng_ctx: MngContext) -> BoardSnapshot:
     muted_agents = _load_muted_agents(mng_ctx)
 
     # Fetch remote data (GitHub PRs)
-    remote = fetch_remote_data(mng_ctx, result.agents)
+    remote = fetch_github_data(mng_ctx, result.agents)
 
     # Build board entries with both local and remote info
     entries: list[AgentBoardEntry] = []

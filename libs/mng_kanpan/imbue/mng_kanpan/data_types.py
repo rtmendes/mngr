@@ -75,8 +75,8 @@ class BoardSnapshot(FrozenModel):
     fetch_time_seconds: float = Field(description="Time taken to fetch data")
 
 
-class RemoteData(FrozenModel):
-    """GitHub PR data fetched from the remote, used to enrich local snapshots."""
+class GitHubData(FrozenModel):
+    """GitHub PR data fetched via the gh CLI, used to enrich agent snapshots."""
 
     pr_by_branch: dict[str, PrInfo] = Field(description="Mapping from branch name to the most relevant PR")
     repo_path: str | None = Field(default=None, description="GitHub owner/repo path (e.g. 'owner/repo')")

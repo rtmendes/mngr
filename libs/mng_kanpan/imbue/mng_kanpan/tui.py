@@ -38,8 +38,8 @@ from imbue.mng_kanpan.data_types import CheckStatus
 from imbue.mng_kanpan.data_types import CustomCommand
 from imbue.mng_kanpan.data_types import KanpanPluginConfig
 from imbue.mng_kanpan.data_types import PrState
+from imbue.mng_kanpan.fetcher import fetch_agent_snapshot
 from imbue.mng_kanpan.fetcher import fetch_board_snapshot
-from imbue.mng_kanpan.fetcher import fetch_local_snapshot
 from imbue.mng_kanpan.fetcher import toggle_agent_mute
 
 REFRESH_INTERVAL_SECONDS: int = 600  # 10 minutes
@@ -634,7 +634,7 @@ def _start_local_refresh(loop: MainLoop, state: _KanpanState) -> None:
     state.footer_left_attr.set_attr_map({None: "footer"})
     state.spinner_index = 0
     state.refresh_is_local_only = True
-    state.refresh_future = state.executor.submit(fetch_local_snapshot, state.mng_ctx)
+    state.refresh_future = state.executor.submit(fetch_agent_snapshot, state.mng_ctx)
     _schedule_spinner_tick(loop, state)
 
 
