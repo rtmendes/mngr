@@ -9,6 +9,7 @@ from imbue.imbue_common.event_envelope import EventEnvelope
 from imbue.slack_exporter.data_types import ChannelEvent
 from imbue.slack_exporter.data_types import ChannelExportState
 from imbue.slack_exporter.data_types import MessageEvent
+from imbue.slack_exporter.data_types import ReplyEvent
 from imbue.slack_exporter.data_types import UserEvent
 from imbue.slack_exporter.primitives import SlackChannelId
 from imbue.slack_exporter.primitives import SlackMessageTimestamp
@@ -22,6 +23,7 @@ class DataType(StrEnum):
 
     CHANNELS = "channels"
     MESSAGES = "messages"
+    REPLIES = "replies"
     USERS = "users"
 
 
@@ -127,5 +129,22 @@ def save_message_events(output_dir: Path, stream: StreamType, events: Sequence[M
     _append_events(_events_path(output_dir, DataType.MESSAGES, stream), events)
 
 
+def save_reply_events(output_dir: Path, stream: StreamType, events: Sequence[ReplyEvent]) -> None:
+    _append_events(_events_path(output_dir, DataType.REPLIES, stream), events)
+
+
 def save_user_events(output_dir: Path, stream: StreamType, events: Sequence[UserEvent]) -> None:
     _append_events(_events_path(output_dir, DataType.USERS, stream), events)
+
+
+def load_existing_reply_keys(
+    output_dir: Path,
+) -> set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]]:
+    """Load the set of known reply keys (channel_id, thread_ts, reply_ts) from both streams."""
+    known_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]] = set()
+    for stream in StreamType:
+        for record in _load_jsonl_records(_events_path(output_dir, DataType.REPLIES, stream)):
+            event = ReplyEvent.model_validate(record)
+            known_keys.add((event.channel_id, event.thread_ts, event.reply_ts))
+    logger.info("Loaded %d known replies from store", len(known_keys))
+    return known_keys

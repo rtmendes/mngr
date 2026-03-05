@@ -6,6 +6,7 @@ from imbue.imbue_common.event_envelope import EventType
 from imbue.imbue_common.event_envelope import IsoTimestamp
 from imbue.slack_exporter.data_types import ChannelEvent
 from imbue.slack_exporter.data_types import MessageEvent
+from imbue.slack_exporter.data_types import ReplyEvent
 from imbue.slack_exporter.data_types import SlackApiCaller
 from imbue.slack_exporter.data_types import UserEvent
 from imbue.slack_exporter.primitives import SlackChannelId
@@ -63,8 +64,43 @@ def make_user_event(
     )
 
 
+def make_reply_event(
+    channel_id: str = "C123",
+    channel_name: str = "general",
+    thread_ts: str = "1700000000.000001",
+    reply_ts: str = "1700000000.000002",
+) -> ReplyEvent:
+    return ReplyEvent(
+        timestamp=FIXED_TIMESTAMP,
+        type=EventType("reply_fetched"),
+        event_id=FIXED_EVENT_ID,
+        source=EventSource("replies"),
+        channel_id=SlackChannelId(channel_id),
+        channel_name=SlackChannelName(channel_name),
+        thread_ts=SlackMessageTimestamp(thread_ts),
+        reply_ts=SlackMessageTimestamp(reply_ts),
+        raw={"ts": reply_ts, "thread_ts": thread_ts, "text": "reply"},
+    )
+
+
+def make_replies_response(
+    messages: list[dict[str, Any]],
+    has_more: bool = False,
+    next_cursor: str = "",
+) -> dict[str, Any]:
+    """Build a fake conversations.replies API response."""
+    response: dict[str, Any] = {
+        "ok": True,
+        "messages": messages,
+        "has_more": has_more,
+    }
+    if next_cursor:
+        response["response_metadata"] = {"next_cursor": next_cursor}
+    return response
+
+
 def make_history_response(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     has_more: bool = False,
     next_cursor: str = "",
 ) -> dict[str, Any]:
@@ -79,7 +115,7 @@ def make_history_response(
     return response
 
 
-def make_channel_list_response(channels: list[dict[str, str]]) -> dict[str, Any]:
+def make_channel_list_response(channels: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a fake conversations.list API response."""
     return {
         "ok": True,
@@ -88,7 +124,7 @@ def make_channel_list_response(channels: list[dict[str, str]]) -> dict[str, Any]
     }
 
 
-def make_user_list_response(members: list[dict[str, str]]) -> dict[str, Any]:
+def make_user_list_response(members: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a fake users.list API response."""
     return {
         "ok": True,

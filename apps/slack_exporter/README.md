@@ -38,6 +38,7 @@ slack-exporter -v
 2. Fetches the channel list from Slack (via `conversations.list`) and saves only new or changed channels
 3. Fetches the user list from Slack (via `users.list`) and saves only new users
 4. For each configured channel, fetches new messages (via `conversations.history`) starting from either the configured oldest date or the most recent message already in the file
+5. For messages with threads (reply_count > 0), fetches replies (via `conversations.replies`) and saves only new ones
 
 ## Output structure
 
@@ -49,6 +50,8 @@ slack_export/
   channels/updated/events.jsonl   -- all channel state changes (includes creates)
   messages/created/events.jsonl   -- new messages
   messages/updated/events.jsonl   -- all message state changes (includes creates)
+  replies/created/events.jsonl    -- new thread replies
+  replies/updated/events.jsonl    -- all reply state changes (includes creates)
   users/created/events.jsonl      -- new users (first seen)
   users/updated/events.jsonl      -- all user state changes (includes creates)
 ```

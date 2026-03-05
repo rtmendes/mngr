@@ -11,6 +11,7 @@ from imbue.slack_exporter.data_types import ChannelEvent
 from imbue.slack_exporter.data_types import ChannelExportState
 from imbue.slack_exporter.data_types import ExporterSettings
 from imbue.slack_exporter.data_types import MessageEvent
+from imbue.slack_exporter.data_types import ReplyEvent
 from imbue.slack_exporter.data_types import SlackApiCaller
 from imbue.slack_exporter.data_types import make_event_id
 from imbue.slack_exporter.data_types import make_iso_timestamp
@@ -21,14 +22,17 @@ from imbue.slack_exporter.primitives import SlackMessageTimestamp
 from imbue.slack_exporter.store import StreamType
 from imbue.slack_exporter.store import load_existing_channels
 from imbue.slack_exporter.store import load_existing_message_state
+from imbue.slack_exporter.store import load_existing_reply_keys
 from imbue.slack_exporter.store import load_existing_user_ids
 from imbue.slack_exporter.store import save_channel_events
 from imbue.slack_exporter.store import save_message_events
+from imbue.slack_exporter.store import save_reply_events
 from imbue.slack_exporter.store import save_user_events
 
 logger = logging.getLogger(__name__)
 
 _MESSAGE_SOURCE = EventSource("messages")
+_REPLY_SOURCE = EventSource("replies")
 
 
 def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
@@ -36,6 +40,7 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     existing_channel_by_id = load_existing_channels(settings.output_dir)
     state_by_channel_id, known_message_keys = load_existing_message_state(settings.output_dir)
     existing_user_ids = load_existing_user_ids(settings.output_dir)
+    known_reply_keys = load_existing_reply_keys(settings.output_dir)
 
     channel_id_by_name: dict[SlackChannelName, SlackChannelId] = {
         event.channel_name: event.channel_id for event in existing_channel_by_id.values()
@@ -55,7 +60,6 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
             pass
 
     save_channel_events(settings.output_dir, StreamType.CREATED, new_channels)
-    # Created events also go to updated (a create is logically an update from nothing)
     all_changed_channels = list(new_channels) + list(updated_channels)
     save_channel_events(settings.output_dir, StreamType.UPDATED, all_changed_channels)
     if new_channels:
@@ -69,13 +73,12 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     # Fetch users and split into created vs updated
     fresh_users = fetch_user_list(api_caller)
     new_users = [u for u in fresh_users if u.user_id not in existing_user_ids]
-    # Users that already exist but may have changed -- we currently only track new ones
     save_user_events(settings.output_dir, StreamType.CREATED, new_users)
     save_user_events(settings.output_dir, StreamType.UPDATED, new_users)
     if new_users:
         logger.info("Saved %d new users", len(new_users))
 
-    # Fetch messages for all configured channels
+    # Fetch messages and replies for all configured channels
     for channel_config in settings.channels:
         channel_id = resolve_channel_id(channel_config.name, fresh_channels, channel_id_by_name)
         _export_single_channel(
@@ -83,6 +86,7 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
             channel_id=channel_id,
             state_by_channel_id=state_by_channel_id,
             known_message_keys=known_message_keys,
+            known_reply_keys=known_reply_keys,
             settings=settings,
             api_caller=api_caller,
         )
@@ -93,10 +97,11 @@ def _export_single_channel(
     channel_id: SlackChannelId,
     state_by_channel_id: dict[SlackChannelId, ChannelExportState],
     known_message_keys: set[tuple[SlackChannelId, SlackMessageTimestamp]],
+    known_reply_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]],
     settings: ExporterSettings,
     api_caller: SlackApiCaller,
 ) -> None:
-    """Export messages from a single channel."""
+    """Export messages and replies from a single channel."""
     logger.info("Exporting channel %s (ID: %s)", channel_config.name, channel_id)
 
     existing_state = state_by_channel_id.get(channel_id)
@@ -120,7 +125,6 @@ def _export_single_channel(
         api_caller=api_caller,
     )
 
-    # All fetched messages go to "created" stream (new messages only)
     new_messages = [m for m in all_fetched if (m.channel_id, m.message_ts) not in known_message_keys]
 
     if new_messages:
@@ -129,6 +133,114 @@ def _export_single_channel(
         logger.info("  Saved %d new messages from channel %s", len(new_messages), channel_config.name)
     else:
         logger.info("  No new messages in channel %s", channel_config.name)
+
+    # Fetch replies for threaded messages
+    # conversations.history includes reply_count and latest_reply on parent messages,
+    # so we can efficiently skip threads that haven't changed
+    _export_replies_for_channel(
+        channel_id=channel_id,
+        channel_name=channel_config.name,
+        all_message_events=all_fetched,
+        known_reply_keys=known_reply_keys,
+        settings=settings,
+        api_caller=api_caller,
+    )
+
+
+def _export_replies_for_channel(
+    channel_id: SlackChannelId,
+    channel_name: SlackChannelName,
+    all_message_events: list[MessageEvent],
+    known_reply_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]],
+    settings: ExporterSettings,
+    api_caller: SlackApiCaller,
+) -> None:
+    """Fetch replies for all threaded messages in a channel."""
+    # Identify parent messages that have threads (reply_count > 0)
+    thread_parents = [m for m in all_message_events if m.raw.get("reply_count", 0) > 0]
+
+    if not thread_parents:
+        return
+
+    logger.info("  Found %d threads to check for replies", len(thread_parents))
+    total_new_replies = 0
+
+    for parent in thread_parents:
+        thread_ts = parent.message_ts
+
+        replies = _fetch_all_replies_for_thread(
+            channel_id=channel_id,
+            channel_name=channel_name,
+            thread_ts=thread_ts,
+            api_caller=api_caller,
+        )
+
+        # Filter to only replies we haven't seen (exclude the parent message itself)
+        new_replies = [
+            r
+            for r in replies
+            if r.reply_ts != thread_ts and (channel_id, thread_ts, r.reply_ts) not in known_reply_keys
+        ]
+
+        if new_replies:
+            save_reply_events(settings.output_dir, StreamType.CREATED, new_replies)
+            save_reply_events(settings.output_dir, StreamType.UPDATED, new_replies)
+            total_new_replies += len(new_replies)
+            # Track the newly saved keys to avoid duplicates within this run
+            for reply in new_replies:
+                known_reply_keys.add((channel_id, thread_ts, reply.reply_ts))
+
+    if total_new_replies > 0:
+        logger.info("  Saved %d new replies from channel %s", total_new_replies, channel_name)
+
+
+def _fetch_all_replies_for_thread(
+    channel_id: SlackChannelId,
+    channel_name: SlackChannelName,
+    thread_ts: SlackMessageTimestamp,
+    api_caller: SlackApiCaller,
+) -> list[ReplyEvent]:
+    """Fetch all replies for a specific thread, handling pagination."""
+    all_replies: list[ReplyEvent] = []
+    cursor: str | None = None
+
+    while True:
+        params: dict[str, str] = {
+            "channel": channel_id,
+            "ts": thread_ts,
+            "limit": "200",
+        }
+        if cursor:
+            params["cursor"] = cursor
+
+        data = api_caller("conversations.replies", params)
+
+        for reply_raw in data.get("messages", []):
+            ts = reply_raw.get("ts", "")
+            if not ts:
+                continue
+            event = ReplyEvent(
+                timestamp=make_iso_timestamp(),
+                type=EventType("reply_fetched"),
+                event_id=make_event_id(),
+                source=_REPLY_SOURCE,
+                channel_id=channel_id,
+                channel_name=channel_name,
+                thread_ts=thread_ts,
+                reply_ts=SlackMessageTimestamp(ts),
+                raw=reply_raw,
+            )
+            all_replies.append(event)
+
+        if not data.get("has_more", False):
+            break
+
+        next_cursor = extract_next_cursor(data)
+        if not next_cursor:
+            break
+        cursor = next_cursor
+
+    return all_replies
 
 
 def _fetch_all_messages_for_channel(

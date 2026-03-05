@@ -18,6 +18,7 @@ from imbue.slack_exporter.testing import make_channel_list_response
 from imbue.slack_exporter.testing import make_fake_api_caller
 from imbue.slack_exporter.testing import make_history_response
 from imbue.slack_exporter.testing import make_message_event
+from imbue.slack_exporter.testing import make_replies_response
 from imbue.slack_exporter.testing import make_user_list_response
 
 
@@ -237,3 +238,81 @@ def test_run_export_incremental_resumes_from_latest(temp_output_dir: Path) -> No
     assert captured_params[0] is not None
     assert captured_params[0].get("oldest") == "1700000000.000001"
     assert captured_params[0].get("inclusive") == "false"
+
+
+def test_run_export_fetches_replies_for_threaded_messages(temp_output_dir: Path) -> None:
+    """When a message has replies, conversations.replies should be called and replies saved."""
+    # A message with reply_count > 0 indicates it has a thread
+    threaded_message = {
+        "ts": "1700000000.000001",
+        "text": "parent",
+        "reply_count": 2,
+        "latest_reply": "1700000000.000003",
+    }
+
+    api_caller = make_fake_api_caller(
+        {
+            "conversations.list": [
+                make_channel_list_response(channels=[{"id": "C123", "name": "general"}]),
+            ],
+            "users.list": [make_user_list_response(members=[])],
+            "conversations.history": [
+                make_history_response(messages=[threaded_message]),
+            ],
+            "conversations.replies": [
+                make_replies_response(
+                    messages=[
+                        {"ts": "1700000000.000001", "thread_ts": "1700000000.000001", "text": "parent"},
+                        {"ts": "1700000000.000002", "thread_ts": "1700000000.000001", "text": "reply 1"},
+                        {"ts": "1700000000.000003", "thread_ts": "1700000000.000001", "text": "reply 2"},
+                    ]
+                ),
+            ],
+        }
+    )
+
+    settings = ExporterSettings(
+        channels=(ChannelConfig(name=SlackChannelName("general")),),
+        default_oldest=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        output_dir=temp_output_dir,
+    )
+
+    run_export(settings, api_caller=api_caller)
+
+    # Verify replies were saved (2 replies, parent is excluded)
+    reply_path = temp_output_dir / "replies" / "created" / "events.jsonl"
+    assert reply_path.exists()
+    reply_lines = reply_path.read_text().strip().splitlines()
+    assert len(reply_lines) == 2
+    first_reply = json.loads(reply_lines[0])
+    assert first_reply["thread_ts"] == "1700000000.000001"
+    assert first_reply["source"] == "replies"
+
+
+def test_run_export_skips_replies_for_non_threaded_messages(temp_output_dir: Path) -> None:
+    """Messages without reply_count should not trigger conversations.replies."""
+    reply_call_count = 0
+
+    def tracking_caller(method: str, query_params: dict[str, str] | None = None) -> dict[str, Any]:
+        nonlocal reply_call_count
+        if method == "conversations.list":
+            return make_channel_list_response(channels=[{"id": "C123", "name": "general"}])
+        elif method == "users.list":
+            return make_user_list_response(members=[])
+        elif method == "conversations.history":
+            return make_history_response(messages=[{"ts": "1700000000.000001", "text": "no thread"}])
+        elif method == "conversations.replies":
+            reply_call_count += 1
+            return make_replies_response(messages=[])
+        else:
+            return {"ok": True}
+
+    settings = ExporterSettings(
+        channels=(ChannelConfig(name=SlackChannelName("general")),),
+        default_oldest=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        output_dir=temp_output_dir,
+    )
+
+    run_export(settings, api_caller=tracking_caller)
+
+    assert reply_call_count == 0

@@ -78,6 +78,16 @@ class UserEvent(EventEnvelope):
     raw: dict[str, Any] = Field(description="Raw Slack API user payload")
 
 
+class ReplyEvent(EventEnvelope):
+    """An event envelope wrapping a Slack thread reply record."""
+
+    channel_id: SlackChannelId = Field(description="Slack channel ID")
+    channel_name: SlackChannelName = Field(description="Channel name at time of fetch")
+    thread_ts: SlackMessageTimestamp = Field(description="Parent message ts (thread root)")
+    reply_ts: SlackMessageTimestamp = Field(description="This reply's ts")
+    raw: dict[str, Any] = Field(description="Raw Slack API reply payload")
+
+
 class ChannelExportState(FrozenModel):
     """Tracks the export state for a single channel derived from message events."""
 
