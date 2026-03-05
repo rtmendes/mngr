@@ -560,7 +560,16 @@ def test_create_event_log_directories_creates_all_source_dirs() -> None:
     host = StubHost()
     create_event_log_directories(cast(Any, host), Path("/tmp/mng-test/agents/agent-123"), _DEFAULT_PROVISIONING)
 
-    for source in ("conversations", "messages", "scheduled", "mng_agents", "stop", "monitor", "claude_transcript"):
+    for source in (
+        "conversations",
+        "messages",
+        "scheduled",
+        "mng_agents",
+        "stop",
+        "monitor",
+        "delivery_failures",
+        "claude_transcript",
+    ):
         assert any(source in c and "mkdir" in c for c in host.executed_commands), f"Missing mkdir for {source}"
 
 

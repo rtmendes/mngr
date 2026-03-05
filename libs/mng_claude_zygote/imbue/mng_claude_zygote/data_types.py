@@ -36,6 +36,7 @@ SOURCE_SCHEDULED: Final[EventSource] = EventSource("scheduled")
 SOURCE_MNG_AGENTS: Final[EventSource] = EventSource("mng_agents")
 SOURCE_STOP: Final[EventSource] = EventSource("stop")
 SOURCE_MONITOR: Final[EventSource] = EventSource("monitor")
+SOURCE_DELIVERY_FAILURES: Final[EventSource] = EventSource("delivery_failures")
 SOURCE_CLAUDE_TRANSCRIPT: Final[EventSource] = EventSource("claude_transcript")
 SOURCE_COMMON_TRANSCRIPT: Final[EventSource] = EventSource("common_transcript")
 
@@ -248,7 +249,7 @@ class WatcherSettings(FrozenModel):
     event_cel_filter: str = Field(
         default=(
             'source != "claude_transcript" && source != "common_transcript" && source != "monitor"'
-            ' && source != "conversations"'
+            ' && source != "conversations" && source != "delivery_failures"'
             " && ("
             '!source.startsWith("logs/") || (source.startsWith("logs/") && (level == "ERROR" || level == "WARNING"))'
             ")"
