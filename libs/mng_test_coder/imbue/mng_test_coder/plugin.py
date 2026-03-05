@@ -121,10 +121,12 @@ def _configure_echo_model_as_default(host: OnlineHostInterface, work_dir: Path) 
 
     settings_content = '[chat]\nmodel = "{}"\n'.format(_ECHO_MODEL_NAME)
 
-    host.execute_command(
+    mkdir_result = host.execute_command(
         f"mkdir -p {settings_dir}",
         timeout_seconds=10.0,
     )
+    if not mkdir_result.success:
+        raise RuntimeError(f"Failed to create settings directory {settings_dir}: {mkdir_result.stderr}")
     host.write_text_file(settings_path, settings_content)
     logger.info("Configured echo model as default chat model")
 

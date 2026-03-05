@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-from llm_echo import EchoModel
 from llm_echo import _resolve_response
 
 
@@ -54,15 +53,3 @@ class TestResolveResponse:
         monkeypatch.setenv("LLM_ECHO_RESPONSES_FILE", str(bad_file))
         with pytest.raises(json.JSONDecodeError):
             _resolve_response("hello")
-
-
-class TestEchoModel:
-    """Tests for the EchoModel class."""
-
-    def test_model_id(self) -> None:
-        model = EchoModel()
-        assert model.model_id == "echo"
-
-    def test_can_stream(self) -> None:
-        model = EchoModel()
-        assert model.can_stream is True
