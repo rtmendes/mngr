@@ -642,7 +642,12 @@ def test_get_lifecycle_state_does_not_override_non_running_states(
     agent._get_agent_dir().mkdir(parents=True, exist_ok=True)
     (agent._get_agent_dir() / "permissions_waiting").touch()
 
-    for state in (AgentLifecycleState.STOPPED, AgentLifecycleState.WAITING, AgentLifecycleState.DONE):
+    for state in (
+        AgentLifecycleState.STOPPED,
+        AgentLifecycleState.WAITING,
+        AgentLifecycleState.REPLACED,
+        AgentLifecycleState.DONE,
+    ):
         with patch.object(type(agent).__mro__[1], "get_lifecycle_state", return_value=state):
             assert agent.get_lifecycle_state() == state
 
