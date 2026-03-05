@@ -642,7 +642,7 @@ def _carry_forward_pr_data(old: BoardSnapshot, new: BoardSnapshot) -> BoardSnaps
     updated_entries = []
     for entry in new.entries:
         old_entry = old_by_name.get(entry.name)
-        if old_entry is not None and old_entry.pr is not None:
+        if old_entry is not None and (old_entry.pr is not None or old_entry.create_pr_url is not None):
             ref = entry.field_ref()
             updated = entry.model_copy_update(
                 to_update(ref.pr, old_entry.pr),

@@ -76,6 +76,34 @@ def test_carry_forward_pr_data_preserves_old_prs() -> None:
     assert result.fetch_time_seconds == 2.0
 
 
+def test_carry_forward_pr_data_preserves_create_pr_url_without_pr() -> None:
+    """When the old snapshot has a create_pr_url but no PR, it should be carried forward."""
+    old_entry = AgentBoardEntry(
+        name=AgentName("agent-1"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-1",
+        pr=None,
+        create_pr_url="https://github.com/org/repo/compare/mng/agent-1?expand=1",
+    )
+    old = BoardSnapshot(entries=(old_entry,), prs_loaded=True, fetch_time_seconds=1.0)
+
+    new_entry = AgentBoardEntry(
+        name=AgentName("agent-1"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-1",
+        pr=None,
+        create_pr_url=None,
+    )
+    new = BoardSnapshot(entries=(new_entry,), prs_loaded=False, fetch_time_seconds=2.0)
+
+    result = _carry_forward_pr_data(old, new)
+    assert result.prs_loaded is True
+    assert result.entries[0].pr is None
+    assert result.entries[0].create_pr_url == "https://github.com/org/repo/compare/mng/agent-1?expand=1"
+
+
 def test_carry_forward_pr_data_handles_new_agents() -> None:
     """New agents that weren't in the old snapshot get no PR data carried forward."""
     old = BoardSnapshot(entries=(), prs_loaded=True, fetch_time_seconds=1.0)
