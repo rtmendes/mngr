@@ -667,16 +667,16 @@ def _classify_entry(entry: AgentBoardEntry) -> BoardSection:
     return BoardSection.PR_BEING_REVIEWED
 
 
-def _get_state_attr(entry: AgentBoardEntry, section: BoardSection) -> str:
+def _get_state_attr(entry: AgentBoardEntry) -> str:
     """Determine the color attribute for an agent's lifecycle state.
 
-    Magenta is used for WAITING agents in the "still cooking" section
-    (they need the user to respond). RUNNING gets green. Everything
-    else is default (no color).
+    RUNNING gets green, WAITING gets magenta (needs user response).
+    Everything else is default (no color). Muted override is handled
+    separately in _format_agent_line.
     """
     if entry.state == AgentLifecycleState.RUNNING:
         return "state_running"
-    if entry.state == AgentLifecycleState.WAITING and section == BoardSection.STILL_COOKING:
+    if entry.state == AgentLifecycleState.WAITING:
         return "state_attention"
     return ""
 
@@ -782,7 +782,7 @@ def _build_agent_row(entry: AgentBoardEntry, section: BoardSection, widths: dict
         ]
         return _SelectableColumns(cols, dividechars=_COL_DIVIDER_CHARS)
 
-    state_attr = _get_state_attr(entry, section)
+    state_attr = _get_state_attr(entry)
     state_markup: str | tuple[Hashable, str] = (state_attr, state_str) if state_attr else state_str
     ci_markup = _get_check_cell_markup(entry)
 
