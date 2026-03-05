@@ -1,5 +1,9 @@
 import logging
+from collections.abc import Callable
+from collections.abc import Sequence
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from imbue.imbue_common.event_envelope import EventSource
 from imbue.imbue_common.event_envelope import EventType
@@ -7,13 +11,11 @@ from imbue.slack_exporter.channels import fetch_channel_list
 from imbue.slack_exporter.channels import fetch_user_list
 from imbue.slack_exporter.channels import resolve_channel_id
 from imbue.slack_exporter.data_types import ChannelConfig
-from imbue.slack_exporter.data_types import ChannelEvent
 from imbue.slack_exporter.data_types import ChannelExportState
 from imbue.slack_exporter.data_types import ExporterSettings
 from imbue.slack_exporter.data_types import MessageEvent
 from imbue.slack_exporter.data_types import ReplyEvent
 from imbue.slack_exporter.data_types import SlackApiCaller
-from imbue.slack_exporter.data_types import UserEvent
 from imbue.slack_exporter.data_types import make_event_id
 from imbue.slack_exporter.data_types import make_iso_timestamp
 from imbue.slack_exporter.latchkey import fetch_paginated
@@ -35,6 +37,39 @@ logger = logging.getLogger(__name__)
 _MESSAGE_SOURCE = EventSource("messages")
 _REPLY_SOURCE = EventSource("replies")
 
+_T = Any
+
+
+def _diff_and_save(
+    fresh_items: Sequence[_T],
+    existing_by_key: dict[str, _T],
+    get_key: Callable[[_T], str],
+    get_raw: Callable[[_T], dict[str, Any]],
+    save_fn: Callable[[Path, StreamType, Sequence[_T]], None],
+    output_dir: Path,
+    entity_name: str,
+) -> None:
+    """Diff fresh items against existing, save new to CREATED+UPDATED and changed to UPDATED."""
+    new_items: list[_T] = []
+    updated_items: list[_T] = []
+    for item in fresh_items:
+        key = get_key(item)
+        existing = existing_by_key.get(key)
+        if existing is None:
+            new_items.append(item)
+        elif get_raw(existing) != get_raw(item):
+            updated_items.append(item)
+        else:
+            pass
+
+    save_fn(output_dir, StreamType.CREATED, new_items)
+    all_changed = list(new_items) + list(updated_items)
+    save_fn(output_dir, StreamType.UPDATED, all_changed)
+    if new_items:
+        logger.info("Saved %d new %s", len(new_items), entity_name)
+    if updated_items:
+        logger.info("Saved %d updated %s", len(updated_items), entity_name)
+
 
 def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     """Run the full export process: load state, resolve channels, fetch new messages, save."""
@@ -43,56 +78,37 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     existing_user_by_id = load_existing_users(settings.output_dir)
     known_reply_keys = load_existing_reply_keys(settings.output_dir)
 
+    # Export channels
+    fresh_channels = fetch_channel_list(api_caller)
+    _diff_and_save(
+        fresh_items=fresh_channels,
+        existing_by_key={k: v for k, v in existing_channel_by_id.items()},
+        get_key=lambda ch: ch.channel_id,
+        get_raw=lambda ch: ch.raw,
+        save_fn=save_channel_events,
+        output_dir=settings.output_dir,
+        entity_name="channels",
+    )
+
     channel_id_by_name: dict[SlackChannelName, SlackChannelId] = {
         event.channel_name: event.channel_id for event in existing_channel_by_id.values()
     }
-
-    # Fetch channels and split into created vs updated
-    fresh_channels = fetch_channel_list(api_caller)
-    new_channels: list[ChannelEvent] = []
-    updated_channels: list[ChannelEvent] = []
-    for channel in fresh_channels:
-        existing = existing_channel_by_id.get(channel.channel_id)
-        if existing is None:
-            new_channels.append(channel)
-        elif existing.raw != channel.raw:
-            updated_channels.append(channel)
-        else:
-            pass
-
-    save_channel_events(settings.output_dir, StreamType.CREATED, new_channels)
-    all_changed_channels = list(new_channels) + list(updated_channels)
-    save_channel_events(settings.output_dir, StreamType.UPDATED, all_changed_channels)
-    if new_channels:
-        logger.info("Saved %d new channels", len(new_channels))
-    if updated_channels:
-        logger.info("Saved %d updated channels", len(updated_channels))
-
     for event in fresh_channels:
         channel_id_by_name[event.channel_name] = event.channel_id
 
-    # Fetch users and split into created vs updated
+    # Export users
     fresh_users = fetch_user_list(api_caller)
-    new_users: list[UserEvent] = []
-    updated_users: list[UserEvent] = []
-    for user in fresh_users:
-        existing = existing_user_by_id.get(user.user_id)
-        if existing is None:
-            new_users.append(user)
-        elif existing.raw != user.raw:
-            updated_users.append(user)
-        else:
-            pass
+    _diff_and_save(
+        fresh_items=fresh_users,
+        existing_by_key={k: v for k, v in existing_user_by_id.items()},
+        get_key=lambda u: u.user_id,
+        get_raw=lambda u: u.raw,
+        save_fn=save_user_events,
+        output_dir=settings.output_dir,
+        entity_name="users",
+    )
 
-    save_user_events(settings.output_dir, StreamType.CREATED, new_users)
-    all_changed_users = list(new_users) + list(updated_users)
-    save_user_events(settings.output_dir, StreamType.UPDATED, all_changed_users)
-    if new_users:
-        logger.info("Saved %d new users", len(new_users))
-    if updated_users:
-        logger.info("Saved %d updated users", len(updated_users))
-
-    # Fetch messages and replies for all configured channels
+    # Export messages and replies per channel
     for channel_config in settings.channels:
         channel_id = resolve_channel_id(channel_config.name, fresh_channels, channel_id_by_name)
         _export_single_channel(
@@ -125,11 +141,7 @@ def _export_single_channel(
 
     if existing_state and existing_state.latest_message_timestamp:
         oldest_ts = existing_state.latest_message_timestamp
-        logger.info(
-            "  Resuming from timestamp %s for channel %s",
-            oldest_ts,
-            channel_config.name,
-        )
+        logger.info("  Resuming from timestamp %s for channel %s", oldest_ts, channel_config.name)
 
     all_fetched = _fetch_all_messages_for_channel(
         channel_id=channel_id,
@@ -140,7 +152,6 @@ def _export_single_channel(
     )
 
     new_messages = [m for m in all_fetched if (m.channel_id, m.message_ts) not in known_message_keys]
-
     if new_messages:
         save_message_events(settings.output_dir, StreamType.CREATED, new_messages)
         save_message_events(settings.output_dir, StreamType.UPDATED, new_messages)
@@ -148,9 +159,6 @@ def _export_single_channel(
     else:
         logger.info("  No new messages in channel %s", channel_config.name)
 
-    # Fetch replies for threaded messages
-    # conversations.history includes reply_count and latest_reply on parent messages,
-    # so we can efficiently skip threads that haven't changed
     _export_replies_for_channel(
         channel_id=channel_id,
         channel_name=channel_config.name,
@@ -170,9 +178,7 @@ def _export_replies_for_channel(
     api_caller: SlackApiCaller,
 ) -> None:
     """Fetch replies for all threaded messages in a channel."""
-    # Identify parent messages that have threads (reply_count > 0)
     thread_parents = [m for m in all_message_events if m.raw.get("reply_count", 0) > 0]
-
     if not thread_parents:
         return
 
@@ -181,7 +187,6 @@ def _export_replies_for_channel(
 
     for parent in thread_parents:
         thread_ts = parent.message_ts
-
         replies = _fetch_all_replies_for_thread(
             channel_id=channel_id,
             channel_name=channel_name,
@@ -189,7 +194,6 @@ def _export_replies_for_channel(
             api_caller=api_caller,
         )
 
-        # Filter to only replies we haven't seen (exclude the parent message itself)
         new_replies = [
             r
             for r in replies
@@ -200,7 +204,6 @@ def _export_replies_for_channel(
             save_reply_events(settings.output_dir, StreamType.CREATED, new_replies)
             save_reply_events(settings.output_dir, StreamType.UPDATED, new_replies)
             total_new_replies += len(new_replies)
-            # Track the newly saved keys to avoid duplicates within this run
             for reply in new_replies:
                 known_reply_keys.add((channel_id, thread_ts, reply.reply_ts))
 
@@ -221,25 +224,21 @@ def _fetch_all_replies_for_thread(
         base_params={"channel": channel_id, "ts": thread_ts, "limit": "200"},
         response_key="messages",
     )
-    replies: list[ReplyEvent] = []
-    for reply_raw in raw_replies:
-        ts = reply_raw.get("ts", "")
-        if not ts:
-            continue
-        replies.append(
-            ReplyEvent(
-                timestamp=make_iso_timestamp(),
-                type=EventType("reply_fetched"),
-                event_id=make_event_id(),
-                source=_REPLY_SOURCE,
-                channel_id=channel_id,
-                channel_name=channel_name,
-                thread_ts=thread_ts,
-                reply_ts=SlackMessageTimestamp(ts),
-                raw=reply_raw,
-            )
+    return [
+        ReplyEvent(
+            timestamp=make_iso_timestamp(),
+            type=EventType("reply_fetched"),
+            event_id=make_event_id(),
+            source=_REPLY_SOURCE,
+            channel_id=channel_id,
+            channel_name=channel_name,
+            thread_ts=thread_ts,
+            reply_ts=SlackMessageTimestamp(raw["ts"]),
+            raw=raw,
         )
-    return replies
+        for raw in raw_replies
+        if raw.get("ts")
+    ]
 
 
 def _fetch_all_messages_for_channel(
@@ -262,24 +261,20 @@ def _fetch_all_messages_for_channel(
         },
         response_key="messages",
     )
-    messages: list[MessageEvent] = []
-    for message_raw in raw_messages:
-        ts = message_raw.get("ts", "")
-        if not ts:
-            continue
-        messages.append(
-            MessageEvent(
-                timestamp=make_iso_timestamp(),
-                type=EventType("message_fetched"),
-                event_id=make_event_id(),
-                source=_MESSAGE_SOURCE,
-                channel_id=channel_id,
-                channel_name=channel_name,
-                message_ts=SlackMessageTimestamp(ts),
-                raw=message_raw,
-            )
+    return [
+        MessageEvent(
+            timestamp=make_iso_timestamp(),
+            type=EventType("message_fetched"),
+            event_id=make_event_id(),
+            source=_MESSAGE_SOURCE,
+            channel_id=channel_id,
+            channel_name=channel_name,
+            message_ts=SlackMessageTimestamp(raw["ts"]),
+            raw=raw,
         )
-    return messages
+        for raw in raw_messages
+        if raw.get("ts")
+    ]
 
 
 def _datetime_to_slack_timestamp(dt: datetime) -> SlackMessageTimestamp:

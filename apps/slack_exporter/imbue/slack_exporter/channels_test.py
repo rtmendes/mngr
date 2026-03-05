@@ -8,20 +8,20 @@ from imbue.slack_exporter.primitives import SlackChannelId
 from imbue.slack_exporter.primitives import SlackChannelName
 from imbue.slack_exporter.primitives import SlackUserId
 from imbue.slack_exporter.testing import make_channel_event
-from imbue.slack_exporter.testing import make_channel_list_response
 from imbue.slack_exporter.testing import make_fake_api_caller
-from imbue.slack_exporter.testing import make_user_list_response
+from imbue.slack_exporter.testing import make_slack_response
 
 
 def test_fetch_channel_list_single_page() -> None:
     api_caller = make_fake_api_caller(
         {
             "conversations.list": [
-                make_channel_list_response(
-                    channels=[
+                make_slack_response(
+                    "channels",
+                    [
                         {"id": "C123", "name": "general"},
                         {"id": "C456", "name": "random"},
-                    ]
+                    ],
                 ),
             ],
         }
@@ -45,7 +45,7 @@ def test_fetch_channel_list_multiple_pages() -> None:
                     "channels": [{"id": "C123", "name": "general"}],
                     "response_metadata": {"next_cursor": "cursor_page2"},
                 },
-                make_channel_list_response(channels=[{"id": "C456", "name": "random"}]),
+                make_slack_response("channels", [{"id": "C456", "name": "random"}]),
             ],
         }
     )
@@ -55,7 +55,7 @@ def test_fetch_channel_list_multiple_pages() -> None:
 
 
 def test_fetch_channel_list_empty_response() -> None:
-    api_caller = make_fake_api_caller({"conversations.list": [make_channel_list_response(channels=[])]})
+    api_caller = make_fake_api_caller({"conversations.list": [make_slack_response("channels", [])]})
     channels = fetch_channel_list(api_caller)
     assert channels == []
 
@@ -64,11 +64,12 @@ def test_fetch_user_list_single_page() -> None:
     api_caller = make_fake_api_caller(
         {
             "users.list": [
-                make_user_list_response(
-                    members=[
+                make_slack_response(
+                    "members",
+                    [
                         {"id": "U001", "name": "alice"},
                         {"id": "U002", "name": "bob"},
-                    ]
+                    ],
                 ),
             ],
         }
@@ -90,7 +91,7 @@ def test_fetch_user_list_multiple_pages() -> None:
                     "members": [{"id": "U001", "name": "alice"}],
                     "response_metadata": {"next_cursor": "next"},
                 },
-                make_user_list_response(members=[{"id": "U002", "name": "bob"}]),
+                make_slack_response("members", [{"id": "U002", "name": "bob"}]),
             ],
         }
     )

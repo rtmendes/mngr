@@ -83,54 +83,20 @@ def make_reply_event(
     )
 
 
-def make_replies_response(
-    messages: list[dict[str, Any]],
+def make_slack_response(
+    response_key: str,
+    items: list[dict[str, Any]],
     has_more: bool = False,
     next_cursor: str = "",
 ) -> dict[str, Any]:
-    """Build a fake conversations.replies API response."""
+    """Build a fake Slack API response with the given items under response_key."""
     response: dict[str, Any] = {
         "ok": True,
-        "messages": messages,
+        response_key: items,
         "has_more": has_more,
+        "response_metadata": {"next_cursor": next_cursor},
     }
-    if next_cursor:
-        response["response_metadata"] = {"next_cursor": next_cursor}
     return response
-
-
-def make_history_response(
-    messages: list[dict[str, Any]],
-    has_more: bool = False,
-    next_cursor: str = "",
-) -> dict[str, Any]:
-    """Build a fake conversations.history API response."""
-    response: dict[str, Any] = {
-        "ok": True,
-        "messages": messages,
-        "has_more": has_more,
-    }
-    if next_cursor:
-        response["response_metadata"] = {"next_cursor": next_cursor}
-    return response
-
-
-def make_channel_list_response(channels: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build a fake conversations.list API response."""
-    return {
-        "ok": True,
-        "channels": channels,
-        "response_metadata": {"next_cursor": ""},
-    }
-
-
-def make_user_list_response(members: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build a fake users.list API response."""
-    return {
-        "ok": True,
-        "members": members,
-        "response_metadata": {"next_cursor": ""},
-    }
 
 
 def make_fake_api_caller(
