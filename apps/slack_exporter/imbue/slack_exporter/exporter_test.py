@@ -14,39 +14,11 @@ from imbue.slack_exporter.primitives import SlackChannelName
 from imbue.slack_exporter.primitives import SlackMessageTimestamp
 from imbue.slack_exporter.store import StreamType
 from imbue.slack_exporter.store import save_message_events
+from imbue.slack_exporter.testing import make_channel_list_response
 from imbue.slack_exporter.testing import make_fake_api_caller
+from imbue.slack_exporter.testing import make_history_response
 from imbue.slack_exporter.testing import make_message_event
-
-
-def _history_response(
-    messages: list[dict[str, str]],
-    has_more: bool = False,
-    next_cursor: str = "",
-) -> dict[str, Any]:
-    response: dict[str, Any] = {
-        "ok": True,
-        "messages": messages,
-        "has_more": has_more,
-    }
-    if next_cursor:
-        response["response_metadata"] = {"next_cursor": next_cursor}
-    return response
-
-
-def _channel_list_response(channels: list[dict[str, str]]) -> dict[str, Any]:
-    return {
-        "ok": True,
-        "channels": channels,
-        "response_metadata": {"next_cursor": ""},
-    }
-
-
-def _user_list_response(members: list[dict[str, str]]) -> dict[str, Any]:
-    return {
-        "ok": True,
-        "members": members,
-        "response_metadata": {"next_cursor": ""},
-    }
+from imbue.slack_exporter.testing import make_user_list_response
 
 
 def test_datetime_to_slack_timestamp_converts_correctly() -> None:
@@ -59,7 +31,7 @@ def test_fetch_all_messages_returns_event_envelope() -> None:
     api_caller = make_fake_api_caller(
         {
             "conversations.history": [
-                _history_response(messages=[{"ts": "1700000000.000001", "text": "hello"}]),
+                make_history_response(messages=[{"ts": "1700000000.000001", "text": "hello"}]),
             ],
         }
     )
@@ -83,12 +55,12 @@ def test_fetch_all_messages_handles_pagination() -> None:
     api_caller = make_fake_api_caller(
         {
             "conversations.history": [
-                _history_response(
+                make_history_response(
                     messages=[{"ts": "1700000000.000001", "text": "first"}],
                     has_more=True,
                     next_cursor="cursor_abc",
                 ),
-                _history_response(messages=[{"ts": "1700000000.000002", "text": "second"}]),
+                make_history_response(messages=[{"ts": "1700000000.000002", "text": "second"}]),
             ],
         }
     )
@@ -108,13 +80,13 @@ def test_run_export_writes_to_created_streams(temp_output_dir: Path) -> None:
     api_caller = make_fake_api_caller(
         {
             "conversations.list": [
-                _channel_list_response(channels=[{"id": "C123", "name": "general"}]),
+                make_channel_list_response(channels=[{"id": "C123", "name": "general"}]),
             ],
             "users.list": [
-                _user_list_response(members=[{"id": "U001", "name": "alice"}]),
+                make_user_list_response(members=[{"id": "U001", "name": "alice"}]),
             ],
             "conversations.history": [
-                _history_response(messages=[{"ts": "1700000000.000001", "text": "hello"}]),
+                make_history_response(messages=[{"ts": "1700000000.000001", "text": "hello"}]),
             ],
         }
     )
@@ -159,10 +131,10 @@ def test_run_export_unchanged_channels_not_written(temp_output_dir: Path) -> Non
         api_caller=make_fake_api_caller(
             {
                 "conversations.list": [
-                    _channel_list_response(channels=[{"id": "C123", "name": "general"}]),
+                    make_channel_list_response(channels=[{"id": "C123", "name": "general"}]),
                 ],
-                "users.list": [_user_list_response(members=[])],
-                "conversations.history": [_history_response(messages=[])],
+                "users.list": [make_user_list_response(members=[])],
+                "conversations.history": [make_history_response(messages=[])],
             }
         ),
     )
@@ -173,10 +145,10 @@ def test_run_export_unchanged_channels_not_written(temp_output_dir: Path) -> Non
         api_caller=make_fake_api_caller(
             {
                 "conversations.list": [
-                    _channel_list_response(channels=[{"id": "C123", "name": "general"}]),
+                    make_channel_list_response(channels=[{"id": "C123", "name": "general"}]),
                 ],
-                "users.list": [_user_list_response(members=[])],
-                "conversations.history": [_history_response(messages=[])],
+                "users.list": [make_user_list_response(members=[])],
+                "conversations.history": [make_history_response(messages=[])],
             }
         ),
     )
@@ -203,10 +175,10 @@ def test_run_export_changed_channels_go_to_updated_stream(temp_output_dir: Path)
         api_caller=make_fake_api_caller(
             {
                 "conversations.list": [
-                    _channel_list_response(channels=[{"id": "C123", "name": "general"}]),
+                    make_channel_list_response(channels=[{"id": "C123", "name": "general"}]),
                 ],
-                "users.list": [_user_list_response(members=[])],
-                "conversations.history": [_history_response(messages=[])],
+                "users.list": [make_user_list_response(members=[])],
+                "conversations.history": [make_history_response(messages=[])],
             }
         ),
     )
@@ -223,8 +195,8 @@ def test_run_export_changed_channels_go_to_updated_stream(temp_output_dir: Path)
                         "response_metadata": {"next_cursor": ""},
                     },
                 ],
-                "users.list": [_user_list_response(members=[])],
-                "conversations.history": [_history_response(messages=[])],
+                "users.list": [make_user_list_response(members=[])],
+                "conversations.history": [make_history_response(messages=[])],
             }
         ),
     )
@@ -236,48 +208,6 @@ def test_run_export_changed_channels_go_to_updated_stream(temp_output_dir: Path)
     assert len(updated_lines) == 2
 
 
-def test_run_export_skips_message_fetch_for_unchanged_channels(temp_output_dir: Path) -> None:
-    """When a channel hasn't changed, conversations.history should not be called."""
-    settings = ExporterSettings(
-        channels=(ChannelConfig(name=SlackChannelName("general")),),
-        default_oldest=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        output_dir=temp_output_dir,
-    )
-
-    # First run creates channel and fetches messages
-    run_export(
-        settings,
-        api_caller=make_fake_api_caller(
-            {
-                "conversations.list": [
-                    _channel_list_response(channels=[{"id": "C123", "name": "general"}]),
-                ],
-                "users.list": [_user_list_response(members=[])],
-                "conversations.history": [_history_response(messages=[{"ts": "1700000000.000001", "text": "hi"}])],
-            }
-        ),
-    )
-
-    # Second run: channel unchanged, so conversations.history should NOT be called
-    history_call_count = 0
-
-    def tracking_caller(method: str, query_params: dict[str, str] | None = None) -> dict[str, Any]:
-        nonlocal history_call_count
-        if method == "conversations.list":
-            return _channel_list_response(channels=[{"id": "C123", "name": "general"}])
-        elif method == "users.list":
-            return _user_list_response(members=[])
-        elif method == "conversations.history":
-            history_call_count += 1
-            return _history_response(messages=[])
-        else:
-            return {"ok": True}
-
-    run_export(settings, api_caller=tracking_caller)
-
-    assert history_call_count == 0
-
-
 def test_run_export_incremental_resumes_from_latest(temp_output_dir: Path) -> None:
     existing_msg = make_message_event(ts="1700000000.000001")
     save_message_events(temp_output_dir, StreamType.CREATED, [existing_msg])
@@ -286,12 +216,12 @@ def test_run_export_incremental_resumes_from_latest(temp_output_dir: Path) -> No
 
     def tracking_api_caller(method: str, query_params: dict[str, str] | None = None) -> dict[str, Any]:
         if method == "conversations.list":
-            return _channel_list_response(channels=[{"id": "C123", "name": "general"}])
+            return make_channel_list_response(channels=[{"id": "C123", "name": "general"}])
         elif method == "users.list":
-            return _user_list_response(members=[])
+            return make_user_list_response(members=[])
         elif method == "conversations.history":
             captured_params.append(query_params)
-            return _history_response(messages=[{"ts": "1700000000.000009", "text": "new"}])
+            return make_history_response(messages=[{"ts": "1700000000.000009", "text": "new"}])
         else:
             return {"ok": True}
 

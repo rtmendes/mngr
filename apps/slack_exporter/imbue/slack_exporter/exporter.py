@@ -75,13 +75,9 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     if new_users:
         logger.info("Saved %d new users", len(new_users))
 
-    # Only fetch messages for channels that are new or have changed
-    changed_channel_ids: set[SlackChannelId] = {ch.channel_id for ch in all_changed_channels}
+    # Fetch messages for all configured channels
     for channel_config in settings.channels:
         channel_id = resolve_channel_id(channel_config.name, fresh_channels, channel_id_by_name)
-        if channel_id not in changed_channel_ids:
-            logger.info("Skipping channel %s (unchanged)", channel_config.name)
-            continue
         _export_single_channel(
             channel_config=channel_config,
             channel_id=channel_id,

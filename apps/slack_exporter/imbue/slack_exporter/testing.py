@@ -63,6 +63,40 @@ def make_user_event(
     )
 
 
+def make_history_response(
+    messages: list[dict[str, str]],
+    has_more: bool = False,
+    next_cursor: str = "",
+) -> dict[str, Any]:
+    """Build a fake conversations.history API response."""
+    response: dict[str, Any] = {
+        "ok": True,
+        "messages": messages,
+        "has_more": has_more,
+    }
+    if next_cursor:
+        response["response_metadata"] = {"next_cursor": next_cursor}
+    return response
+
+
+def make_channel_list_response(channels: list[dict[str, str]]) -> dict[str, Any]:
+    """Build a fake conversations.list API response."""
+    return {
+        "ok": True,
+        "channels": channels,
+        "response_metadata": {"next_cursor": ""},
+    }
+
+
+def make_user_list_response(members: list[dict[str, str]]) -> dict[str, Any]:
+    """Build a fake users.list API response."""
+    return {
+        "ok": True,
+        "members": members,
+        "response_metadata": {"next_cursor": ""},
+    }
+
+
 def make_fake_api_caller(
     response_by_method: dict[str, list[dict[str, Any]]],
 ) -> SlackApiCaller:
