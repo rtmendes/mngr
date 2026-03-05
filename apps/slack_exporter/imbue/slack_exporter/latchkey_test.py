@@ -90,14 +90,12 @@ def test_extract_next_cursor_returns_none_when_metadata_is_not_dict() -> None:
 
 
 def test_fetch_paginated_single_page_with_has_more_false() -> None:
-    """Endpoints like conversations.history return has_more=false on the last page."""
     api_caller = make_fake_api_caller({"conversations.history": [make_slack_response("messages", [{"ts": "1"}])]})
     items = fetch_paginated(api_caller, "conversations.history", {"channel": "C1"}, "messages")
     assert items == [{"ts": "1"}]
 
 
 def test_fetch_paginated_single_page_cursor_only() -> None:
-    """Endpoints like conversations.list have no has_more, just an empty cursor on the last page."""
     api_caller = make_fake_api_caller(
         {
             "conversations.list": [
@@ -110,7 +108,6 @@ def test_fetch_paginated_single_page_cursor_only() -> None:
 
 
 def test_fetch_paginated_multiple_pages_cursor_only() -> None:
-    """Cursor-based pagination without has_more (e.g. conversations.list, users.list)."""
     api_caller = make_fake_api_caller(
         {
             "conversations.list": [
@@ -125,7 +122,6 @@ def test_fetch_paginated_multiple_pages_cursor_only() -> None:
 
 
 def test_fetch_paginated_multiple_pages_has_more_and_cursor() -> None:
-    """has_more + cursor pagination (e.g. conversations.history, conversations.replies)."""
     api_caller = make_fake_api_caller(
         {
             "conversations.history": [
@@ -140,7 +136,6 @@ def test_fetch_paginated_multiple_pages_has_more_and_cursor() -> None:
 
 
 def test_fetch_paginated_passes_cursor_in_params() -> None:
-    """Verify that the cursor is passed to subsequent API calls."""
     captured_params: list[dict[str, str] | None] = []
 
     def tracking_caller(method: str, params: dict[str, str] | None = None) -> dict[str, Any]:
@@ -157,7 +152,6 @@ def test_fetch_paginated_passes_cursor_in_params() -> None:
 
 
 def test_fetch_paginated_no_response_metadata_stops() -> None:
-    """If there's no response_metadata at all, pagination stops after one page."""
     api_caller = make_fake_api_caller({"test.method": [{"ok": True, "items": [{"id": "1"}]}]})
     items = fetch_paginated(api_caller, "test.method", {}, "items")
     assert items == [{"id": "1"}]
