@@ -413,7 +413,7 @@ def _notify_user(events_dir: Path, message: str, level: str = "WARNING") -> None
     """Notify the user about a delivery issue.
 
     Uses two mechanisms for reliability:
-    1. Writes a structured event to events/monitor/events.jsonl (always persisted)
+    1. Writes a structured event to events/delivery_failures/events.jsonl (always persisted)
     2. Sends a chat message via ``llm`` (best-effort, visible in chat interface)
     """
     _write_notification_event(events_dir, message, level=level)
