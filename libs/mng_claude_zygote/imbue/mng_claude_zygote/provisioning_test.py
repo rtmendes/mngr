@@ -588,8 +588,8 @@ def test_configure_llm_user_path_creates_dir_and_writes_env() -> None:
     # Should create llm_data directory
     assert any("llm_data" in c and "mkdir" in c for c in host.executed_commands)
 
-    # Should append LLM_USER_PATH to the environment file
-    env_commands = [c for c in host.executed_commands if "LLM_USER_PATH" in c and "environment" in c]
+    # Should append LLM_USER_PATH to the agent env file
+    env_commands = [c for c in host.executed_commands if "LLM_USER_PATH" in c and "/env" in c]
     assert len(env_commands) == 1
     assert str(agent_state_dir / "llm_data") in env_commands[0]
 

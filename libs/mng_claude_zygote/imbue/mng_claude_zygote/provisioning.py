@@ -559,8 +559,9 @@ def configure_llm_user_path(
         warn_threshold=settings.fs_warn_threshold_seconds,
         label="mkdir llm_data",
     )
-    # Write to the agent's environment file
-    env_file = agent_state_dir / "environment"
+    # Write to the agent's env file (sourced by shell processes via
+    # build_source_env_shell_commands; the file is <agent_state_dir>/env)
+    env_file = agent_state_dir / "env"
     env_line = f"LLM_USER_PATH={llm_data_dir}\n"
     with log_span("Setting LLM_USER_PATH={}", llm_data_dir):
         host.execute_command(
