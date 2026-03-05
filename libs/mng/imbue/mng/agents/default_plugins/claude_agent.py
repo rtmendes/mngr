@@ -330,7 +330,7 @@ def _prompt_user_for_trust(source_path: Path) -> bool:
     logger.info(
         "\nSource directory {} is not yet trusted by Claude Code.\n"
         "mng needs to add a trust entry for this directory to ~/.claude.json\n"
-        "so that Claude Code can start without showing a trust dialog.\n",
+        "so that the trust dialog doesn't interfere with automated input.\n",
         source_path,
     )
     return click.confirm("Would you like to update ~/.claude.json to trust this directory?", default=False)
