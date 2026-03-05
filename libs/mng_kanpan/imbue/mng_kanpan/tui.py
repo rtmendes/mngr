@@ -762,10 +762,7 @@ def _build_agent_row(entry: AgentBoardEntry, section: BoardSection, widths: dict
 
     # Muted agents: flatten all markup to gray
     if section == BoardSection.MUTED:
-        for key in cell_markup:
-            val = cell_markup[key]
-            plain = val[1] if isinstance(val, tuple) else val
-            cell_markup[key] = ("muted", plain)
+        cell_markup = {k: ("muted", v[1] if isinstance(v, tuple) else v) for k, v in cell_markup.items()}
 
     cols: list[tuple[int, Text] | Text] = []
     for col in _BOARD_COLUMNS:
