@@ -22,11 +22,12 @@ from urwid.widget.listbox import SimpleFocusListWalker
 from urwid.widget.pile import Pile
 from urwid.widget.text import Text
 
+from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.mutable_model import MutableModel
+from imbue.imbue_common.pure import pure
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import AgentName
-from imbue.mng.primitives import PluginName
 from imbue.mng_kanpan.data_types import AgentBoardEntry
 from imbue.mng_kanpan.data_types import BoardSection
 from imbue.mng_kanpan.data_types import BoardSnapshot
@@ -439,16 +440,17 @@ def _execute_next_in_batch(
     name, mark, entry = work[index]
     state.execute_status = f"  [{index + 1}/{len(work)}] "
 
+    assert state.executor is not None
     if mark == PendingMark.DELETE:
         state.footer_left_text.set_text(f"{state.execute_status}Deleting {name}...")
-        future: Future[subprocess.CompletedProcess[str]] = state.executor.submit(_run_destroy, str(name))  # type: ignore[union-attr]
+        future: Future[subprocess.CompletedProcess[str]] = state.executor.submit(_run_destroy, str(name))
     elif mark == PendingMark.PUSH:
         if entry is None or entry.work_dir is None:
             results.append(f"Cannot push {name}: no local work_dir")
             _execute_next_in_batch(state, work, results, index + 1)
             return
         state.footer_left_text.set_text(f"{state.execute_status}Pushing {name}...")
-        future = state.executor.submit(_run_git_push, str(entry.work_dir))  # type: ignore[union-attr]
+        future = state.executor.submit(_run_git_push, str(entry.work_dir))
     else:
         _execute_next_in_batch(state, work, results, index + 1)
         return
@@ -531,6 +533,7 @@ def _update_snapshot_mute(state: _KanpanState, agent_name: AgentName, is_muted: 
     state.snapshot = BoardSnapshot(
         entries=new_entries,
         errors=state.snapshot.errors,
+        prs_loaded=state.snapshot.prs_loaded,
         fetch_time_seconds=state.snapshot.fetch_time_seconds,
     )
 
@@ -715,13 +718,17 @@ def _finish_refresh(loop: MainLoop, state: _KanpanState) -> None:
         return
 
     try:
-        state.snapshot = state.refresh_future.result()
+        new_snapshot = state.refresh_future.result()
+        if not new_snapshot.prs_loaded and state.snapshot is not None and state.snapshot.prs_loaded:
+            new_snapshot = _carry_forward_pr_data(state.snapshot, new_snapshot)
+        state.snapshot = new_snapshot
     except Exception as e:
         logger.debug("Refresh failed: {}", e)
         if state.snapshot is not None:
             state.snapshot = BoardSnapshot(
                 entries=state.snapshot.entries,
                 errors=(*state.snapshot.errors, f"Refresh failed: {e}"),
+                prs_loaded=state.snapshot.prs_loaded,
                 fetch_time_seconds=state.snapshot.fetch_time_seconds,
             )
     finally:
@@ -738,6 +745,34 @@ def _finish_refresh(loop: MainLoop, state: _KanpanState) -> None:
     state.footer_left_text.set_text(state.steady_footer_text)
 
     _schedule_next_refresh(loop, state)
+
+
+@pure
+def _carry_forward_pr_data(old: BoardSnapshot, new: BoardSnapshot) -> BoardSnapshot:
+    """Carry forward PR data from a previous snapshot when the new one failed to load PRs.
+
+    Matches entries by agent name and copies pr and create_pr_url from the old snapshot.
+    The new snapshot's prs_loaded is set to True since we're using valid (stale) data.
+    """
+    old_by_name = {entry.name: entry for entry in old.entries}
+    updated_entries = []
+    for entry in new.entries:
+        old_entry = old_by_name.get(entry.name)
+        if old_entry is not None and (old_entry.pr is not None or old_entry.create_pr_url is not None):
+            ref = entry.field_ref()
+            updated = entry.model_copy_update(
+                to_update(ref.pr, old_entry.pr),
+                to_update(ref.create_pr_url, old_entry.create_pr_url),
+            )
+            updated_entries.append(updated)
+        else:
+            updated_entries.append(entry)
+    return BoardSnapshot(
+        entries=tuple(updated_entries),
+        errors=new.errors,
+        prs_loaded=True,
+        fetch_time_seconds=new.fetch_time_seconds,
+    )
 
 
 def _classify_entry(entry: AgentBoardEntry) -> BoardSection:
@@ -850,20 +885,22 @@ def _format_section_heading(section: BoardSection, count: int) -> list[str | tup
     return [(attr, prefix), f" ({count})"]
 
 
-def _build_board_widgets(state: _KanpanState) -> SimpleFocusListWalker[AttrMap | Text | Divider]:
+@pure
+def _build_board_widgets(
+    snapshot: BoardSnapshot | None,
+    marks: dict[AgentName, PendingMark] | None = None,
+) -> tuple[SimpleFocusListWalker[AttrMap | Text | Divider], dict[int, AgentBoardEntry]]:
     """Build the urwid widget list from a BoardSnapshot, grouped by PR state.
 
-    Returns a SimpleFocusListWalker and populates state.index_to_entry with the
-    mapping from list walker index to agent name for selectable entries.
+    Returns (walker, index_to_entry) where index_to_entry maps list walker
+    indices to the AgentBoardEntry for selectable rows.
     """
-    snapshot = state.snapshot
-    state.index_to_entry = {}
-
+    index_to_entry: dict[int, AgentBoardEntry] = {}
     walker: SimpleFocusListWalker[AttrMap | Text | Divider] = SimpleFocusListWalker([])
 
     if snapshot is None:
         walker.append(Text("Loading..."))
-        return walker
+        return walker, index_to_entry
 
     # Classify entries into sections
     by_section: dict[BoardSection, list[AgentBoardEntry]] = {}
@@ -881,11 +918,19 @@ def _build_board_widgets(state: _KanpanState) -> SimpleFocusListWalker[AttrMap |
         if has_content:
             walker.append(Divider())
 
-        walker.append(Text(_format_section_heading(section, len(entries))))
+        if section == BoardSection.STILL_COOKING and not snapshot.prs_loaded:
+            section_attr = _SECTION_ATTR[section]
+            heading: list[str | tuple[Hashable, str]] = [
+                (section_attr, "In progress"),
+                f" - PRs not loaded ({len(entries)})",
+            ]
+        else:
+            heading = _format_section_heading(section, len(entries))
+        walker.append(Text(heading))
         has_content = True
 
         for entry in entries:
-            mark = state.marks.get(entry.name)
+            mark = marks.get(entry.name) if marks else None
             markup = _format_agent_line(entry, section, mark)
             item = _SelectableText(markup)
             idx = len(walker)
@@ -893,7 +938,7 @@ def _build_board_widgets(state: _KanpanState) -> SimpleFocusListWalker[AttrMap |
             for attr in _AGENT_LINE_ATTRS:
                 focus_map[attr] = f"{attr}_focus"
             walker.append(AttrMap(item, None, focus_map=focus_map))
-            state.index_to_entry[idx] = entry
+            index_to_entry[idx] = entry
 
     if not has_content:
         walker.append(Text("No agents found."))
@@ -905,7 +950,7 @@ def _build_board_widgets(state: _KanpanState) -> SimpleFocusListWalker[AttrMap |
         for error in snapshot.errors:
             walker.append(Text(("error_text", f"  {error}")))
 
-    return walker
+    return walker, index_to_entry
 
 
 def _refresh_display(state: _KanpanState) -> None:
@@ -918,7 +963,7 @@ def _refresh_display(state: _KanpanState) -> None:
     if focused_entry is not None:
         state.focused_agent_name = focused_entry.name
 
-    walker = _build_board_widgets(state)
+    walker, state.index_to_entry = _build_board_widgets(state.snapshot, state.marks or None)
     state.list_walker = walker
     state.frame.body = ListBox(walker)
 
@@ -943,12 +988,7 @@ def _on_auto_refresh_alarm(loop: MainLoop, state: _KanpanState) -> None:
 
 def _load_user_commands(mng_ctx: MngContext) -> dict[str, CustomCommand]:
     """Load user-defined commands from plugin config."""
-    plugin_name = PluginName("kanpan")
-    if plugin_name not in mng_ctx.config.plugins:
-        return {}
-    config = mng_ctx.config.plugins[plugin_name]
-    if not isinstance(config, KanpanPluginConfig):
-        return {}
+    config = mng_ctx.get_plugin_config("kanpan", KanpanPluginConfig)
     # Config loader uses model_construct() which bypasses validation,
     # so nested dicts may not be parsed into CustomCommand objects.
     result: dict[str, CustomCommand] = {}

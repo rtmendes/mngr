@@ -1,5 +1,8 @@
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import Any
+
+from urwid.widget.attr_map import AttrMap
+from urwid.widget.text import Text
 
 from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import AgentName
@@ -11,15 +14,38 @@ from imbue.mng_kanpan.data_types import CheckStatus
 from imbue.mng_kanpan.data_types import PendingMark
 from imbue.mng_kanpan.data_types import PrInfo
 from imbue.mng_kanpan.data_types import PrState
+from imbue.mng_kanpan.testing import make_pr_info
 from imbue.mng_kanpan.tui import _KanpanState
 from imbue.mng_kanpan.tui import _advance_focus
 from imbue.mng_kanpan.tui import _build_board_widgets
+from imbue.mng_kanpan.tui import _carry_forward_pr_data
 from imbue.mng_kanpan.tui import _classify_entry
 from imbue.mng_kanpan.tui import _format_agent_line
 from imbue.mng_kanpan.tui import _is_safe_to_delete
 from imbue.mng_kanpan.tui import _toggle_mark
 from imbue.mng_kanpan.tui import _unmark_all
 from imbue.mng_kanpan.tui import _unmark_focused
+
+
+class _Stub:
+    """A permissive stub that accepts any attribute access or method call."""
+
+    def __getattr__(self, name: str) -> "_Stub":
+        return _Stub()
+
+    def __call__(self, *args: Any, **kwargs: Any) -> "_Stub":
+        return _Stub()
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        pass
+
+
+def _stub() -> Any:
+    """Return an opaque stub for fields that aren't exercised by tests."""
+    return _Stub()
+
+
+# --- Helpers ---
 
 
 def _make_entry(
@@ -54,13 +80,13 @@ def _make_entry(
 def _make_state(entries: tuple[AgentBoardEntry, ...] = ()) -> _KanpanState:
     """Create a minimal _KanpanState for testing pure functions."""
     snapshot = BoardSnapshot(entries=entries, fetch_time_seconds=0.1) if entries else None
-    frame = MagicMock()
-    footer_left_text = MagicMock()
-    footer_left_attr = MagicMock()
-    footer_right = MagicMock()
+    frame = _stub()
+    footer_left_text = _stub()
+    footer_left_attr = _stub()
+    footer_right = _stub()
     # Use model_construct to bypass MngContext validation (we don't need a real one)
     state = _KanpanState.model_construct(
-        mng_ctx=MagicMock(),
+        mng_ctx=_stub(),
         frame=frame,
         footer_left_text=footer_left_text,
         footer_left_attr=footer_left_attr,
@@ -81,10 +107,35 @@ def _make_state(entries: tuple[AgentBoardEntry, ...] = ()) -> _KanpanState:
         executor=None,
     )
     if snapshot is not None:
-        walker = _build_board_widgets(state)
+        walker, state.index_to_entry = _build_board_widgets(snapshot)
         state.list_walker = walker
-        frame.body = MagicMock()
+        frame.body = _stub()
     return state
+
+
+def _extract_text(walker: list[object]) -> list[str]:
+    """Extract plain text from all Text widgets in a walker."""
+    texts: list[str] = []
+    for widget in walker:
+        inner = widget.original_widget if isinstance(widget, AttrMap) else widget
+        if not isinstance(inner, Text):
+            continue
+        raw = inner.text
+        if isinstance(raw, str):
+            texts.append(raw)
+        else:
+            parts: list[str] = []
+            for seg in raw:
+                if isinstance(seg, tuple):
+                    parts.append(str(seg[1]))
+                else:
+                    parts.append(str(seg))
+            texts.append("".join(parts))
+    return texts
+
+
+def _text_contains(texts: list[str], substring: str) -> bool:
+    return any(substring in t for t in texts)
 
 
 # --- _classify_entry ---
@@ -203,7 +254,7 @@ def test_toggle_mark_replaces_different_mark() -> None:
 
 
 def test_toggle_push_mark_rejected_without_work_dir() -> None:
-    entry = _make_entry()  # no work_dir
+    entry = _make_entry()
     state = _make_state(entries=(entry,))
     first_idx = min(state.index_to_entry.keys())
     state.list_walker.set_focus(first_idx)
@@ -232,7 +283,7 @@ def test_unmark_focused_noop_without_mark() -> None:
     first_idx = min(state.index_to_entry.keys())
     state.list_walker.set_focus(first_idx)
 
-    _unmark_focused(state)  # should not error
+    _unmark_focused(state)
     assert state.marks == {}
 
 
@@ -252,7 +303,7 @@ def test_unmark_all_clears_all_marks() -> None:
 
 def test_unmark_all_noop_when_empty() -> None:
     state = _make_state(entries=(_make_entry(),))
-    _unmark_all(state)  # should not error
+    _unmark_all(state)
     assert state.marks == {}
 
 
@@ -282,7 +333,7 @@ def test_advance_focus_stays_at_last_agent() -> None:
     _advance_focus(state)
 
     _, new_focus = state.list_walker.get_focus()
-    assert new_focus == first_idx  # didn't move, only one agent
+    assert new_focus == first_idx
 
 
 # --- _build_board_widgets with marks ---
@@ -290,17 +341,189 @@ def test_advance_focus_stays_at_last_agent() -> None:
 
 def test_build_board_widgets_shows_mark_indicator() -> None:
     entry = _make_entry()
-    state = _make_state(entries=(entry,))
-    state.marks[AgentName("agent-1")] = PendingMark.DELETE
+    snapshot = BoardSnapshot(entries=(entry,), fetch_time_seconds=0.1)
+    marks = {AgentName("agent-1"): PendingMark.DELETE}
 
-    walker = _build_board_widgets(state)
+    walker, index_to_entry = _build_board_widgets(snapshot, marks)
 
-    # Find the selectable widget (agent line)
-    agent_idx = min(state.index_to_entry.keys())
-    widget = walker[agent_idx]
-    # The inner widget is a _SelectableText wrapped in AttrMap
-    inner_text = widget.original_widget  # type: ignore[union-attr]
-    markup = inner_text.text
-    # The markup should contain the D mark indicator
-    flat = "".join(seg if isinstance(seg, str) else seg[1] for seg in markup)
-    assert flat.startswith("D")
+    agent_idx = min(index_to_entry.keys())
+    texts = _extract_text([walker[agent_idx]])
+    assert len(texts) == 1
+    assert texts[0].startswith("D")
+
+
+# === _carry_forward_pr_data ===
+
+
+def test_carry_forward_pr_data_preserves_old_prs() -> None:
+    pr = make_pr_info(number=42, head_branch="mng/agent-1")
+    old_entry = AgentBoardEntry(
+        name=AgentName("agent-1"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-1",
+        pr=pr,
+        create_pr_url=None,
+    )
+    old = BoardSnapshot(entries=(old_entry,), prs_loaded=True, fetch_time_seconds=1.0)
+
+    new_entry = AgentBoardEntry(
+        name=AgentName("agent-1"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-1",
+        pr=None,
+        create_pr_url=None,
+    )
+    new = BoardSnapshot(
+        entries=(new_entry,),
+        errors=("gh auth failed",),
+        prs_loaded=False,
+        fetch_time_seconds=2.0,
+    )
+
+    result = _carry_forward_pr_data(old, new)
+    assert result.prs_loaded is True
+    assert result.entries[0].pr is not None
+    assert result.entries[0].pr.number == 42
+    # Errors from the failed fetch are still preserved
+    assert "gh auth failed" in result.errors[0]
+    # Timing comes from the new snapshot
+    assert result.fetch_time_seconds == 2.0
+
+
+def test_carry_forward_pr_data_preserves_create_pr_url_without_pr() -> None:
+    """When the old snapshot has a create_pr_url but no PR, it should be carried forward."""
+    old_entry = AgentBoardEntry(
+        name=AgentName("agent-1"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-1",
+        pr=None,
+        create_pr_url="https://github.com/org/repo/compare/mng/agent-1?expand=1",
+    )
+    old = BoardSnapshot(entries=(old_entry,), prs_loaded=True, fetch_time_seconds=1.0)
+
+    new_entry = AgentBoardEntry(
+        name=AgentName("agent-1"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-1",
+        pr=None,
+        create_pr_url=None,
+    )
+    new = BoardSnapshot(entries=(new_entry,), prs_loaded=False, fetch_time_seconds=2.0)
+
+    result = _carry_forward_pr_data(old, new)
+    assert result.prs_loaded is True
+    assert result.entries[0].pr is None
+    assert result.entries[0].create_pr_url == "https://github.com/org/repo/compare/mng/agent-1?expand=1"
+
+
+def test_carry_forward_pr_data_handles_new_agents() -> None:
+    """New agents that weren't in the old snapshot get no PR data carried forward."""
+    old = BoardSnapshot(entries=(), prs_loaded=True, fetch_time_seconds=1.0)
+
+    new_entry = AgentBoardEntry(
+        name=AgentName("agent-new"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-new",
+    )
+    new = BoardSnapshot(entries=(new_entry,), prs_loaded=False, fetch_time_seconds=2.0)
+
+    result = _carry_forward_pr_data(old, new)
+    assert result.entries[0].pr is None
+
+
+# === _build_board_widgets: first-load PR failure ===
+
+
+def test_first_load_pr_failure_shows_prs_not_loaded() -> None:
+    """When the first load fails to fetch PRs, the heading should say 'PRs not loaded'
+    and no create-PR links should appear."""
+    entry = AgentBoardEntry(
+        name=AgentName("agent-1"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-1",
+        pr=None,
+        create_pr_url=None,
+    )
+    snapshot = BoardSnapshot(
+        entries=(entry,),
+        errors=("gh pr list failed: auth required",),
+        prs_loaded=False,
+        fetch_time_seconds=1.0,
+    )
+    walker, _ = _build_board_widgets(snapshot)
+
+    texts = _extract_text(list(walker))
+    assert _text_contains(texts, "PRs not loaded")
+    assert not _text_contains(texts, "no PR yet")
+    assert not _text_contains(texts, "create PR")
+    assert _text_contains(texts, "gh pr list failed")
+
+
+def test_first_load_pr_success_shows_normal_heading() -> None:
+    """When PRs load successfully, agents without PRs show normal 'no PR yet' heading."""
+    entry = AgentBoardEntry(
+        name=AgentName("agent-1"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-1",
+        pr=None,
+        create_pr_url="https://github.com/org/repo/compare/mng/agent-1?expand=1",
+    )
+    snapshot = BoardSnapshot(
+        entries=(entry,),
+        prs_loaded=True,
+        fetch_time_seconds=1.0,
+    )
+    walker, _ = _build_board_widgets(snapshot)
+
+    texts = _extract_text(list(walker))
+    assert _text_contains(texts, "no PR yet")
+    assert not _text_contains(texts, "PRs not loaded")
+
+
+def test_second_load_pr_failure_shows_carried_forward_prs() -> None:
+    """When the second load fails to fetch PRs, carry-forward preserves PR data
+    and the TUI shows normal PR info (not 'PRs not loaded')."""
+    pr = make_pr_info(number=42, head_branch="mng/agent-1")
+    old_entry = AgentBoardEntry(
+        name=AgentName("agent-1"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-1",
+        pr=pr,
+        create_pr_url=None,
+    )
+    old = BoardSnapshot(entries=(old_entry,), prs_loaded=True, fetch_time_seconds=1.0)
+
+    new_entry = AgentBoardEntry(
+        name=AgentName("agent-1"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("modal"),
+        branch="mng/agent-1",
+        pr=None,
+        create_pr_url=None,
+    )
+    new = BoardSnapshot(
+        entries=(new_entry,),
+        errors=("gh pr list failed: network error",),
+        prs_loaded=False,
+        fetch_time_seconds=2.0,
+    )
+
+    carried = _carry_forward_pr_data(old, new)
+    walker, _ = _build_board_widgets(carried)
+
+    texts = _extract_text(list(walker))
+    # Carried-forward PR data renders the same as a normal successful load
+    assert _text_contains(texts, "github.com/org/repo/pull/42")
+    assert not _text_contains(texts, "PRs not loaded")
+    assert not _text_contains(texts, "no PR yet")
+    assert not _text_contains(texts, "create PR")
+    # Error from the failed fetch is still visible
+    assert _text_contains(texts, "network error")
