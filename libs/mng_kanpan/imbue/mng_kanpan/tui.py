@@ -341,7 +341,7 @@ def _update_row_mark(state: _KanpanState, walker_idx: int, mark: PendingMark | N
 
 
 def _toggle_mark(state: _KanpanState, mark: PendingMark) -> None:
-    """Toggle a dired-style mark on the focused agent, then advance focus."""
+    """Toggle a dired-style mark on the focused agent."""
     if state.list_walker is None:
         return
     _, focus_idx = state.list_walker.get_focus()
@@ -368,7 +368,7 @@ def _toggle_mark(state: _KanpanState, mark: PendingMark) -> None:
 
 
 def _unmark_focused(state: _KanpanState) -> None:
-    """Remove any mark from the focused agent, then advance focus."""
+    """Remove any mark from the focused agent."""
     if state.list_walker is None:
         return
     _, focus_idx = state.list_walker.get_focus()
