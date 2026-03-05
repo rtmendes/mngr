@@ -7,6 +7,7 @@ from imbue.changelings.forwarding_server.backend_resolver import BackendResolver
 from imbue.changelings.forwarding_server.backend_resolver import MngCliBackendResolver
 from imbue.changelings.forwarding_server.backend_resolver import MngStreamManager
 from imbue.changelings.forwarding_server.backend_resolver import ParsedAgentsResult
+from imbue.changelings.forwarding_server.backend_resolver import ServerLogParseError
 from imbue.changelings.forwarding_server.backend_resolver import StaticBackendResolver
 from imbue.changelings.forwarding_server.backend_resolver import parse_agent_ids_from_json
 from imbue.changelings.forwarding_server.backend_resolver import parse_agents_from_json
@@ -108,7 +109,7 @@ def test_parse_server_log_records_raises_on_invalid_json() -> None:
 
 def test_parse_server_log_records_raises_on_missing_fields() -> None:
     text = '{"server": "web"}\n'
-    with pytest.raises(ValueError, match="missing required fields"):
+    with pytest.raises(ServerLogParseError, match="missing required fields"):
         parse_server_log_records(text)
 
 

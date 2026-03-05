@@ -25,6 +25,10 @@ from imbue.mng.primitives import AgentId
 SERVERS_LOG_FILENAME: Final[str] = "servers/events.jsonl"
 
 
+class ServerLogParseError(ValueError):
+    """Raised when a server log record cannot be parsed."""
+
+
 class ServerLogRecord(FrozenModel):
     """A record of a server started by an agent, as written to servers/events.jsonl.
 
@@ -167,7 +171,7 @@ def parse_server_log_record(raw: dict[str, object]) -> ServerLogRecord:
     server = raw.get("server")
     url = raw.get("url")
     if not server or not url:
-        raise ValueError(f"Server log record missing required fields (server={server!r}, url={url!r})")
+        raise ServerLogParseError(f"Server log record missing required fields (server={server!r}, url={url!r})")
     return ServerLogRecord(server=ServerName(str(server)), url=str(url))
 
 
