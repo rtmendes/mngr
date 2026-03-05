@@ -1,6 +1,7 @@
 import time
 from concurrent.futures import Future
 from types import SimpleNamespace
+from typing import Any
 
 from imbue.mng_kanpan.data_types import BoardSnapshot
 from imbue.mng_kanpan.tui import REFRESH_INTERVAL_SECONDS
@@ -36,6 +37,11 @@ class _FakeLoop:
         return True
 
 
+def _make_loop() -> Any:
+    """Create a _FakeLoop typed as Any to satisfy MainLoop parameter types."""
+    return _FakeLoop()
+
+
 class _FakeExecutor:
     """Executor whose submit() always returns a pre-built future."""
 
@@ -46,9 +52,9 @@ class _FakeExecutor:
         return self._future
 
 
-def _make_state(**overrides: object) -> _KanpanState:
+def _make_state(**overrides: Any) -> _KanpanState:
     """Build a _KanpanState with fake urwid widgets and sensible defaults."""
-    defaults: dict[str, object] = {
+    defaults: dict[str, Any] = {
         "mng_ctx": SimpleNamespace(config=SimpleNamespace(plugins={})),
         "frame": SimpleNamespace(body=None),
         "footer_left_text": SimpleNamespace(set_text=lambda text: None),
@@ -60,7 +66,7 @@ def _make_state(**overrides: object) -> _KanpanState:
 
 
 def test_request_refresh_starts_immediately_when_cooldown_expired() -> None:
-    loop = _FakeLoop()
+    loop = _make_loop()
     pre_built_future: Future[BoardSnapshot] = Future()
     pre_built_future.set_result(BoardSnapshot(entries=(), fetch_time_seconds=0.1))
     executor = _FakeExecutor(pre_built_future)
@@ -76,7 +82,7 @@ def test_request_refresh_starts_immediately_when_cooldown_expired() -> None:
 
 
 def test_request_refresh_defers_when_within_cooldown() -> None:
-    loop = _FakeLoop()
+    loop = _make_loop()
     state = _make_state(last_refresh_time=time.monotonic())
 
     _request_refresh(loop, state, cooldown_seconds=60.0)
@@ -93,7 +99,7 @@ def test_request_refresh_defers_when_within_cooldown() -> None:
 
 def test_request_refresh_replaces_deferred_with_sooner_alarm() -> None:
     """A manual refresh (short cooldown) should replace a pending auto refresh (long cooldown)."""
-    loop = _FakeLoop()
+    loop = _make_loop()
     now = time.monotonic()
     state = _make_state(
         last_refresh_time=now - 2,
@@ -114,7 +120,7 @@ def test_request_refresh_replaces_deferred_with_sooner_alarm() -> None:
 
 def test_request_refresh_keeps_existing_if_sooner() -> None:
     """An auto refresh request should not replace a sooner pending manual refresh."""
-    loop = _FakeLoop()
+    loop = _make_loop()
     now = time.monotonic()
     state = _make_state(
         last_refresh_time=now - 2,
@@ -131,7 +137,7 @@ def test_request_refresh_keeps_existing_if_sooner() -> None:
 
 
 def test_request_refresh_noop_when_already_refreshing() -> None:
-    loop = _FakeLoop()
+    loop = _make_loop()
     existing_future: Future[BoardSnapshot] = Future()
     state = _make_state(refresh_future=existing_future)
 
@@ -143,7 +149,7 @@ def test_request_refresh_noop_when_already_refreshing() -> None:
 
 
 def test_finish_refresh_schedules_normal_interval_on_success() -> None:
-    loop = _FakeLoop()
+    loop = _make_loop()
     snapshot = BoardSnapshot(entries=(), fetch_time_seconds=1.0)
     future: Future[BoardSnapshot] = Future()
     future.set_result(snapshot)
@@ -160,7 +166,7 @@ def test_finish_refresh_schedules_normal_interval_on_success() -> None:
 
 def test_finish_refresh_uses_auto_cooldown_on_failure() -> None:
     """After a failed refresh, the next refresh should be deferred by auto_refresh_cooldown_seconds."""
-    loop = _FakeLoop()
+    loop = _make_loop()
     future: Future[BoardSnapshot] = Future()
     future.set_exception(RuntimeError("GitHub API error"))
     state = _make_state(
