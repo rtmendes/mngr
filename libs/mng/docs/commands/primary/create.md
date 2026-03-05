@@ -57,7 +57,7 @@ mng create [OPTIONS] [POSITIONAL_NAME] [POSITIONAL_AGENT_TYPE] [AGENT_ARGS]...
 | `--id` | text | Explicit agent ID [default: auto-generated] | None |
 | `--name-style` | choice (`english` &#x7C; `fantasy` &#x7C; `scifi` &#x7C; `painters` &#x7C; `authors` &#x7C; `artists` &#x7C; `musicians` &#x7C; `animals` &#x7C; `scientists` &#x7C; `demons`) | Auto-generated name style | `english` |
 | `--type` | text | Which type of agent to run [default: claude] | None |
-| `--command` | text | Run a literal command using the generic agent type (mutually exclusive with --type) | None |
+| `--agent-command` | text | Run a literal command using the generic agent type (mutually exclusive with --type) | None |
 | `-w`, `--extra-window` | text | Run extra command in additional window. Use name="command" to set window name. Note: ALL_UPPERCASE names (e.g., FOO="bar") are treated as env var assignments, not window names | None |
 | `--user` | text | Override which user to run the agent as [default: current user for local, provider-defined or root for remote] | None |
 | `--label` | text | Agent label KEY=VALUE [repeatable] [experimental] | None |

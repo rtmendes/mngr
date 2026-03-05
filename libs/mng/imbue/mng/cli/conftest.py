@@ -65,7 +65,7 @@ def default_create_cli_opts() -> CreateCliOptions:
         name=None,
         agent_id=None,
         name_style="english",
-        command=None,
+        agent_command=None,
         extra_window=(),
         user=None,
         source=None,
