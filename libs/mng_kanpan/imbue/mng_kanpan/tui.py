@@ -749,29 +749,23 @@ def _build_agent_row(entry: AgentBoardEntry, section: BoardSection, widths: dict
 
     Muted agents are rendered entirely in gray.
     """
-    is_muted = section == BoardSection.MUTED
+    state_str = str(entry.state)
+    state_attr = _get_state_attr(entry)
+    cell_markup: dict[str, str | tuple[Hashable, str]] = {
+        "name": f"  {entry.name}",
+        "state": (state_attr, state_str) if state_attr else state_str,
+        "git": _get_push_cell_text(entry),
+        "pr": _get_pr_cell_text(entry),
+        "ci": _get_check_cell_markup(entry),
+        "link": _get_link_cell_text(entry),
+    }
 
-    # Build cell markup -- muted forces all cells to gray
-    if is_muted:
-        cell_markup: dict[str, str | tuple[Hashable, str]] = {
-            "name": ("muted", f"  {entry.name}"),
-            "state": ("muted", str(entry.state)),
-            "git": ("muted", _get_push_cell_text(entry)),
-            "pr": ("muted", _get_pr_cell_text(entry)),
-            "ci": ("muted", _get_check_cell_text(entry)),
-            "link": ("muted", _get_link_cell_text(entry)),
-        }
-    else:
-        state_str = str(entry.state)
-        state_attr = _get_state_attr(entry)
-        cell_markup = {
-            "name": f"  {entry.name}",
-            "state": (state_attr, state_str) if state_attr else state_str,
-            "git": _get_push_cell_text(entry),
-            "pr": _get_pr_cell_text(entry),
-            "ci": _get_check_cell_markup(entry),
-            "link": _get_link_cell_text(entry),
-        }
+    # Muted agents: flatten all markup to gray
+    if section == BoardSection.MUTED:
+        for key in cell_markup:
+            val = cell_markup[key]
+            plain = val[1] if isinstance(val, tuple) else val
+            cell_markup[key] = ("muted", plain)
 
     cols: list[tuple[int, Text] | Text] = []
     for col in _BOARD_COLUMNS:
