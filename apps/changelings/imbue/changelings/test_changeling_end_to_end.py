@@ -112,7 +112,7 @@ def test_deploy_test_coder_and_verify_echo_model() -> None:
     3. Verify the chat settings are configured correctly
     4. Clean up
     """
-    agent_name = f"e2e-test-{uuid4().hex[:8]}"
+    agent_name = f"e2e-test-{uuid4().hex}"
 
     try:
         deploy_result = _run_changeling(
@@ -163,7 +163,7 @@ def test_deploy_test_coder_and_verify_echo_model() -> None:
 @pytest.mark.timeout(120)
 def test_echo_model_with_custom_response_via_env() -> None:
     """Deploy a test-coder and verify the LLM_ECHO_RESPONSE env var works."""
-    agent_name = f"e2e-test-{uuid4().hex[:8]}"
+    agent_name = f"e2e-test-{uuid4().hex}"
 
     try:
         deploy_result = _run_changeling(
@@ -206,7 +206,7 @@ def test_echo_model_with_custom_response_via_env() -> None:
 @pytest.mark.timeout(120)
 def test_echo_model_with_responses_file() -> None:
     """Deploy a test-coder and verify the LLM_ECHO_RESPONSES_FILE feature."""
-    agent_name = f"e2e-test-{uuid4().hex[:8]}"
+    agent_name = f"e2e-test-{uuid4().hex}"
 
     try:
         deploy_result = _run_changeling(
