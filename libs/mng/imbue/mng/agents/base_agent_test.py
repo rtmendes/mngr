@@ -11,6 +11,7 @@ from imbue.mng.agents.base_agent import BaseAgent
 from imbue.mng.agents.base_agent import _check_paste_content
 from imbue.mng.agents.base_agent import _normalize_for_match
 from imbue.mng.config.data_types import AgentTypeConfig
+from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import SendMessageError
 from imbue.mng.hosts.host import Host
 from imbue.mng.interfaces.data_types import CommandResult
@@ -18,6 +19,7 @@ from imbue.mng.interfaces.host import DEFAULT_AGENT_READY_TIMEOUT_SECONDS
 from imbue.mng.primitives import ActivitySource
 from imbue.mng.primitives import AgentId
 from imbue.mng.primitives import AgentLifecycleState
+from imbue.mng.primitives import HostId
 from imbue.mng.primitives import AgentName
 from imbue.mng.primitives import AgentTypeName
 from imbue.mng.primitives import CommandString
@@ -1004,14 +1006,36 @@ class _StubHost:
         self.written_files.append((path, content))
 
 
+def _create_agent_with_stub_host(
+    temp_mng_ctx: MngContext,
+    stub: _StubHost,
+) -> BaseAgent:
+    """Create a BaseAgent that uses a stub host for command recording.
+
+    Uses model_construct to bypass Pydantic validation so the stub host
+    (which does not implement the full OnlineHostInterface) can be used.
+    """
+    return BaseAgent.model_construct(
+        id=AgentId.generate(),
+        name=AgentName("stub-agent"),
+        agent_type=AgentTypeName("test"),
+        work_dir=Path("/tmp/stub-work"),
+        create_time=datetime.now(timezone.utc),
+        host_id=HostId.generate(),
+        host=stub,
+        mng_ctx=temp_mng_ctx,
+        agent_config=AgentTypeConfig(command=CommandString("sleep 1000")),
+    )
+
+
 def test_send_tmux_literal_keys_short_message_uses_send_keys(
-    test_agent: BaseAgent,
+    temp_mng_ctx: MngContext,
 ) -> None:
     """Short messages should use tmux send-keys -l."""
     stub = _StubHost()
-    object.__setattr__(test_agent, "host", stub)
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
 
-    test_agent._send_tmux_literal_keys("mng-test:0", "hello")
+    agent._send_tmux_literal_keys("mng-test:0", "hello")
 
     assert len(stub.executed_commands) == 1
     assert "send-keys" in stub.executed_commands[0]
@@ -1020,14 +1044,14 @@ def test_send_tmux_literal_keys_short_message_uses_send_keys(
 
 
 def test_send_tmux_literal_keys_long_message_uses_load_buffer(
-    test_agent: BaseAgent,
+    temp_mng_ctx: MngContext,
 ) -> None:
     """Messages >= 1024 chars should use write_text_file + load-buffer + paste-buffer."""
     stub = _StubHost()
-    object.__setattr__(test_agent, "host", stub)
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
 
     long_message = "x" * 1024
-    test_agent._send_tmux_literal_keys("mng-test:0", long_message)
+    agent._send_tmux_literal_keys("mng-test:0", long_message)
 
     # Should write the file
     assert len(stub.written_files) == 1
@@ -1044,40 +1068,40 @@ def test_send_tmux_literal_keys_long_message_uses_load_buffer(
 
 
 def test_send_tmux_literal_keys_long_message_raises_on_load_buffer_failure(
-    test_agent: BaseAgent,
+    temp_mng_ctx: MngContext,
 ) -> None:
     """load-buffer failure should raise SendMessageError."""
     stub = _StubHost(command_results=[
         CommandResult(success=False, stdout="", stderr="load failed"),
     ])
-    object.__setattr__(test_agent, "host", stub)
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
 
     with pytest.raises(SendMessageError, match="load-buffer failed"):
-        test_agent._send_tmux_literal_keys("mng-test:0", "x" * 1024)
+        agent._send_tmux_literal_keys("mng-test:0", "x" * 1024)
 
 
 def test_send_tmux_literal_keys_long_message_raises_on_paste_buffer_failure(
-    test_agent: BaseAgent,
+    temp_mng_ctx: MngContext,
 ) -> None:
     """paste-buffer failure should raise SendMessageError."""
     stub = _StubHost(command_results=[
         CommandResult(success=True, stdout="", stderr=""),
         CommandResult(success=False, stdout="", stderr="paste failed"),
     ])
-    object.__setattr__(test_agent, "host", stub)
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
 
     with pytest.raises(SendMessageError, match="paste-buffer failed"):
-        test_agent._send_tmux_literal_keys("mng-test:0", "x" * 1024)
+        agent._send_tmux_literal_keys("mng-test:0", "x" * 1024)
 
 
 def test_send_tmux_literal_keys_short_message_raises_on_send_keys_failure(
-    test_agent: BaseAgent,
+    temp_mng_ctx: MngContext,
 ) -> None:
     """send-keys failure should raise SendMessageError."""
     stub = _StubHost(command_results=[
         CommandResult(success=False, stdout="", stderr="command too long"),
     ])
-    object.__setattr__(test_agent, "host", stub)
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
 
     with pytest.raises(SendMessageError, match="send-keys failed"):
-        test_agent._send_tmux_literal_keys("mng-test:0", "hello")
+        agent._send_tmux_literal_keys("mng-test:0", "hello")
