@@ -465,6 +465,10 @@ def test_second_load_pr_failure_shows_carried_forward_prs() -> None:
     walker = _build_board_widgets(state)
 
     texts = _extract_text(list(walker))
-    assert _text_contains(texts, "PR ")
+    # Carried-forward PR data renders the same as a normal successful load
+    assert _text_contains(texts, "github.com/org/repo/pull/42")
     assert not _text_contains(texts, "PRs not loaded")
+    assert not _text_contains(texts, "no PR yet")
+    assert not _text_contains(texts, "create PR")
+    # Error from the failed fetch is still visible
     assert _text_contains(texts, "network error")
