@@ -369,23 +369,25 @@ class BaseAgent(AgentInterface):
                 raise SendMessageError(str(self.name), f"tmux send-keys failed: {result.stderr or result.stdout}")
         else:
             tmp_path = Path(f"/tmp/mng-msg-buffer-{self.session_name}.txt")
-            buffer_name = f"mng-{self.session_name}"
-            self.host.write_text_file(tmp_path, message)
-            load_cmd = f"tmux load-buffer -b {shlex.quote(buffer_name)} {shlex.quote(str(tmp_path))}"
-            result = self.host.execute_command(load_cmd)
-            if not result.success:
-                raise SendMessageError(
-                    str(self.name), f"tmux load-buffer failed: {result.stderr or result.stdout}"
-                )
-            paste_cmd = (
-                f"tmux paste-buffer -b {shlex.quote(buffer_name)} -t '{tmux_target}'"
-                f" && tmux delete-buffer -b {shlex.quote(buffer_name)}"
-                f" ; rm -f {shlex.quote(str(tmp_path))}"
-            )
-            result = self.host.execute_command(paste_cmd)
-            if not result.success:
-                raise SendMessageError(
-                    str(self.name), f"tmux paste-buffer failed: {result.stderr or result.stdout}"
+            quoted_buffer = shlex.quote(f"mng-{self.session_name}")
+            quoted_path = shlex.quote(str(tmp_path))
+            try:
+                self.host.write_text_file(tmp_path, message)
+                load_cmd = f"tmux load-buffer -b {quoted_buffer} {quoted_path}"
+                result = self.host.execute_command(load_cmd)
+                if not result.success:
+                    raise SendMessageError(
+                        str(self.name), f"tmux load-buffer failed: {result.stderr or result.stdout}"
+                    )
+                paste_cmd = f"tmux paste-buffer -b {quoted_buffer} -t '{tmux_target}'"
+                result = self.host.execute_command(paste_cmd)
+                if not result.success:
+                    raise SendMessageError(
+                        str(self.name), f"tmux paste-buffer failed: {result.stderr or result.stdout}"
+                    )
+            finally:
+                self.host.execute_command(
+                    f"tmux delete-buffer -b {quoted_buffer} 2>/dev/null; rm -f {quoted_path}"
                 )
 
     def _send_message_simple(self, tmux_target: str, message: str) -> None:
