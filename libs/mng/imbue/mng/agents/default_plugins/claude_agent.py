@@ -536,12 +536,13 @@ class ClaudeAgent(BaseAgent):
     def _preflight_send_message(self, tmux_target: str) -> None:
         """Check for blocking dialogs before sending a message.
 
-        Captures the tmux pane and checks for known dialog indicators
-        (trust dialogs, theme selection, effort callout).
+        Checks the permissions_waiting file (set by the PermissionRequest hook)
+        and captures the tmux pane for other dialog indicators (trust, theme, effort).
         Raises DialogDetectedError if any are found.
-        Note: permission dialogs are handled via the PermissionRequest hook
-        and the permissions_waiting file, not by tmux pane scanning.
         """
+        if self._check_file_exists(self._get_agent_dir() / "permissions_waiting"):
+            raise DialogDetectedError(str(self.name), "permission dialog")
+
         content = self._capture_pane_content(tmux_target)
         if content is None:
             return
