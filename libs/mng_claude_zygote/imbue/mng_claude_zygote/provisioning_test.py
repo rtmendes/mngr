@@ -602,12 +602,14 @@ def test_create_system_notifications_conversation_runs_inject_and_records_event(
     agent_state_dir = Path("/tmp/mng-test/agents/agent-123")
     create_system_notifications_conversation(cast(Any, host), agent_state_dir, _DEFAULT_PROVISIONING)
 
-    # Should run llm inject
+    # Should run llm inject with LLM_USER_PATH prefix
     inject_commands = [c for c in host.executed_commands if "llm inject" in c]
     assert len(inject_commands) == 1
     assert "system-notifications" in inject_commands[0]
     # "echo" is the model name used for the system_notifications conversation
     assert "echo" in inject_commands[0]
+    assert "LLM_USER_PATH=" in inject_commands[0]
+    assert "llm_data" in inject_commands[0]
 
     # Should create conversations directory
     assert any("conversations" in c and "mkdir" in c for c in host.executed_commands)
@@ -645,11 +647,12 @@ def test_create_daily_conversation_runs_inject_and_records_tagged_event() -> Non
     agent_state_dir = Path("/tmp/mng-test/agents/agent-123")
     create_daily_conversation(cast(Any, host), agent_state_dir, _DEFAULT_PROVISIONING, "claude-opus-4-6")
 
-    # Should run llm inject with the greeting
+    # Should run llm inject with the greeting and LLM_USER_PATH
     inject_commands = [c for c in host.executed_commands if "llm inject" in c]
     assert len(inject_commands) == 1
     assert "Elena" in inject_commands[0]
     assert "claude-opus-4-6" in inject_commands[0]
+    assert "LLM_USER_PATH=" in inject_commands[0]
 
     # Should append a conversation_created event with daily tag
     event_commands = [

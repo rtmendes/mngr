@@ -619,10 +619,17 @@ def _inject_conversation(
     prompt: str,
     response: str,
     label: str,
+    llm_user_path: Path | None = None,
 ) -> bool:
-    """Run ``llm inject`` to seed a conversation. Returns True on success."""
+    """Run ``llm inject`` to seed a conversation. Returns True on success.
+
+    When ``llm_user_path`` is provided, the command is prefixed with
+    ``LLM_USER_PATH=<path>`` so the conversation is created in the
+    per-agent database rather than the system default.
+    """
+    env_prefix = f"LLM_USER_PATH={shlex.quote(str(llm_user_path))} " if llm_user_path else ""
     inject_cmd = (
-        f"llm inject --cid {shlex.quote(cid)} -m {shlex.quote(model)} "
+        f"{env_prefix}llm inject --cid {shlex.quote(cid)} -m {shlex.quote(model)} "
         f"--prompt {shlex.quote(prompt)} "
         f"{shlex.quote(response)}"
     )
@@ -655,6 +662,7 @@ def create_system_notifications_conversation(
     cid = f"system-notifications-{uuid4().hex}"
     model = "echo"
 
+    llm_data_dir = agent_state_dir / "llm_data"
     if not _inject_conversation(
         host,
         settings,
@@ -663,6 +671,7 @@ def create_system_notifications_conversation(
         prompt="This channel is for system notifications, warnings, and errors.",
         response="Confirmed.",
         label="system_notifications",
+        llm_user_path=llm_data_dir,
     ):
         return
 
@@ -685,6 +694,7 @@ def create_daily_conversation(
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     cid = f"daily-{today}-{uuid4().hex}"
 
+    llm_data_dir = agent_state_dir / "llm_data"
     if not _inject_conversation(
         host,
         settings,
@@ -693,6 +703,7 @@ def create_daily_conversation(
         prompt="",
         response="Hi, I'm Elena! How can I help?",
         label="daily",
+        llm_user_path=llm_data_dir,
     ):
         return
 
