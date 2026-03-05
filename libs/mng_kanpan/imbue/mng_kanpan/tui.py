@@ -138,19 +138,6 @@ _BOARD_HEADER_LABELS: dict[str, str] = {
 }
 
 
-class _SelectableText(Text):
-    """A Text widget that is selectable, allowing it to receive focus.
-
-    Unlike SelectableIcon, this supports full urwid text markup (colored segments).
-    """
-
-    _selectable = True
-
-    def keypress(self, size: tuple[()] | tuple[int] | tuple[int, int], key: str) -> str | None:
-        """Pass all keys through (no keys are handled by this widget)."""
-        return key
-
-
 class _SelectableColumns(Columns):
     """A Columns widget that is selectable, allowing it to receive focus.
 
