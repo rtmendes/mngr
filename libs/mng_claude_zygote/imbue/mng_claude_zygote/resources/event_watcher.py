@@ -852,7 +852,7 @@ def main() -> None:
     stop_event = threading.Event()
     event_buffer: list[str] = []
     buffer_lock = threading.Lock()
-    active_proc: subprocess.Popen[str] | None = None
+    active_process: subprocess.Popen[str] | None = None
 
     # Start the long-lived delivery thread
     delivery_thread = threading.Thread(
@@ -864,12 +864,12 @@ def main() -> None:
 
     try:
         while not stop_event.is_set():
-            active_proc = _start_events_subprocess(agent_name, settings.cel_filter)
+            active_process = _start_events_subprocess(agent_name, settings.cel_filter)
 
             # Reader thread feeds subprocess stdout into the shared buffer
             reader_thread = threading.Thread(
                 target=_read_events_from_subprocess,
-                args=(active_proc, event_buffer, buffer_lock, stop_event),
+                args=(active_process, event_buffer, buffer_lock, stop_event),
                 daemon=True,
             )
             reader_thread.start()
@@ -877,15 +877,15 @@ def main() -> None:
             # Stderr drain thread
             stderr_thread = threading.Thread(
                 target=_drain_stderr,
-                args=(active_proc, stop_event),
+                args=(active_process, stop_event),
                 daemon=True,
             )
             stderr_thread.start()
 
             # Wait for subprocess to exit
-            active_proc.wait()
-            logger.warning("mng events subprocess exited with code {}", active_proc.returncode)
-            active_proc = None
+            active_process.wait()
+            logger.warning("mng events subprocess exited with code {}", active_process.returncode)
+            active_process = None
 
             if stop_event.is_set():
                 break
@@ -897,12 +897,12 @@ def main() -> None:
         logger.info("Event watcher stopping (KeyboardInterrupt)")
     finally:
         stop_event.set()
-        if active_proc is not None and active_proc.poll() is None:
-            active_proc.terminate()
+        if active_process is not None and active_process.poll() is None:
+            active_process.terminate()
             try:
-                active_proc.wait(timeout=5)
+                active_process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                active_proc.kill()
+                active_process.kill()
 
 
 if __name__ == "__main__":

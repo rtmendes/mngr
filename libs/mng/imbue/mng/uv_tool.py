@@ -162,8 +162,8 @@ def build_uv_tool_install_add_path(
 
     Preserves all existing extras and appends the new editable one.
     """
-    new_req = ToolRequirement(name=package_name, editable=local_path)
-    all_extras = list(receipt.extras) + [new_req]
+    new_requirement = ToolRequirement(name=package_name, editable=local_path)
+    all_extras = list(receipt.extras) + [new_requirement]
     return _build_uv_tool_install_command(receipt.base, all_extras)
 
 
@@ -180,8 +180,8 @@ def build_uv_tool_install_add_git(
     # We don't know the package name from the URL alone, so we use the
     # URL as the --with argument directly in PEP 508 format.
     git_url = url if url.startswith("git+") else f"git+{url}"
-    new_req = ToolRequirement(name=git_url)
-    all_extras = list(receipt.extras) + [new_req]
+    new_requirement = ToolRequirement(name=git_url)
+    all_extras = list(receipt.extras) + [new_requirement]
     return _build_uv_tool_install_command(receipt.base, all_extras)
 
 
