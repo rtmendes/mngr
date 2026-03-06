@@ -107,10 +107,6 @@ class KanpanPluginConfig(PluginConfig):
         default=60.0,
         description="Minimum seconds before retrying after a failed full refresh",
     )
-    manual_refresh_cooldown_seconds: float = Field(
-        default=5.0,
-        description="Minimum seconds between manual refreshes (triggered by pressing 'r')",
-    )
 
     def merge_with(self, override: "PluginConfig") -> "KanpanPluginConfig":
         """Merge this config with an override config."""
@@ -123,14 +119,8 @@ class KanpanPluginConfig(PluginConfig):
             if override.auto_refresh_cooldown_seconds is not None
             else self.auto_refresh_cooldown_seconds
         )
-        merged_manual_cooldown = (
-            override.manual_refresh_cooldown_seconds
-            if override.manual_refresh_cooldown_seconds is not None
-            else self.manual_refresh_cooldown_seconds
-        )
         return KanpanPluginConfig(
             enabled=merged_enabled,
             commands=merged_commands,
             auto_refresh_cooldown_seconds=merged_auto_cooldown,
-            manual_refresh_cooldown_seconds=merged_manual_cooldown,
         )

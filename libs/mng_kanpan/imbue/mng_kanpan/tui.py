@@ -189,7 +189,6 @@ class _KanpanState(MutableModel):
     deferred_refresh_fire_at: float = 0.0
     # Cooldown durations (loaded from plugin config)
     auto_refresh_cooldown_seconds: float = 60.0
-    manual_refresh_cooldown_seconds: float = 5.0
 
 
 class _KanpanInputHandler(MutableModel):
@@ -495,8 +494,8 @@ def _on_mute_persist_poll(loop: MainLoop, data: tuple[_KanpanState, Future[bool]
 def _dispatch_command(state: _KanpanState, key: str, cmd: CustomCommand) -> None:
     """Dispatch a command by key. Routes to builtins or runs shell commands."""
     if key == _BUILTIN_COMMAND_KEY_REFRESH and not cmd.command:
-        if state.loop is not None:
-            _request_refresh(state.loop, state, state.manual_refresh_cooldown_seconds)
+        if state.loop is not None and state.refresh_future is None:
+            _start_refresh(state.loop, state)
         return
     if key == _BUILTIN_COMMAND_KEY_PUSH and not cmd.command:
         _push_focused_agent(state)
@@ -1091,7 +1090,6 @@ def run_kanpan(mng_ctx: MngContext) -> None:
         footer_right=footer_right,
         commands=commands,
         auto_refresh_cooldown_seconds=plugin_config.auto_refresh_cooldown_seconds,
-        manual_refresh_cooldown_seconds=plugin_config.manual_refresh_cooldown_seconds,
     )
 
     input_handler = _KanpanInputHandler(state=state)

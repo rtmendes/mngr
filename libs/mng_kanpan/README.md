@@ -21,16 +21,17 @@ refresh_afterwards = true
 
 Each entry defines a keybinding (the table key, e.g. `c`) that appears in the status bar and runs with the `MNG_AGENT_NAME` environment variable set to the focused agent's name. Custom commands override builtins when they share the same key. Set `enabled = false` to disable a builtin.
 
-## Refresh cooldown
+## Refresh behavior
 
-Kanpan rate-limits refreshes to avoid hammering the GitHub API. Two cooldown durations are configurable:
+Kanpan uses two refresh strategies:
+
+- **Full refresh** (manual 'r' key, periodic 10-minute timer): fetches both agent state and GitHub PR data. Only one can be in flight at a time -- pressing 'r' while a refresh is running is ignored.
+- **Agent-only refresh** (after push, delete, custom commands): fetches agent state without hitting the GitHub API. PR data is carried forward from the previous snapshot.
+
+If a full refresh fails (e.g. GitHub API timeout), it retries after a configurable cooldown:
 
 ```toml
 [plugins.kanpan]
 # Minimum seconds before retrying after a failed full refresh
 auto_refresh_cooldown_seconds = 60.0
-# Minimum seconds between manual refreshes (pressing 'r')
-manual_refresh_cooldown_seconds = 5.0
 ```
-
-When a manual refresh is requested within the cooldown window, it is deferred until the cooldown expires. A manual refresh with a shorter cooldown will replace a pending automatic refresh if it would fire sooner. Operations like delete, push, and custom commands trigger a cheap local-only refresh that bypasses cooldown (no GitHub API calls).
