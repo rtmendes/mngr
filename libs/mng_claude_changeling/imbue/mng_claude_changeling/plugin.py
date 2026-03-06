@@ -20,6 +20,7 @@ from imbue.mng.errors import MngError
 from imbue.mng.interfaces.agent import AgentInterface
 from imbue.mng.interfaces.host import CreateAgentOptions
 from imbue.mng.interfaces.host import OnlineHostInterface
+from imbue.mng.primitives import CommandString
 from imbue.mng_claude_changeling.provisioning import build_memory_sync_hooks_config
 from imbue.mng_claude_changeling.provisioning import configure_llm_user_path
 from imbue.mng_claude_changeling.provisioning import create_changeling_symlinks
@@ -101,8 +102,8 @@ class ClaudeChangelingConfig(ClaudeAgentConfig):
     )
     active_role: str = Field(
         default="thinking",
-        description="The active role for this agent. Determines which role directory "
-        "is symlinked as .claude/ at the repo root (e.g. 'thinking', 'working', 'verifying').",
+        description="The active role for this agent. Claude Code runs from within this "
+        "role directory (e.g. 'thinking', 'working', 'verifying').",
     )
 
 
@@ -112,9 +113,12 @@ class ClaudeChangelingAgent(ClaudeAgent):
     Inherits all Claude Code functionality (session management, provisioning,
     TUI interaction, etc.) and extends it with changeling-specific setup:
 
+    At runtime:
+    - Overrides assemble_command() to ``cd`` into the active role directory
+      before running Claude Code, so .claude/ is discovered naturally
+
     During provisioning:
     - Installs the llm toolchain (llm, llm-anthropic, llm-live-chat)
-    - Symlinks .claude/ to the active role's .claude/ directory
     - Provisions supporting service scripts and chat utilities
     - Sets up event log directories (events/<source>/events.jsonl)
     - Syncs per-role memory/ into Claude project memory via hooks
@@ -144,14 +148,13 @@ class ClaudeChangelingAgent(ClaudeAgent):
         self,
         host: OnlineHostInterface,
         active_role: str,
-        work_dir_abs: str,
+        role_dir_abs: str,
     ) -> None:
         """Write all hooks (readiness + memory sync) to the active role's settings.local.json.
 
-        Writes directly to <active_role>/.claude/settings.local.json using the
-        resolved path, bypassing the symlink. This avoids the gitignore check
-        in the base class's _configure_readiness_hooks, which fails when .claude
-        is a symlink (git refuses to traverse symlinks for check-ignore).
+        Writes directly to <active_role>/.claude/settings.local.json because
+        that is where the role's Claude Code configuration lives (Claude Code
+        runs from within the role directory).
         """
         settings_path = self.work_dir / active_role / ".claude" / "settings.local.json"
 
@@ -169,13 +172,29 @@ class ClaudeChangelingAgent(ClaudeAgent):
             existing_settings = merged
 
         # Merge memory sync hooks
-        memory_config = build_memory_sync_hooks_config(work_dir_abs, active_role)
+        memory_config = build_memory_sync_hooks_config(role_dir_abs)
         merged = merge_hooks_config(existing_settings, memory_config)
         if merged is not None:
             existing_settings = merged
 
         with log_span("Configuring hooks in {}", settings_path):
             host.write_text_file(settings_path, json.dumps(existing_settings, indent=2) + "\n")
+
+    def assemble_command(
+        self,
+        host: OnlineHostInterface,
+        agent_args: tuple[str, ...],
+        command_override: CommandString | None,
+    ) -> CommandString:
+        """Prepend ``cd <role> &&`` so Claude Code runs from within the role directory.
+
+        This causes Claude Code to naturally discover ``.claude/``, skills,
+        and ``CLAUDE.local.md`` from the role directory, while ``CLAUDE.md``
+        at the repo root is found by walking up the directory tree.
+        """
+        base_command = super().assemble_command(host, agent_args, command_override)
+        config = self._get_changeling_config()
+        return CommandString(f"cd {config.active_role} && {base_command}")
 
     def provision(
         self,
@@ -190,7 +209,7 @@ class ClaudeChangelingAgent(ClaudeAgent):
         2. Talking role constraint validation (no skills or settings allowed)
         3. llm + plugin installation
         4. Default content (GLOBAL.md, role prompts, role .claude/ config)
-        5. Symlinks for active role (.claude -> <role>/.claude, CLAUDE.md, CLAUDE.local.md)
+        5. Symlinks (CLAUDE.md -> GLOBAL.md, <role>/CLAUDE.local.md -> <role>/PROMPT.md)
         6. All hooks (readiness + memory sync) written to <role>/.claude/settings.local.json
         7. Supporting service scripts and chat utilities
         8. Event log directory structure (events/<source>/events.jsonl)
@@ -216,12 +235,11 @@ class ClaudeChangelingAgent(ClaudeAgent):
         create_changeling_symlinks(host, self.work_dir, active_role, provisioning)
 
         # Write all hooks (readiness + memory sync) directly to the role's
-        # settings.local.json using the resolved path. We cannot use
-        # self._configure_readiness_hooks(host) here because it runs
-        # `git check-ignore .claude/settings.local.json` which fails when
-        # .claude is a symlink ("pathspec beyond a symbolic link").
+        # settings.local.json. We write to the role directory because that's
+        # where Claude Code runs and discovers its .claude/ config.
         work_dir_abs = resolve_work_dir_abs(host, self.work_dir, provisioning)
-        self._configure_role_hooks(host, active_role, work_dir_abs)
+        role_dir_abs = f"{work_dir_abs}/{active_role}"
+        self._configure_role_hooks(host, active_role, role_dir_abs)
 
         provision_supporting_services(host, provisioning)
         provision_llm_tools(host, provisioning)
@@ -236,7 +254,7 @@ class ClaudeChangelingAgent(ClaudeAgent):
             chat_model = settings.chat.model or "claude-opus-4.6"
             create_daily_conversation(host, agent_state_dir, provisioning, chat_model)
 
-        setup_memory_directory(host, self.work_dir, active_role, work_dir_abs, provisioning)
+        setup_memory_directory(host, self.work_dir, active_role, role_dir_abs, provisioning)
 
 
 def inject_supporting_services(params: dict[str, Any]) -> None:

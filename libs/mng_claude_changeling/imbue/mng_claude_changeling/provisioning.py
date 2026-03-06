@@ -309,22 +309,14 @@ def create_changeling_symlinks(
 ) -> None:
     """Create symlinks so Claude Code discovers changeling files at standard locations.
 
-    The active role's .claude/ directory becomes the top-level .claude/ via a
-    directory symlink, so Claude Code naturally finds settings.json, skills/, etc.
+    Claude Code runs from within the role directory (via ``cd $ROLE`` in
+    assemble_command), so ``.claude/`` is found naturally. We only need:
 
-    Creates:
-    - <work_dir>/.claude -> <work_dir>/<active_role>/.claude (directory symlink)
-    - <work_dir>/CLAUDE.md -> <work_dir>/GLOBAL.md
-    - <work_dir>/CLAUDE.local.md -> <work_dir>/<active_role>/PROMPT.md
+    - ``<work_dir>/CLAUDE.md`` -> ``<work_dir>/GLOBAL.md`` (found by Claude Code
+      walking up the directory tree from the role directory)
+    - ``<work_dir>/<active_role>/CLAUDE.local.md`` -> ``<work_dir>/<active_role>/PROMPT.md``
+      (role-specific prompt, discovered in the role directory)
     """
-    # .claude -> <active_role>/.claude (directory symlink)
-    _create_dir_symlink_if_target_exists(
-        host,
-        link_path=work_dir / ".claude",
-        target_path=work_dir / active_role / ".claude",
-        settings=settings,
-    )
-
     # CLAUDE.md -> GLOBAL.md (so Claude Code loads global instructions)
     _create_symlink_if_target_exists(
         host,
@@ -333,10 +325,10 @@ def create_changeling_symlinks(
         settings=settings,
     )
 
-    # CLAUDE.local.md -> <active_role>/PROMPT.md (role-specific prompt)
+    # <role>/CLAUDE.local.md -> <role>/PROMPT.md (role-specific prompt)
     _create_symlink_if_target_exists(
         host,
-        link_path=work_dir / "CLAUDE.local.md",
+        link_path=work_dir / active_role / "CLAUDE.local.md",
         target_path=work_dir / active_role / "PROMPT.md",
         settings=settings,
     )
@@ -380,61 +372,6 @@ def _create_symlink_if_target_exists(
         )
         if not result.success:
             raise RuntimeError(f"Failed to create symlink {link_path} -> {target_path}: {result.stderr}")
-
-
-def _create_dir_symlink_if_target_exists(
-    host: OnlineHostInterface,
-    link_path: Path,
-    target_path: Path,
-    settings: ProvisioningSettings,
-) -> None:
-    """Create a directory symlink at link_path pointing to target_path, if target exists.
-
-    Uses ``ln -sfn`` so that an existing symlink to a directory is replaced
-    rather than creating a symlink inside the target directory.
-    """
-    check = _execute_with_timing(
-        host,
-        f"test -d {shlex.quote(str(target_path))}",
-        hard_timeout=settings.fs_hard_timeout_seconds,
-        warn_threshold=settings.fs_warn_threshold_seconds,
-        label="dir check",
-    )
-    if not check.success:
-        return
-
-    _execute_with_timing(
-        host,
-        f"mkdir -p {shlex.quote(str(link_path.parent))}",
-        hard_timeout=settings.fs_hard_timeout_seconds,
-        warn_threshold=settings.fs_warn_threshold_seconds,
-        label="mkdir",
-    )
-
-    # Remove any existing real directory at link_path. ln -sfn on a real
-    # directory creates the symlink INSIDE rather than replacing it. The
-    # guard "[ -d X ] && [ ! -L X ]" only matches real directories, not
-    # existing symlinks (which ln -sfn handles correctly).
-    quoted_link = shlex.quote(str(link_path))
-    _execute_with_timing(
-        host,
-        f"[ -d {quoted_link} ] && [ ! -L {quoted_link} ] && rm -rf {quoted_link} || true",
-        hard_timeout=settings.fs_hard_timeout_seconds,
-        warn_threshold=settings.fs_warn_threshold_seconds,
-        label="rm existing dir",
-    )
-
-    cmd = f"ln -sfn {shlex.quote(str(target_path))} {quoted_link}"
-    with log_span("Creating directory symlink: {} -> {}", link_path, target_path):
-        result = _execute_with_timing(
-            host,
-            cmd,
-            hard_timeout=settings.fs_hard_timeout_seconds,
-            warn_threshold=settings.fs_warn_threshold_seconds,
-            label="dir symlink",
-        )
-        if not result.success:
-            raise RuntimeError(f"Failed to create directory symlink {link_path} -> {target_path}: {result.stderr}")
 
 
 def provision_supporting_services(host: OnlineHostInterface, settings: ProvisioningSettings) -> None:
@@ -763,7 +700,7 @@ def setup_memory_directory(
     host: OnlineHostInterface,
     work_dir: Path,
     active_role: str,
-    work_dir_abs: str,
+    role_dir_abs: str,
     settings: ProvisioningSettings,
 ) -> None:
     """Set up the per-role memory directory and initial sync into Claude project memory.
@@ -773,13 +710,17 @@ def setup_memory_directory(
     - ~/.claude/projects/<project_name>/memory/ (real directory, not symlink)
     - Initial rsync of contents from role memory/ to claude project memory/
 
+    The project_name is derived from role_dir_abs (the absolute path to the
+    role directory, e.g. ``/home/user/.changelings/agent/thinking``), because
+    Claude Code runs from within the role directory.
+
     Memory sync hooks (added separately via build_memory_sync_hooks_config) keep
     the two directories in sync during agent operation: PreToolUse syncs from the
     version-controlled role memory into Claude's project memory, and PostToolUse
     syncs back so that any memory Claude wrote is captured in version control.
     """
     memory_dir = work_dir / active_role / "memory"
-    project_dir_name = compute_claude_project_dir_name(work_dir_abs)
+    project_dir_name = compute_claude_project_dir_name(role_dir_abs)
 
     # Create both memory directories.
     # Remove any existing symlink at the project memory path (from old provisioning)
@@ -810,18 +751,23 @@ def setup_memory_directory(
             raise RuntimeError(f"Failed to sync memory directory: {result.stderr}")
 
 
-def build_memory_sync_hooks_config(work_dir_abs: str, active_role: str) -> dict[str, Any]:
+def build_memory_sync_hooks_config(role_dir_abs: str) -> dict[str, Any]:
     """Build Claude hooks config for syncing per-role memory with Claude project memory.
+
+    Takes role_dir_abs, the absolute path to the role directory (e.g.
+    ``/home/user/.changelings/agent/thinking``), because Claude Code runs
+    from within the role directory and its project dir name is derived from
+    that path.
 
     Returns a hooks config dict with PreToolUse and PostToolUse entries that
     rsync the memory directory in the appropriate direction:
-    - PreToolUse: <role>/memory/ -> ~/.claude/projects/<project>/memory/
+    - PreToolUse: <role_dir>/memory/ -> ~/.claude/projects/<project>/memory/
       (ensures Claude sees the latest version-controlled memory)
-    - PostToolUse: ~/.claude/projects/<project>/memory/ -> <role>/memory/
+    - PostToolUse: ~/.claude/projects/<project>/memory/ -> <role_dir>/memory/
       (captures any memory Claude wrote back into version control)
     """
-    project_dir_name = compute_claude_project_dir_name(work_dir_abs)
-    quoted_work_memory = shlex.quote(f"{work_dir_abs}/{active_role}/memory")
+    project_dir_name = compute_claude_project_dir_name(role_dir_abs)
+    quoted_work_memory = shlex.quote(f"{role_dir_abs}/memory")
     quoted_project_dir_name = shlex.quote(project_dir_name)
     project_memory_shell = f'"$HOME/.claude/projects/"{quoted_project_dir_name}/memory'
 

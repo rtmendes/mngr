@@ -237,8 +237,13 @@ def test_provisioning_creates_symlinks(
     temp_git_repo: Path,
     local_shell_host: LocalShellHost,
 ) -> None:
-    """Verify that provisioning creates the expected symlinks."""
-    # Set up the new directory structure
+    """Verify that provisioning creates the expected symlinks.
+
+    With the cd-into-role approach, we only create:
+    - CLAUDE.md -> GLOBAL.md at the repo root
+    - <role>/CLAUDE.local.md -> <role>/PROMPT.md within the role directory
+    """
+    # Set up the directory structure
     (temp_git_repo / "GLOBAL.md").write_text("# Global instructions")
     thinking_dir = temp_git_repo / "thinking"
     thinking_dir.mkdir()
@@ -246,69 +251,22 @@ def test_provisioning_creates_symlinks(
     claude_dir = thinking_dir / ".claude"
     claude_dir.mkdir()
     (claude_dir / "settings.json").write_text("{}")
-    skills_dir = claude_dir / "skills"
-    skills_dir.mkdir()
-    (skills_dir / "test-skill").mkdir()
-    (skills_dir / "test-skill" / "SKILL.md").write_text("# Test skill")
 
     create_changeling_symlinks(cast(Any, local_shell_host), temp_git_repo, "thinking", _DEFAULT_PROVISIONING)
-
-    # .claude -> thinking/.claude (directory symlink)
-    claude_link = temp_git_repo / ".claude"
-    assert claude_link.is_symlink(), ".claude should be a symlink"
-    assert claude_link.resolve() == claude_dir.resolve()
 
     # CLAUDE.md -> GLOBAL.md
     claude_md = temp_git_repo / "CLAUDE.md"
     assert claude_md.is_symlink(), "CLAUDE.md should be a symlink"
     assert claude_md.resolve() == (temp_git_repo / "GLOBAL.md").resolve()
 
-    # CLAUDE.local.md -> thinking/PROMPT.md
-    local_md = temp_git_repo / "CLAUDE.local.md"
-    assert local_md.is_symlink(), "CLAUDE.local.md should be a symlink"
+    # thinking/CLAUDE.local.md -> thinking/PROMPT.md
+    local_md = thinking_dir / "CLAUDE.local.md"
+    assert local_md.is_symlink(), "thinking/CLAUDE.local.md should be a symlink"
     assert local_md.resolve() == (thinking_dir / "PROMPT.md").resolve()
 
-    # settings.json is accessible through the .claude symlink
-    settings_json = temp_git_repo / ".claude" / "settings.json"
-    assert settings_json.exists(), "settings.json should be accessible through .claude symlink"
-
-    # skills are accessible through the .claude symlink
-    skills_link = temp_git_repo / ".claude" / "skills"
-    assert skills_link.is_dir(), ".claude/skills should be accessible through .claude symlink"
-
-
-@pytest.mark.timeout(30)
-def test_symlink_replaces_existing_real_claude_dir(
-    temp_git_repo: Path,
-    local_shell_host: LocalShellHost,
-) -> None:
-    """Verify that create_changeling_symlinks replaces a real .claude/ directory.
-
-    This tests the critical interaction where super().provision() creates .claude/
-    as a real directory (via _configure_readiness_hooks), and create_changeling_symlinks
-    must replace it with a symlink to the active role's .claude/ directory.
-    """
-    # Set up the role's .claude directory
-    (temp_git_repo / "GLOBAL.md").write_text("# Global")
-    thinking_dir = temp_git_repo / "thinking"
-    thinking_dir.mkdir()
-    (thinking_dir / "PROMPT.md").write_text("# Thinking")
-    claude_dir = thinking_dir / ".claude"
-    claude_dir.mkdir()
-    (claude_dir / "settings.json").write_text('{"test": true}')
-
-    # Simulate what super().provision() does: create .claude/ as a real directory
-    real_claude = temp_git_repo / ".claude"
-    real_claude.mkdir()
-    (real_claude / "settings.local.json").write_text("{}")
-
-    create_changeling_symlinks(cast(Any, local_shell_host), temp_git_repo, "thinking", _DEFAULT_PROVISIONING)
-
-    # .claude should now be a symlink, not a real directory
-    assert real_claude.is_symlink(), ".claude should be a symlink after create_changeling_symlinks"
-    assert real_claude.resolve() == claude_dir.resolve()
-    # settings.json should be accessible through the symlink
-    assert (real_claude / "settings.json").read_text() == '{"test": true}'
+    # No .claude symlink at the repo root (Claude Code runs from within the role dir)
+    claude_link = temp_git_repo / ".claude"
+    assert not claude_link.exists(), ".claude symlink should NOT be created at repo root"
 
 
 @pytest.mark.timeout(30)

@@ -197,6 +197,7 @@ def deploy_changeling(
     changeling_dir: Path,
     agent_name: AgentName,
     agent_id: AgentId,
+    agent_type: str,
     provider: DeploymentProvider,
     paths: ChangelingPaths,
     forwarding_server_port: int,
@@ -219,7 +220,7 @@ def deploy_changeling(
 
     This function:
     1. Verifies mng is available and no agent with this name exists
-    2. Creates an mng agent via `mng create --agent-id <id> -t entrypoint --label changeling=true`
+    2. Creates an mng agent via `mng create --agent-id <id> --agent-type <type> --label changeling=true`
     3. Generates a one-time auth code for the forwarding server
     4. Returns the deployment result with the login URL
 
@@ -234,6 +235,7 @@ def deploy_changeling(
             changeling_dir=changeling_dir,
             agent_name=agent_name,
             agent_id=agent_id,
+            agent_type=agent_type,
             provider=provider,
             concurrency_group=concurrency_group,
             pass_env=pass_env,
@@ -262,6 +264,7 @@ def _create_mng_agent(
     changeling_dir: Path,
     agent_name: AgentName,
     agent_id: AgentId,
+    agent_type: str,
     provider: DeploymentProvider,
     concurrency_group: ConcurrencyGroup,
     pass_env: tuple[str, ...] = (),
@@ -271,13 +274,14 @@ def _create_mng_agent(
     The agent_id is passed via --agent-id so mng uses the same ID as the
     changeling directory name (~/.changelings/<agent-id>/).
 
+    The agent_type is passed directly via --agent-type instead of going
+    through a create template in .mng/settings.toml.
+
     For local deployment, runs `mng create --in-place` so the agent runs
     directly in changeling_dir.
 
     For remote deployment, runs `mng create --in <provider> --source-path
     <changeling_dir>`, which copies the code to the remote host.
-
-    Both paths add `--label changeling=true` and `-t entrypoint`.
     """
     with log_span("Creating mng agent '{}' via provider '{}'", agent_name, provider.value):
         mng_command = [
@@ -289,8 +293,8 @@ def _create_mng_agent(
             str(agent_id),
             "--no-connect",
             "--await-ready",
-            "-t",
-            "entrypoint",
+            "--agent-type",
+            agent_type,
             "--label",
             "changeling=true",
         ]

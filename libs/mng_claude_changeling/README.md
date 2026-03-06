@@ -30,13 +30,13 @@ Each role directory in the changeling repo corresponds to an mng agent type:
 
 Each role (except `talking/`) has its own directory structure:
 
-- `<role>/PROMPT.md` - role-specific prompt (symlinked as `CLAUDE.local.md` when active)
+- `<role>/PROMPT.md` - role-specific prompt (symlinked as `CLAUDE.local.md` within the role directory)
 - `<role>/.claude/settings.json` - Claude Code settings for the role
 - `<role>/.claude/skills/` - skills available to the role
 - `<role>/.claude/settings.local.json` - mng-managed hooks (gitignored, written during provisioning)
 - `<role>/memory/` - per-role memory (synced into Claude project memory via hooks)
 
-`GLOBAL.md` at the repo root provides shared instructions for all roles, symlinked as `CLAUDE.md` so Claude Code discovers it.
+Claude Code runs from within the role directory (via `cd $ROLE` in `assemble_command`), so `.claude/` is discovered naturally. `GLOBAL.md` at the repo root is symlinked as `CLAUDE.md` and discovered by Claude Code walking up the directory tree.
 
 ### Role agent lifecycle
 
@@ -111,7 +111,7 @@ The `ClaudeChangelingAgent.provision()` method transforms the changeling repo in
 2. Validates role constraints (e.g., `talking/` cannot have `.claude/` or skills)
 3. Installs the `llm` toolchain (`llm`, `llm-anthropic`, `llm-live-chat`)
 4. Provisions default content (GLOBAL.md, role prompts, role configs) for any missing files
-5. Creates symlinks for the active role (`.claude` -> `<role>/.claude`, `CLAUDE.md` -> `GLOBAL.md`, `CLAUDE.local.md` -> `<role>/PROMPT.md`)
+5. Creates symlinks (`CLAUDE.md` -> `GLOBAL.md`, `<role>/CLAUDE.local.md` -> `<role>/PROMPT.md`)
 6. Configures hooks (readiness detection + memory sync) in `<role>/.claude/settings.local.json`
 7. Deploys supporting service scripts and chat utilities to the host
 8. Creates the event log directory structure

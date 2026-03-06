@@ -317,6 +317,11 @@ class ClaudeChangelingSettings(FrozenModel):
     produces a valid settings object with the standard defaults.
     """
 
+    agent_type: str | None = Field(
+        default=None,
+        description="Agent type for this changeling (e.g. 'elena-code', 'claude-changeling'). "
+        "Used by changeling deploy to determine the agent type when --agent-type is not provided on the CLI.",
+    )
     chat: ChatSettings = Field(
         default_factory=ChatSettings,
         description="Chat-related settings ([chat] section).",

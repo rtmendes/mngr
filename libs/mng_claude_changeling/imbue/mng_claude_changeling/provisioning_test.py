@@ -357,7 +357,8 @@ def _run_setup_memory(
 ) -> StubHost:
     """Run setup_memory_directory on a StubHost and return the host for inspection."""
     host = StubHost()
-    setup_memory_directory(cast(Any, host), Path(work_dir), active_role, work_dir, _DEFAULT_PROVISIONING)
+    role_dir_abs = f"{work_dir}/{active_role}"
+    setup_memory_directory(cast(Any, host), Path(work_dir), active_role, role_dir_abs, _DEFAULT_PROVISIONING)
     return host
 
 
@@ -373,7 +374,8 @@ def test_setup_memory_directory_creates_project_dir_with_home_var() -> None:
     mkdir_cmds = [c for c in host.executed_commands if "mkdir" in c and ".claude/projects" in c]
     assert len(mkdir_cmds) >= 1
     assert "$HOME" in mkdir_cmds[0]
-    assert "-home-user--changelings-agent" in mkdir_cmds[0]
+    # Project dir name is derived from the role directory path (includes /thinking)
+    assert "-home-user--changelings-agent-thinking" in mkdir_cmds[0]
 
 
 def test_setup_memory_directory_rsyncs_initial_content() -> None:
@@ -400,29 +402,29 @@ def test_setup_memory_directory_does_not_use_literal_tilde() -> None:
 
 
 def test_build_memory_sync_hooks_config_has_pre_and_post() -> None:
-    config = build_memory_sync_hooks_config("/home/user/.changelings/agent", "thinking")
+    config = build_memory_sync_hooks_config("/home/user/.changelings/agent/thinking")
     assert "PreToolUse" in config["hooks"]
     assert "PostToolUse" in config["hooks"]
 
 
-def test_build_memory_sync_hooks_config_pre_syncs_work_dir_to_project() -> None:
-    """PreToolUse should rsync FROM <role>/memory/ TO Claude project memory/."""
-    config = build_memory_sync_hooks_config("/home/user/.changelings/agent", "thinking")
+def test_build_memory_sync_hooks_config_pre_syncs_role_dir_to_project() -> None:
+    """PreToolUse should rsync FROM <role_dir>/memory/ TO Claude project memory/."""
+    config = build_memory_sync_hooks_config("/home/user/.changelings/agent/thinking")
     pre_cmd = config["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     # rsync source comes before destination: rsync -a --delete SRC/ DST/
-    work_dir_pos = pre_cmd.index("/home/user/.changelings/agent/thinking/memory")
+    role_dir_pos = pre_cmd.index("/home/user/.changelings/agent/thinking/memory")
     project_pos = pre_cmd.index("$HOME/.claude/projects/")
-    assert work_dir_pos < project_pos, "PreToolUse should sync work_dir -> project (work_dir first in rsync args)"
+    assert role_dir_pos < project_pos, "PreToolUse should sync role_dir -> project (role_dir first in rsync args)"
 
 
-def test_build_memory_sync_hooks_config_post_syncs_project_to_work_dir() -> None:
-    """PostToolUse should rsync FROM Claude project memory/ TO <role>/memory/."""
-    config = build_memory_sync_hooks_config("/home/user/.changelings/agent", "thinking")
+def test_build_memory_sync_hooks_config_post_syncs_project_to_role_dir() -> None:
+    """PostToolUse should rsync FROM Claude project memory/ TO <role_dir>/memory/."""
+    config = build_memory_sync_hooks_config("/home/user/.changelings/agent/thinking")
     post_cmd = config["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
     # rsync source comes before destination: rsync -a --delete SRC/ DST/
-    work_dir_pos = post_cmd.index("/home/user/.changelings/agent/thinking/memory")
+    role_dir_pos = post_cmd.index("/home/user/.changelings/agent/thinking/memory")
     project_pos = post_cmd.index("$HOME/.claude/projects/")
-    assert project_pos < work_dir_pos, "PostToolUse should sync project -> work_dir (project first in rsync args)"
+    assert project_pos < role_dir_pos, "PostToolUse should sync project -> role_dir (project first in rsync args)"
 
 
 # -- Provisioning function tests (using _StubHost) --
@@ -490,11 +492,12 @@ def test_create_changeling_symlinks_checks_thinking_prompt() -> None:
     assert any("thinking/PROMPT.md" in c for c in host.executed_commands)
 
 
-def test_create_changeling_symlinks_creates_claude_dir_symlink() -> None:
+def test_create_changeling_symlinks_does_not_create_claude_dir_symlink() -> None:
+    """Verify that .claude/ symlink is NOT created (Claude Code runs from within the role dir)."""
     host = StubHost()
     create_changeling_symlinks(cast(Any, host), Path("/test/work"), "thinking", _DEFAULT_PROVISIONING)
 
-    assert any("ln -sfn" in c and "thinking/.claude" in c for c in host.executed_commands)
+    assert not any("ln -sfn" in c and "thinking/.claude" in c for c in host.executed_commands)
 
 
 def test_create_changeling_symlinks_creates_claude_md() -> None:
@@ -1313,24 +1316,24 @@ def test_create_changeling_symlinks_skips_when_target_does_not_exist() -> None:
     assert not any("ln -sfn" in c for c in host.executed_commands)
 
 
-def test_create_changeling_symlinks_removes_existing_real_dir() -> None:
-    """Verify that a real .claude/ directory is removed before creating the symlink."""
+def test_create_changeling_symlinks_does_not_touch_claude_dir() -> None:
+    """Verify that the .claude/ directory at repo root is not touched (no symlink, no removal)."""
     host = StubHost()
     create_changeling_symlinks(cast(Any, host), Path("/test/work"), "thinking", _DEFAULT_PROVISIONING)
 
-    # Should have a command that checks for and removes real directories
-    rm_cmds = [c for c in host.executed_commands if "rm -rf" in c and ".claude" in c]
-    assert len(rm_cmds) >= 1
+    # No rm -rf of .claude/ at repo root (we no longer manage .claude symlink)
+    rm_cmds = [c for c in host.executed_commands if "rm -rf" in c and "/test/work/.claude" in c]
+    assert len(rm_cmds) == 0
 
 
 def test_create_changeling_symlinks_raises_on_symlink_failure() -> None:
     """Verify RuntimeError when symlink creation fails."""
     host = StubHost(
         command_results={
-            "ln -sfn": StubCommandResult(success=False, stderr="permission denied"),
+            "ln -sf": StubCommandResult(success=False, stderr="permission denied"),
         }
     )
-    with pytest.raises(RuntimeError, match="Failed to create directory symlink"):
+    with pytest.raises(RuntimeError, match="Failed to create symlink"):
         create_changeling_symlinks(cast(Any, host), Path("/test/work"), "thinking", _DEFAULT_PROVISIONING)
 
 
@@ -1364,7 +1367,9 @@ def test_setup_memory_directory_raises_on_sync_failure() -> None:
         }
     )
     with pytest.raises(RuntimeError, match="Failed to sync memory directory"):
-        setup_memory_directory(cast(Any, host), Path("/test/work"), "thinking", "/test/work", _DEFAULT_PROVISIONING)
+        setup_memory_directory(
+            cast(Any, host), Path("/test/work"), "thinking", "/test/work/thinking", _DEFAULT_PROVISIONING
+        )
 
 
 def test_provision_llm_tools_uses_correct_mode() -> None:
