@@ -25,6 +25,7 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.errors import ProcessSetupError
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
+from imbue.imbue_common.pure import pure
 from imbue.mng import hookimpl
 from imbue.mng.agents.base_agent import BaseAgent
 from imbue.mng.agents.default_plugins.claude_config import ClaudeDirectoryNotTrustedError
@@ -398,6 +399,7 @@ def _delete_macos_keychain_credential(label: str, concurrency_group: Concurrency
     return result.returncode == 0
 
 
+@pure
 def _compute_keychain_label_suffix(config_dir: Path) -> str:
     """Compute the keychain label suffix Claude Code uses for a given CLAUDE_CONFIG_DIR.
 
