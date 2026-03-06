@@ -53,7 +53,7 @@ def test_mng_create_echo_command_on_modal(
     expected_output = f"hello-from-modal-{get_short_random_string()}"
 
     # Run mng create with echo command on modal
-    # Using --no-connect to create in background without attaching
+    # Using --no-connect to create without attaching
     # Using --no-ensure-clean since temp dir won't be a git repo
     result = subprocess.run(
         [

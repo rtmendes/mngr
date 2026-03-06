@@ -182,7 +182,7 @@ def _create_agent(
     )
     assert result.exit_code == 0, f"Create failed: {result.output}"
 
-    # --no-connect creates in background, wait for the session to appear
+    # Wait for the tmux session to appear
     session_name = f"{mng_test_prefix}{agent_name}"
     wait_for(
         lambda: tmux_session_exists(session_name),

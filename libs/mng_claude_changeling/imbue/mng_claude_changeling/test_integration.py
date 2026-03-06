@@ -100,7 +100,7 @@ def _create_agent_in_session(
         )
         assert result.exit_code == 0, f"CLI failed with: {result.output}"
 
-        # --no-connect creates in background, wait for the session to appear
+        # Wait for the tmux session to appear
         wait_for_agent_session(session_name)
         yield session_name
 

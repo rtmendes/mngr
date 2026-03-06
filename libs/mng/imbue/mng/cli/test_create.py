@@ -210,7 +210,7 @@ def test_no_connect_flag_skips_tmux_attach(
             catch_exceptions=False,
         )
 
-        # --no-connect creates in background and returns immediately
+        # --no-connect skips connecting to the agent after creation
         assert result.exit_code == 0, f"CLI failed with: {result.output}"
 
         wait_for(

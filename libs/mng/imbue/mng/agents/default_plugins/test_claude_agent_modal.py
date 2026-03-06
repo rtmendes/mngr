@@ -56,7 +56,7 @@ def test_claude_agent_provisioning_on_modal(
     (temp_source_dir / ".gitignore").write_text(".claude/settings.local.json\n")
 
     # Run mng create with claude agent on modal
-    # Using --no-connect to create in background without attaching
+    # Using --no-connect to create without attaching
     # Using --no-ensure-clean since temp dir won't be a git repo
     result = subprocess.run(
         [
