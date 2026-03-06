@@ -2241,34 +2241,53 @@ def test_on_after_provisioning_writes_session_id(
 
 
 # =============================================================================
-# _transfer_source_agent_data Tests
+# _transfer_source_plugin_data Tests
 # =============================================================================
 
 
-def test_transfer_source_agent_data_copies_files_with_no_clobber(
+@pytest.mark.rsync
+def test_transfer_source_plugin_data_copies_plugin_dir(
     local_provider: LocalProviderInstance, tmp_path: Path, temp_mng_ctx: MngContext
 ) -> None:
-    """_transfer_source_agent_data should copy files without overwriting existing ones."""
+    """_transfer_source_plugin_data should copy the plugin/ directory via rsync."""
     agent, host = make_claude_agent(local_provider, tmp_path, temp_mng_ctx)
 
-    # Create the dest agent state dir with an existing data.json
     dest_dir = agent._get_agent_dir()
     dest_dir.mkdir(parents=True, exist_ok=True)
     (dest_dir / "data.json").write_text('{"id": "new-agent"}')
 
-    # Create a source agent state dir with data.json and extra files
+    # Create a source agent state dir with plugin data
     source_dir = tmp_path / "source_agent_state"
     source_dir.mkdir()
-    # Source data.json should NOT overwrite the new agent's data.json
     (source_dir / "data.json").write_text('{"id": "old-agent"}')
     plugin_dir = source_dir / "plugin" / "claude" / "anthropic"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / ".claude.json").write_text('{"trust": true}')
+    projects_dir = plugin_dir / "projects" / "test-project"
+    projects_dir.mkdir(parents=True)
+    (projects_dir / "session.jsonl").write_text('{"type":"message"}\n')
 
-    agent._transfer_source_agent_data(host, source_dir)
+    agent._transfer_source_plugin_data(host, source_dir)
 
-    # data.json should NOT have been overwritten
+    # data.json should be untouched (only plugin/ is copied)
     assert json.loads((dest_dir / "data.json").read_text())["id"] == "new-agent"
 
-    # But the plugin files should have been copied
+    # Plugin files should have been copied
     assert (dest_dir / "plugin" / "claude" / "anthropic" / ".claude.json").exists()
+    assert (dest_dir / "plugin" / "claude" / "anthropic" / "projects" / "test-project" / "session.jsonl").exists()
+
+
+def test_transfer_source_plugin_data_skips_when_no_plugin_dir(
+    local_provider: LocalProviderInstance, tmp_path: Path, temp_mng_ctx: MngContext
+) -> None:
+    """_transfer_source_plugin_data should skip gracefully when source has no plugin/ dir."""
+    agent, host = make_claude_agent(local_provider, tmp_path, temp_mng_ctx)
+
+    dest_dir = agent._get_agent_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    source_dir = tmp_path / "source_agent_state"
+    source_dir.mkdir()
+
+    # Should not raise
+    agent._transfer_source_plugin_data(host, source_dir)

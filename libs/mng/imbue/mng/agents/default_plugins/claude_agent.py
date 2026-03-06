@@ -1240,6 +1240,12 @@ class ClaudeAgent(BaseAgent):
                 _install_claude(host, config.version)
                 logger.info("Claude installed successfully")
 
+        # Transfer plugin data from source agent before config setup (if cloning via --from-agent).
+        # This copies sessions, memory, transcript offsets, etc. The subsequent config setup
+        # will overwrite identity-specific files (.claude.json, credentials) with fresh values.
+        if options.source_agent_state_dir is not None:
+            self._transfer_source_plugin_data(host, options.source_agent_state_dir)
+
         # Set up per-agent config directory (for both local and remote hosts)
         self._setup_per_agent_config_dir(host, options, mng_ctx)
 
@@ -1248,10 +1254,6 @@ class ClaudeAgent(BaseAgent):
 
         # Provision background task scripts to the host commands directory
         _provision_background_scripts(host)
-
-        # Transfer data from source agent (if cloning via --from-agent)
-        if options.source_agent_state_dir is not None:
-            self._transfer_source_agent_data(host, options.source_agent_state_dir)
 
     def on_after_provisioning(
         self,
@@ -1273,77 +1275,36 @@ class ClaudeAgent(BaseAgent):
         host.write_text_file(agent_state_dir / "claude_session_id", session_id)
         logger.info("Adopted session {}", session_id)
 
-    # Files expected to already exist in the dest agent state dir before clone
-    # transfer. These are written by create_agent_state() and _setup_per_agent_config_dir().
-    _EXPECTED_CLONE_SKIP_PREFIXES: tuple[str, ...] = (
-        "data.json",
-        "plugin/claude/anthropic/",
-    )
-
-    def _transfer_source_agent_data(
+    def _transfer_source_plugin_data(
         self,
         host: OnlineHostInterface,
         source_agent_state_dir: Path,
     ) -> None:
-        """Transfer data from a source agent's state directory during clone.
+        """Transfer plugin data from a source agent's state directory during clone.
 
-        Copies the source agent's entire data directory into this agent's data
-        directory using no-clobber to avoid overwriting the new agent's identity
-        (data.json, etc.) which was already written by create_agent_state().
-
-        Warns about any unexpected file skips (files that exist in the dest but
-        are not in the expected whitelist).
+        Copies the source agent's plugin/ directory into this agent's state
+        directory. This runs before _setup_per_agent_config_dir, which will
+        overwrite identity-specific config files with fresh values for the
+        new agent.
         """
-        dest_data_dir = self._get_agent_dir()
-        source_data_dir = source_agent_state_dir
+        source_plugin_dir = source_agent_state_dir / "plugin"
+        dest_plugin_dir = self._get_agent_dir() / "plugin"
 
-        with log_span("Transferring source agent data from {} to {}", source_data_dir, dest_data_dir):
+        if not source_plugin_dir.exists():
+            logger.debug("No plugin directory in source agent, skipping clone transfer")
+            return
+
+        with log_span("Transferring plugin data from {} to {}", source_plugin_dir, dest_plugin_dir):
             if host.is_local:
-                # cp -a -n: archive mode, no-clobber (don't overwrite existing files)
                 host.execute_command(
-                    f"cp -a -n {shlex.quote(str(source_data_dir))}/ {shlex.quote(str(dest_data_dir))}/",
+                    f"rsync -a {shlex.quote(str(source_plugin_dir))}/ {shlex.quote(str(dest_plugin_dir))}/",
                     timeout_seconds=60.0,
                 )
             else:
-                # For remote hosts: iterate source files, skip if dest exists
-                for file_path in source_data_dir.rglob("*"):
+                for file_path in source_plugin_dir.rglob("*"):
                     if file_path.is_file():
-                        relative_path = file_path.relative_to(source_data_dir)
-                        dest_path = dest_data_dir / relative_path
-                        # No-clobber: skip if destination file already exists
-                        if host.execute_command(f"test -f {shlex.quote(str(dest_path))}", timeout_seconds=5.0).success:
-                            continue
-                        host.write_file(dest_path, file_path.read_bytes())
-
-            # Check for unexpected skipped files
-            self._warn_unexpected_clone_skips(source_data_dir, dest_data_dir)
-
-    def _warn_unexpected_clone_skips(
-        self,
-        source_data_dir: Path,
-        dest_data_dir: Path,
-    ) -> None:
-        """Warn about files that were skipped during clone transfer unexpectedly."""
-        unexpected_skips: list[str] = []
-        for source_file in source_data_dir.rglob("*"):
-            if not source_file.is_file():
-                continue
-            relative = str(source_file.relative_to(source_data_dir))
-            dest_file = dest_data_dir / relative
-            if not dest_file.exists():
-                continue
-            # File exists in both source and dest (was skipped by no-clobber)
-            if not any(
-                relative == prefix or relative.startswith(prefix) for prefix in self._EXPECTED_CLONE_SKIP_PREFIXES
-            ):
-                unexpected_skips.append(relative)
-
-        if unexpected_skips:
-            logger.warning(
-                "Clone transfer skipped {} unexpected file(s) that already existed in dest: {}",
-                len(unexpected_skips),
-                ", ".join(unexpected_skips),
-            )
+                        relative_path = file_path.relative_to(source_plugin_dir)
+                        host.write_file(dest_plugin_dir / relative_path, file_path.read_bytes())
 
     def on_destroy(self, host: OnlineHostInterface) -> None:
         """Clean up per-agent credentials and trust entries.
