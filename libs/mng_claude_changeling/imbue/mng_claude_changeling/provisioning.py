@@ -613,7 +613,7 @@ def create_changeling_conversations_table(
             logger.warning("Failed to create changeling_conversations table: {}", result.stderr)
 
 
-def _record_conversation_event(
+def _insert_conversation_record(
     host: OnlineHostInterface,
     agent_state_dir: Path,
     settings: ProvisioningSettings,
@@ -727,7 +727,7 @@ def create_system_notifications_conversation(
     if conversation_id is None:
         return
 
-    _record_conversation_event(
+    _insert_conversation_record(
         host,
         agent_state_dir,
         settings,
@@ -765,7 +765,7 @@ def create_daily_conversation(
     if conversation_id is None:
         return
 
-    _record_conversation_event(
+    _insert_conversation_record(
         host,
         agent_state_dir,
         settings,

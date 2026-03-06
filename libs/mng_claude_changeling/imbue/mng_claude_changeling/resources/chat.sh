@@ -127,8 +127,8 @@ try:
             print(row[0])
     finally:
         conn.close()
-except sqlite3.Error:
-    pass
+except sqlite3.Error as e:
+    print(f'WARNING: lookup_conversation_model failed: {e}', file=sys.stderr)
 " "$_LLM_DB" "$conversation_id"
 }
 
@@ -183,8 +183,8 @@ try:
             print(row[0])
     finally:
         conn.close()
-except sqlite3.Error:
-    pass
+except sqlite3.Error as e:
+    print(f'WARNING: poll_new_conversation failed: {e}', file=sys.stderr)
 " "$_LLM_DB" "$max_rowid"
 }
 
