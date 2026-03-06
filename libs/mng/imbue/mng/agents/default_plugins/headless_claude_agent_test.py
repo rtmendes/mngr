@@ -8,6 +8,7 @@ import pytest
 from imbue.mng.agents.agent_registry import list_registered_agent_types
 from imbue.mng.agents.default_plugins.headless_claude_agent import HeadlessClaude
 from imbue.mng.agents.default_plugins.headless_claude_agent import HeadlessClaudeAgentConfig
+from imbue.mng.agents.default_plugins.headless_claude_agent import extract_text_delta
 from imbue.mng.config.data_types import AgentTypeConfig
 from imbue.mng.errors import NoCommandDefinedError
 from imbue.mng.errors import SendMessageError
@@ -282,3 +283,96 @@ def test_headless_claude_registered(
     """headless_claude should be registered as an agent type."""
     types = list_registered_agent_types()
     assert "headless_claude" in types
+
+
+# =============================================================================
+# Tests for extract_text_delta
+# =============================================================================
+
+
+def test_extract_text_delta_valid_event() -> None:
+    """A valid content_block_delta event should return the text."""
+    event = json.dumps(
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "hello"},
+            },
+        }
+    )
+    assert extract_text_delta(event) == "hello"
+
+
+def test_extract_text_delta_non_delta_event() -> None:
+    event = json.dumps(
+        {
+            "type": "stream_event",
+            "event": {"type": "content_block_start", "index": 0},
+        }
+    )
+    assert extract_text_delta(event) is None
+
+
+def test_extract_text_delta_malformed_json() -> None:
+    assert extract_text_delta("not valid json {{{") is None
+
+
+def test_extract_text_delta_non_stream_event() -> None:
+    event = json.dumps({"type": "result", "subtype": "success"})
+    assert extract_text_delta(event) is None
+
+
+def test_extract_text_delta_missing_delta() -> None:
+    event = json.dumps(
+        {
+            "type": "stream_event",
+            "event": {"type": "content_block_delta", "index": 0},
+        }
+    )
+    assert extract_text_delta(event) is None
+
+
+def test_extract_text_delta_event_not_dict() -> None:
+    event = json.dumps({"type": "stream_event", "event": "not_a_dict"})
+    assert extract_text_delta(event) is None
+
+
+def test_extract_text_delta_non_text_delta_type() -> None:
+    event = json.dumps(
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "delta": {"type": "input_json_delta", "partial_json": "{}"},
+            },
+        }
+    )
+    assert extract_text_delta(event) is None
+
+
+def test_extract_text_delta_delta_not_dict() -> None:
+    event = json.dumps(
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "delta": "not_a_dict",
+            },
+        }
+    )
+    assert extract_text_delta(event) is None
+
+
+def test_extract_text_delta_text_not_string() -> None:
+    event = json.dumps(
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": 42},
+            },
+        }
+    )
+    assert extract_text_delta(event) is None
