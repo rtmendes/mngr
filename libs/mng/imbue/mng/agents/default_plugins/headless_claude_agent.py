@@ -80,6 +80,16 @@ def extract_text_delta(line: str) -> str | None:
     return None
 
 
+@pure
+def _is_result_event(line: str) -> bool:
+    """Check if a stream-json line is a result event (signals completion)."""
+    try:
+        parsed = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return parsed.get("type") == "result"
+
+
 def _yield_text_deltas_from_lines(lines: list[str]) -> Iterator[str]:
     """Yield text deltas parsed from stream-json lines, skipping blanks and non-delta events."""
     for line in lines:
@@ -156,6 +166,7 @@ class HeadlessClaude(ClaudeAgent, StreamingHeadlessAgentMixin):
         return self._get_agent_dir() / "stdout.jsonl"
 
     def _is_agent_finished(self) -> bool:
+        """Check if the agent process has exited (tmux lifecycle) or is no longer running."""
         state = self.get_lifecycle_state()
         return state in (AgentLifecycleState.STOPPED, AgentLifecycleState.DONE)
 
@@ -192,9 +203,10 @@ class HeadlessClaude(ClaudeAgent, StreamingHeadlessAgentMixin):
 
         tracker = _FileMtimeTracker(path=stdout_path)
         line_buffer = ""
+        got_result = False
 
         with open(stdout_path) as fh:
-            while not self._is_agent_finished():
+            while not got_result and not self._is_agent_finished():
                 poll_until(tracker.has_changed, timeout=_TAIL_POLL_TIMEOUT, poll_interval=_TAIL_POLL_INTERVAL)
                 raw = fh.read()
                 if raw:
@@ -205,12 +217,22 @@ class HeadlessClaude(ClaudeAgent, StreamingHeadlessAgentMixin):
                     if not combined.endswith("\n"):
                         line_buffer = lines.pop()
 
-                    yield from _yield_text_deltas_from_lines(lines)
+                    for line in lines:
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        if _is_result_event(stripped):
+                            got_result = True
+                            break
+                        text = extract_text_delta(stripped)
+                        if text is not None:
+                            yield text
 
-            # Final drain after agent exits
-            remaining = line_buffer + fh.read()
-            if remaining:
-                yield from _yield_text_deltas_from_lines(remaining.split("\n"))
+            if not got_result:
+                # Final drain after agent exits
+                remaining = line_buffer + fh.read()
+                if remaining:
+                    yield from _yield_text_deltas_from_lines(remaining.split("\n"))
 
 
 @hookimpl
