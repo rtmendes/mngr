@@ -5,6 +5,8 @@ deeper context information beyond what gather_context() returns.
 
 All event data follows the standard envelope format with timestamp, type,
 event_id, and source fields. Events are read from events/<source>/events.jsonl.
+Conversation metadata is read from the changeling_conversations table in the
+llm sqlite database at $LLM_USER_PATH/logs.db.
 
 Settings are read from $MNG_AGENT_WORK_DIR/changelings.toml.
 Missing file or keys fall back to built-in defaults.
@@ -17,6 +19,7 @@ where they cannot import from each other or from the mng_claude_changeling packa
 import json
 import os
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import time
@@ -62,7 +65,7 @@ def gather_extra_context() -> str:
     Returns a formatted string with:
     - Current mng agent list (active agents and their states)
     - Extended inner monologue history (from events/transcript/events.jsonl)
-    - Full conversation list (from events/conversations/events.jsonl)
+    - Full conversation list (from changeling_conversations table in the llm DB)
 
     Use this when you need deeper context than gather_context() provides.
     """
@@ -115,8 +118,6 @@ def gather_extra_context() -> str:
         if llm_user_path:
             db_path = pathlib.Path(llm_user_path) / "logs.db"
             if db_path.is_file():
-                import sqlite3
-
                 try:
                     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
                     try:

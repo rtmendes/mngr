@@ -647,6 +647,10 @@ def _sql_quote(value: str) -> str:
     """Quote a string value for use in a SQL statement.
 
     Escapes single quotes by doubling them, per SQL standard.
+
+    We use manual quoting here instead of parameterized queries because the
+    SQL is passed to the sqlite3 CLI via host.execute_command() over SSH,
+    where parameterized queries are not available.
     """
     escaped = value.replace("'", "''")
     return f"'{escaped}'"

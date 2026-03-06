@@ -358,8 +358,8 @@ def _get_system_notifications_conversation_id() -> str | None:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
             rows = conn.execute(
-                "SELECT conversation_id FROM changeling_conversations WHERE tags LIKE ?",
-                ('%"internal"%"system_notifications"%',),
+                "SELECT conversation_id FROM changeling_conversations "
+                "WHERE json_extract(tags, '$.internal') = 'system_notifications'",
             ).fetchall()
             if rows:
                 return str(rows[0][0])

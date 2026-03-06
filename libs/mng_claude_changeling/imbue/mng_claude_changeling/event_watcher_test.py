@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from imbue.mng_claude_changeling.conftest import EventWatcherSubprocessCapture
-from imbue.mng_claude_changeling.conftest import _create_changeling_conversations_table
+from imbue.mng_claude_changeling.conftest import create_changeling_conversations_table_in_test_db
 from imbue.mng_claude_changeling.conftest import write_changelings_settings_toml
 from imbue.mng_claude_changeling.conftest import write_conversation_to_db
 from imbue.mng_claude_changeling.data_types import WatcherSettings
@@ -528,7 +528,7 @@ def test_get_system_notifications_conversation_id_returns_tagged_conversation(
     db_path = llm_data_dir / "logs.db"
     monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
 
-    _create_changeling_conversations_table(db_path)
+    create_changeling_conversations_table_in_test_db(db_path)
     write_conversation_to_db(db_path, "sys-notif-123", model="echo", tags='{"internal":"system_notifications"}')
     write_conversation_to_db(db_path, "other-conv", model="claude-opus-4.6")
 
@@ -551,7 +551,7 @@ def test_get_system_notifications_conversation_id_returns_none_when_no_tagged_co
     db_path = llm_data_dir / "logs.db"
     monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
 
-    _create_changeling_conversations_table(db_path)
+    create_changeling_conversations_table_in_test_db(db_path)
 
     assert _get_system_notifications_conversation_id() is None
 
@@ -569,7 +569,7 @@ def _setup_conversations_db(
     db_path = llm_data_dir / "logs.db"
     monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
 
-    _create_changeling_conversations_table(db_path)
+    create_changeling_conversations_table_in_test_db(db_path)
     write_conversation_to_db(db_path, conversation_id, model="echo", tags='{"internal":"system_notifications"}')
 
     events_dir = tmp_path / "events"

@@ -76,7 +76,8 @@ generate_conversation_id() {
     echo "conv-$(date +%s)-$(head -c 4 /dev/urandom | xxd -p)"
 }
 
-# Insert a conversation record into the changeling_conversations table.
+# Insert a conversation record into the changeling_conversations table
+# using Python with parameterized queries for safety.
 # Args: conversation_id, model, [tags_json]
 # tags_json defaults to '{}' if not provided.
 insert_conversation_record() {
@@ -86,14 +87,105 @@ insert_conversation_record() {
     local created_at
     created_at=$(iso_timestamp_ns)
 
-    # Escape single quotes in values for SQL
-    local escaped_cid="${conversation_id//\'/\'\'}"
-    local escaped_model="${model//\'/\'\'}"
-    local escaped_tags="${tags//\'/\'\'}"
-    local escaped_ts="${created_at//\'/\'\'}"
-
-    sqlite3 "$_LLM_DB" "CREATE TABLE IF NOT EXISTS changeling_conversations (conversation_id TEXT PRIMARY KEY, model TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL); INSERT OR REPLACE INTO changeling_conversations (conversation_id, model, tags, created_at) VALUES ('$escaped_cid', '$escaped_model', '$escaped_tags', '$escaped_ts');"
+    python3 -c "
+import sqlite3, sys
+db_path = sys.argv[1]
+conn = sqlite3.connect(db_path)
+try:
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS changeling_conversations '
+        '(conversation_id TEXT PRIMARY KEY, model TEXT NOT NULL, '
+        \"tags TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)\"
+    )
+    conn.execute(
+        'INSERT OR REPLACE INTO changeling_conversations '
+        '(conversation_id, model, tags, created_at) VALUES (?, ?, ?, ?)',
+        (sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]),
+    )
+    conn.commit()
+finally:
+    conn.close()
+" "$_LLM_DB" "$conversation_id" "$model" "$tags" "$created_at"
     log "Inserted conversation record: conversation_id=$conversation_id model=$model tags=$tags"
+}
+
+# Look up the model for a conversation from the changeling_conversations table.
+# Prints the model to stdout, or empty string if not found.
+lookup_conversation_model() {
+    local conversation_id="$1"
+    python3 -c "
+import sqlite3, sys
+db_path = sys.argv[1]
+try:
+    conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+    try:
+        row = conn.execute(
+            'SELECT model FROM changeling_conversations WHERE conversation_id = ?',
+            (sys.argv[2],),
+        ).fetchone()
+        if row:
+            print(row[0])
+    finally:
+        conn.close()
+except sqlite3.Error:
+    pass
+" "$_LLM_DB" "$conversation_id"
+}
+
+# Check if the changeling_conversations table has any rows.
+# Prints the row count to stdout (0 if table missing or empty).
+count_conversations() {
+    python3 -c "
+import sqlite3, sys
+try:
+    conn = sqlite3.connect(f'file:{sys.argv[1]}?mode=ro', uri=True)
+    try:
+        row = conn.execute('SELECT count(*) FROM changeling_conversations').fetchone()
+        print(row[0] if row else 0)
+    finally:
+        conn.close()
+except sqlite3.Error:
+    print(0)
+" "$_LLM_DB"
+}
+
+# Get the max rowid from the llm conversations table.
+# Prints the max rowid to stdout (0 if table missing or empty).
+get_max_conversation_rowid() {
+    python3 -c "
+import sqlite3, sys
+try:
+    conn = sqlite3.connect(f'file:{sys.argv[1]}?mode=ro', uri=True)
+    try:
+        row = conn.execute('SELECT COALESCE(MAX(rowid), 0) FROM conversations').fetchone()
+        print(row[0] if row else 0)
+    finally:
+        conn.close()
+except sqlite3.Error:
+    print(0)
+" "$_LLM_DB"
+}
+
+# Poll for a new conversation in the llm conversations table (rowid > given).
+# Prints the conversation_id to stdout, or empty string if not found.
+poll_new_conversation() {
+    local max_rowid="$1"
+    python3 -c "
+import sqlite3, sys
+try:
+    conn = sqlite3.connect(f'file:{sys.argv[1]}?mode=ro', uri=True)
+    try:
+        row = conn.execute(
+            'SELECT id FROM conversations WHERE rowid > ? ORDER BY rowid ASC LIMIT 1',
+            (int(sys.argv[2]),),
+        ).fetchone()
+        if row:
+            print(row[0])
+    finally:
+        conn.close()
+except sqlite3.Error:
+    pass
+" "$_LLM_DB" "$max_rowid"
 }
 
 build_tool_args() {
@@ -177,7 +269,7 @@ new_conversation() {
         local _max_rowid
         _max_rowid=0
         if [ -f "$_LLM_DB" ]; then
-            _max_rowid=$(sqlite3 "$_LLM_DB" "SELECT COALESCE(MAX(rowid), 0) FROM conversations" 2>/dev/null || echo "0")
+            _max_rowid=$(get_max_conversation_rowid)
         fi
 
         (
@@ -185,9 +277,7 @@ new_conversation() {
             for _i in $(seq 1 60); do
                 sleep 1
                 if [ -f "$_LLM_DB" ]; then
-                    _new_conversation_id=$(sqlite3 "$_LLM_DB" \
-                        "SELECT id FROM conversations WHERE rowid > $_max_rowid ORDER BY rowid ASC LIMIT 1" \
-                        2>/dev/null || true)
+                    _new_conversation_id=$(poll_new_conversation "$_max_rowid")
                     if [ -n "$_new_conversation_id" ]; then
                         insert_conversation_record "$_new_conversation_id" "$model"
                         log "Recorded conversation for new conversation_id=$_new_conversation_id (rowid > $_max_rowid)"
@@ -214,7 +304,7 @@ resume_conversation() {
 
     # Get the model from the changeling_conversations table
     local model
-    model=$(sqlite3 "$_LLM_DB" "SELECT model FROM changeling_conversations WHERE conversation_id = '${conversation_id//\'/\'\'}'" 2>/dev/null || true)
+    model=$(lookup_conversation_model "$conversation_id")
     if [ -z "$model" ]; then
         model=$(get_default_model)
     fi
@@ -242,7 +332,7 @@ list_conversations() {
 
     # Check if the changeling_conversations table exists and has rows
     local _row_count
-    _row_count=$(sqlite3 "$_LLM_DB" "SELECT count(*) FROM changeling_conversations" 2>/dev/null || echo "0")
+    _row_count=$(count_conversations)
     if [ "$_row_count" = "0" ]; then
         echo "No conversations yet."
         return 0
@@ -256,8 +346,8 @@ list_conversations() {
 import json, os, sys, sqlite3
 from pathlib import Path
 
-db_path = '$_LLM_DB'
-messages_file = '${AGENT_DATA_DIR}/events/messages/events.jsonl'
+db_path = sys.argv[1]
+messages_file = sys.argv[2]
 
 conversations = {}
 try:
@@ -310,7 +400,7 @@ for event in sorted_conversations:
     tags = event.get('tags', {})
     tags_str = '  tags=' + json.dumps(tags) if tags else ''
     print(f\"  {event.get('conversation_id','?')}  model={event.get('model', '?')}  created_at={event.get('timestamp', '?')}  updated_at={event.get('updated_at', '?')}{tags_str}\")
-"
+" "$_LLM_DB" "${AGENT_DATA_DIR}/events/messages/events.jsonl"
 
     log "Listed conversations"
 }

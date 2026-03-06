@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from imbue.mng_claude_changeling.conftest import _create_changeling_conversations_table
+from imbue.mng_claude_changeling.conftest import create_changeling_conversations_table_in_test_db
 from imbue.mng_claude_changeling.conftest import write_conversation_to_db
 from imbue.mng_claude_changeling.provisioning import load_changeling_resource
 
@@ -20,7 +20,7 @@ def _create_test_db_with_conversations(db_path: Path, conversations: list[tuple[
 
     Each conversation tuple is (conversation_id, model, created_at).
     """
-    _create_changeling_conversations_table(db_path)
+    create_changeling_conversations_table_in_test_db(db_path)
     for conversation_id, model, created_at in conversations:
         write_conversation_to_db(db_path, conversation_id, model=model, created_at=created_at)
 

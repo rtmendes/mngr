@@ -15,7 +15,7 @@ import pytest
 
 from imbue.mng_claude_changeling.conftest import StubCommandResult
 from imbue.mng_claude_changeling.conftest import StubHost
-from imbue.mng_claude_changeling.conftest import _create_changeling_conversations_table
+from imbue.mng_claude_changeling.conftest import create_changeling_conversations_table_in_test_db
 from imbue.mng_claude_changeling.conftest import write_conversation_to_db
 from imbue.mng_claude_changeling.data_types import CommonToolResultEvent
 from imbue.mng_claude_changeling.data_types import ProvisioningSettings
@@ -1469,7 +1469,7 @@ def test_extra_context_tool_with_conversations(
     db_path = llm_data_dir / "logs.db"
     monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
 
-    _create_changeling_conversations_table(db_path)
+    create_changeling_conversations_table_in_test_db(db_path)
     write_conversation_to_db(db_path, "conv-1", model="claude-opus-4.6", created_at="2026-01-01T00:00:00Z")
     write_conversation_to_db(db_path, "conv-2", model="claude-sonnet-4-6", created_at="2026-01-01T00:01:00Z")
 
@@ -1532,7 +1532,7 @@ def test_extra_context_tool_conversations_empty_db(
     db_path = llm_data_dir / "logs.db"
     monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
 
-    _create_changeling_conversations_table(db_path)
+    create_changeling_conversations_table_in_test_db(db_path)
 
     module = _load_fresh_extra_context_tool()
     _setup_uv_not_found(tmp_path, monkeypatch)
@@ -1577,7 +1577,7 @@ def test_extra_context_tool_conversations_shows_current_model(
     db_path = llm_data_dir / "logs.db"
     monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
 
-    _create_changeling_conversations_table(db_path)
+    create_changeling_conversations_table_in_test_db(db_path)
     write_conversation_to_db(db_path, "conv-1", model="claude-sonnet-4-6", created_at="2026-01-01T00:00:00Z")
 
     module = _load_fresh_extra_context_tool()

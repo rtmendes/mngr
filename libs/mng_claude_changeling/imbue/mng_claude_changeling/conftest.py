@@ -150,7 +150,7 @@ class ChatScriptEnv:
         self.llm_data_dir = self.agent_state_dir / "llm_data"
         self.llm_data_dir.mkdir(parents=True)
         self.llm_db_path = self.llm_data_dir / "logs.db"
-        _create_changeling_conversations_table(self.llm_db_path)
+        create_changeling_conversations_table_in_test_db(self.llm_db_path)
 
         self.work_dir = temp_host_dir / "work"
         self.work_dir.mkdir(parents=True)
@@ -287,7 +287,7 @@ LLM_RESPONSES_SCHEMA = """
 """
 
 
-def _create_changeling_conversations_table(db_path: Path) -> None:
+def create_changeling_conversations_table_in_test_db(db_path: Path) -> None:
     """Create the changeling_conversations table in the given database."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(str(db_path)) as conn:
