@@ -1,7 +1,6 @@
 """Unit tests for event_watcher.py."""
 
 import json
-import sqlite3
 import subprocess
 import threading
 import time
@@ -12,7 +11,9 @@ from typing import Any
 import pytest
 
 from imbue.mng_claude_changeling.conftest import EventWatcherSubprocessCapture
+from imbue.mng_claude_changeling.conftest import _create_changeling_conversations_table
 from imbue.mng_claude_changeling.conftest import write_changelings_settings_toml
+from imbue.mng_claude_changeling.conftest import write_conversation_to_db
 from imbue.mng_claude_changeling.data_types import WatcherSettings
 from imbue.mng_claude_changeling.resources import event_watcher as event_watcher_module
 from imbue.mng_claude_changeling.resources.event_watcher import _CHAT_PAIR_TIMEOUT_SECONDS
@@ -524,39 +525,22 @@ def test_get_system_notifications_conversation_id_returns_tagged_conversation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     llm_data_dir = tmp_path / "llm_data"
-    llm_data_dir.mkdir(parents=True)
     db_path = llm_data_dir / "logs.db"
     monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
 
-    conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "CREATE TABLE changeling_conversations ("
-        "conversation_id TEXT PRIMARY KEY, model TEXT NOT NULL, "
-        "tags TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)"
-    )
-    conn.execute(
-        "INSERT INTO changeling_conversations VALUES (?, ?, ?, ?)",
-        ("sys-notif-123", "echo", '{"internal":"system_notifications"}', "2025-01-01T00:00:00Z"),
-    )
-    conn.execute(
-        "INSERT INTO changeling_conversations VALUES (?, ?, ?, ?)",
-        ("other-conv", "claude-opus-4.6", "{}", "2025-01-01T00:00:00Z"),
-    )
-    conn.commit()
-    conn.close()
+    _create_changeling_conversations_table(db_path)
+    write_conversation_to_db(db_path, "sys-notif-123", model="echo", tags='{"internal":"system_notifications"}')
+    write_conversation_to_db(db_path, "other-conv", model="claude-opus-4.6")
 
-    events_dir = tmp_path / "events"
-    assert _get_system_notifications_conversation_id(events_dir) == "sys-notif-123"
+    assert _get_system_notifications_conversation_id() == "sys-notif-123"
 
 
 def test_get_system_notifications_conversation_id_returns_none_when_no_db(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    llm_data_dir = tmp_path / "nonexistent_llm"
-    monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
-    events_dir = tmp_path / "events"
-    assert _get_system_notifications_conversation_id(events_dir) is None
+    monkeypatch.setenv("LLM_USER_PATH", str(tmp_path / "nonexistent_llm"))
+    assert _get_system_notifications_conversation_id() is None
 
 
 def test_get_system_notifications_conversation_id_returns_none_when_no_tagged_conversation(
@@ -564,21 +548,12 @@ def test_get_system_notifications_conversation_id_returns_none_when_no_tagged_co
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     llm_data_dir = tmp_path / "llm_data"
-    llm_data_dir.mkdir(parents=True)
     db_path = llm_data_dir / "logs.db"
     monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
 
-    conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "CREATE TABLE changeling_conversations ("
-        "conversation_id TEXT PRIMARY KEY, model TEXT NOT NULL, "
-        "tags TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)"
-    )
-    conn.commit()
-    conn.close()
+    _create_changeling_conversations_table(db_path)
 
-    events_dir = tmp_path / "events"
-    assert _get_system_notifications_conversation_id(events_dir) is None
+    assert _get_system_notifications_conversation_id() is None
 
 
 # -- _send_chat_notification tests --
@@ -591,22 +566,11 @@ def _setup_conversations_db(
 ) -> Path:
     """Create a llm DB with a system_notifications conversation and return events_dir."""
     llm_data_dir = tmp_path / "llm_data"
-    llm_data_dir.mkdir(parents=True, exist_ok=True)
     db_path = llm_data_dir / "logs.db"
     monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
 
-    conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS changeling_conversations ("
-        "conversation_id TEXT PRIMARY KEY, model TEXT NOT NULL, "
-        "tags TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)"
-    )
-    conn.execute(
-        "INSERT OR REPLACE INTO changeling_conversations VALUES (?, ?, ?, ?)",
-        (conversation_id, "echo", '{"internal":"system_notifications"}', "2025-01-01T00:00:00Z"),
-    )
-    conn.commit()
-    conn.close()
+    _create_changeling_conversations_table(db_path)
+    write_conversation_to_db(db_path, conversation_id, model="echo", tags='{"internal":"system_notifications"}')
 
     events_dir = tmp_path / "events"
     return events_dir

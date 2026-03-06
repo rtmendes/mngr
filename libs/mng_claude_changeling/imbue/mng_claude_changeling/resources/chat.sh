@@ -262,8 +262,10 @@ messages_file = '${AGENT_DATA_DIR}/events/messages/events.jsonl'
 conversations = {}
 try:
     conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
-    rows = conn.execute('SELECT conversation_id, model, tags, created_at FROM changeling_conversations').fetchall()
-    conn.close()
+    try:
+        rows = conn.execute('SELECT conversation_id, model, tags, created_at FROM changeling_conversations').fetchall()
+    finally:
+        conn.close()
     for conversation_id, model, tags_json, created_at in rows:
         try:
             tags = json.loads(tags_json) if tags_json else {}
@@ -275,7 +277,7 @@ try:
             'timestamp': created_at or '?',
             'tags': tags,
         }
-except Exception as e:
+except (sqlite3.Error, OSError) as e:
     print(f'WARNING: failed to read conversations from database: {e}', file=sys.stderr)
 
 # Find latest message timestamp per conversation from messages events

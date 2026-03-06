@@ -703,10 +703,10 @@ def create_system_notifications_conversation(
 ) -> None:
     """Create the system_notifications conversation for delivery failure alerts.
 
-    Uses ``llm inject`` to create a new conversation, then records a
-    ``conversation_created`` event in ``events/conversations/events.jsonl``.
-    Because this is the first conversation created, ``_send_chat_notification``
-    can find it by reading the first entry in the conversations event log.
+    Uses ``llm inject`` to create a new conversation, then inserts a record
+    into the ``changeling_conversations`` table in the llm database with
+    ``tags={"internal": "system_notifications"}``. The event watcher finds
+    this conversation by querying for the ``internal`` tag.
     """
     model = "echo"
 
@@ -743,8 +743,8 @@ def create_daily_conversation(
     """Create a daily conversation tagged with today's date.
 
     Uses ``llm inject`` to seed the conversation with an empty user prompt
-    and a greeting from the assistant, then records a ``conversation_created``
-    event with ``tags={"daily": "<today>"}`` in the conversations event log.
+    and a greeting from the assistant, then inserts a record into the
+    ``changeling_conversations`` table with ``tags={"daily": "<today>"}``.
     """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 

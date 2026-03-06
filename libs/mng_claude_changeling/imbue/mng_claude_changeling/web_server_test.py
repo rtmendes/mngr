@@ -4,13 +4,14 @@ Tests the pure/near-pure functions by loading the resource module via exec().
 """
 
 import json
-import sqlite3
 import types
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from imbue.mng_claude_changeling.conftest import _create_changeling_conversations_table
+from imbue.mng_claude_changeling.conftest import write_conversation_to_db
 from imbue.mng_claude_changeling.provisioning import load_changeling_resource
 
 
@@ -19,23 +20,9 @@ def _create_test_db_with_conversations(db_path: Path, conversations: list[tuple[
 
     Each conversation tuple is (conversation_id, model, created_at).
     """
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS changeling_conversations ("
-            "conversation_id TEXT PRIMARY KEY, "
-            "model TEXT NOT NULL, "
-            "tags TEXT NOT NULL DEFAULT '{}', "
-            "created_at TEXT NOT NULL"
-            ")"
-        )
-        for conversation_id, model, created_at in conversations:
-            conn.execute(
-                "INSERT INTO changeling_conversations (conversation_id, model, tags, created_at) "
-                "VALUES (?, ?, '{}', ?)",
-                (conversation_id, model, created_at),
-            )
-        conn.commit()
+    _create_changeling_conversations_table(db_path)
+    for conversation_id, model, created_at in conversations:
+        write_conversation_to_db(db_path, conversation_id, model=model, created_at=created_at)
 
 
 @pytest.fixture()

@@ -14,6 +14,7 @@ from loguru import logger
 from imbue.mng.providers.ssh_host_setup import load_resource_script
 from imbue.mng.utils.plugin_testing import register_plugin_test_fixtures
 from imbue.mng.utils.testing import init_git_repo_with_config
+from imbue.mng_claude_changeling.provisioning import CHANGELING_CONVERSATIONS_TABLE_SQL
 from imbue.mng_claude_changeling.provisioning import load_changeling_resource
 from imbue.mng_claude_changeling.resources import event_watcher as event_watcher_module
 
@@ -286,21 +287,11 @@ LLM_RESPONSES_SCHEMA = """
 """
 
 
-CHANGELING_CONVERSATIONS_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS changeling_conversations (
-        conversation_id TEXT PRIMARY KEY,
-        model TEXT NOT NULL,
-        tags TEXT NOT NULL DEFAULT '{}',
-        created_at TEXT NOT NULL
-    )
-"""
-
-
 def _create_changeling_conversations_table(db_path: Path) -> None:
     """Create the changeling_conversations table in the given database."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(str(db_path)) as conn:
-        conn.execute(CHANGELING_CONVERSATIONS_SCHEMA)
+        conn.execute(CHANGELING_CONVERSATIONS_TABLE_SQL)
         conn.commit()
 
 
@@ -311,7 +302,7 @@ def create_test_llm_db(db_path: Path, rows: list[tuple[str, str, str, str, str, 
     """
     with sqlite3.connect(str(db_path)) as conn:
         conn.execute(LLM_RESPONSES_SCHEMA)
-        conn.execute(CHANGELING_CONVERSATIONS_SCHEMA)
+        conn.execute(CHANGELING_CONVERSATIONS_TABLE_SQL)
         for row_id, prompt, response, model, dt, conversation_id in rows:
             conn.execute(
                 "INSERT INTO responses (id, prompt, response, model, datetime_utc, conversation_id) "
@@ -362,7 +353,7 @@ def write_conversation_to_db(
     """Insert a conversation record into the changeling_conversations table in the given database."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(str(db_path)) as conn:
-        conn.execute(CHANGELING_CONVERSATIONS_SCHEMA)
+        conn.execute(CHANGELING_CONVERSATIONS_TABLE_SQL)
         conn.execute(
             "INSERT OR REPLACE INTO changeling_conversations "
             "(conversation_id, model, tags, created_at) VALUES (?, ?, ?, ?)",

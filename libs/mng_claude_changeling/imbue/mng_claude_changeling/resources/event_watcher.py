@@ -338,10 +338,11 @@ def _write_notification_event(events_dir: Path, message: str, level: str = "WARN
 _CHAT_NOTIFICATION_TIMEOUT_SECONDS: Final[float] = 30.0
 
 
-def _get_system_notifications_conversation_id(events_dir: Path) -> str | None:
+def _get_system_notifications_conversation_id() -> str | None:
     """Read the system_notifications conversation ID from the changeling_conversations table.
 
-    Looks for a conversation tagged with ``{"internal": "system_notifications"}``.
+    Looks for a conversation tagged with ``{"internal": "system_notifications"}``
+    in the llm database at ``$LLM_USER_PATH/logs.db``.
     Falls back to None if the database or table does not exist.
     """
     llm_user_path = os.environ.get("LLM_USER_PATH", "")
@@ -374,15 +375,15 @@ def _get_system_notifications_conversation_id(events_dir: Path) -> str | None:
 def _send_chat_notification(events_dir: Path, message: str) -> bool:
     """Send a notification as a chat message via ``llm``.
 
-    Uses the system_notifications conversation (the first conversation
-    created during provisioning) so that all system notifications appear
+    Uses the system_notifications conversation (found by tag in the
+    changeling_conversations table) so that all system notifications appear
     in the same thread. The message is sent as the user prompt; the model
     response is discarded.
 
     Returns True on success, False if ``llm`` is not available or fails.
     This is best-effort: the caller should not depend on success.
     """
-    conversation_id = _get_system_notifications_conversation_id(events_dir)
+    conversation_id = _get_system_notifications_conversation_id()
     if conversation_id is None:
         logger.warning("No system_notifications conversation found, skipping chat notification")
         return False
