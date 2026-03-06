@@ -786,9 +786,9 @@ def _finish_refresh(loop: MainLoop, state: _KanpanState) -> None:
     now = datetime.now(tz=timezone.utc).strftime("%H:%M:%S")
     if state.snapshot is not None:
         elapsed = f"{state.snapshot.fetch_time_seconds:.1f}s"
-        state.steady_footer_text = f"  Last refresh: {now} (took {elapsed})  r: refresh"
+        state.steady_footer_text = f"  Last refresh: {now} (took {elapsed})"
     else:
-        state.steady_footer_text = f"  Last refresh: {now}  r: refresh"
+        state.steady_footer_text = f"  Last refresh: {now}"
     state.footer_left_text.set_text(state.steady_footer_text)
 
     _schedule_next_refresh(loop, state)

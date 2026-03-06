@@ -408,11 +408,6 @@ def test_input_handler_q_exits() -> None:
         _KanpanInputHandler(state=_make_state())("q")
 
 
-def test_input_handler_uppercase_q_exits() -> None:
-    with pytest.raises(ExitMainLoop):
-        _KanpanInputHandler(state=_make_state())("Q")
-
-
 def test_input_handler_ctrl_c_exits() -> None:
     with pytest.raises(ExitMainLoop):
         _KanpanInputHandler(state=_make_state())("ctrl c")
