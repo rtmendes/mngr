@@ -1261,16 +1261,51 @@ class ClaudeAgent(BaseAgent):
         options: CreateAgentOptions,
         mng_ctx: MngContext,
     ) -> None:
-        """Write the adopted session ID when --adopt-session is used.
+        """Adopt a session when --adopt-session is used.
 
-        The session data itself is already present in the per-agent config dir,
-        copied by _transfer_source_agent_data during provisioning. This method
-        just writes the specific session ID so --resume picks it up.
+        Searches the user's Claude config directory for the session by ID,
+        copies the containing project directory into the per-agent config dir,
+        and writes the session ID so --resume picks it up.
         """
         session_id = options.plugin_data.get("adopt_session")
         if session_id is None:
             return
 
+        # Find the session file in the user's Claude config dir
+        source_config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+        source_projects_dir = source_config_dir / "projects"
+        if not source_projects_dir.exists():
+            raise UserInputError(
+                f"No projects directory found at {source_projects_dir}. Cannot find session to adopt."
+            )
+
+        # Search for the session file across all project directories
+        matches = list(source_projects_dir.glob(f"*/{session_id}.jsonl"))
+        if not matches:
+            raise UserInputError(
+                f"Session {session_id} not found in {source_projects_dir}. Check that the session ID is correct."
+            )
+
+        source_session_file = matches[0]
+        source_project_dir = source_session_file.parent
+
+        # Copy the entire project directory into the per-agent config dir
+        config_dir = self.get_claude_config_dir()
+        dest_project_dir = config_dir / "projects" / source_project_dir.name
+
+        with log_span("Adopting session {} from {}", session_id, source_project_dir):
+            if host.is_local:
+                host.execute_command(
+                    f"rsync -a {shlex.quote(str(source_project_dir))}/ {shlex.quote(str(dest_project_dir))}/",
+                    timeout_seconds=60.0,
+                )
+            else:
+                for file_path in source_project_dir.rglob("*"):
+                    if file_path.is_file():
+                        relative_path = file_path.relative_to(source_project_dir)
+                        host.write_file(dest_project_dir / relative_path, file_path.read_bytes())
+
+        # Write the session ID so --resume picks it up
         agent_state_dir = self._get_agent_dir()
         host.write_text_file(agent_state_dir / "claude_session_id", session_id)
         logger.info("Adopted session {}", session_id)
@@ -1393,7 +1428,8 @@ def register_cli_options(command_name: str) -> Mapping[str, list[OptionStackItem
                     param_decls=("--adopt-session",),
                     default=None,
                     help="Adopt an existing Claude Code session by ID into this agent. "
-                    "Copies session data from the current directory's Claude project.",
+                    "Searches for the session in the current Claude config directory and "
+                    "copies it into the new agent's per-agent config.",
                 ),
             ]
         }
@@ -1406,20 +1442,14 @@ def on_before_create(args: OnBeforeCreateArgs) -> OnBeforeCreateArgs | None:
 
     When plugin_data contains "adopt_session":
     - Validates the agent type is claude (or unset/default)
-    - Validates that --from-agent was used (source_agent_state_dir must be set)
     """
     adopt_session = args.agent_options.plugin_data.get("adopt_session")
     if adopt_session is None:
         return None
 
-    # Validate agent type is claude or unset (defaults to claude)
     agent_type = args.agent_options.agent_type
     if agent_type is not None and str(agent_type) != "claude":
         raise UserInputError(f"--adopt-session can only be used with the claude agent type, not '{agent_type}'.")
-
-    # Require --from-agent so the session data is available via clone transfer
-    if args.agent_options.source_agent_state_dir is None:
-        raise UserInputError("--adopt-session requires --from-agent to specify which agent's session to adopt.")
 
     return None
 

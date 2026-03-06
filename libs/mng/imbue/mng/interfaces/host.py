@@ -777,11 +777,6 @@ class CreateAgentOptions(FrozenModel):
         description="Opaque dict for plugins to pass data through the creation pipeline. "
         "Keys are namespaced by plugin (e.g. 'adopt_session' for ClaudeAgent).",
     )
-    source_work_dir: Path | None = Field(
-        default=None,
-        description="Work directory of the source agent, used by plugins to transfer "
-        "state during clone operations (set when cloning via --from-agent)",
-    )
     source_agent_state_dir: Path | None = Field(
         default=None,
         description="Agent state directory of the source agent, used to transfer "
