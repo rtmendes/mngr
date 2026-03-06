@@ -855,8 +855,8 @@ class ClaudeAgent(BaseAgent):
             # Determine trust path based on copy mode
             copy_mode = options.git.copy_mode if options.git else None
             if copy_mode in (WorkDirCopyMode.WORKTREE, WorkDirCopyMode.COPY):
-                git_common_dir = find_git_common_dir(self.work_dir, mng_ctx.concurrency_group)
-                trust_path = git_common_dir.parent if git_common_dir is not None else self.work_dir
+                source_path = self._find_git_source_path(mng_ctx.concurrency_group)
+                trust_path = source_path if source_path is not None else self.work_dir
             else:
                 trust_path = self.work_dir
             check_claude_dialogs_dismissed(get_claude_config_path(), trust_path)
@@ -1008,6 +1008,17 @@ class ClaudeAgent(BaseAgent):
         # The bypass-permissions warning is reliably suppressed by
         # skipDangerousModePermissionPrompt in settings.json instead.
 
+    def _find_git_source_path(self, concurrency_group: ConcurrencyGroup) -> Path | None:
+        """Find the source repo path for the agent's work_dir, if it's a git worktree/copy.
+
+        Returns the parent of the git common dir (the source repo root),
+        or None if work_dir is not inside a git repo.
+        """
+        git_common_dir = find_git_common_dir(self.work_dir, concurrency_group)
+        if git_common_dir is None:
+            return None
+        return git_common_dir.parent
+
     def _setup_per_agent_config_dir(
         self,
         host: OnlineHostInterface,
@@ -1135,9 +1146,9 @@ class ClaudeAgent(BaseAgent):
 
         # For worktree/copy mode, extend trust from the source to the work_dir
         if copy_mode in (WorkDirCopyMode.WORKTREE, WorkDirCopyMode.COPY):
-            git_common_dir = find_git_common_dir(self.work_dir, self.mng_ctx.concurrency_group)
-            if git_common_dir is not None:
-                source_path = git_common_dir.parent.resolve()
+            source_path = self._find_git_source_path(self.mng_ctx.concurrency_group)
+            if source_path is not None:
+                source_path = source_path.resolve()
                 global_projects = global_config.get("projects", {})
                 source_config = find_project_config(global_projects, source_path)
                 if source_config is not None:
@@ -1177,9 +1188,7 @@ class ClaudeAgent(BaseAgent):
             source_path: Path | None = None
             copy_mode = options.git.copy_mode if options.git else None
             if copy_mode in (WorkDirCopyMode.WORKTREE, WorkDirCopyMode.COPY):
-                git_common_dir = find_git_common_dir(self.work_dir, mng_ctx.concurrency_group)
-                if git_common_dir is not None:
-                    source_path = git_common_dir.parent
+                source_path = self._find_git_source_path(mng_ctx.concurrency_group)
 
             if config.trust_working_directory:
                 # Auto-approve all dialogs for agents that opt into trust
