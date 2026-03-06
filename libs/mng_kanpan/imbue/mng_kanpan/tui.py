@@ -1169,11 +1169,12 @@ def run_kanpan(mng_ctx: MngContext) -> None:  # pragma: no cover
     """Run the kanpan TUI board."""
     commands = _build_command_map(mng_ctx)
 
-    # Build footer keybindings (q: quit is always present, not in the command map)
-    keybinding_parts = [f"{key}: {cmd.name}" for key, cmd in commands.items()]
-    keybinding_parts.append("U: unmark all")
-    keybinding_parts.append("q: quit")
-    keybindings = "  ".join(keybinding_parts) + "  "
+    # Build footer keybindings, visually separating markable from instant commands
+    markable_parts = [f"{key}: {cmd.name}" for key, cmd in commands.items() if cmd.markable]
+    instant_parts = [f"{key}: {cmd.name}" for key, cmd in commands.items() if not cmd.markable]
+    instant_parts.append("U: unmark all")
+    instant_parts.append("q: quit")
+    keybindings = "  ".join(markable_parts + ["|"] + instant_parts) + "  "
 
     footer_left_text = Text("  Loading...")
     footer_left_attr = AttrMap(footer_left_text, "footer")
