@@ -13,6 +13,22 @@ from imbue.mng_claude_changeling.data_types import ClaudeChangelingSettings
 SETTINGS_FILENAME = "changelings.toml"
 
 
+def load_settings_from_path(settings_path: Path) -> ClaudeChangelingSettings:
+    """Load settings from a local changelings.toml file.
+
+    Returns a ClaudeChangelingSettings with defaults for any missing values.
+    If the file does not exist, returns all defaults.
+    Raises tomllib.TOMLDecodeError if the file exists but has invalid TOML syntax.
+    """
+    if not settings_path.exists():
+        logger.debug("No settings file at {}, using defaults", settings_path)
+        return ClaudeChangelingSettings()
+
+    with log_span("Loading settings from {}", settings_path):
+        raw = tomllib.loads(settings_path.read_text())
+        return ClaudeChangelingSettings.model_validate(raw)
+
+
 def load_settings_from_host(
     host: OnlineHostInterface,
     work_dir: Path,

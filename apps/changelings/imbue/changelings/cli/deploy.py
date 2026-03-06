@@ -23,6 +23,8 @@ from imbue.changelings.primitives import GitBranch
 from imbue.changelings.primitives import GitUrl
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mng.primitives import AgentId
+from imbue.mng_claude_changeling.settings import SETTINGS_FILENAME
+from imbue.mng_claude_changeling.settings import load_settings_from_path
 
 # FIXME: stop making short ids
 _TEMP_DIR_ID_BYTES: int = 8
@@ -228,25 +230,26 @@ def _resolve_agent_type(temp_dir: Path, cli_agent_type: str | None) -> str:
     2. agent_type field in changelings.toml (if present in the repo)
     3. Error
 
+    Uses ``load_settings_from_path`` to parse changelings.toml through the
+    ``ClaudeChangelingSettings`` model, ensuring consistent validation.
+
     Raises MissingAgentTypeError if no agent type can be determined.
     """
     if cli_agent_type is not None:
         return cli_agent_type
 
-    # Try changelings.toml
-    changelings_toml = temp_dir / "changelings.toml"
-    if changelings_toml.exists():
-        try:
-            raw = tomllib.loads(changelings_toml.read_text())
-        except tomllib.TOMLDecodeError as e:
-            raise MissingAgentTypeError(
-                "Failed to parse changelings.toml: {}. Fix the syntax error or provide --agent-type on the CLI.".format(
-                    e
-                )
-            ) from e
-        agent_type = raw.get("agent_type")
-        if agent_type is not None:
-            return str(agent_type)
+    settings_path = temp_dir / SETTINGS_FILENAME
+    try:
+        settings = load_settings_from_path(settings_path)
+    except tomllib.TOMLDecodeError as e:
+        raise MissingAgentTypeError(
+            "Failed to parse {}: {}. Fix the syntax error or provide --agent-type on the CLI.".format(
+                SETTINGS_FILENAME, e
+            )
+        ) from e
+
+    if settings.agent_type is not None:
+        return settings.agent_type
 
     raise MissingAgentTypeError(
         "No agent type specified. Either provide --agent-type on the CLI, "
