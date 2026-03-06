@@ -502,7 +502,10 @@ def create_changeling_conversations_table(
             label="create changeling_conversations table",
         )
         if not result.success:
-            logger.warning("Failed to create changeling_conversations table: {}", result.stderr)
+            raise RuntimeError(
+                f"Failed to create changeling_conversations table: {result.stderr}. "
+                "Conversation features (chat, system notifications) will not work without this table."
+            )
 
 
 def _insert_conversation_record(
