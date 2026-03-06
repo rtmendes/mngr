@@ -26,7 +26,7 @@ Agent types include any program in your `PATH`, as well as types registered by [
 
 ## Resolution
 
-When you run `mng create my-agent <type>` (or `mng create my-agent --agent-type <type>`):
+When you run `mng create my-agent <type>` (or `mng create my-agent --type <type>`):
 
 1. **Custom type lookup**: If you defined `<type>` in your config, use that configuration
 2. **Plugin lookup**: If a plugin registered `<type>` as an agent type, use its configuration

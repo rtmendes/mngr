@@ -482,7 +482,7 @@ def test_create_agent_with_additional_commands(
         cli_runner,
         plugin_manager,
         temp_git_repo,
-        extra_args=("--add-command", 'watcher="sleep 847292"'),
+        extra_args=("--extra-window", 'watcher="sleep 847292"'),
     ) as session_name:
         assert tmux_session_exists(session_name)
 
@@ -661,7 +661,7 @@ def test_agent_with_ttyd_window_creates_session_with_expected_windows(
     temp_git_repo: Path,
     plugin_manager: pluggy.PluginManager,
 ) -> None:
-    """Verify that adding named windows via --add-command creates the expected tmux windows.
+    """Verify that adding named windows via --extra-window creates the expected tmux windows.
 
     This tests the window injection mechanism that the claude-changeling plugin uses,
     without requiring ttyd to be installed.
@@ -672,13 +672,13 @@ def test_agent_with_ttyd_window_creates_session_with_expected_windows(
         plugin_manager,
         temp_git_repo,
         extra_args=(
-            "--add-command",
+            "--extra-window",
             'agent_ttyd="sleep 847293"',
-            "--add-command",
+            "--extra-window",
             'conv_watcher="sleep 847294"',
-            "--add-command",
+            "--extra-window",
             'events="sleep 847295"',
-            "--add-command",
+            "--extra-window",
             'chat_ttyd="sleep 847296"',
         ),
     ) as session_name:
