@@ -305,7 +305,11 @@ def _install_mng_editable_remote(
 
 
 def _get_agent_state_dir(agent: AgentInterface, host: OnlineHostInterface) -> Path:
-    """Get the agent's state directory path."""
+    """Get the agent's state directory path.
+
+    Mirrors the convention in host.py:_get_agent_state_dir and
+    base_agent.py:_get_agent_dir.
+    """
     return host.host_dir / "agents" / str(agent.id)
 
 

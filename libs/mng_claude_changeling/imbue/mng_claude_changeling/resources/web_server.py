@@ -212,7 +212,7 @@ def _poll_agent_list_forever() -> None:
                     _log(f"Failed to parse mng list JSON output: {e}")
         except subprocess.TimeoutExpired:
             _log("mng list timed out")
-        except FileNotFoundError:
+        except (FileNotFoundError, RuntimeError):
             _log("mng not found, cannot poll agent list")
         except OSError as e:
             _log(f"Failed to poll agent list: {e}")

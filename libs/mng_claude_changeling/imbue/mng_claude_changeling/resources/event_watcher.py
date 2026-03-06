@@ -299,7 +299,7 @@ def _send_message(agent_name: str, message: str) -> bool:
     except subprocess.TimeoutExpired:
         logger.error("Timed out sending message to {}", agent_name)
         return False
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         logger.error("Failed to invoke mng message subprocess: {}", exc)
         return False
 
