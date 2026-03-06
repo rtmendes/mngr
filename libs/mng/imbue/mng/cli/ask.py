@@ -283,7 +283,7 @@ def _headless_claude_output(mng_ctx: MngContext, prompt: str, system_prompt: str
             try:
                 host.stop_agents([agent.id])
             except (OSError, BaseMngError):
-                pass
+                logger.debug("Failed to stop ask agent {}", agent.name)
             try:
                 host.destroy_agent(agent)
             except (OSError, BaseMngError):
