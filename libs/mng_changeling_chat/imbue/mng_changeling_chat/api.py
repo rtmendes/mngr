@@ -129,15 +129,16 @@ try:
     for conversation_id, model, created_at, tags_json in rows:
         try:
             tags = json.loads(tags_json) if tags_json else {}
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            sys.stderr.write(f'WARNING: malformed tags JSON for {conversation_id}: {e}\\n')
             tags = {}
         if 'internal' in tags:
             continue
         conversations[conversation_id] = {
             'conversation_id': conversation_id,
             'model': model or '?',
-            'created_at': created_at or '?',
-            'updated_at': created_at or '?',
+            'created_at': created_at or '',
+            'updated_at': created_at or '',
             'name': tags.get('name', ''),
         }
 except sqlite3.Error as e:

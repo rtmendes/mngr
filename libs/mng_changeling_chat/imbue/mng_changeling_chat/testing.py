@@ -22,7 +22,7 @@ class TestAgent(BaseAgent):
 def create_conversation_events(
     host: Host,
     agent: TestAgent,
-    conversations: list[dict[str, str]],
+    conversations: list[dict[str, object]],
 ) -> None:
     """Create conversation records in the llm database for testing.
 

@@ -161,6 +161,38 @@ def test_list_conversations_returns_conversations_sorted_by_updated_at(
     assert result[1].model == "claude-opus-4.6"
 
 
+def test_list_conversations_returns_name_from_tags(
+    local_host_and_agent: tuple[Host, TestAgent],
+) -> None:
+    host, agent = local_host_and_agent
+
+    create_conversation_events(
+        host,
+        agent,
+        [
+            {
+                "timestamp": "2026-03-01T10:00:00Z",
+                "conversation_id": "conv-named",
+                "model": "claude-opus-4.6",
+                "tags": {"name": "My Chat"},
+            },
+            {
+                "timestamp": "2026-03-01T11:00:00Z",
+                "conversation_id": "conv-unnamed",
+                "model": "claude-sonnet-4-6",
+            },
+        ],
+    )
+
+    result = list_conversations_on_agent(agent, host)
+
+    assert len(result) == 2
+    named = next(c for c in result if c.conversation_id == "conv-named")
+    unnamed = next(c for c in result if c.conversation_id == "conv-unnamed")
+    assert named.name == "My Chat"
+    assert unnamed.name == ""
+
+
 def test_list_conversations_uses_message_timestamps_for_updated_at(
     local_host_and_agent: tuple[Host, TestAgent],
 ) -> None:
