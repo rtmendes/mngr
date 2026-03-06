@@ -134,24 +134,23 @@ def test_mng_unrecognized_command_errors(
     assert "No such command" in result.output
 
 
-def test_mng_snapshot_bare_defaults_to_create(
+def test_mng_snapshot_bare_shows_help(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
 ) -> None:
-    """Running `mng snapshot` with no args should forward to `snapshot create`."""
+    """Running `mng snapshot` with no args should show help (no default command)."""
     result = cli_runner.invoke(snapshot, [], obj=plugin_manager)
-    assert "Missing command" not in result.output
-    assert "Commands:" not in result.output
-    assert "Must specify at least one agent" in result.output
+    assert "Commands:" in result.output or "Usage:" in result.output
 
 
-def test_mng_snapshot_unrecognized_forwards_to_create(
+def test_mng_snapshot_unrecognized_errors(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
 ) -> None:
-    """Running `mng snapshot nonexistent` should forward to `snapshot create nonexistent`."""
+    """Running `mng snapshot nonexistent` with no default command should error."""
     result = cli_runner.invoke(snapshot, ["nonexistent"], obj=plugin_manager)
-    assert "No such command" not in result.output
+    assert result.exit_code != 0
+    assert "No such command" in result.output
 
 
 # =============================================================================

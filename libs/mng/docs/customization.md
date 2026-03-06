@@ -14,7 +14,7 @@
 
 ### Default Subcommands
 
-You can configure which subcommand runs when a command group is invoked with no recognized subcommand. By default, `mng` with no subcommand shows help, while `mng snapshot` defaults to `create`.
+You can configure which subcommand runs when a command group is invoked with no recognized subcommand. By default, both `mng` and `mng snapshot` with no subcommand show help.
 
 To restore the old behavior where `mng my-task` is equivalent to `mng create my-task`, set the default subcommand explicitly:
 
@@ -30,18 +30,18 @@ default_subcommand = "create"
 default_subcommand = "list"
 ```
 
-**Disabling the default:**
+**Disabling a configured default:**
 
-Set `default_subcommand` to an empty string to disable defaulting entirely. When disabled, running the group with no subcommand shows help, and unrecognized arguments produce an error instead of being forwarded.
+Set `default_subcommand` to an empty string to disable defaulting entirely. When disabled (or absent), running the group with no subcommand shows help, and unrecognized arguments produce an error instead of being forwarded.
 
 ```toml
-[commands.snapshot]
-default_subcommand = ""   # `mng snapshot` with no args shows help instead of creating
+[commands.mng]
+default_subcommand = ""   # explicitly disable (same as the built-in default)
 ```
 
 **Notes:**
 
-- If `default_subcommand` is absent from config, `mng` shows help (no default), while `mng snapshot` defaults to `"create"`.
+- If `default_subcommand` is absent from config, both `mng` and `mng snapshot` show help (no defaulting).
 - The `default_subcommand` key can coexist with parameter defaults in the same `[commands.<name>]` section.
 - Config file precedence applies as usual: local config overrides project config, which overrides user config.
 
