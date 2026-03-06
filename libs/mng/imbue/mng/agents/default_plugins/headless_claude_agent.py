@@ -6,8 +6,6 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Callable
 
-from pydantic import Field
-
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.pure import pure
 from imbue.mng import hookimpl
@@ -94,16 +92,7 @@ def _yield_text_deltas_from_lines(lines: list[str]) -> Iterator[str]:
 
 
 class HeadlessClaudeAgentConfig(ClaudeAgentConfig):
-    """Config for the headless_claude agent type.
-
-    Inherits all ClaudeAgentConfig fields (sync settings, credentials, etc.).
-    Command defaults to 'claude'.
-    """
-
-    command: CommandString = Field(
-        default=CommandString("claude"),
-        description="Command to run headless claude agent",
-    )
+    """Config for the headless_claude agent type."""
 
 
 class HeadlessClaude(ClaudeAgent, HeadlessAgentMixin):
