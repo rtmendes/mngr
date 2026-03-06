@@ -172,7 +172,7 @@ class CreateCliOptions(CommonCliOptions):
     name: str | None
     agent_id: str | None
     name_style: str
-    agent_command: str | None
+    command: str | None
     extra_window: tuple[str, ...]
     user: str | None
     source: str | None
@@ -261,7 +261,8 @@ class CreateCliOptions(CommonCliOptions):
 )
 @optgroup.option("--type", "agent_type", help="Which type of agent to run [default: claude]")
 @optgroup.option(
-    "--agent-command",
+    "--command",
+    "command",
     help="Run a literal command using the generic agent type (mutually exclusive with --type)",
 )
 @optgroup.option(
@@ -1392,7 +1393,7 @@ def _parse_agent_opts(
     # instead of agent_args. We detect this by checking if the value appears after
     # -- in sys.argv and move it to agent_args if so.
     #
-    # Special case: --agent-command implies using the "generic" agent type, which simply
+    # Special case: --command implies using the "generic" agent type, which simply
     # runs the provided command. If --type is also specified to something other
     # than "generic", that's an error (they are mutually exclusive).
     resolved_agent_type = opts.agent_type
@@ -1411,22 +1412,22 @@ def _parse_agent_opts(
             # --type was already specified, ignore the positional (could warn here)
             pass
 
-    # Handle --agent-command: it implies using the "generic" agent type
-    if opts.agent_command:
+    # Handle --command: it implies using the "generic" agent type
+    if opts.command:
         if resolved_agent_type is not None and resolved_agent_type != "generic":
             raise UserInputError(
-                f"--agent-command and --type are mutually exclusive. "
-                f"Use --agent-command to run a literal command (implicitly uses 'generic' agent type), "
+                f"--command and --type are mutually exclusive. "
+                f"Use --command to run a literal command (implicitly uses 'generic' agent type), "
                 f"or use --type to specify an agent type like '{resolved_agent_type}'."
             )
-        # Automatically use the "generic" agent type when --agent-command is provided
+        # Automatically use the "generic" agent type when --command is provided
         resolved_agent_type = "generic"
 
     agent_opts = CreateAgentOptions(
         agent_id=AgentId(opts.agent_id) if opts.agent_id else None,
         agent_type=AgentTypeName(resolved_agent_type) if resolved_agent_type else None,
         name=parsed_agent_name,
-        command=CommandString(opts.agent_command) if opts.agent_command else None,
+        command=CommandString(opts.command) if opts.command else None,
         additional_commands=tuple(NamedCommand.from_string(c) for c in opts.extra_window),
         agent_args=resolved_agent_args,
         user=opts.user,
