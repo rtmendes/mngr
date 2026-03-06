@@ -15,7 +15,7 @@ from imbue.mng.config.data_types import AgentTypeConfig
 from imbue.mng.errors import NoCommandDefinedError
 from imbue.mng.errors import SendMessageError
 from imbue.mng.interfaces.agent import AgentInterface
-from imbue.mng.interfaces.agent import HeadlessAgentMixin
+from imbue.mng.interfaces.agent import StreamingHeadlessAgentMixin
 from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import CommandString
@@ -95,7 +95,7 @@ class HeadlessClaudeAgentConfig(ClaudeAgentConfig):
     """Config for the headless_claude agent type."""
 
 
-class HeadlessClaude(ClaudeAgent, HeadlessAgentMixin):
+class HeadlessClaude(ClaudeAgent, StreamingHeadlessAgentMixin):
     """Agent type for non-interactive (headless) Claude usage.
 
     Runs `claude --print` with stdout redirected to a file so callers can
@@ -171,8 +171,12 @@ class HeadlessClaude(ClaudeAgent, HeadlessAgentMixin):
         )
         return stdout_path.exists()
 
+    def output(self) -> str:
+        """Wait for the agent to finish and return its complete output."""
+        return "".join(self.stream_output())
+
     def stream_output(self) -> Iterator[str]:
-        """Stream text output from the headless agent.
+        """Stream text output as it becomes available.
 
         Tails $MNG_AGENT_STATE_DIR/stdout.jsonl using a file handle kept open
         at the current read position. Uses mtime/size checks (via poll_until)
