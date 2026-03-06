@@ -9,6 +9,7 @@ import random
 import shlex
 from abc import ABC
 from abc import abstractmethod
+from collections.abc import Mapping
 from collections.abc import Sequence
 from datetime import datetime
 from datetime import timezone
@@ -25,6 +26,7 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.errors import ProcessSetupError
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
+from imbue.imbue_common.model_update import to_update
 from imbue.mng import hookimpl
 from imbue.mng.agents.base_agent import BaseAgent
 from imbue.mng.agents.default_plugins.claude_config import ClaudeDirectoryNotTrustedError
@@ -35,6 +37,7 @@ from imbue.mng.agents.default_plugins.claude_config import build_readiness_hooks
 from imbue.mng.agents.default_plugins.claude_config import check_claude_dialogs_dismissed
 from imbue.mng.agents.default_plugins.claude_config import complete_onboarding
 from imbue.mng.agents.default_plugins.claude_config import dismiss_effort_callout
+from imbue.mng.agents.default_plugins.claude_config import encode_claude_project_dir_name
 from imbue.mng.agents.default_plugins.claude_config import ensure_claude_dialogs_dismissed
 from imbue.mng.agents.default_plugins.claude_config import find_project_config
 from imbue.mng.agents.default_plugins.claude_config import get_claude_config_path
@@ -57,6 +60,8 @@ from imbue.mng.interfaces.data_types import FileTransferSpec
 from imbue.mng.interfaces.data_types import RelativePath
 from imbue.mng.interfaces.host import CreateAgentOptions
 from imbue.mng.interfaces.host import OnlineHostInterface
+from imbue.mng.plugins.hookspecs import OnBeforeCreateArgs
+from imbue.mng.plugins.hookspecs import OptionStackItem
 from imbue.mng.primitives import CommandString
 from imbue.mng.primitives import WorkDirCopyMode
 from imbue.mng.providers.ssh_host_setup import load_resource_script
@@ -79,6 +84,11 @@ _CLAUDE_HOME_SYNC_ITEMS: Final[tuple[str, ...]] = (
 # into local per-agent config dirs. Symlinks avoid duplication and keep the
 # per-agent dir lightweight; copies provide full isolation.
 _SYMLINK_LOCAL_USER_RESOURCES: Final[bool] = True
+
+
+def _get_claude_project_dir(path: Path) -> Path:
+    """Get the Claude project directory for a given filesystem path."""
+    return Path.home() / ".claude" / "projects" / encode_claude_project_dir_name(path)
 
 
 class ClaudeAgentConfig(AgentTypeConfig):
@@ -1246,6 +1256,101 @@ class ClaudeAgent(BaseAgent):
         # Provision background task scripts to the host commands directory
         _provision_background_scripts(host)
 
+        # Transfer data from source agent (if cloning via --from-agent)
+        if options.source_agent_state_dir is not None:
+            self._transfer_source_agent_data(host, options.source_agent_state_dir)
+
+    def on_after_provisioning(
+        self,
+        host: OnlineHostInterface,
+        options: CreateAgentOptions,
+        mng_ctx: MngContext,
+    ) -> None:
+        """Transfer session data when --adopt-session is used.
+
+        Copies the project directory from the source work_dir's Claude project
+        into the per-agent config dir, then writes the specific session ID.
+        """
+        session_id = options.plugin_data.get("adopt_session")
+        if session_id is None:
+            return
+
+        if options.source_work_dir is None:
+            raise PluginMngError("source_work_dir is required when adopt_session is set")
+
+        # Source: the Claude project dir in the user's global ~/.claude/
+        source_project_dir = _get_claude_project_dir(options.source_work_dir)
+        if not source_project_dir.exists():
+            raise UserInputError(
+                f"No Claude project directory found at {source_project_dir}. "
+                f"Cannot adopt session from {options.source_work_dir}."
+            )
+
+        # Dest: the project dir inside the per-agent config dir
+        config_dir = self.get_claude_config_dir()
+        dest_project_dir = config_dir / "projects" / encode_claude_project_dir_name(self.work_dir)
+        host.execute_command(f"mkdir -p {shlex.quote(str(dest_project_dir))}", timeout_seconds=5.0)
+
+        # Copy all files from source project dir to dest
+        with log_span("Transferring Claude session from {} to {}", source_project_dir, dest_project_dir):
+            if host.is_local:
+                # Use cp -a for local transfer; dest dir already exists so copy contents
+                host.execute_command(
+                    f"cp -a {shlex.quote(str(source_project_dir))}/ {shlex.quote(str(dest_project_dir))}/",
+                    timeout_seconds=60.0,
+                )
+            else:
+                # For remote hosts, iterate and write each file
+                for file_path in source_project_dir.rglob("*"):
+                    if file_path.is_file():
+                        relative_path = file_path.relative_to(source_project_dir)
+                        remote_path = dest_project_dir / relative_path
+                        host.write_file(remote_path, file_path.read_bytes())
+
+        # Verify the specific session exists
+        target_file = dest_project_dir / f"{session_id}.jsonl"
+        if not host.execute_command(f"test -f {shlex.quote(str(target_file))}", timeout_seconds=5.0).success:
+            raise UserInputError(
+                f"Session {session_id} not found after transfer. Check that the session ID is correct."
+            )
+
+        # Write the session ID so --resume picks it up
+        agent_state_dir = self._get_agent_dir()
+        host.write_text_file(agent_state_dir / "claude_session_id", session_id)
+        logger.info("Adopted session {}", session_id)
+
+    def _transfer_source_agent_data(
+        self,
+        host: OnlineHostInterface,
+        source_agent_state_dir: Path,
+    ) -> None:
+        """Transfer data from a source agent's state directory during clone.
+
+        Copies the source agent's entire data directory into this agent's data
+        directory using no-clobber to avoid overwriting the new agent's identity
+        (data.json, etc.) which was already written by create_agent_state().
+        """
+        dest_data_dir = self._get_agent_dir()
+        source_data_dir = source_agent_state_dir
+
+        with log_span("Transferring source agent data from {} to {}", source_data_dir, dest_data_dir):
+            if host.is_local:
+                # cp -a -n: archive mode, no-clobber (don't overwrite existing files)
+                host.execute_command(
+                    f"cp -a -n {shlex.quote(str(source_data_dir))}/ {shlex.quote(str(dest_data_dir))}/",
+                    timeout_seconds=60.0,
+                )
+            else:
+                # For remote hosts: iterate source files, skip if dest exists
+                for file_path in source_data_dir.rglob("*"):
+                    if file_path.is_file():
+                        relative_path = file_path.relative_to(source_data_dir)
+                        dest_path = dest_data_dir / relative_path
+                        # No-clobber: skip if destination file already exists
+                        if host.execute_command(f"test -f {shlex.quote(str(dest_path))}", timeout_seconds=5.0).success:
+                            continue
+                        host.write_file(dest_path, file_path.read_bytes())
+
     def on_destroy(self, host: OnlineHostInterface) -> None:
         """Clean up per-agent credentials and trust entries.
 
@@ -1321,6 +1426,53 @@ def _generate_claude_json(version: str | None, current_time: datetime | None = N
 def register_agent_type() -> tuple[str, type[AgentInterface] | None, type[AgentTypeConfig]]:
     """Register the claude agent type."""
     return ("claude", ClaudeAgent, ClaudeAgentConfig)
+
+
+@hookimpl
+def register_cli_options(command_name: str) -> Mapping[str, list[OptionStackItem]] | None:
+    """Register the --adopt-session CLI option for the create command."""
+    if command_name == "create":
+        return {
+            "Behavior": [
+                OptionStackItem(
+                    param_decls=("--adopt-session",),
+                    default=None,
+                    help="Adopt an existing Claude Code session by ID into this agent. "
+                    "Copies session data from the current directory's Claude project.",
+                ),
+            ]
+        }
+    return None
+
+
+@hookimpl
+def on_before_create(args: OnBeforeCreateArgs) -> OnBeforeCreateArgs | None:
+    """Validate and enrich create args when --adopt-session is used.
+
+    When plugin_data contains "adopt_session":
+    - Validates the agent type is claude (or unset/default)
+    - Sets source_work_dir = Path.cwd() if not already set (clone/migrate sets
+      it separately; standalone adopt uses the current directory)
+    """
+    adopt_session = args.agent_options.plugin_data.get("adopt_session")
+    if adopt_session is None:
+        return None
+
+    # Validate agent type is claude or unset (defaults to claude)
+    agent_type = args.agent_options.agent_type
+    if agent_type is not None and str(agent_type) != "claude":
+        raise UserInputError(f"--adopt-session can only be used with the claude agent type, not '{agent_type}'.")
+
+    # Set source_work_dir if not already set (e.g. by --source-agent)
+    if args.agent_options.source_work_dir is not None:
+        return None
+
+    new_options = args.agent_options.model_copy_update(
+        to_update(args.agent_options.field_ref().source_work_dir, Path.cwd()),
+    )
+    return args.model_copy_update(
+        to_update(args.field_ref().agent_options, new_options),
+    )
 
 
 @hookimpl
