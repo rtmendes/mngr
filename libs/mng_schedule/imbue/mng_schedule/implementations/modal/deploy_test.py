@@ -54,6 +54,11 @@ def test_forward_output_writes_stderr_to_stderr(capsys: pytest.CaptureFixture[st
     assert "some stderr line" in captured.err
 
 
+def test_forward_output_logs_stdout_lines() -> None:
+    """_forward_output should log stdout lines via loguru."""
+    _forward_output("build output line\n", is_stdout=True)
+
+
 def test_detect_local_timezone_returns_string() -> None:
     """detect_local_timezone should return a non-empty timezone string."""
     result = detect_local_timezone()
@@ -107,6 +112,31 @@ def test_package_repo_at_commit_succeeds_with_valid_script(tmp_path: Path) -> No
     dest_dir = tmp_path / "dest"
     package_repo_at_commit(commit, dest_dir, repo_root)
     assert (dest_dir / "current.tar.gz").exists()
+
+
+def test_package_repo_at_commit_raises_when_script_fails(tmp_path: Path) -> None:
+    """package_repo_at_commit should raise when the packaging script exits non-zero."""
+    repo_root = tmp_path / "repo"
+    init_git_repo_with_config(repo_root)
+
+    scripts_dir = repo_root / "scripts"
+    scripts_dir.mkdir()
+    script = scripts_dir / "make_tar_of_repo.sh"
+    script.write_text("#!/bin/bash\nexit 1\n")
+    script.chmod(0o755)
+    run_git_command(repo_root, "add", ".")
+    run_git_command(repo_root, "commit", "-m", "add failing script")
+
+    commit = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    dest_dir = tmp_path / "dest"
+    with pytest.raises(ScheduleDeployError, match="Failed to package repo"):
+        package_repo_at_commit(commit, dest_dir, repo_root)
 
 
 def test_package_repo_at_commit_raises_when_script_missing(tmp_path: Path) -> None:

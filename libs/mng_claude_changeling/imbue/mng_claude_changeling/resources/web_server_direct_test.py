@@ -6,8 +6,12 @@ Only tests for functions that don't depend on module-level env var state
 belong here.
 """
 
+import json
+from pathlib import Path
+
 import pytest
 
+from imbue.mng_claude_changeling.resources.web_server import _get_most_recent_conversation_id
 from imbue.mng_claude_changeling.resources.web_server import _html_escape
 from imbue.mng_claude_changeling.resources.web_server import _iso_timestamp
 from imbue.mng_claude_changeling.resources.web_server import _log
@@ -139,3 +143,27 @@ def test_render_agents_page_lists_cached_agents() -> None:
         assert "STOPPED" in page
     finally:
         ws._cached_agents = original
+
+
+def test_register_server_creates_jsonl_file(tmp_path: Path) -> None:
+    """_register_server should write a server record to the JSONL file."""
+    import imbue.mng_claude_changeling.resources.web_server as ws
+
+    original_path = ws.SERVERS_JSONL_PATH
+    jsonl_path = tmp_path / "events" / "servers" / "events.jsonl"
+    ws.SERVERS_JSONL_PATH = jsonl_path
+    try:
+        ws._register_server("web", 8080)
+        assert jsonl_path.exists()
+        record = json.loads(jsonl_path.read_text().strip())
+        assert record["server"] == "web"
+        assert record["url"] == "http://127.0.0.1:8080"
+        assert record["type"] == "server_registered"
+    finally:
+        ws.SERVERS_JSONL_PATH = original_path
+
+
+def test_get_most_recent_conversation_id_returns_none_when_empty() -> None:
+    """Should return None when there are no conversations."""
+    result = _get_most_recent_conversation_id()
+    assert result is None
