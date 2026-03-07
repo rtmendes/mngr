@@ -18,7 +18,7 @@ agent_type = "coder"
 
 [create_templates.modal]
 new_host = "modal"
-build_args = "file=libs/mng/imbue/mng/resources/Dockerfile context-dir=.mng/dev/build/ volume=code-review-json:/code_reviews"
+build_args = "file=libs/mng/imbue/mng/resources/Dockerfile context-dir=.mng/dev/build/"
 add_command = ["github_setup='ssh-keyscan github.com >> ~/.ssh/known_hosts && git remote set-url origin https://github.com/imbue-ai/mng.git && gh auth setup-git'"]
 agent_args = ["--dangerously-skip-permissions"]
 target_path = "/code/mng"
