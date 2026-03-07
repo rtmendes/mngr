@@ -203,17 +203,22 @@ class ClaudeChangelingAgent(ClaudeAgent):
         host: OnlineHostInterface,
         env_vars: dict[str, str],
     ) -> None:
-        """Set UV_TOOL_DIR and UV_TOOL_BIN_DIR for per-agent mng isolation.
+        """Set UV_TOOL_DIR, UV_TOOL_BIN_DIR, and prepend bin dir to PATH.
 
         These env vars ensure that ``uv tool install`` (run by the
         mng_recursive plugin) places the mng binary and its venv into
         the agent's state directory, and that any subsequent ``uv tool``
         invocations within the agent's processes also use the same paths.
+
+        PATH is prepended so that ``mng`` is found directly by name.
         """
         agent_state_dir = env_vars.get("MNG_AGENT_STATE_DIR", "")
         if agent_state_dir:
+            bin_dir = f"{agent_state_dir}/bin"
             env_vars["UV_TOOL_DIR"] = f"{agent_state_dir}/tools"
-            env_vars["UV_TOOL_BIN_DIR"] = f"{agent_state_dir}/bin"
+            env_vars["UV_TOOL_BIN_DIR"] = bin_dir
+            existing_path = env_vars.get("PATH", "$PATH")
+            env_vars["PATH"] = f"{bin_dir}:{existing_path}"
 
     def assemble_command(
         self,
@@ -242,6 +247,7 @@ class ClaudeChangelingAgent(ClaudeAgent):
         """Provision a changeling role agent with llm toolchain and supporting service infrastructure.
 
         Extends ClaudeAgent provisioning with:
+        0. Per-agent mng installation (via mng_recursive, before super())
         1. Settings loading from changelings.toml
         2. Talking role constraint validation (no skills or settings allowed)
         3. llm + plugin installation
@@ -253,6 +259,14 @@ class ClaudeChangelingAgent(ClaudeAgent):
         9. LLM tool scripts for conversation context
         10. Per-role memory directory setup
         """
+        # Install mng before anything else so that supporting services
+        # (event_watcher, web_server, etc.) can find it via UV_TOOL_BIN_DIR.
+        # The env vars (UV_TOOL_DIR, UV_TOOL_BIN_DIR) are already written
+        # to the agent env file by this point (host writes env before provision).
+        from imbue.mng_recursive.provisioning import provision_mng_for_agent
+
+        provision_mng_for_agent(agent=self, host=host, mng_ctx=mng_ctx)
+
         super().provision(host, options, mng_ctx)
 
         config = self._get_changeling_config()
