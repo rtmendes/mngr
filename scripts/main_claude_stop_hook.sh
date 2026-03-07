@@ -157,8 +157,7 @@ export RED GREEN YELLOW NC
 
 _log_to_file "INFO" "Launching PR/CI script..."
 
-"$SCRIPT_DIR/stop_hook_pr_and_ci.sh"
-PR_CI_EXIT=$?
+"$SCRIPT_DIR/stop_hook_pr_and_ci.sh" && PR_CI_EXIT=0 || PR_CI_EXIT=$?
 _log_to_file "INFO" "PR/CI script exited with code $PR_CI_EXIT"
 
 if [[ $PR_CI_EXIT -ne 0 ]]; then
