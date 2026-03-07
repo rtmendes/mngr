@@ -217,6 +217,9 @@ node_modules/
 # Frontend build artifacts
 frontend-dist/
 
+# Conversation review output
+.reviews/
+
 # Claude Code local settings (session-specific permissions)
 .claude/settings.local.json
 
