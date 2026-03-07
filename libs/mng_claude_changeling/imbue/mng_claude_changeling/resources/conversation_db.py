@@ -13,11 +13,11 @@ The table is expected to already exist (created during provisioning). If it
 does not, the insert subcommand creates it as a safety net.
 
 Usage:
-    python3 conversation_db.py insert <db_path> <conversation_id> <tags_json> <created_at>
-    python3 conversation_db.py lookup-model <db_path> <conversation_id>
-    python3 conversation_db.py count <db_path>
-    python3 conversation_db.py max-rowid <db_path>
-    python3 conversation_db.py poll-new <db_path> <max_rowid>
+    mng changeling-conversation-db insert <db_path> <conversation_id> <tags_json> <created_at>
+    mng changeling-conversation-db lookup-model <db_path> <conversation_id>
+    mng changeling-conversation-db count <db_path>
+    mng changeling-conversation-db max-rowid <db_path>
+    mng changeling-conversation-db poll-new <db_path> <max_rowid>
 
 Environment: None required (all paths passed as arguments).
 """
@@ -26,7 +26,6 @@ import sqlite3
 import sys
 
 # SYNC: This schema MUST match CHANGELING_CONVERSATIONS_TABLE_SQL in provisioning.py.
-# This file runs standalone on remote hosts and cannot import from provisioning.
 # A test (test_conversation_db_schema_matches_provisioning) verifies they stay in sync.
 _CREATE_TABLE_SQL = (
     "CREATE TABLE IF NOT EXISTS changeling_conversations ("
