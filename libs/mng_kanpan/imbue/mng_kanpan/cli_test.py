@@ -20,8 +20,29 @@ def test_kanpan_cli_options_can_be_instantiated() -> None:
         project_context_path=None,
         plugin=(),
         disable_plugin=(),
+        include=(),
+        exclude=(),
+        project=(),
     )
     assert opts.output_format == "human"
+    assert opts.include == ()
+    assert opts.exclude == ()
+    assert opts.project == ()
+
+
+def _capture_run_kanpan(called_with: list[dict]) -> object:
+    """Return a callable that captures run_kanpan args into called_with."""
+
+    def _fake_run_kanpan(
+        mng_ctx: object,
+        include_filters: tuple[str, ...] = (),
+        exclude_filters: tuple[str, ...] = (),
+    ) -> None:
+        called_with.append(
+            {"mng_ctx": mng_ctx, "include_filters": include_filters, "exclude_filters": exclude_filters}
+        )
+
+    return _fake_run_kanpan
 
 
 def test_kanpan_command_calls_run_kanpan(
@@ -30,11 +51,70 @@ def test_kanpan_command_calls_run_kanpan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The kanpan command should call run_kanpan with the MngContext."""
-    called_with = []
-    monkeypatch.setattr(
-        "imbue.mng_kanpan.cli.run_kanpan",
-        lambda mng_ctx: called_with.append(mng_ctx),
-    )
+    called_with: list[dict] = []
+    monkeypatch.setattr("imbue.mng_kanpan.cli.run_kanpan", _capture_run_kanpan(called_with))
     result = cli_runner.invoke(kanpan, [], obj=plugin_manager, catch_exceptions=False)
     assert result.exit_code == 0
     assert len(called_with) == 1
+    assert called_with[0]["include_filters"] == ()
+    assert called_with[0]["exclude_filters"] == ()
+
+
+def test_kanpan_command_passes_include_filters(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called_with: list[dict] = []
+    monkeypatch.setattr("imbue.mng_kanpan.cli.run_kanpan", _capture_run_kanpan(called_with))
+    result = cli_runner.invoke(kanpan, ["--include", 'state == "RUNNING"'], obj=plugin_manager, catch_exceptions=False)
+    assert result.exit_code == 0
+    assert called_with[0]["include_filters"] == ('state == "RUNNING"',)
+    assert called_with[0]["exclude_filters"] == ()
+
+
+def test_kanpan_command_passes_exclude_filters(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called_with: list[dict] = []
+    monkeypatch.setattr("imbue.mng_kanpan.cli.run_kanpan", _capture_run_kanpan(called_with))
+    result = cli_runner.invoke(kanpan, ["--exclude", 'state == "DONE"'], obj=plugin_manager, catch_exceptions=False)
+    assert result.exit_code == 0
+    assert called_with[0]["include_filters"] == ()
+    assert called_with[0]["exclude_filters"] == ('state == "DONE"',)
+
+
+def test_kanpan_command_converts_project_to_include_filter(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called_with: list[dict] = []
+    monkeypatch.setattr("imbue.mng_kanpan.cli.run_kanpan", _capture_run_kanpan(called_with))
+    result = cli_runner.invoke(kanpan, ["--project", "mng"], obj=plugin_manager, catch_exceptions=False)
+    assert result.exit_code == 0
+    assert called_with[0]["include_filters"] == ('labels.project == "mng"',)
+
+
+def test_kanpan_command_ors_multiple_projects(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called_with: list[dict] = []
+    monkeypatch.setattr("imbue.mng_kanpan.cli.run_kanpan", _capture_run_kanpan(called_with))
+    result = cli_runner.invoke(
+        kanpan, ["--project", "mng", "--project", "other"], obj=plugin_manager, catch_exceptions=False
+    )
+    assert result.exit_code == 0
+    assert called_with[0]["include_filters"] == ('labels.project == "mng" || labels.project == "other"',)
+
+
+def test_kanpan_command_fails_fast_on_invalid_cel(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    result = cli_runner.invoke(kanpan, ["--include", "invalid("], obj=plugin_manager)
+    assert result.exit_code != 0
