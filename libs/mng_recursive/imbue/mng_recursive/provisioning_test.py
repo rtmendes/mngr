@@ -10,7 +10,12 @@ from imbue.mng.errors import MngError
 from imbue.mng.interfaces.data_types import CommandResult
 from imbue.mng.providers.deploy_utils import MngInstallMode
 from imbue.mng_recursive.data_types import RecursivePluginConfig
+from imbue.mng_recursive.plugin import on_host_created
+from imbue.mng_recursive.provisioning import _build_uv_env_prefix
+from imbue.mng_recursive.provisioning import _ensure_uv_available
 from imbue.mng_recursive.provisioning import _get_installed_mng_packages
+from imbue.mng_recursive.provisioning import _get_mng_repo_root
+from imbue.mng_recursive.provisioning import _install_mng_package_mode
 from imbue.mng_recursive.provisioning import _resolve_remote_path
 from imbue.mng_recursive.provisioning import _upload_deploy_files
 from imbue.mng_recursive.provisioning import provision_mng_for_agent
@@ -391,3 +396,257 @@ def test_uv_installed_when_missing() -> None:
     # Find the curl call
     curl_calls = [call for call in host.execute_command.call_args_list if "astral.sh/uv" in str(call)]
     assert len(curl_calls) == 1
+
+
+# --- Plugin hook tests ---
+
+
+def test_on_host_created_calls_provision() -> None:
+    """on_host_created hook should call provision_mng_on_host."""
+    host = _make_mock_host(is_local=True)
+    ctx = _make_mock_mng_ctx()
+    on_host_created(host=host, mng_ctx=ctx)
+    host.execute_command.assert_called()
+
+
+# --- Data types tests ---
+
+
+def test_recursive_plugin_config_merge_with() -> None:
+    """merge_with should let override values win over base values."""
+    base = RecursivePluginConfig(is_errors_fatal=False, install_mode=MngInstallMode.AUTO)
+    override = RecursivePluginConfig(is_errors_fatal=True, install_mode=MngInstallMode.PACKAGE)
+    merged = base.merge_with(override)
+    assert merged.is_errors_fatal is True
+    assert merged.install_mode == MngInstallMode.PACKAGE
+
+
+# --- _resolve_remote_path bare tilde test ---
+
+
+def test_resolve_remote_path_bare_tilde() -> None:
+    """A bare '~' should resolve to the remote home directory."""
+    result = _resolve_remote_path(Path("~"), "/home/testuser")
+    assert result == Path("/home/testuser")
+
+
+# --- _build_uv_env_prefix test ---
+
+
+def test_build_uv_env_prefix_sets_tool_and_bin_dirs() -> None:
+    """_build_uv_env_prefix should export UV_TOOL_DIR and UV_TOOL_BIN_DIR."""
+    result = _build_uv_env_prefix(Path("/tools"), Path("/bin"))
+    assert "UV_TOOL_DIR=" in result
+    assert "UV_TOOL_BIN_DIR=" in result
+    assert "/tools" in result
+    assert "/bin" in result
+
+
+# --- _ensure_uv_available error tests ---
+
+
+def test_ensure_uv_raises_on_install_failure() -> None:
+    """_ensure_uv_available should raise when installation fails."""
+    host = _make_mock_host()
+    host.execute_command.side_effect = [
+        _make_command_result(False),
+        _make_command_result(False, stderr="curl failed"),
+    ]
+    with pytest.raises(MngError, match="Failed to install uv"):
+        _ensure_uv_available(host)
+
+
+def test_ensure_uv_raises_when_not_on_path_after_install() -> None:
+    """_ensure_uv_available should raise when uv is installed but not findable."""
+    host = _make_mock_host()
+    host.execute_command.side_effect = [
+        _make_command_result(False),
+        _make_command_result(True),
+        _make_command_result(False),
+    ]
+    with pytest.raises(MngError, match="cannot be found on PATH"):
+        _ensure_uv_available(host)
+
+
+# --- _install_mng_package_mode tests ---
+
+
+def test_install_package_mode_raises_when_no_mng_package() -> None:
+    """_install_mng_package_mode should raise when mng is not in packages list."""
+    host = _make_mock_host()
+    with pytest.raises(MngError, match="mng package not found"):
+        _install_mng_package_mode(host, [("mng-pair", "0.1.0")], Path("/tools"), Path("/bin"))
+
+
+def test_install_package_mode_retries_with_force_reinstall() -> None:
+    """_install_mng_package_mode should retry with --force-reinstall on failure."""
+    host = _make_mock_host()
+    host.execute_command.side_effect = [
+        _make_command_result(False, stderr="already installed"),
+        _make_command_result(True),
+    ]
+    _install_mng_package_mode(host, [("mng", "0.1.4")], Path("/tools"), Path("/bin"))
+    assert len(host.execute_command.call_args_list) == 2
+    second_call = str(host.execute_command.call_args_list[1])
+    assert "--force-reinstall" in second_call
+
+
+# --- provision_mng_for_agent when no packages found ---
+
+
+def test_agent_package_mode_warns_when_no_packages() -> None:
+    """provision_mng_for_agent should warn when no mng packages are found locally."""
+    host = _make_mock_host()
+    host.execute_command.return_value = _make_command_result(True)
+    ctx = _make_mock_mng_ctx(
+        plugin_config=RecursivePluginConfig(install_mode=MngInstallMode.PACKAGE),
+    )
+    agent = _make_mock_agent(mng_ctx=ctx)
+
+    with patch("imbue.mng_recursive.provisioning._get_installed_mng_packages") as mock_packages:
+        mock_packages.return_value = []
+        provision_mng_for_agent(agent=agent, host=host, mng_ctx=ctx)
+
+
+# --- deploy files collection error ---
+
+
+def test_provision_on_host_handles_deploy_file_collection_error() -> None:
+    """provision_mng_on_host should handle errors from collect_deploy_files."""
+    host = _make_mock_host(is_local=False)
+    ctx = _make_mock_mng_ctx(
+        plugin_config=RecursivePluginConfig(is_errors_fatal=False, install_mode=MngInstallMode.PACKAGE),
+    )
+
+    with patch("imbue.mng_recursive.provisioning.collect_deploy_files") as mock_collect:
+        mock_collect.side_effect = RuntimeError("hook failed")
+        provision_mng_on_host(host=host, mng_ctx=ctx)
+
+
+# --- _upload_deploy_files mkdir failure ---
+
+
+def test_upload_deploy_files_raises_on_mkdir_failure() -> None:
+    """_upload_deploy_files should raise when mkdir -p fails."""
+    host = _make_mock_host()
+    host.execute_command.return_value = _make_command_result(False, stderr="permission denied")
+    deploy_files: dict[Path, Path | str] = {
+        Path("~/.mng/config.toml"): "content",
+    }
+    with pytest.raises(MngError, match="Failed to create directory"):
+        _upload_deploy_files(host, deploy_files, "/home/testuser")
+
+
+def test_install_package_mode_raises_when_force_reinstall_also_fails() -> None:
+    """_install_mng_package_mode should raise when both install and force-reinstall fail."""
+    host = _make_mock_host()
+    host.execute_command.side_effect = [
+        _make_command_result(False, stderr="install failed"),
+        _make_command_result(False, stderr="reinstall also failed"),
+    ]
+    with pytest.raises(MngError, match="Failed to install mng"):
+        _install_mng_package_mode(host, [("mng", "0.1.4")], Path("/tools"), Path("/bin"))
+
+
+def test_agent_editable_mode_dispatches_to_install(tmp_path: Path) -> None:
+    """provision_mng_for_agent with EDITABLE mode should call _install_mng_editable_mode."""
+    host_dir = tmp_path / "host"
+    host_dir.mkdir()
+    host = _make_mock_host(is_local=True, host_dir=host_dir)
+    host.execute_command.return_value = _make_command_result(True)
+    ctx = _make_mock_mng_ctx(
+        plugin_config=RecursivePluginConfig(install_mode=MngInstallMode.EDITABLE),
+    )
+    agent = _make_mock_agent(mng_ctx=ctx)
+
+    repo_root = tmp_path / "monorepo"
+    libs_dir = repo_root / "libs"
+    (libs_dir / "mng").mkdir(parents=True)
+
+    with patch("imbue.mng_recursive.provisioning._get_mng_repo_root") as mock_root:
+        mock_root.return_value = repo_root
+        provision_mng_for_agent(agent=agent, host=host, mng_ctx=ctx)
+
+    install_calls = [call for call in host.execute_command.call_args_list if "uv tool install" in str(call)]
+    assert len(install_calls) >= 1
+
+
+def test_editable_local_retries_with_force_reinstall(tmp_path: Path) -> None:
+    """Editable local mode should retry with --force-reinstall on initial failure."""
+    repo_root = tmp_path / "monorepo"
+    libs_dir = repo_root / "libs"
+    (libs_dir / "mng").mkdir(parents=True)
+
+    host_dir = tmp_path / "host"
+    host_dir.mkdir()
+    host = _make_mock_host(is_local=True, host_dir=host_dir)
+
+    call_count = [0]
+
+    def execute_side_effect(cmd: str, **kwargs: object) -> CommandResult:
+        call_count[0] += 1
+        if "uv tool install" in cmd and "--force-reinstall" not in cmd:
+            return _make_command_result(False, stderr="already installed")
+        return _make_command_result(True)
+
+    host.execute_command.side_effect = execute_side_effect
+    ctx = _make_mock_mng_ctx(
+        plugin_config=RecursivePluginConfig(install_mode=MngInstallMode.EDITABLE),
+    )
+    agent = _make_mock_agent(mng_ctx=ctx)
+
+    with patch("imbue.mng_recursive.provisioning._get_mng_repo_root") as mock_root:
+        mock_root.return_value = repo_root
+        provision_mng_for_agent(agent=agent, host=host, mng_ctx=ctx)
+
+    force_calls = [call for call in host.execute_command.call_args_list if "--force-reinstall" in str(call)]
+    assert len(force_calls) >= 1
+
+
+def test_provision_on_host_handles_mng_error_from_deploy_files() -> None:
+    """provision_mng_on_host should catch MngError from collect_deploy_files when not fatal."""
+    host = _make_mock_host(is_local=False)
+    ctx = _make_mock_mng_ctx(
+        plugin_config=RecursivePluginConfig(is_errors_fatal=False, install_mode=MngInstallMode.PACKAGE),
+    )
+
+    with patch("imbue.mng_recursive.provisioning.collect_deploy_files") as mock_collect:
+        mock_collect.side_effect = MngError("absolute path not allowed")
+        provision_mng_on_host(host=host, mng_ctx=ctx)
+
+
+# --- _get_mng_repo_root tests ---
+
+
+def test_get_mng_repo_root_returns_repo_root() -> None:
+    """_get_mng_repo_root should return the git repo root of the mng monorepo."""
+    result = _get_mng_repo_root()
+    assert result.is_dir()
+    assert (result / ".git").exists()
+
+
+def test_editable_local_raises_when_force_reinstall_also_fails(tmp_path: Path) -> None:
+    """Editable local mode should raise when both install and force-reinstall fail."""
+    repo_root = tmp_path / "monorepo"
+    libs_dir = repo_root / "libs"
+    (libs_dir / "mng").mkdir(parents=True)
+
+    host_dir = tmp_path / "host"
+    host_dir.mkdir()
+    host = _make_mock_host(is_local=True, host_dir=host_dir)
+    host.execute_command.side_effect = [
+        _make_command_result(True),
+        _make_command_result(True),
+        _make_command_result(False, stderr="install failed"),
+        _make_command_result(False, stderr="reinstall also failed"),
+    ]
+
+    ctx = _make_mock_mng_ctx(
+        plugin_config=RecursivePluginConfig(is_errors_fatal=True, install_mode=MngInstallMode.EDITABLE),
+    )
+    agent = _make_mock_agent(mng_ctx=ctx)
+
+    with patch("imbue.mng_recursive.provisioning._get_mng_repo_root") as mock_root:
+        mock_root.return_value = repo_root
+        with pytest.raises(MngError, match="Failed to install mng in editable mode"):
+            provision_mng_for_agent(agent=agent, host=host, mng_ctx=ctx)
