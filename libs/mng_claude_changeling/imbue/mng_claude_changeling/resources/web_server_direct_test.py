@@ -1,6 +1,6 @@
 """Direct-import tests for web_server.py pure functions.
 
-Unlike web_server_test.py which loads the module via exec() (invisible to
+Unlike web_server_test.py which loads the module dynamically (invisible to
 pytest-cov), these tests import functions directly so coverage is tracked.
 Only tests for functions that don't depend on module-level env var state
 belong here.
