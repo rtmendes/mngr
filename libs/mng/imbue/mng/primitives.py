@@ -247,6 +247,11 @@ class ProviderBackendName(NonEmptyStr):
 class AgentName(NonEmptyStr):
     """Human-readable name for an agent."""
 
+    def __new__(cls, value: str) -> Self:
+        if value.startswith("-") or value.endswith("-"):
+            raise ValueError(f"{cls.__name__} cannot start or end with a dash: '{value}'")
+        return super().__new__(cls, value.strip())
+
 
 class HostName(NonEmptyStr):
     """Human-readable name for a host."""
