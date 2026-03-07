@@ -5,10 +5,12 @@ import subprocess
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pluggy
 import pytest
 from dotenv import dotenv_values
+from loguru import logger
 
 from imbue.mng import hookimpl
 from imbue.mng.config.data_types import MngContext
@@ -54,9 +56,19 @@ def test_forward_output_writes_stderr_to_stderr(capsys: pytest.CaptureFixture[st
     assert "some stderr line" in captured.err
 
 
-def test_forward_output_logs_stdout_lines() -> None:
-    """_forward_output should log stdout lines via loguru."""
-    _forward_output("build output line\n", is_stdout=True)
+def test_forward_output_logs_stdout_via_loguru() -> None:
+    """_forward_output should log stdout lines via loguru at BUILD level."""
+    captured: list[str] = []
+
+    def sink(message: Any) -> None:
+        captured.append(message.record["message"])
+
+    handler_id = logger.add(sink, level=0, format="{message}")
+    try:
+        _forward_output("build output line\n", is_stdout=True)
+    finally:
+        logger.remove(handler_id)
+    assert any("build output line" in msg for msg in captured)
 
 
 def test_detect_local_timezone_returns_string() -> None:
