@@ -242,6 +242,8 @@ class ProviderBackendName(NonEmptyStr):
     """Name of a provider backend."""
 
 
+# FIXME: actually, there are more restrictions here, like: only alphanumeric and dashes, must not start or end with a dash, etc. We must enforce those.
+#  the same restrictions should apply to ProviderInstanceName, ProviderBackendName, HostName, AgentName, and AgentTypeName
 class AgentName(NonEmptyStr):
     """Human-readable name for an agent."""
 
