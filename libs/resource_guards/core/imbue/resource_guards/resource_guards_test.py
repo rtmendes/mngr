@@ -3,13 +3,13 @@ from pathlib import Path
 
 import pytest
 
-import imbue.imbue_common.resource_guards as rg
-from imbue.imbue_common.resource_guards import ResourceGuardViolation
-from imbue.imbue_common.resource_guards import cleanup_resource_guard_wrappers
-from imbue.imbue_common.resource_guards import create_resource_guard_wrappers
-from imbue.imbue_common.resource_guards import enforce_sdk_guard
-from imbue.imbue_common.resource_guards import generate_wrapper_script
-from imbue.imbue_common.resource_guards import register_resource_guard
+import imbue.resource_guards.resource_guards as rg
+from imbue.resource_guards.resource_guards import ResourceGuardViolation
+from imbue.resource_guards.resource_guards import cleanup_resource_guard_wrappers
+from imbue.resource_guards.resource_guards import create_resource_guard_wrappers
+from imbue.resource_guards.resource_guards import enforce_sdk_guard
+from imbue.resource_guards.resource_guards import generate_wrapper_script
+from imbue.resource_guards.resource_guards import register_resource_guard
 
 # Use ubiquitous coreutils binaries so these tests run on any system.
 _TEST_RESOURCES = ["echo", "cat", "ls"]
@@ -20,7 +20,7 @@ _TEST_RESOURCES = ["echo", "cat", "ls"]
 _PYTESTER_CONFTEST = """\
 import os
 import pytest
-from imbue.imbue_common.resource_guards import (
+from imbue.resource_guards.resource_guards import (
     register_resource_guard,
     create_resource_guard_wrappers,
     cleanup_resource_guard_wrappers,
@@ -49,17 +49,6 @@ pytest_runtest_makereport = _pytest_runtest_makereport
 """
 
 pytest_plugins = ["pytester"]
-
-
-@pytest.fixture()
-def isolated_guard_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Isolate resource guard module state so create/cleanup don't affect the session."""
-    monkeypatch.setattr(rg, "_guard_wrapper_dir", None)
-    monkeypatch.setattr(rg, "_owns_guard_wrapper_dir", False)
-    monkeypatch.setattr(rg, "_session_env_patcher", None)
-    monkeypatch.setattr(rg, "_guarded_resources", [])
-    monkeypatch.setattr(rg, "_registered_sdk_guards", [])
-    monkeypatch.delenv("_PYTEST_GUARD_WRAPPER_DIR", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +266,7 @@ def test_enforce_sdk_guard_skips_when_no_phase_set(
 _PYTESTER_SDK_CONFTEST = """\
 import os
 import pytest
-from imbue.imbue_common.resource_guards import (
+from imbue.resource_guards.resource_guards import (
     create_resource_guard_wrappers,
     cleanup_resource_guard_wrappers,
     register_sdk_guard,
@@ -315,7 +304,7 @@ def test_sdk_marked_test_that_triggers_guard_passes(pytester: pytest.Pytester) -
     pytester.makeconftest(_PYTESTER_SDK_CONFTEST)
     pytester.makepyfile("""
         import pytest
-        from imbue.imbue_common.resource_guards import enforce_sdk_guard
+        from imbue.resource_guards.resource_guards import enforce_sdk_guard
 
         @pytest.mark.test_sdk
         def test_sdk_call():
@@ -329,7 +318,7 @@ def test_sdk_unmarked_test_that_triggers_guard_fails(pytester: pytest.Pytester) 
     """A test without the SDK mark that triggers the guard should fail."""
     pytester.makeconftest(_PYTESTER_SDK_CONFTEST)
     pytester.makepyfile("""
-        from imbue.imbue_common.resource_guards import enforce_sdk_guard
+        from imbue.resource_guards.resource_guards import enforce_sdk_guard
 
         def test_sdk_call():
             enforce_sdk_guard("test_sdk")
@@ -349,8 +338,8 @@ def test_sdk_unmarked_test_that_catches_guard_error_still_fails(
     """
     pytester.makeconftest(_PYTESTER_SDK_CONFTEST)
     pytester.makepyfile("""
-        from imbue.imbue_common.resource_guards import ResourceGuardViolation
-        from imbue.imbue_common.resource_guards import enforce_sdk_guard
+        from imbue.resource_guards.resource_guards import ResourceGuardViolation
+        from imbue.resource_guards.resource_guards import enforce_sdk_guard
 
         def test_sdk_catches_error():
             try:

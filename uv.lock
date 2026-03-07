@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -27,6 +27,9 @@ members = [
     "mng-test-coder",
     "mng-ttyd",
     "mng-tutor",
+    "resource-guards",
+    "resource-guards-docker",
+    "resource-guards-modal",
     "sculptor-web",
     "slack-exporter",
 ]
@@ -2844,6 +2847,70 @@ sdist = { url = "https://files.pythonhosted.org/packages/c9/74/b3ff8e6c8446842c3
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl", hash = "sha256:2462f94637a34fd532264295e186976db0f5d453d1cdd31473c85a6a161affb6", size = 64738, upload-time = "2025-08-18T20:46:00.542Z" },
 ]
+
+[[package]]
+name = "resource-guards"
+version = "0.1.0"
+source = { editable = "libs/resource_guards/core" }
+dependencies = [
+    { name = "pytest" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "inline-snapshot" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "inline-snapshot", marker = "extra == 'dev'", specifier = ">=0.13" },
+    { name = "pytest", specifier = ">=7.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "resource-guards-docker"
+version = "0.1.0"
+source = { editable = "libs/resource_guards/docker" }
+dependencies = [
+    { name = "docker" },
+    { name = "resource-guards" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "inline-snapshot" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "docker", specifier = ">=7.1.0" },
+    { name = "inline-snapshot", marker = "extra == 'dev'", specifier = ">=0.13" },
+    { name = "resource-guards", editable = "libs/resource_guards/core" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "resource-guards-modal"
+version = "0.1.0"
+source = { editable = "libs/resource_guards/modal" }
+dependencies = [
+    { name = "modal" },
+    { name = "resource-guards" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "inline-snapshot" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "inline-snapshot", marker = "extra == 'dev'", specifier = ">=0.13" },
+    { name = "modal", specifier = ">=1.3.1" },
+    { name = "resource-guards", editable = "libs/resource_guards/core" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "rich"

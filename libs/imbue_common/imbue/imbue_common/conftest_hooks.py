@@ -44,13 +44,13 @@ from uuid import uuid4
 import pytest
 from coverage.exceptions import CoverageException
 
-from imbue.imbue_common.resource_guards import _pytest_runtest_makereport
-from imbue.imbue_common.resource_guards import _pytest_runtest_setup
-from imbue.imbue_common.resource_guards import _pytest_runtest_teardown
-from imbue.imbue_common.resource_guards import cleanup_resource_guard_wrappers
-from imbue.imbue_common.resource_guards import cleanup_sdk_resource_guards
-from imbue.imbue_common.resource_guards import create_resource_guard_wrappers
-from imbue.imbue_common.resource_guards import create_sdk_resource_guards
+from imbue.resource_guards.resource_guards import _pytest_runtest_makereport
+from imbue.resource_guards.resource_guards import _pytest_runtest_setup
+from imbue.resource_guards.resource_guards import _pytest_runtest_teardown
+from imbue.resource_guards.resource_guards import cleanup_resource_guard_wrappers
+from imbue.resource_guards.resource_guards import cleanup_sdk_resource_guards
+from imbue.resource_guards.resource_guards import create_resource_guard_wrappers
+from imbue.resource_guards.resource_guards import create_sdk_resource_guards
 
 # ---------------------------------------------------------------------------
 # Cache importlib.metadata.entry_points() to avoid repeated filesystem scans.

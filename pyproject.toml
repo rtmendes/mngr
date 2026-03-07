@@ -14,7 +14,8 @@ dependencies = [
 imbue-common = { workspace = true }
 
 [tool.uv.workspace]
-members = ["libs/*", "apps/*"]
+members = ["libs/*", "libs/resource_guards/*", "apps/*"]
+exclude = ["libs/resource_guards"]
 
 [dependency-groups]
 dev = [
@@ -60,6 +61,9 @@ addopts = [
   "--dist=worksteal",
   "--cov=imbue.mng",
   "--cov=imbue.imbue_common",
+  "--cov=imbue.resource_guards",
+  "--cov=imbue.resource_guards_modal",
+  "--cov=imbue.resource_guards_docker",
   "--cov=imbue.mng_opencode",
   "--cov=imbue.mng_pair",
   "--cov=imbue.mng_schedule",
