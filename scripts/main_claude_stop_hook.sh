@@ -162,15 +162,8 @@ PR_CI_EXIT=$?
 _log_to_file "INFO" "PR/CI script exited with code $PR_CI_EXIT"
 
 if [[ $PR_CI_EXIT -ne 0 ]]; then
-    if [[ $PR_CI_EXIT -eq 2 ]]; then
-        log_error "PR/CI hook failed (exit code 2)"
-        log_error "Use the gh tool to inspect the remote test results for this branch and see what failed."
-        log_error "Note that you MUST identify the issue and fix it locally before trying again!"
-        log_error "NEVER just re-trigger the pipeline!"
-        log_error "NEVER fix timeouts by increasing them! Instead, make things faster or increase parallelism."
-        log_error "If it is impossible to fix the test, tell the user and say that you failed."
-        log_error "Otherwise, once you have understood and fixed the issue, you can simply commit to try again."
-    fi
+    # Detailed guidance is already printed by stop_hook_pr_and_ci.sh itself;
+    # only log the exit code here to avoid duplicating those messages.
     _log_to_file "ERROR" "main_stop_hook exiting with PR/CI exit code $PR_CI_EXIT"
     notify_user || echo "No notify_user function defined, skipping."
     exit $PR_CI_EXIT
