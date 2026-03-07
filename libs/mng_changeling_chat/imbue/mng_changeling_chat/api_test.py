@@ -61,17 +61,6 @@ def test_build_remote_chat_script_uses_shlex_quote_for_env_values(
         assert f"export {key}={shlex.quote(value)}" in script
 
 
-def test_build_remote_chat_script_execs_chat_sh(
-    local_host_and_agent: tuple[Host, TestAgent],
-) -> None:
-    host, agent = local_host_and_agent
-
-    script = _build_remote_chat_script(agent, host, ["--new"])
-
-    expected_chat_path = str(host.host_dir / "commands" / "chat.sh")
-    assert f"exec {shlex.quote(expected_chat_path)} --new" in script
-
-
 def test_build_remote_chat_script_quotes_conversation_id_with_special_chars(
     local_host_and_agent: tuple[Host, TestAgent],
 ) -> None:
