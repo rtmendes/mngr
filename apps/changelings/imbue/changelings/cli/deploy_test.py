@@ -2,9 +2,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
-from click.testing import Result
 
+from imbue.changelings.cli.conftest import DEPLOY_TEST_RUNNER
+from imbue.changelings.cli.conftest import create_git_repo_with_agent_type
+from imbue.changelings.cli.conftest import data_dir_args
+from imbue.changelings.cli.conftest import deploy_with_agent_type
 from imbue.changelings.cli.deploy import _copy_add_paths
 from imbue.changelings.cli.deploy import _move_to_permanent_location
 from imbue.changelings.cli.deploy import _parse_add_path
@@ -25,78 +27,11 @@ from imbue.changelings.testing import capture_loguru_messages
 from imbue.changelings.testing import init_and_commit_git_repo
 from imbue.mng.primitives import AgentId
 
-_RUNNER = CliRunner()
-
-
-def _create_git_repo_with_agent_type(tmp_path: Path, agent_type: str = "elena-code") -> Path:
-    """Create a minimal git repo with changelings.toml specifying the agent type."""
-    repo_dir = tmp_path / "my-agent-repo"
-    repo_dir.mkdir()
-    (repo_dir / "changelings.toml").write_text('agent_type = "{}"\n'.format(agent_type))
-    init_and_commit_git_repo(repo_dir, tmp_path)
-    return repo_dir
-
-
-def _data_dir_args(tmp_path: Path) -> list[str]:
-    """Return the --data-dir CLI args pointing to a temp directory."""
-    return ["--data-dir", str(tmp_path / "changelings-data")]
-
-
-def _deploy_with_agent_type(
-    tmp_path: Path,
-    agent_type: str = "elena-code",
-    name: str | None = "test-bot",
-    add_paths: list[str] | None = None,
-    provider: str = "local",
-    input_text: str | None = None,
-) -> Result:
-    """Invoke changeling deploy with --agent-type and standard non-interactive flags."""
-    args: list[str] = ["deploy", "--agent-type", agent_type]
-
-    if name is not None:
-        args.extend(["--name", name])
-
-    for ap in add_paths or []:
-        args.extend(["--add-path", ap])
-
-    args.extend(["--provider", provider, "--no-self-deploy"])
-    args.extend(_data_dir_args(tmp_path))
-
-    return _RUNNER.invoke(cli, args, input=input_text)
-
-
-def _deploy_with_git_url(
-    tmp_path: Path,
-    git_url: str,
-    name: str | None = "test-bot",
-    add_paths: list[str] | None = None,
-    provider: str = "local",
-    input_text: str | None = None,
-    agent_type: str | None = None,
-) -> Result:
-    """Invoke changeling deploy with a git URL and standard non-interactive flags."""
-    args: list[str] = ["deploy", git_url]
-
-    if agent_type is not None:
-        args.extend(["--agent-type", agent_type])
-
-    if name is not None:
-        args.extend(["--name", name])
-
-    for ap in add_paths or []:
-        args.extend(["--add-path", ap])
-
-    args.extend(["--provider", provider, "--no-self-deploy"])
-    args.extend(_data_dir_args(tmp_path))
-
-    return _RUNNER.invoke(cli, args, input=input_text)
-
-
 # --- Tests for git URL deployment ---
 
 
 def test_deploy_fails_for_invalid_git_url(tmp_path: Path) -> None:
-    result = _RUNNER.invoke(cli, ["deploy", "/nonexistent/repo/path", *_data_dir_args(tmp_path)])
+    result = DEPLOY_TEST_RUNNER.invoke(cli, ["deploy", "/nonexistent/repo/path", *data_dir_args(tmp_path)])
 
     assert result.exit_code != 0
     assert "git clone failed" in result.output
@@ -108,7 +43,7 @@ def test_deploy_fails_when_no_agent_type(tmp_path: Path) -> None:
     repo_dir.mkdir()
     init_and_commit_git_repo(repo_dir, tmp_path, allow_empty=True)
 
-    result = _RUNNER.invoke(cli, ["deploy", str(repo_dir), *_data_dir_args(tmp_path)])
+    result = DEPLOY_TEST_RUNNER.invoke(cli, ["deploy", str(repo_dir), *data_dir_args(tmp_path)])
 
     assert result.exit_code != 0
     assert "agent type" in result.output.lower() or "agent_type" in result.output
@@ -118,7 +53,7 @@ def test_deploy_cleans_up_temp_dir_on_clone_failure(tmp_path: Path) -> None:
     """Verify that a failed clone does not leave temporary directories behind."""
     data_dir = tmp_path / "changelings-data"
 
-    _RUNNER.invoke(cli, ["deploy", "/nonexistent/repo/path", "--data-dir", str(data_dir)])
+    DEPLOY_TEST_RUNNER.invoke(cli, ["deploy", "/nonexistent/repo/path", "--data-dir", str(data_dir)])
 
     if data_dir.exists():
         leftover = [p for p in data_dir.iterdir() if p.name.startswith(".tmp-")]
@@ -132,7 +67,7 @@ def test_deploy_cleans_up_temp_dir_on_missing_agent_type(tmp_path: Path) -> None
     init_and_commit_git_repo(repo_dir, tmp_path, allow_empty=True)
     data_dir = tmp_path / "changelings-data"
 
-    _RUNNER.invoke(cli, ["deploy", str(repo_dir), "--data-dir", str(data_dir)])
+    DEPLOY_TEST_RUNNER.invoke(cli, ["deploy", str(repo_dir), "--data-dir", str(data_dir)])
 
     leftover = [p for p in data_dir.iterdir() if p.name.startswith(".tmp-")]
     assert leftover == []
@@ -153,7 +88,7 @@ def test_resolve_provider_accepts_docker() -> None:
 
 def test_deploy_fails_without_git_url_or_agent_type(tmp_path: Path) -> None:
     """Verify that deploy fails when neither GIT_URL nor --agent-type is provided."""
-    result = _RUNNER.invoke(cli, ["deploy", *_data_dir_args(tmp_path)])
+    result = DEPLOY_TEST_RUNNER.invoke(cli, ["deploy", *data_dir_args(tmp_path)])
 
     assert result.exit_code != 0
     assert "Either GIT_URL or --agent-type must be provided" in result.output
@@ -164,7 +99,7 @@ def test_deploy_fails_without_git_url_or_agent_type(tmp_path: Path) -> None:
 
 def test_deploy_add_path_fails_for_nonexistent_source(tmp_path: Path) -> None:
     """Verify that --add-path fails when the source path does not exist."""
-    result = _deploy_with_agent_type(
+    result = deploy_with_agent_type(
         tmp_path,
         name="bad-bot",
         add_paths=["/nonexistent/path:dest.txt"],
@@ -176,7 +111,7 @@ def test_deploy_add_path_fails_for_nonexistent_source(tmp_path: Path) -> None:
 
 def test_deploy_add_path_fails_for_invalid_format(tmp_path: Path) -> None:
     """Verify that --add-path fails when the format is not SRC:DEST."""
-    result = _deploy_with_agent_type(
+    result = deploy_with_agent_type(
         tmp_path,
         name="bad-bot",
         add_paths=["no-colon-here"],
@@ -191,7 +126,7 @@ def test_deploy_add_path_fails_for_absolute_dest(tmp_path: Path) -> None:
     extra_file = tmp_path / "file.txt"
     extra_file.write_text("content")
 
-    result = _deploy_with_agent_type(
+    result = deploy_with_agent_type(
         tmp_path,
         name="bad-bot",
         add_paths=["{}:/absolute/dest.txt".format(extra_file)],
@@ -220,7 +155,7 @@ def test_prepare_repo_creates_git_repo(tmp_path: Path) -> None:
 
 def test_prepare_repo_with_git_url_clones(tmp_path: Path) -> None:
     """Verify that _prepare_repo clones a git URL."""
-    source = _create_git_repo_with_agent_type(tmp_path)
+    source = create_git_repo_with_agent_type(tmp_path)
     clone_dir = tmp_path / "clone"
 
     _prepare_repo(
@@ -314,7 +249,7 @@ def test_prepare_repo_add_path_files_are_committed(tmp_path: Path) -> None:
 
 def test_prepare_repo_add_path_with_clone_commits_added_files(tmp_path: Path) -> None:
     """Verify that --add-path files are committed when used with a git URL."""
-    source = _create_git_repo_with_agent_type(tmp_path)
+    source = create_git_repo_with_agent_type(tmp_path)
     extra_file = tmp_path / "extra.txt"
     extra_file.write_text("extra from clone")
 
