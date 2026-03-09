@@ -1,0 +1,10 @@
+# Configuration for the autofix stop hook.
+# This file is read by scripts/stop_hook_autofix.sh.
+
+# Set to false to disable the autofix stop hook entirely.
+enabled = true
+
+# Extra arguments to pass to /autofix when the stop hook triggers it.
+# This text is appended to the "Run /autofix" message shown to the agent.
+# Example: "Focus only on logic_error and runtime_error_risk categories."
+extra_args = ""

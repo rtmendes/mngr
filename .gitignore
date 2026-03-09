@@ -254,8 +254,9 @@ current.tar.gz
 # Changelings deploy-time build artifacts
 .changelings/
 
-# Autofix working artifacts
-.autofix/
+# Autofix working artifacts (but keep config)
+.autofix/*
+!.autofix/config/
 
 # Demo recordings (asciinema .cast, .txt, and scripts)
 .demos/
