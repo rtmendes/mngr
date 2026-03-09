@@ -1,3 +1,6 @@
+import asyncio
+
+import pytest
 from modal._grpc_client import UnaryStreamWrapper
 from modal._grpc_client import UnaryUnaryWrapper
 
@@ -94,3 +97,48 @@ def test_install_modal_guards_records_originals(
     assert UnaryStreamWrapper.unary_stream is _guarded_modal_unary_stream
 
     _cleanup_modal_guards()
+
+
+def test_guarded_modal_unary_call_delegates_to_original(
+    isolated_guard_state: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guarded unary call invokes enforce_sdk_guard and delegates."""
+    monkeypatch.delenv("_PYTEST_GUARD_PHASE", raising=False)
+
+    sentinel = object()
+
+    async def fake_original(self, *args, **kwargs):
+        return sentinel
+
+    _modal_originals["unary_call"] = fake_original
+
+    result = asyncio.get_event_loop().run_until_complete(_guarded_modal_unary_call(None))
+
+    assert result is sentinel
+    _modal_originals.clear()
+
+
+def test_guarded_modal_unary_stream_delegates_to_original(
+    isolated_guard_state: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guarded unary stream invokes enforce_sdk_guard and yields from original."""
+    monkeypatch.delenv("_PYTEST_GUARD_PHASE", raising=False)
+
+    async def fake_original(self, *args, **kwargs):
+        yield "a"
+        yield "b"
+
+    _modal_originals["unary_stream"] = fake_original
+
+    async def collect():
+        results = []
+        async for item in _guarded_modal_unary_stream(None):
+            results.append(item)
+        return results
+
+    results = asyncio.get_event_loop().run_until_complete(collect())
+
+    assert results == ["a", "b"]
+    _modal_originals.clear()

@@ -5,11 +5,16 @@ import pytest
 
 import imbue.resource_guards.resource_guards as resource_guards
 from imbue.resource_guards.resource_guards import ResourceGuardViolation
+from imbue.resource_guards.resource_guards import _build_per_test_guard_env
 from imbue.resource_guards.resource_guards import cleanup_resource_guard_wrappers
+from imbue.resource_guards.resource_guards import cleanup_sdk_resource_guards
 from imbue.resource_guards.resource_guards import create_resource_guard_wrappers
+from imbue.resource_guards.resource_guards import create_sdk_resource_guards
 from imbue.resource_guards.resource_guards import enforce_sdk_guard
+from imbue.resource_guards.resource_guards import generate_stub_wrapper_script
 from imbue.resource_guards.resource_guards import generate_wrapper_script
 from imbue.resource_guards.resource_guards import register_resource_guard
+from imbue.resource_guards.resource_guards import register_sdk_guard
 
 # Use ubiquitous coreutils binaries so these tests run on any system.
 _TEST_RESOURCES = ["echo", "cat", "ls"]
@@ -54,6 +59,14 @@ pytest_plugins = ["pytester"]
 # ---------------------------------------------------------------------------
 # Script generation (unit tests)
 # ---------------------------------------------------------------------------
+
+
+def test_generate_stub_wrapper_script_contains_shebang_and_exit() -> None:
+    script = generate_stub_wrapper_script("mybin")
+    assert script.startswith("#!/bin/bash\n")
+    assert "not installed on this machine" in script
+    assert "exit 127" in script
+    assert "$_PYTEST_GUARD_MYBIN" in script
 
 
 def test_generate_wrapper_script_contains_shebang_and_exec() -> None:
@@ -195,6 +208,100 @@ def test_create_and_cleanup_round_trip(isolated_guard_state: None) -> None:
     assert resource_guards._guard_wrapper_dir is None
     assert not Path(wrapper_dir).exists()
     assert not os.environ["PATH"].startswith(wrapper_dir)
+
+
+def test_create_wrappers_generates_stub_for_missing_binary(
+    isolated_guard_state: None,
+) -> None:
+    """A nonexistent binary gets a stub wrapper that exits 127."""
+    register_resource_guard("nonexistent_xyz_binary")
+    create_resource_guard_wrappers()
+
+    wrapper_dir = resource_guards._guard_wrapper_dir
+    assert wrapper_dir is not None
+    stub = Path(wrapper_dir) / "nonexistent_xyz_binary"
+    assert stub.exists()
+    assert "not installed on this machine" in stub.read_text()
+
+    cleanup_resource_guard_wrappers()
+
+
+def test_create_wrappers_reuses_inherited_directory(
+    isolated_guard_state: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When _PYTEST_GUARD_WRAPPER_DIR is set, wrappers are reused, not recreated."""
+    monkeypatch.setenv("_PYTEST_GUARD_WRAPPER_DIR", str(tmp_path))
+
+    create_resource_guard_wrappers()
+
+    assert resource_guards._guard_wrapper_dir == str(tmp_path)
+    assert resource_guards._owns_guard_wrapper_dir is False
+
+    # Cleanup should not delete the directory since we don't own it
+    cleanup_resource_guard_wrappers()
+    assert tmp_path.exists()
+    assert resource_guards._guard_wrapper_dir is None
+
+
+# ---------------------------------------------------------------------------
+# SDK guard lifecycle (unit tests)
+# ---------------------------------------------------------------------------
+
+
+def test_register_sdk_guard_adds_entry(isolated_guard_state: None) -> None:
+    install_called = []
+    register_sdk_guard("test_sdk", lambda: install_called.append(1), lambda: None)
+
+    assert len(resource_guards._registered_sdk_guards) == 1
+    assert resource_guards._registered_sdk_guards[0][0] == "test_sdk"
+
+
+def test_register_sdk_guard_deduplicates(isolated_guard_state: None) -> None:
+    register_sdk_guard("test_sdk", lambda: None, lambda: None)
+    register_sdk_guard("test_sdk", lambda: None, lambda: None)
+
+    assert len(resource_guards._registered_sdk_guards) == 1
+
+
+def test_create_sdk_resource_guards_installs_and_populates(
+    isolated_guard_state: None,
+) -> None:
+    install_called = []
+    register_sdk_guard("test_sdk", lambda: install_called.append(1), lambda: None)
+    create_sdk_resource_guards()
+
+    assert "test_sdk" in resource_guards._guarded_resources
+    assert install_called == [1]
+
+
+def test_cleanup_sdk_resource_guards_calls_cleanup(
+    isolated_guard_state: None,
+) -> None:
+    cleanup_called = []
+    register_sdk_guard("test_sdk", lambda: None, lambda: cleanup_called.append(1))
+    cleanup_sdk_resource_guards()
+
+    assert cleanup_called == [1]
+
+
+# ---------------------------------------------------------------------------
+# _build_per_test_guard_env (unit tests)
+# ---------------------------------------------------------------------------
+
+
+def test_build_per_test_guard_env_sets_allow_for_marked_resources(
+    isolated_guard_state: None,
+) -> None:
+    register_resource_guard("tmux")
+    register_resource_guard("rsync")
+    env = _build_per_test_guard_env({"tmux"}, "/tmp/track")
+
+    assert env["_PYTEST_GUARD_PHASE"] == "call"
+    assert env["_PYTEST_GUARD_TRACKING_DIR"] == "/tmp/track"
+    assert env["_PYTEST_GUARD_TMUX"] == "allow"
+    assert env["_PYTEST_GUARD_RSYNC"] == "block"
 
 
 # ---------------------------------------------------------------------------
