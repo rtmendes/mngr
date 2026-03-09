@@ -25,6 +25,7 @@ Usage:
     into the conftest namespace.
 """
 
+import dataclasses
 import os
 import shutil
 import stat
@@ -39,6 +40,15 @@ import pytest
 
 class ResourceGuardViolation(Exception):
     """Raised when a test invokes an SDK resource without the required mark."""
+
+
+@dataclasses.dataclass
+class _PerTestGuardState:
+    """Per-test state stashed on pytest.Item during the test lifecycle."""
+
+    tracking_dir: str
+    marks: set[str]
+    env_patcher: patch.dict  # ty: ignore[invalid-type-form]
 
 
 # Module-level state for resource guard wrappers. The wrapper directory is created
@@ -315,16 +325,15 @@ def _pytest_runtest_setup(item: pytest.Item) -> Generator[None, None, None]:
         return
 
     marks = {m.name for m in item.iter_markers()}
-
-    # Create per-test tracking directory
     tracking_dir = tempfile.mkdtemp(prefix="pytest_guard_track_")
-    item._resource_tracking_dir = tracking_dir  # ty: ignore[unresolved-attribute]
-    item._resource_marks = marks  # ty: ignore[unresolved-attribute]
+    env_patcher = patch.dict(os.environ, _build_per_test_guard_env(marks, tracking_dir))
+    env_patcher.start()
 
-    # Start a patch.dict that will be stopped in teardown
-    patcher = patch.dict(os.environ, _build_per_test_guard_env(marks, tracking_dir))
-    patcher.start()
-    item._guard_env_patcher = patcher  # ty: ignore[unresolved-attribute]
+    item._guard_state = _PerTestGuardState(  # ty: ignore[unresolved-attribute]
+        tracking_dir=tracking_dir,
+        marks=marks,
+        env_patcher=env_patcher,
+    )
 
     yield
 
@@ -334,9 +343,9 @@ def _pytest_runtest_teardown(item: pytest.Item) -> Generator[None, None, None]:
     """Clean up resource guard environment variables after teardown."""
     yield
 
-    patcher = getattr(item, "_guard_env_patcher", None)
-    if patcher is not None:
-        patcher.stop()
+    state: _PerTestGuardState | None = getattr(item, "_guard_state", None)
+    if state is not None:
+        state.env_patcher.stop()
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -358,19 +367,18 @@ def _pytest_runtest_makereport(
     outcome = yield
     report = outcome.get_result()
 
+    state: _PerTestGuardState | None = getattr(item, "_guard_state", None)
+    if state is None:
+        return
+
     if call.when != "call":
         # Clean up tracking dir on the final phase (teardown)
         if call.when == "teardown":
-            tracking_dir = getattr(item, "_resource_tracking_dir", None)
-            if tracking_dir:
-                shutil.rmtree(tracking_dir, ignore_errors=True)
+            shutil.rmtree(state.tracking_dir, ignore_errors=True)
         return
 
-    tracking_dir = getattr(item, "_resource_tracking_dir", None)
-    if tracking_dir is None:
-        return
-
-    marks: set[str] = getattr(item, "_resource_marks", set())
+    tracking_dir = state.tracking_dir
+    marks = state.marks
 
     # Check for blocked invocations regardless of pass/fail. When a guard
     # blocks a resource inside a subprocess (e.g., mng create -> tmux), the

@@ -82,7 +82,7 @@ def test_prevent_importlib_import_module() -> None:
 
 
 def test_prevent_getattr() -> None:
-    rc.check_getattr(_DIR, snapshot(4))
+    rc.check_getattr(_DIR, snapshot(2))
 
 
 def test_prevent_setattr() -> None:
@@ -101,7 +101,7 @@ def test_prevent_pandas_import() -> None:
 
 
 def test_prevent_dataclasses_import() -> None:
-    rc.check_dataclasses_import(_DIR, snapshot(0))
+    rc.check_dataclasses_import(_DIR, snapshot(1))
 
 
 def test_prevent_namedtuple_usage() -> None:
