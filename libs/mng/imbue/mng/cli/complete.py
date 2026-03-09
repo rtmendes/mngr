@@ -11,6 +11,7 @@ Invoked as: python -m imbue.mng.cli.complete {zsh|bash}
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -56,8 +57,6 @@ def _read_agent_names() -> list[str]:
 
 def _read_git_branches() -> list[str]:
     """Read local and remote git branch names via ``git for-each-ref``."""
-    import subprocess
-
     try:
         result = subprocess.run(
             ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads/", "refs/remotes/"],
