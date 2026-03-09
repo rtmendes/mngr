@@ -19,7 +19,7 @@ Both mechanisms use per-test tracking files so the `makereport` hook can detect 
 
 ## Packages
 
-The guard system is split into three packages so you can install only what you need:
+This is the core package. Extension packages provide guards for specific SDKs:
 
 - **`resource-guards`** (this package) -- core machinery, no third-party dependencies beyond pytest
 - **`resource-guards-modal`** -- Modal gRPC guard, depends on `resource-guards` and `modal`
