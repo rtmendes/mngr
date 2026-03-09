@@ -91,6 +91,7 @@ Before writing new tests, read the relevant `conftest.py` and `testing.py` files
 | `mock_*_test.py` | Concrete mock implementations of interfaces (explicitly imported) |
 
 All fixtures must be in conftest.py, not in individual test files.
+
 # Manual verification and testing
 
 Before declaring any feature complete, manually verify it: exercise the feature exactly as a real user would, with real inputs, and critically evaluate whether it *actually does the right thing*. Do not confuse "no errors" with "correct behavior" -- a command that exits 0 but produces wrong output is not working.
