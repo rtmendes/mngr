@@ -71,3 +71,23 @@ def test_write_cli_completions_cache_writes_valid_json(monkeypatch: pytest.Monke
     assert "commands" in data
     assert "create" in data["commands"]
     assert "list" in data["commands"]
+
+
+def test_write_cli_completions_cache_includes_git_branch_options(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """write_cli_completions_cache should include git_branch_options for the create command."""
+    monkeypatch.setenv("MNG_COMPLETION_CACHE_DIR", str(tmp_path))
+
+    group = click.Group(
+        name="test",
+        commands={
+            "create": click.Command("create", params=[click.Option(["--base-branch"])]),
+        },
+    )
+
+    write_cli_completions_cache(group)
+    cache_path = tmp_path / COMMAND_COMPLETIONS_CACHE_FILENAME
+    data = json.loads(cache_path.read_text())
+    assert "git_branch_options" in data
+    assert "create.--base-branch" in data["git_branch_options"]

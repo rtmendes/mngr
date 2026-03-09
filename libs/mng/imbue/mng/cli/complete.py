@@ -54,6 +54,64 @@ def _read_agent_names() -> list[str]:
         return []
 
 
+def _find_git_common_dir() -> Path | None:
+    """Find the git common directory by walking up from the current directory.
+
+    For regular repos this is the ``.git`` directory. For worktrees it follows
+    the ``gitdir`` pointer and ``commondir`` file to find the shared object store
+    where branch refs live.
+    """
+    cwd = Path.cwd()
+    for parent in [cwd, *cwd.parents]:
+        git_path = parent / ".git"
+        if git_path.is_dir():
+            return git_path
+        if git_path.is_file():
+            text = git_path.read_text().strip()
+            if text.startswith("gitdir:"):
+                git_dir = Path(text[len("gitdir:") :].strip())
+                if not git_dir.is_absolute():
+                    git_dir = (parent / git_dir).resolve()
+                commondir_path = git_dir / "commondir"
+                if commondir_path.is_file():
+                    commondir = commondir_path.read_text().strip()
+                    return (git_dir / commondir).resolve()
+                return git_dir
+    return None
+
+
+def _read_git_branches() -> list[str]:
+    """Read local and remote git branch names from the filesystem."""
+    git_dir = _find_git_common_dir()
+    if git_dir is None:
+        return []
+
+    branches: set[str] = set()
+    try:
+        for ref_prefix in ("refs/heads", "refs/remotes"):
+            ref_path = git_dir / ref_prefix
+            if ref_path.is_dir():
+                for p in ref_path.rglob("*"):
+                    if p.is_file():
+                        branches.add(str(p.relative_to(ref_path)))
+
+        packed_refs = git_dir / "packed-refs"
+        if packed_refs.is_file():
+            for line in packed_refs.read_text().splitlines():
+                if line.startswith(("#", "^")):
+                    continue
+                parts = line.split(None, 2)
+                if len(parts) >= 2:
+                    ref = parts[1]
+                    for prefix in ("refs/heads/", "refs/remotes/"):
+                        if ref.startswith(prefix):
+                            branches.add(ref[len(prefix) :])
+    except OSError:
+        pass
+
+    return sorted(branches)
+
+
 def _is_flag_option(word: str, flag_options: list[str]) -> bool:
     """Check if word is a known flag option.
 
@@ -94,6 +152,7 @@ def _get_completions() -> list[str]:
     flag_options_by_command: dict[str, list[str]] = cache.get("flag_options_by_command", {})
     option_choices: dict[str, list[str]] = cache.get("option_choices", {})
     agent_name_arguments: list[str] = cache.get("agent_name_arguments", [])
+    git_branch_options: list[str] = cache.get("git_branch_options", [])
 
     # Resolve the command and subcommand from the words already typed
     resolved_command: str | None = None
@@ -148,6 +207,9 @@ def _get_completions() -> list[str]:
         elif incomplete.startswith("--"):
             # Previous word is value-taking, but user started typing an option
             candidates = options_by_command.get(option_key, [])
+        elif choice_key in git_branch_options:
+            # Option whose value should complete against git branch names
+            candidates = _read_git_branches()
         else:
             # Previous word is value-taking, current word is its value -- no completions
             candidates = []
