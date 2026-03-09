@@ -1,7 +1,8 @@
 #!/bin/bash
 # Print paths to Claude Code session JSONL files for all sessions.
 # Outputs one line per file: "<source>\t<path>"
-# where source is one of: tracked, current, agent_dir, subagent
+# where source is one of: mng_tracked, current, mng_agent_dir,
+# or a subagent variant like mng_tracked:subagent, current:subagent, etc.
 #
 # Discovery is controlled by .reviews/config/verify-conversation.toml.
 # If the config file is missing, all toggles default to true.
@@ -53,12 +54,13 @@ _emit() {
 }
 
 _emit_subagents() {
-    local jsonl_file="$1"
+    local parent_source="$1"
+    local jsonl_file="$2"
     local session_dir="${jsonl_file%.jsonl}"
     local subagents_dir="$session_dir/subagents"
     if [ -d "$subagents_dir" ]; then
         for subagent_file in "$subagents_dir"/*.jsonl; do
-            [ -f "$subagent_file" ] && _emit "subagent" "$subagent_file"
+            [ -f "$subagent_file" ] && _emit "${parent_source}:subagent" "$subagent_file"
         done
     fi
 }
@@ -98,8 +100,8 @@ if [ "$INCLUDE_TRACKED" = "true" ]; then
     for sid in "${_TRACKED_SESSION_IDS[@]}"; do
         file=$(_find_session_file "$sid")
         if [ -n "$file" ]; then
-            _emit "tracked" "$file"
-            [ "$INCLUDE_SUBAGENTS" = "true" ] && _emit_subagents "$file"
+            _emit "mng_tracked" "$file"
+            [ "$INCLUDE_SUBAGENTS" = "true" ] && _emit_subagents "mng_tracked" "$file"
         fi
     done
 fi
@@ -113,7 +115,7 @@ if [ "$INCLUDE_CURRENT" = "true" ] && [ -n "${MNG_CLAUDE_SESSION_ID:-}" ]; then
         file=$(_find_session_file "$MNG_CLAUDE_SESSION_ID")
         if [ -n "$file" ]; then
             _emit "current" "$file"
-            [ "$INCLUDE_SUBAGENTS" = "true" ] && _emit_subagents "$file"
+            [ "$INCLUDE_SUBAGENTS" = "true" ] && _emit_subagents "current" "$file"
         fi
     fi
 fi
@@ -130,8 +132,8 @@ if [ "$INCLUDE_AGENT_DIR" = "true" ]; then
             case "$jsonl_file" in
                 */subagents/*) continue ;;
             esac
-            _emit "agent_dir" "$jsonl_file"
-            [ "$INCLUDE_SUBAGENTS" = "true" ] && _emit_subagents "$jsonl_file"
+            _emit "mng_agent_dir" "$jsonl_file"
+            [ "$INCLUDE_SUBAGENTS" = "true" ] && _emit_subagents "mng_agent_dir" "$jsonl_file"
         done < <(find "$search_dir" -name '*.jsonl' 2>/dev/null | sort)
     done
 fi
