@@ -1,5 +1,4 @@
 import json
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -10,6 +9,7 @@ from imbue.mng.cli.complete import _get_completions
 from imbue.mng.cli.complete import _read_agent_names
 from imbue.mng.cli.complete import _read_cache
 from imbue.mng.cli.complete import _read_git_branches
+from imbue.mng.utils.testing import run_git_command
 from imbue.mng.utils.testing import write_discovery_snapshot_to_path
 
 
@@ -619,35 +619,11 @@ def test_get_completions_subcommand_flag_allows_positional(
 # =============================================================================
 
 
-def _init_git_repo(repo_dir: Path, branches: list[str]) -> None:
-    """Create a real git repo at repo_dir with an initial commit and the given branches."""
-    subprocess.run(["git", "init", str(repo_dir)], capture_output=True, check=True)
-    subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", "init"],
-        capture_output=True,
-        check=True,
-        cwd=repo_dir,
-    )
-    for branch in branches:
-        subprocess.run(
-            ["git", "branch", branch],
-            capture_output=True,
-            check=True,
-            cwd=repo_dir,
-        )
-
-
-@pytest.fixture
-def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Create a git repo with known branches and chdir into it."""
-    repo = tmp_path / "repo"
-    _init_git_repo(repo, ["develop", "feature/foo"])
-    monkeypatch.chdir(repo)
-    return repo
-
-
-def test_read_git_branches_returns_branches(git_repo: Path) -> None:
+def test_read_git_branches_returns_branches(temp_git_repo_cwd: Path) -> None:
     """_read_git_branches should return branch names from a real git repo."""
+    run_git_command(temp_git_repo_cwd, "branch", "develop")
+    run_git_command(temp_git_repo_cwd, "branch", "feature/foo")
+
     result = _read_git_branches()
 
     assert "develop" in result
@@ -666,9 +642,10 @@ def test_read_git_branches_returns_empty_outside_repo(tmp_path: Path, monkeypatc
 def test_get_completions_git_branch_option(
     completion_cache_dir: Path,
     set_comp_env: Callable[[str, str], None],
-    git_repo: Path,
+    temp_git_repo_cwd: Path,
 ) -> None:
     """Completing values for a git branch option should offer branch names."""
+    run_git_command(temp_git_repo_cwd, "branch", "develop")
     data = _make_cache_data(
         commands=["create"],
         options_by_command={"create": ["--base-branch", "--name"]},
@@ -680,15 +657,16 @@ def test_get_completions_git_branch_option(
     result = _get_completions()
 
     assert "develop" in result
-    assert "feature/foo" in result
 
 
 def test_get_completions_git_branch_option_with_prefix(
     completion_cache_dir: Path,
     set_comp_env: Callable[[str, str], None],
-    git_repo: Path,
+    temp_git_repo_cwd: Path,
 ) -> None:
     """Completing values for a git branch option should filter by prefix."""
+    run_git_command(temp_git_repo_cwd, "branch", "develop")
+    run_git_command(temp_git_repo_cwd, "branch", "feature/foo")
     data = _make_cache_data(
         commands=["create"],
         options_by_command={"create": ["--base-branch", "--name"]},
@@ -705,7 +683,7 @@ def test_get_completions_git_branch_option_with_prefix(
 def test_get_completions_git_branch_option_not_triggered_for_other_options(
     completion_cache_dir: Path,
     set_comp_env: Callable[[str, str], None],
-    git_repo: Path,
+    temp_git_repo_cwd: Path,
 ) -> None:
     """Options not in git_branch_options should not trigger git branch completion."""
     data = _make_cache_data(
