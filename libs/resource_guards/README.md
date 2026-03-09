@@ -54,10 +54,35 @@ def pytest_sessionstart(session):
 def pytest_sessionfinish(session, exitstatus):
     stop_resource_guards()
 
-# Wire up the per-test hooks
+# Wire up the per-test hooks. If you don't have your own hooks, you can
+# assign them directly:
 pytest_runtest_setup = _pytest_runtest_setup
 pytest_runtest_teardown = _pytest_runtest_teardown
 pytest_runtest_makereport = _pytest_runtest_makereport
+```
+
+If you already have your own `pytest_runtest_setup` (or teardown/makereport), call the guard hooks from within yours:
+
+```python
+import pytest
+from imbue.resource_guards.resource_guards import (
+    _pytest_runtest_setup as _guard_setup,
+    _pytest_runtest_teardown as _guard_teardown,
+    _pytest_runtest_makereport as _guard_makereport,
+)
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_setup(item):
+    # your custom setup logic here
+    yield from _guard_setup(item)
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item):
+    yield from _guard_teardown(item)
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    yield from _guard_makereport(item, call)
 ```
 
 ### 2. Add guards for Modal or Docker
