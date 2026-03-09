@@ -291,6 +291,25 @@ def cleanup_sdk_resource_guards() -> None:
         cleanup()
 
 
+def start_resource_guards() -> None:
+    """Create all resource guards (binary wrappers and SDK monkeypatches).
+
+    Call this from pytest_sessionstart. Safe to call with only binary guards,
+    only SDK guards, or both registered.
+    """
+    create_resource_guard_wrappers()
+    create_sdk_resource_guards()
+
+
+def stop_resource_guards() -> None:
+    """Clean up all resource guards (SDK monkeypatches and binary wrappers).
+
+    Call this from pytest_sessionfinish. Reverses start_resource_guards().
+    """
+    cleanup_sdk_resource_guards()
+    cleanup_resource_guard_wrappers()
+
+
 # ---------------------------------------------------------------------------
 # Pytest hook implementations (prefixed with _ to avoid accidental discovery)
 # ---------------------------------------------------------------------------

@@ -35,10 +35,8 @@ In your `conftest.py`, register each resource you want to guard. You need two th
 # conftest.py
 from imbue.resource_guards.resource_guards import (
     register_resource_guard,
-    create_resource_guard_wrappers,
-    cleanup_resource_guard_wrappers,
-    create_sdk_resource_guards,
-    cleanup_sdk_resource_guards,
+    start_resource_guards,
+    stop_resource_guards,
     _pytest_runtest_setup,
     _pytest_runtest_teardown,
     _pytest_runtest_makereport,
@@ -51,12 +49,10 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "tmux: marks tests that use tmux")
 
 def pytest_sessionstart(session):
-    create_resource_guard_wrappers()
-    create_sdk_resource_guards()
+    start_resource_guards()
 
 def pytest_sessionfinish(session, exitstatus):
-    cleanup_sdk_resource_guards()
-    cleanup_resource_guard_wrappers()
+    stop_resource_guards()
 
 # Wire up the per-test hooks
 pytest_runtest_setup = _pytest_runtest_setup

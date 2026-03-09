@@ -47,10 +47,8 @@ from coverage.exceptions import CoverageException
 from imbue.resource_guards.resource_guards import _pytest_runtest_makereport
 from imbue.resource_guards.resource_guards import _pytest_runtest_setup
 from imbue.resource_guards.resource_guards import _pytest_runtest_teardown
-from imbue.resource_guards.resource_guards import cleanup_resource_guard_wrappers
-from imbue.resource_guards.resource_guards import cleanup_sdk_resource_guards
-from imbue.resource_guards.resource_guards import create_resource_guard_wrappers
-from imbue.resource_guards.resource_guards import create_sdk_resource_guards
+from imbue.resource_guards.resource_guards import start_resource_guards
+from imbue.resource_guards.resource_guards import stop_resource_guards
 
 # ---------------------------------------------------------------------------
 # Cache importlib.metadata.entry_points() to avoid repeated filesystem scans.
@@ -312,11 +310,7 @@ def _pytest_sessionstart(session: pytest.Session) -> None:
         # Record start time AFTER acquiring the lock so wait time isn't counted
         setattr(session, "start_time", time.time())  # noqa: B010
 
-    # Create resource guard wrappers (workers reuse the controller's via env var).
-    create_resource_guard_wrappers()
-
-    # Install SDK-level guards (each process patches independently, no shared state)
-    create_sdk_resource_guards()
+    start_resource_guards()
 
 
 @pytest.hookimpl(trylast=True)
@@ -326,9 +320,7 @@ def _pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     Prints per-test durations before checking the limit so that timing data
     is always visible in CI output, even when the suite exceeds the limit.
     """
-    # Clean up resource guard wrappers
-    cleanup_sdk_resource_guards()
-    cleanup_resource_guard_wrappers()
+    stop_resource_guards()
 
     # Print test durations before checking the time limit, so they are
     # visible in the CI output even when pytest.exit() aborts the session.
