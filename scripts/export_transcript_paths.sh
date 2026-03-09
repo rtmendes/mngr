@@ -32,10 +32,11 @@ _read_config() {
     echo "$default"
 }
 
-INCLUDE_TRACKED=$(_read_config "include_tracked_sessions" "true")
-INCLUDE_CURRENT=$(_read_config "include_current_session" "true")
-INCLUDE_AGENT_DIR=$(_read_config "include_all_agent_sessions" "true")
-INCLUDE_SUBAGENTS=$(_read_config "include_subagents" "true")
+# Env vars override config file (allows the skill to narrow scope per-invocation)
+INCLUDE_TRACKED="${INCLUDE_TRACKED:-$(_read_config "include_tracked_sessions" "true")}"
+INCLUDE_CURRENT="${INCLUDE_CURRENT:-$(_read_config "include_current_session" "true")}"
+INCLUDE_AGENT_DIR="${INCLUDE_AGENT_DIR:-$(_read_config "include_all_agent_sessions" "true")}"
+INCLUDE_SUBAGENTS="${INCLUDE_SUBAGENTS:-$(_read_config "include_subagents" "true")}"
 
 # ---------------------------------------------------------------------------
 # Track emitted paths to avoid duplicates

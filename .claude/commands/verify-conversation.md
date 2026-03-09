@@ -1,11 +1,25 @@
 ---
+argument-hint: [options...]
 description: Review the conversation transcript for behavioral issues (misleading behavior, disobeyed instructions, instructions worth saving).
-allowed-tools: Bash:*, Read, Write, Agent
+allowed-tools: Bash:*, Read, Write, Agent, AskUserQuestion
 ---
 
 # Verify Conversation
 
 Orchestrate a review of the conversation transcript for behavioral issues. You handle setup and coordination; a subagent does the actual review.
+
+## Arguments
+
+If the user provides arguments, they serve as additional instructions for this run. For example:
+- `/verify-conversation only review tracked sessions` -- override config to only include tracked sessions
+- `/verify-conversation skip subagents` -- disable subagent transcript inclusion
+- `/verify-conversation only review the current session` -- only the current session
+
+To apply overrides, set env vars before calling the discovery script. The env vars are: `INCLUDE_TRACKED`, `INCLUDE_CURRENT`, `INCLUDE_AGENT_DIR`, `INCLUDE_SUBAGENTS` (each `true` or `false`). For example, "only tracked sessions" means:
+
+```bash
+INCLUDE_TRACKED=true INCLUDE_CURRENT=false INCLUDE_AGENT_DIR=false INCLUDE_SUBAGENTS=false bash ./scripts/export_transcript_paths.sh
+```
 
 ## Instructions
 
@@ -21,7 +35,7 @@ The script outputs lines in the format `source\tpath`, where source is one of: `
 
 If this outputs nothing (no sessions found), skip to Step 5 and write an empty marker file.
 
-### Step 2: Choose Model
+### Step 2: Check Size and Choose Model
 
 For each session file found, get its size:
 
@@ -29,9 +43,17 @@ For each session file found, get its size:
 wc -c <file_path>
 ```
 
-Sum the total bytes across all session files. Use this to decide the model for the subagent:
+Sum the total bytes across all session files.
+
+- If total size exceeds 3MB (3000000 bytes), STOP and warn the user. The transcripts are too large for even the 1M context window. Suggest narrowing scope, for example:
+  - `/verify-conversation only review tracked sessions`
+  - `/verify-conversation skip subagents`
+  - Disabling some sources in `.reviews/config/verify-conversation.toml`
+
+  Do NOT proceed unless the user confirms they want to try anyway.
+
+- If total size is 200KB or more (but under 3MB), use `model: "opus[1m]"` -- the transcript needs a larger context window.
 - If total size is under 200KB, use `model: "opus"` -- the transcript comfortably fits in a standard context window.
-- If total size is 200KB or more, use `model: "opus[1m]"` -- the transcript needs a larger context window.
 
 ### Step 3: Gather Context
 
