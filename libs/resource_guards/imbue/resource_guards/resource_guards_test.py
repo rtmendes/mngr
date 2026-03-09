@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-import imbue.resource_guards.resource_guards as rg
+import imbue.resource_guards.resource_guards as resource_guards
 from imbue.resource_guards.resource_guards import ResourceGuardViolation
 from imbue.resource_guards.resource_guards import cleanup_resource_guard_wrappers
 from imbue.resource_guards.resource_guards import create_resource_guard_wrappers
@@ -184,15 +184,15 @@ def test_create_and_cleanup_round_trip(isolated_guard_state: None) -> None:
         register_resource_guard(resource)
     create_resource_guard_wrappers()
 
-    assert rg._guard_wrapper_dir is not None
-    wrapper_dir = rg._guard_wrapper_dir
+    assert resource_guards._guard_wrapper_dir is not None
+    wrapper_dir = resource_guards._guard_wrapper_dir
     assert os.environ["PATH"].startswith(wrapper_dir)
 
     for resource in _TEST_RESOURCES:
         assert (Path(wrapper_dir) / resource).exists()
 
     cleanup_resource_guard_wrappers()
-    assert rg._guard_wrapper_dir is None
+    assert resource_guards._guard_wrapper_dir is None
     assert not Path(wrapper_dir).exists()
     assert not os.environ["PATH"].startswith(wrapper_dir)
 
