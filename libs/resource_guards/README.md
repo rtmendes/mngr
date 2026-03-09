@@ -33,7 +33,7 @@ In your `conftest.py`, register each resource you want to guard. You need two th
 
 ```python
 # conftest.py
-from resource_guards.resource_guards import (
+from imbue.resource_guards.resource_guards import (
     register_resource_guard,
     create_resource_guard_wrappers,
     cleanup_resource_guard_wrappers,
@@ -70,9 +70,9 @@ Install the extension package and call its registration function:
 
 ```python
 # conftest.py (continued)
-from resource_guards_modal.guards import register_modal_guard
-from resource_guards_docker.guards import register_docker_cli_guard
-from resource_guards_docker.guards import register_docker_sdk_guard
+from imbue.resource_guards_modal.guards import register_modal_guard
+from imbue.resource_guards_docker.guards import register_docker_cli_guard
+from imbue.resource_guards_docker.guards import register_docker_sdk_guard
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "tmux: marks tests that use tmux")
@@ -104,8 +104,8 @@ def test_deploy_to_modal():
 You can guard any Python SDK by registering an install/cleanup pair:
 
 ```python
-from resource_guards.resource_guards import enforce_sdk_guard
-from resource_guards.resource_guards import register_sdk_guard
+from imbue.resource_guards.resource_guards import enforce_sdk_guard
+from imbue.resource_guards.resource_guards import register_sdk_guard
 
 _originals = {}
 
