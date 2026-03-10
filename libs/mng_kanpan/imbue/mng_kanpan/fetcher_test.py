@@ -384,6 +384,26 @@ def test_run_refresh_hooks_multiple_hooks() -> None:
     assert "Fail hook" in errors[0]
 
 
+def test_run_refresh_hooks_execute_in_order(tmp_path: Path) -> None:
+    """Hooks execute sequentially in list order, with per-agent commands parallel within each hook."""
+    log_file = tmp_path / "hook-order.log"
+    hook1 = RefreshHook(name="First", command=f'echo "1-$MNG_AGENT_NAME" >> {log_file}')
+    hook2 = RefreshHook(name="Second", command=f'echo "2-$MNG_AGENT_NAME" >> {log_file}')
+    hook3 = RefreshHook(name="Third", command=f'echo "3-$MNG_AGENT_NAME" >> {log_file}')
+    entries = (_make_entry(name="alice"), _make_entry(name="bob"))
+    with ConcurrencyGroup(name="test") as cg:
+        errors = run_refresh_hooks(cg, [hook1, hook2, hook3], entries)
+    assert errors == []
+    lines = log_file.read_text().strip().splitlines()
+    assert len(lines) == 6
+    # All hook-1 lines come before all hook-2 lines, which come before all hook-3 lines.
+    # Within a hook, agent order is non-deterministic (parallel), so just check the hook prefixes.
+    prefixes = [line.split("-")[0] for line in lines]
+    assert prefixes[:2] == ["1", "1"]
+    assert prefixes[2:4] == ["2", "2"]
+    assert prefixes[4:] == ["3", "3"]
+
+
 # === fetch_board_snapshot_with_hooks ===
 
 
