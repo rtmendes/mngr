@@ -355,9 +355,6 @@ Code patterns that are very likely to cause runtime errors during execution.
 - Modifying global state in ways that affect other code
 - Operations that are not thread-safe when concurrency is present
 
-**Look for platform-specific incompatibilities:**
-- Code that will fail when run on OSX or linux (it's ok to fail on Windows)
-
 Only flag issues where there is clear evidence the code will fail or cause serious problems. Avoid speculating about potential issues in well-established language patterns or standard library usage.
 
 ---
