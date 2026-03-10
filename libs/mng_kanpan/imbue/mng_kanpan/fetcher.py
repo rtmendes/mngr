@@ -200,6 +200,10 @@ def fetch_board_snapshot(
             )
         )
 
+    # fetch_time_seconds captures before-hooks + data fetch but not after-hooks,
+    # because the snapshot (and its displayed timing) is constructed before
+    # after-hooks run. Before-hooks are included since they can mutate state
+    # that the fetch reads (e.g. clearing labels before re-fetching).
     snapshot = BoardSnapshot(
         entries=tuple(entries),
         errors=(*errors, *remote.errors),
