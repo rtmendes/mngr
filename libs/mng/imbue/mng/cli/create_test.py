@@ -8,6 +8,7 @@ import pytest
 from imbue.imbue_common.model_update import to_update
 from imbue.mng.cli.create import CreateCliOptions
 from imbue.mng.cli.create import _parse_agent_opts
+from imbue.mng.cli.create import _parse_branch_flag
 from imbue.mng.cli.create import _parse_host_lifecycle_options
 from imbue.mng.cli.create import _parse_project_name
 from imbue.mng.cli.create import _resolve_source_location
@@ -541,7 +542,7 @@ def test_parse_agent_opts_includes_labels(
         to_update(default_create_cli_opts.field_ref().label, ("project=mng", "env=prod")),
     )
 
-    result = _parse_agent_opts(
+    result, _ = _parse_agent_opts(
         opts=opts,
         initial_message=None,
         source_location=source_location,
@@ -583,7 +584,7 @@ def test_parse_agent_opts_empty_labels_by_default(
     local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
     source_location = HostLocation(host=local_host, path=temp_work_dir)
 
-    result = _parse_agent_opts(
+    result, _ = _parse_agent_opts(
         opts=default_create_cli_opts,
         initial_message=None,
         source_location=source_location,
@@ -607,7 +608,7 @@ def test_parse_agent_opts_with_agent_id(
         to_update(default_create_cli_opts.field_ref().agent_id, str(explicit_id)),
     )
 
-    result = _parse_agent_opts(
+    result, _ = _parse_agent_opts(
         opts=opts,
         initial_message=None,
         source_location=source_location,
@@ -627,7 +628,7 @@ def test_parse_agent_opts_agent_id_none_by_default(
     local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
     source_location = HostLocation(host=local_host, path=temp_work_dir)
 
-    result = _parse_agent_opts(
+    result, _ = _parse_agent_opts(
         opts=default_create_cli_opts,
         initial_message=None,
         source_location=source_location,
@@ -635,3 +636,95 @@ def test_parse_agent_opts_agent_id_none_by_default(
     )
 
     assert result.agent_id is None
+
+
+# =============================================================================
+# Tests for _parse_branch_flag
+# =============================================================================
+
+
+def test_parse_branch_flag_base_only() -> None:
+    """A branch spec with no colon means base branch only, no new branch."""
+    base, new, has_explicit_base = _parse_branch_flag("main", AgentName("my-agent"))
+
+    assert base == "main"
+    assert new is None
+    assert has_explicit_base is True
+
+
+def test_parse_branch_flag_base_and_new() -> None:
+    """BASE:NEW creates a new branch from the base."""
+    base, new, has_explicit_base = _parse_branch_flag("main:feature", AgentName("my-agent"))
+
+    assert base == "main"
+    assert new == "feature"
+    assert has_explicit_base is True
+
+
+def test_parse_branch_flag_base_and_wildcard() -> None:
+    """Wildcard * in NEW is replaced by the agent name."""
+    base, new, has_explicit_base = _parse_branch_flag("main:mng/*", AgentName("my-agent"))
+
+    assert base == "main"
+    assert new == "mng/my-agent"
+    assert has_explicit_base is True
+
+
+def test_parse_branch_flag_empty_base_with_new() -> None:
+    """Empty base (colon prefix) defaults base to None (current branch)."""
+    base, new, has_explicit_base = _parse_branch_flag(":feature", AgentName("my-agent"))
+
+    assert base is None
+    assert new == "feature"
+    assert has_explicit_base is False
+
+
+def test_parse_branch_flag_empty_base_with_wildcard() -> None:
+    """Default format :mng/* uses current branch and auto-generates name."""
+    base, new, has_explicit_base = _parse_branch_flag(":mng/*", AgentName("my-agent"))
+
+    assert base is None
+    assert new == "mng/my-agent"
+    assert has_explicit_base is False
+
+
+def test_parse_branch_flag_empty_new_uses_default() -> None:
+    """Empty NEW after colon (e.g. 'main:') falls back to default pattern."""
+    base, new, has_explicit_base = _parse_branch_flag("main:", AgentName("my-agent"))
+
+    assert base == "main"
+    assert new == "mng/my-agent"
+    assert has_explicit_base is True
+
+
+def test_parse_branch_flag_just_colon_uses_default() -> None:
+    """Just ':' means current branch with default new branch pattern."""
+    base, new, has_explicit_base = _parse_branch_flag(":", AgentName("my-agent"))
+
+    assert base is None
+    assert new == "mng/my-agent"
+    assert has_explicit_base is False
+
+
+def test_parse_branch_flag_multiple_wildcards_raises() -> None:
+    """More than one * in NEW raises an error."""
+    with pytest.raises(UserInputError, match="at most one"):
+        _parse_branch_flag("main:mng/*-*", AgentName("my-agent"))
+
+
+def test_parse_branch_flag_empty_string() -> None:
+    """Empty string means no base branch and no new branch."""
+    base, new, has_explicit_base = _parse_branch_flag("", AgentName("my-agent"))
+
+    assert base is None
+    assert new is None
+    assert has_explicit_base is False
+
+
+def test_parse_branch_flag_new_without_wildcard() -> None:
+    """NEW without wildcard uses the exact name."""
+    base, new, has_explicit_base = _parse_branch_flag(":my-exact-branch", AgentName("ignored"))
+
+    assert base is None
+    assert new == "my-exact-branch"
+    assert has_explicit_base is False
