@@ -6,7 +6,7 @@ allowed-tools: Bash:*, Read, Write, Agent, AskUserQuestion
 
 # Verify Conversation
 
-Orchestrate a review of the conversation transcript for behavioral issues. You handle setup and coordination; a subagent does the actual review.
+Orchestrate a review of the conversation transcript for behavioral issues. You handle setup and coordination; an agent does the actual review.
 
 ## Arguments
 
@@ -64,18 +64,18 @@ Read the following files:
 3. **Instruction files**: `CLAUDE.md` at the repo root, plus any other instruction files (`AGENTS.md`, `.claude.md`, etc.) that exist at the repo root
 4. **Review progress**: `.reviews/conversation/progress.jsonl` (if it exists -- this tracks which parts of the transcript have already been reviewed)
 
-### Step 4: Spawn Subagent
+### Step 4: Spawn Agent
 
 Get the current HEAD hash: `git rev-parse HEAD`
 
 Create the output directory: `mkdir -p .reviews/conversation`
 
-Build the subagent prompt by combining:
+Build the agent prompt by combining:
 
 1. The review prompt (from review.md)
 2. A separator, then the full contents of categories.md
 3. A section with the instruction file contents
-4. The list of session file paths for the subagent to read, grouped by provenance:
+4. The list of session file paths for the agent to read, grouped by provenance:
    - `mng_tracked` files: label as "The sequence of tracked session files for this task"
    - `current` files: label as "The current session"
    - `mng_agent_dir` files: label as "All sessions found in this agent's directory"
@@ -84,17 +84,17 @@ Build the subagent prompt by combining:
 
 If the progress file exists:
 - Include the progress data in the prompt
-- Tell the subagent: "The following portions have already been reviewed. You should only review the parts that have NOT been reviewed yet, but you may look at already-reviewed portions for context if needed."
-- For each session file, compare the current line count (`wc -l`) against the line count recorded in the progress file. If a file has grown since it was last reviewed, tell the subagent the previously-reviewed line range (e.g. "lines 1-500 already reviewed") so it can focus on the new content.
-- If a session file appears in the progress file and its line count has NOT changed, tell the subagent it can skip that file entirely (but may reference it for context).
+- Tell the agent: "The following portions have already been reviewed. You should only review the parts that have NOT been reviewed yet, but you may look at already-reviewed portions for context if needed."
+- For each session file, compare the current line count (`wc -l`) against the line count recorded in the progress file. If a file has grown since it was last reviewed, tell the agent the previously-reviewed line range (e.g. "lines 1-500 already reviewed") so it can focus on the new content.
+- If a session file appears in the progress file and its line count has NOT changed, tell the agent it can skip that file entirely (but may reference it for context).
 
-If there is no progress file, tell the subagent to review all session files in full.
+If there is no progress file, tell the agent to review all session files in full.
 
-Spawn an Agent subagent (`subagent_type: "general-purpose"`) with this combined prompt.
+Spawn an Agent (`subagent_type: "general-purpose"`) with this combined prompt.
 
 ### Step 5: Update Progress
 
-After the subagent finishes, update the progress file (`.reviews/conversation/progress.jsonl`).
+After the agent finishes, update the progress file (`.reviews/conversation/progress.jsonl`).
 
 For each session file that was part of this review, get its current line count (`wc -l`). Then append a JSONL line:
 
@@ -106,7 +106,7 @@ This ensures the next invocation knows which portions have already been covered.
 
 ### Step 6: Save Results
 
-If the subagent found no issues or no transcript was available, ensure the output file `.reviews/conversation/{hash}.json` exists (even if empty) -- it serves as the verification marker.
+If the agent found no issues or no transcript was available, ensure the output file `.reviews/conversation/{hash}.json` exists (even if empty) -- it serves as the verification marker.
 
 ### Step 7: Report
 

@@ -25,13 +25,13 @@ Determine the base branch: check the GIT_BASE_BRANCH environment variable. If it
 
 If you do not already know what the changes on this branch are supposed to accomplish, STOP and ask the user before continuing.
 
-Write a brief description of what the branch is trying to do. This helps the diff validation and fix subagents distinguish intentional changes from issues.
+Write a brief description of what the branch is trying to do. This helps the diff validation and fix agents distinguish intentional changes from issues.
 
 ### Phase 2: Validate the Diff
 
-Read the diff validation prompt from `.claude/skills/autofix/validate-diff.md`. Spawn an Agent subagent (`subagent_type: "general-purpose"`) with that prompt, providing the base branch name and the problem description.
+Read the diff validation prompt from `.claude/skills/autofix/validate-diff.md`. Spawn an Agent (`subagent_type: "general-purpose"`) with that prompt, providing the base branch name and the problem description.
 
-Based on the subagent's response:
+Based on the agent's response:
 - If the diff is empty, STOP and ask the user whether the work has been committed yet or whether the base branch is wrong.
 - If it reports significant unrelated changes, STOP and ask the user what the correct base branch is.
 - If it reports the work looks incomplete, note this but proceed -- autofix works on whatever is there.
@@ -43,15 +43,15 @@ Create the .autofix/plans directory if it does not already exist.
 Repeat up to 10 times:
 
 1. Record the current HEAD as `pre_iteration_head`.
-2. Read the supporting file `.claude/skills/autofix/verify-and-fix.md`. Spawn a single Agent subagent (`subagent_type: "general-purpose"`) with its contents as the prompt. Prepend the line `Base branch for this project: {base_branch}` to the prompt.
-3. After the subagent finishes, check if HEAD moved: compare `git rev-parse HEAD` to `pre_iteration_head`.
+2. Read the supporting file `.claude/skills/autofix/verify-and-fix.md`. Spawn a single Agent (`subagent_type: "general-purpose"`) with its contents as the prompt. Prepend the line `Base branch for this project: {base_branch}` to the prompt.
+3. After the agent finishes, check if HEAD moved: compare `git rev-parse HEAD` to `pre_iteration_head`.
 4. If HEAD did not move, no fixes were made. The branch is clean (or remaining issues are unfixable). Stop looping.
 5. If HEAD moved, continue to the next iteration.
 
 Important:
-- Do NOT explore code, plan, or fix anything yourself. The subagent does all the work.
-- Each iteration gets a fresh-context subagent, which is the whole point.
-- Do NOT pass the subagent any information about previous iterations or previous fixes. It operates from a clean slate every time.
+- Do NOT explore code, plan, or fix anything yourself. The agent does all the work.
+- Each iteration gets a fresh-context agent, which is the whole point.
+- Do NOT pass the agent any information about previous iterations or previous fixes. It operates from a clean slate every time.
 
 ### Phase 4: Review
 
