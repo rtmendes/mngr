@@ -1,3 +1,4 @@
+import asyncio
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -6,12 +7,14 @@ import pytest
 
 import imbue.resource_guards.resource_guards as resource_guards
 from imbue.resource_guards.resource_guards import ResourceGuardViolation
+from imbue.resource_guards.resource_guards import _MethodKind
 from imbue.resource_guards.resource_guards import _PerTestGuardState
 from imbue.resource_guards.resource_guards import _build_per_test_guard_env
 from imbue.resource_guards.resource_guards import _check_guard_violations
 from imbue.resource_guards.resource_guards import cleanup_resource_guard_wrappers
 from imbue.resource_guards.resource_guards import cleanup_sdk_resource_guards
 from imbue.resource_guards.resource_guards import create_resource_guard_wrappers
+from imbue.resource_guards.resource_guards import create_sdk_method_guard
 from imbue.resource_guards.resource_guards import create_sdk_resource_guards
 from imbue.resource_guards.resource_guards import enforce_sdk_guard
 from imbue.resource_guards.resource_guards import generate_stub_wrapper_script
@@ -381,6 +384,121 @@ def test_custom_sdk_guard_end_to_end(
     cleanup_sdk_resource_guards()
     assert FakeClient().send("hello") == "sent:hello"
     assert len(originals) == 0
+
+
+# ---------------------------------------------------------------------------
+# create_sdk_method_guard (unit tests)
+# ---------------------------------------------------------------------------
+
+
+def test_create_sdk_method_guard_sync(
+    isolated_guard_state: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """create_sdk_method_guard patches a sync method, enforces guard, and cleans up."""
+
+    class Client:
+        def call(self, x: int) -> int:
+            return x * 2
+
+    original_call = Client.call
+    create_sdk_method_guard("test_sync", [(Client, "call", _MethodKind.SYNC)])
+    create_sdk_resource_guards()
+
+    assert Client.call is not original_call
+
+    # Guard blocks
+    monkeypatch.setenv("_PYTEST_GUARD_PHASE", "call")
+    monkeypatch.setenv("_PYTEST_GUARD_TEST_SYNC", "block")
+    monkeypatch.setenv("_PYTEST_GUARD_TRACKING_DIR", str(tmp_path))
+    with pytest.raises(ResourceGuardViolation):
+        Client().call(5)
+
+    # Guard allows
+    monkeypatch.setenv("_PYTEST_GUARD_TEST_SYNC", "allow")
+    assert Client().call(5) == 10
+
+    # Cleanup restores
+    cleanup_sdk_resource_guards()
+    assert Client.call is original_call
+
+
+def test_create_sdk_method_guard_async(
+    isolated_guard_state: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """create_sdk_method_guard patches an async method, enforces guard, and cleans up."""
+
+    class Client:
+        async def call(self, x: int) -> int:
+            return x * 2
+
+    original_call = Client.call
+    create_sdk_method_guard("test_async", [(Client, "call", _MethodKind.ASYNC)])
+    create_sdk_resource_guards()
+
+    # Guard blocks
+    monkeypatch.setenv("_PYTEST_GUARD_PHASE", "call")
+    monkeypatch.setenv("_PYTEST_GUARD_TEST_ASYNC", "block")
+    monkeypatch.setenv("_PYTEST_GUARD_TRACKING_DIR", str(tmp_path))
+    with pytest.raises(ResourceGuardViolation):
+        asyncio.get_event_loop().run_until_complete(Client().call(5))
+
+    # Guard allows
+    monkeypatch.setenv("_PYTEST_GUARD_TEST_ASYNC", "allow")
+    result = asyncio.get_event_loop().run_until_complete(Client().call(5))
+    assert result == 10
+
+    # Cleanup restores
+    cleanup_sdk_resource_guards()
+    assert Client.call is original_call
+
+
+def test_create_sdk_method_guard_async_gen(
+    isolated_guard_state: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """create_sdk_method_guard patches an async generator method, enforces guard, and cleans up."""
+
+    class Client:
+        async def stream(self):
+            yield 1
+            yield 2
+
+    original_stream = Client.stream
+    create_sdk_method_guard("test_agen", [(Client, "stream", _MethodKind.ASYNC_GEN)])
+    create_sdk_resource_guards()
+
+    # Guard blocks
+    monkeypatch.setenv("_PYTEST_GUARD_PHASE", "call")
+    monkeypatch.setenv("_PYTEST_GUARD_TEST_AGEN", "block")
+    monkeypatch.setenv("_PYTEST_GUARD_TRACKING_DIR", str(tmp_path))
+
+    async def collect_blocked():
+        async for _item in Client().stream():
+            pass
+
+    with pytest.raises(ResourceGuardViolation):
+        asyncio.get_event_loop().run_until_complete(collect_blocked())
+
+    # Guard allows
+    monkeypatch.setenv("_PYTEST_GUARD_TEST_AGEN", "allow")
+
+    async def collect_allowed():
+        results = []
+        async for item in Client().stream():
+            results.append(item)
+        return results
+
+    results = asyncio.get_event_loop().run_until_complete(collect_allowed())
+    assert results == [1, 2]
+
+    # Cleanup restores
+    cleanup_sdk_resource_guards()
+    assert Client.stream is original_stream
 
 
 # ---------------------------------------------------------------------------

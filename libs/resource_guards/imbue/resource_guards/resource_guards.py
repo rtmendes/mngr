@@ -33,7 +33,9 @@ import tempfile
 from collections.abc import Callable
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 
@@ -270,6 +272,77 @@ def register_sdk_guard(
     registered_names = {entry[0] for entry in _registered_sdk_guards}
     if name not in registered_names:
         _registered_sdk_guards.append((name, install, cleanup))
+
+
+class _MethodKind:
+    """How to wrap a guarded method."""
+
+    SYNC = "sync"
+    ASYNC = "async"
+    ASYNC_GEN = "async_gen"
+
+
+def create_sdk_method_guard(
+    name: str,
+    methods: list[tuple[type, str, str]],
+) -> None:
+    """Register an SDK guard that monkeypatches one or more methods on classes.
+
+    Each entry in methods is (class, method_name, kind) where kind is one of
+    _MethodKind.SYNC, _MethodKind.ASYNC, or _MethodKind.ASYNC_GEN.
+
+    Example:
+        create_sdk_method_guard("my_sdk", [
+            (SomeClient, "send", _MethodKind.SYNC),
+        ])
+    """
+    originals: dict[str, Any] = {}
+    patches: list[tuple[type, str, str, str]] = []  # (cls, method_name, key, kind)
+
+    for cls, method_name, kind in methods:
+        key = uuid4().hex
+        patches.append((cls, method_name, key, kind))
+
+    def _make_sync_wrapper(key: str) -> Callable[..., Any]:
+        def guarded(self, *args, **kwargs):  # ty: ignore[invalid-type-form]
+            enforce_sdk_guard(name)
+            return originals[key](self, *args, **kwargs)
+
+        return guarded
+
+    def _make_async_wrapper(key: str) -> Callable[..., Any]:
+        async def guarded(self, *args, **kwargs):  # ty: ignore[invalid-type-form]
+            enforce_sdk_guard(name)
+            return await originals[key](self, *args, **kwargs)
+
+        return guarded
+
+    def _make_async_gen_wrapper(key: str) -> Callable[..., Any]:
+        async def guarded(self, *args, **kwargs):  # ty: ignore[invalid-type-form]
+            enforce_sdk_guard(name)
+            async for item in originals[key](self, *args, **kwargs):
+                yield item
+
+        return guarded
+
+    _wrapper_factories = {
+        _MethodKind.SYNC: _make_sync_wrapper,
+        _MethodKind.ASYNC: _make_async_wrapper,
+        _MethodKind.ASYNC_GEN: _make_async_gen_wrapper,
+    }
+
+    def install() -> None:
+        for cls, method_name, key, kind in patches:
+            originals[key] = getattr(cls, method_name)
+            setattr(cls, method_name, _wrapper_factories[kind](key))
+
+    def cleanup() -> None:
+        for cls, method_name, key, _kind in patches:
+            if key in originals:
+                setattr(cls, method_name, originals[key])
+        originals.clear()
+
+    register_sdk_guard(name, install, cleanup)
 
 
 def create_sdk_resource_guards() -> None:

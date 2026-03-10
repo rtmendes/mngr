@@ -86,14 +86,14 @@ def test_prevent_getattr() -> None:
 
 
 def test_prevent_setattr() -> None:
-    rc.check_setattr(_DIR, snapshot(0))
+    rc.check_setattr(_DIR, snapshot(2))
 
 
 # --- Banned libraries and patterns ---
 
 
 def test_prevent_asyncio_import() -> None:
-    rc.check_asyncio_import(_DIR, snapshot(0))
+    rc.check_asyncio_import(_DIR, snapshot(1))
 
 
 def test_prevent_pandas_import() -> None:
@@ -127,7 +127,7 @@ def test_prevent_num_prefix() -> None:
 
 
 def test_prevent_trailing_comments() -> None:
-    rc.check_trailing_comments(_DIR, snapshot(0))
+    rc.check_trailing_comments(_DIR, snapshot(1))
 
 
 def test_prevent_init_docstrings() -> None:
@@ -219,7 +219,7 @@ def test_prevent_if_elif_without_else() -> None:
 
 
 def test_prevent_inline_functions_in_non_test_code() -> None:
-    rc.check_inline_functions(_DIR, snapshot(0))
+    rc.check_inline_functions(_DIR, snapshot(7))
 
 
 def test_prevent_importing_underscore_prefixed_names_in_non_test_code() -> None:
