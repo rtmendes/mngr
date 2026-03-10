@@ -1,4 +1,5 @@
 import socket
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -247,87 +248,91 @@ def test_relay_data_forwards_between_socket_pair() -> None:
 # -- _tunnel_accept_loop tests --
 
 
-def test_tunnel_accept_loop_forwards_connections(tmp_path: Path) -> None:
+def test_tunnel_accept_loop_forwards_connections() -> None:
     """The accept loop creates Unix sockets and forwards data through a mock transport."""
-    sock_path = tmp_path / "test.sock"
-    shutdown_event = threading.Event()
+    # Use a short tmpdir to stay under the 104-char AF_UNIX path limit on macOS.
+    with tempfile.TemporaryDirectory(prefix="ssh") as short_dir:
+        sock_path = Path(short_dir) / "t.sock"
+        shutdown_event = threading.Event()
 
-    channel_remote, channel_local = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        channel_remote, channel_local = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
 
-    fake_transport = FakeParamikoTransport.create()
-    fake_channel = FakeChannelFromSocket.create(channel_local)
-    fake_transport.channel_to_return = fake_channel
+        fake_transport = FakeParamikoTransport.create()
+        fake_channel = FakeChannelFromSocket.create(channel_local)
+        fake_transport.channel_to_return = fake_channel
 
-    accept_thread = threading.Thread(
-        target=_tunnel_accept_loop,
-        args=(sock_path, fake_transport, "127.0.0.1", 9100, shutdown_event),
-        daemon=True,
-    )
-    accept_thread.start()
+        accept_thread = threading.Thread(
+            target=_tunnel_accept_loop,
+            args=(sock_path, fake_transport, "127.0.0.1", 9100, shutdown_event),
+            daemon=True,
+        )
+        accept_thread.start()
 
-    client = _connect_with_retry(sock_path, timeout=10.0)
-    client.settimeout(3.0)
-    channel_remote.settimeout(3.0)
+        client = _connect_with_retry(sock_path, timeout=10.0)
+        client.settimeout(3.0)
+        channel_remote.settimeout(3.0)
 
-    client.sendall(b"test request")
-    data = channel_remote.recv(4096)
-    assert data == b"test request"
+        client.sendall(b"test request")
+        data = channel_remote.recv(4096)
+        assert data == b"test request"
 
-    channel_remote.sendall(b"test response")
-    response = client.recv(4096)
-    assert response == b"test response"
+        channel_remote.sendall(b"test response")
+        response = client.recv(4096)
+        assert response == b"test response"
 
-    client.close()
-    channel_remote.close()
-    shutdown_event.set()
-    accept_thread.join(timeout=5.0)
+        client.close()
+        channel_remote.close()
+        shutdown_event.set()
+        accept_thread.join(timeout=5.0)
 
 
-def test_tunnel_accept_loop_handles_channel_open_failure(tmp_path: Path) -> None:
+def test_tunnel_accept_loop_handles_channel_open_failure() -> None:
     """When open_channel fails, the accepted client socket is closed gracefully."""
-    sock_path = tmp_path / "fail.sock"
-    shutdown_event = threading.Event()
+    with tempfile.TemporaryDirectory(prefix="ssh") as short_dir:
+        sock_path = Path(short_dir) / "t.sock"
+        shutdown_event = threading.Event()
 
-    fake_transport = FakeParamikoTransport.create()
-    fake_transport.channel_error = paramiko.SSHException("Channel denied")
+        fake_transport = FakeParamikoTransport.create()
+        fake_transport.channel_error = paramiko.SSHException("Channel denied")
 
-    accept_thread = threading.Thread(
-        target=_tunnel_accept_loop,
-        args=(sock_path, fake_transport, "127.0.0.1", 9100, shutdown_event),
-        daemon=True,
-    )
-    accept_thread.start()
+        accept_thread = threading.Thread(
+            target=_tunnel_accept_loop,
+            args=(sock_path, fake_transport, "127.0.0.1", 9100, shutdown_event),
+            daemon=True,
+        )
+        accept_thread.start()
 
-    client = _connect_with_retry(sock_path, timeout=10.0)
-    client.settimeout(3.0)
+        client = _connect_with_retry(sock_path, timeout=10.0)
+        client.settimeout(3.0)
 
-    try:
-        data = client.recv(4096)
-        assert data == b""
-    except socket.timeout:
-        pass
+        try:
+            data = client.recv(4096)
+            assert data == b""
+        except socket.timeout:
+            pass
 
-    client.close()
-    shutdown_event.set()
-    accept_thread.join(timeout=3.0)
+        client.close()
+        shutdown_event.set()
+        accept_thread.join(timeout=3.0)
 
 
-def test_tunnel_accept_loop_shutdown_event_stops_loop(tmp_path: Path) -> None:
+def test_tunnel_accept_loop_shutdown_event_stops_loop() -> None:
     """Setting the shutdown event causes the accept loop to exit."""
-    sock_path = tmp_path / "shutdown.sock"
-    shutdown_event = threading.Event()
+    with tempfile.TemporaryDirectory(prefix="ssh") as short_dir:
+        sock_path = Path(short_dir) / "t.sock"
+        shutdown_event = threading.Event()
 
-    fake_transport = FakeParamikoTransport.create()
+        fake_transport = FakeParamikoTransport.create()
 
-    accept_thread = threading.Thread(
-        target=_tunnel_accept_loop,
-        args=(sock_path, fake_transport, "127.0.0.1", 9100, shutdown_event),
-        daemon=True,
-    )
-    accept_thread.start()
+        accept_thread = threading.Thread(
+            target=_tunnel_accept_loop,
+            args=(sock_path, fake_transport, "127.0.0.1", 9100, shutdown_event),
+            daemon=True,
+        )
+        accept_thread.start()
 
-    _wait_for_socket(sock_path, timeout=10.0)
+        _wait_for_socket(sock_path, timeout=10.0)
 
-    shutdown_event.set()
-    accept_thread.join(timeout=3.0)
-    assert not accept_thread.is_alive()
+        shutdown_event.set()
+        accept_thread.join(timeout=3.0)
+        assert not accept_thread.is_alive()
