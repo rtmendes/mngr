@@ -14,6 +14,7 @@ from imbue.concurrency_group.errors import ProcessSetupError
 from imbue.concurrency_group.event_utils import CompoundEvent
 from imbue.concurrency_group.local_process import RunningProcess
 from imbue.concurrency_group.local_process import run_background
+from imbue.concurrency_group.test_utils import poll_until
 
 
 def test_run_background_simple_command() -> None:
@@ -136,8 +137,8 @@ def test_run_background_terminate() -> None:
     """Test terminating a background process."""
     process = run_background(["sleep", "10"])
 
-    # Process should be running (sleep 10 won't finish immediately)
-    assert not process.is_finished()
+    # Wait until the process is running
+    assert poll_until(lambda: not process.is_finished(), timeout=5.0)
 
     # Terminate it
     process.terminate(force_kill_seconds=2.0)
@@ -219,8 +220,8 @@ def test_run_background_shutdown_event() -> None:
 
     process = run_background(["sleep", "10"], shutdown_event=shutdown_event, shutdown_timeout_sec=0.2)
 
-    # Process should be running (sleep 10 won't finish immediately)
-    assert not process.is_finished()
+    # Wait until the process is running
+    assert poll_until(lambda: not process.is_finished(), timeout=5.0)
 
     # Trigger shutdown
     shutdown_event.set()
@@ -246,8 +247,8 @@ def test_run_background_compound_shutdown_event() -> None:
         shutdown_timeout_sec=0.2,
     )
 
-    # Process should be running (sleep 10 won't finish immediately)
-    assert not process.is_finished()
+    # Wait until the process is running
+    assert poll_until(lambda: not process.is_finished(), timeout=5.0)
 
     # Trigger one of the compound events
     event2.set()
