@@ -681,9 +681,9 @@ class ClaudeAgent(BaseAgent):
         """
         return self._get_agent_dir() / "plugin" / "claude" / "anthropic"
 
-    def get_extra_env_vars(self) -> dict[str, str]:
-        """Return CLAUDE_CONFIG_DIR pointing to the per-agent config directory."""
-        return {"CLAUDE_CONFIG_DIR": str(self.get_claude_config_dir())}
+    def modify_env_vars(self, host: OnlineHostInterface, env_vars: dict[str, str]) -> None:
+        """Add CLAUDE_CONFIG_DIR pointing to the per-agent config directory."""
+        env_vars["CLAUDE_CONFIG_DIR"] = str(self.get_claude_config_dir())
 
     def get_lifecycle_state(self) -> AgentLifecycleState:
         """Get lifecycle state, accounting for Claude-specific permissions_waiting file.

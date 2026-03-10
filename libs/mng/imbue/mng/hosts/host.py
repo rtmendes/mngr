@@ -1588,10 +1588,7 @@ class Host(BaseHost, OnlineHostInterface):
         env_vars["MNG_AGENT_WORK_DIR"] = str(agent.work_dir)
         env_vars["LLM_USER_PATH"] = str(agent_state_dir / "llm_data")
 
-        # 2. Agent-type-specific env vars (e.g., CLAUDE_CONFIG_DIR)
-        env_vars.update(agent.get_extra_env_vars())
-
-        # 3. Add programmatic defaults
+        # 2. Add programmatic defaults
         env_vars["GIT_BASE_BRANCH"] = (options.git.base_branch if options.git else None) or ""
 
         # 4. Load from env_files
