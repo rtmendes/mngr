@@ -66,7 +66,7 @@ def test_list_command_with_agent(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 837291",
                 "--source",
                 str(temp_work_dir),
@@ -109,7 +109,7 @@ def test_list_command_json_format_with_agent(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 726483",
                 "--source",
                 str(temp_work_dir),
@@ -153,7 +153,7 @@ def test_list_command_jsonl_format_with_agent(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 615283",
                 "--source",
                 str(temp_work_dir),
@@ -197,7 +197,7 @@ def test_list_command_with_include_filter(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 504293",
                 "--source",
                 str(temp_work_dir),
@@ -240,7 +240,7 @@ def test_list_command_with_exclude_filter(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 403182",
                 "--source",
                 str(temp_work_dir),
@@ -287,7 +287,7 @@ def test_list_command_with_host_provider_filter(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 403183",
                 "--source",
                 str(temp_work_dir),
@@ -344,7 +344,7 @@ def test_list_command_with_host_name_filter(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 403184",
                 "--source",
                 str(temp_work_dir),
@@ -417,7 +417,7 @@ def test_list_command_with_basic_fields(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 302171",
                 "--source",
                 str(temp_work_dir),
@@ -465,7 +465,7 @@ def test_list_command_with_nested_fields(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 201060",
                 "--source",
                 str(temp_work_dir),
@@ -513,7 +513,7 @@ def test_list_command_with_host_and_provider_fields(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 109949",
                 "--source",
                 str(temp_work_dir),
@@ -563,7 +563,7 @@ def test_list_command_with_invalid_fields(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 008838",
                 "--source",
                 str(temp_work_dir),
@@ -609,7 +609,7 @@ def test_list_command_with_running_filter_alias(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 907727",
                 "--source",
                 str(temp_work_dir),
@@ -686,7 +686,7 @@ def test_list_command_with_local_filter_alias(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 806616",
                 "--source",
                 str(temp_work_dir),
@@ -729,7 +729,7 @@ def test_list_command_with_remote_filter_alias(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 705505",
                 "--source",
                 str(temp_work_dir),
@@ -779,7 +779,7 @@ def test_list_command_with_limit(
                 [
                     "--name",
                     agent_name_1,
-                    "--agent-cmd",
+                    "--command",
                     "sleep 604394",
                     "--source",
                     str(temp_work_dir),
@@ -798,7 +798,7 @@ def test_list_command_with_limit(
                 [
                     "--name",
                     agent_name_2,
-                    "--agent-cmd",
+                    "--command",
                     "sleep 503283",
                     "--source",
                     str(temp_work_dir),
@@ -844,7 +844,7 @@ def test_list_command_with_limit_json_format(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 402172",
                 "--source",
                 str(temp_work_dir),
@@ -890,7 +890,7 @@ def test_list_command_with_sort_by_name(
                 [
                     "--name",
                     agent_name_z,
-                    "--agent-cmd",
+                    "--command",
                     "sleep 200950",
                     "--source",
                     str(temp_work_dir),
@@ -908,7 +908,7 @@ def test_list_command_with_sort_by_name(
                 [
                     "--name",
                     agent_name_a,
-                    "--agent-cmd",
+                    "--command",
                     "sleep 109839",
                     "--source",
                     str(temp_work_dir),
@@ -959,7 +959,7 @@ def test_list_command_with_sort_descending(
                 [
                     "--name",
                     agent_name_a,
-                    "--agent-cmd",
+                    "--command",
                     "sleep 008728",
                     "--source",
                     str(temp_work_dir),
@@ -977,7 +977,7 @@ def test_list_command_with_sort_descending(
                 [
                     "--name",
                     agent_name_z,
-                    "--agent-cmd",
+                    "--command",
                     "sleep 007617",
                     "--source",
                     str(temp_work_dir),
@@ -1025,7 +1025,7 @@ def test_list_command_with_provider_filter(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 345678",
                 "--source",
                 str(temp_work_dir),
@@ -1097,7 +1097,7 @@ def test_list_command_format_template_with_agent(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 248391",
                 "--source",
                 str(temp_work_dir),
@@ -1139,14 +1139,14 @@ def test_list_command_format_template_invalid_syntax(
     assert "Invalid format template" in result.output
 
 
-def test_list_command_json_flag(
+def test_list_command_format_json(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
 ) -> None:
-    """Test list command with --json flag (alias for --format json)."""
+    """Test list command with --format json."""
     result = cli_runner.invoke(
         list_command,
-        ["--json"],
+        ["--format", "json"],
         obj=plugin_manager,
         catch_exceptions=False,
     )
@@ -1155,46 +1155,16 @@ def test_list_command_json_flag(
     assert '"agents": []' in result.output
 
 
-def test_list_command_jsonl_flag(
+def test_list_command_format_jsonl(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
 ) -> None:
-    """Test list command with --jsonl flag (alias for --format jsonl)."""
+    """Test list command with --format jsonl."""
     result = cli_runner.invoke(
         list_command,
-        ["--jsonl"],
+        ["--format", "jsonl"],
         obj=plugin_manager,
         catch_exceptions=False,
     )
 
     assert result.exit_code == 0
-
-
-def test_list_command_json_flag_mutually_exclusive_with_format(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that --json and --format cannot be used together."""
-    result = cli_runner.invoke(
-        list_command,
-        ["--json", "--format", "jsonl"],
-        obj=plugin_manager,
-    )
-
-    assert result.exit_code != 0
-    assert "mutually exclusive" in result.output
-
-
-def test_list_command_json_and_jsonl_flags_mutually_exclusive(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """Test that --json and --jsonl cannot be used together."""
-    result = cli_runner.invoke(
-        list_command,
-        ["--json", "--jsonl"],
-        obj=plugin_manager,
-    )
-
-    assert result.exit_code != 0
-    assert "mutually exclusive" in result.output

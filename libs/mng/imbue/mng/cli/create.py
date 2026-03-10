@@ -156,16 +156,16 @@ class CreateCliOptions(CommonCliOptions):
     positional_agent_type: str | None
     agent_args: tuple[str, ...]
     template: tuple[str, ...]
-    agent_type: str | None
+    type: str | None
     reuse: bool
     connect: bool
     connect_command: str | None
     ensure_clean: bool
     name: str | None
-    agent_id: str | None
+    id: str | None
     name_style: str
-    agent_command: str | None
-    add_command: tuple[str, ...]
+    command: str | None
+    extra_window: tuple[str, ...]
     source: str | None
     source_agent: str | None
     source_host: str | None
@@ -184,14 +184,14 @@ class CreateCliOptions(CommonCliOptions):
     branch: str
     depth: int | None
     shallow_since: str | None
-    agent_env: tuple[str, ...]
-    agent_env_file: tuple[str, ...]
-    pass_agent_env: tuple[str, ...]
+    env: tuple[str, ...]
+    env_file: tuple[str, ...]
+    pass_env: tuple[str, ...]
     host: str | None
     new_host: str | None
     host_name: str | None
     host_name_style: str
-    tag: tuple[str, ...]
+    host_label: tuple[str, ...]
     label: tuple[str, ...]
     project: str | None
     host_env: tuple[str, ...]
@@ -199,9 +199,7 @@ class CreateCliOptions(CommonCliOptions):
     pass_host_env: tuple[str, ...]
     snapshot: str | None
     build_arg: tuple[str, ...]
-    build_args: str | None
     start_arg: tuple[str, ...]
-    start_args: str | None
     reconnect: bool
     interactive: bool | None
     message: str | None
@@ -236,7 +234,7 @@ class CreateCliOptions(CommonCliOptions):
     help="Use a named template from create_templates config [repeatable, stacks in order]",
 )
 @optgroup.option("-n", "--name", help="Agent name (alternative to positional argument) [default: auto-generated]")
-@optgroup.option("--agent-id", help="Explicit agent ID [default: auto-generated]")
+@optgroup.option("--id", help="Explicit agent ID [default: auto-generated]")
 @optgroup.option(
     "--name-style",
     type=click.Choice(_make_name_style_choices(), case_sensitive=False),
@@ -244,23 +242,20 @@ class CreateCliOptions(CommonCliOptions):
     show_default=True,
     help="Auto-generated name style",
 )
-@optgroup.option("--agent-type", help="Which type of agent to run [default: claude]")
+@optgroup.option("--type", help="Which type of agent to run [default: claude]")
 @optgroup.option(
-    "--agent-cmd",
-    "--agent-command",
-    "agent_command",
-    help="Run a literal command using the generic agent type (mutually exclusive with --agent-type)",
+    "--command",
+    help="Run a literal command using the generic agent type (mutually exclusive with --type)",
 )
 # FOLLOWUP: hmm... I wonder if the name of this should be changed to something more like "window" to be more closely aligned with the tmux primitive it actually creates...
 #  more generally, we probably need to do a pass at refining *all* of these option names...
 @optgroup.option(
-    "-c",
-    "--add-cmd",
-    "--add-command",
-    "add_command",
+    "-w",
+    "--extra-window",
     multiple=True,
     help='Run extra command in additional window. Use name="command" to set window name. Note: ALL_UPPERCASE names (e.g., FOO="bar") are treated as env var assignments, not window names',
 )
+@optgroup.option("--label", multiple=True, help="Agent label KEY=VALUE [repeatable] [experimental]")
 @optgroup.group("Host Options")
 @optgroup.option("--in", "--new-host", "new_host", help="Create a new host using provider (docker, modal, ...)")
 @optgroup.option("--host", "--target-host", help="Use an existing host (by name or ID) [default: local]")
@@ -268,8 +263,7 @@ class CreateCliOptions(CommonCliOptions):
     "--project",
     help="Project name for the agent (sets the 'project' label) [default: derived from git remote origin or folder name]",
 )
-@optgroup.option("--label", multiple=True, help="Agent label KEY=VALUE [repeatable] [experimental]")
-@optgroup.option("--tag", multiple=True, help="Host metadata tag KEY=VALUE [repeatable]")
+@optgroup.option("--host-label", multiple=True, help="Host metadata label KEY=VALUE [repeatable]")
 @optgroup.option("--host-name", help="Name for the new host")
 @optgroup.option(
     "--host-name-style",
@@ -286,9 +280,6 @@ class CreateCliOptions(CommonCliOptions):
     help="Reuse existing agent with the same name if it exists (idempotent create)",
 )
 @optgroup.option("--connect/--no-connect", default=True, help="Connect to the agent after creation [default: connect]")
-@optgroup.option(
-    "--ensure-clean/--no-ensure-clean", default=True, show_default=True, help="Abort if working tree is dirty"
-)
 @optgroup.option(
     "--auto-start/--no-auto-start",
     "start_host",
@@ -313,18 +304,6 @@ class CreateCliOptions(CommonCliOptions):
 )
 @optgroup.option("--rsync-args", help="Additional arguments to pass to rsync")
 @optgroup.option("--include-git/--no-include-git", default=True, show_default=True, help="Include .git directory")
-@optgroup.option(
-    "--include-unclean/--exclude-unclean",
-    "include_unclean",
-    default=None,
-    help="Include uncommitted files [default: include if --no-ensure-clean]",
-)
-@optgroup.option(
-    "--include-gitignored/--no-include-gitignored",
-    default=False,
-    show_default=True,
-    help="Include gitignored files",
-)
 @optgroup.group("Agent Target (where to put the new agent)")
 @optgroup.option("--target", help="Target [HOST][:PATH]. Defaults to current dir if no other target args are given")
 @optgroup.option("--target-path", help="Directory to mount source inside agent host. Incompatible with --in-place")
@@ -360,17 +339,30 @@ class CreateCliOptions(CommonCliOptions):
 )
 @optgroup.option("--depth", type=int, help="Shallow clone depth [default: full]")
 @optgroup.option("--shallow-since", help="Shallow clone since date")
+@optgroup.option(
+    "--ensure-clean/--no-ensure-clean", default=True, show_default=True, help="Abort if working tree is dirty"
+)
+@optgroup.option(
+    "--include-unclean/--exclude-unclean",
+    "include_unclean",
+    default=None,
+    help="Include uncommitted files [default: include if --no-ensure-clean]",
+)
+@optgroup.option(
+    "--include-gitignored/--no-include-gitignored",
+    default=False,
+    show_default=True,
+    help="Include gitignored files",
+)
 @optgroup.group("Agent Environment Variables")
-@optgroup.option("--env", "--agent-env", "agent_env", multiple=True, help="Set environment variable KEY=VALUE")
+@optgroup.option("--env", multiple=True, help="Set environment variable KEY=VALUE")
 @optgroup.option(
     "--env-file",
-    "--agent-env-file",
-    "agent_env_file",
     type=click.Path(exists=True),
     multiple=True,
     help="Load env",
 )
-@optgroup.option("--pass-env", "--pass-agent-env", "pass_agent_env", multiple=True, help="Forward variable from shell")
+@optgroup.option("--pass-env", multiple=True, help="Forward variable from shell")
 @optgroup.group("Agent Provisioning")
 @optgroup.option("--grant", "grant", multiple=True, help="Grant a permission to the agent [repeatable]")
 @optgroup.option(
@@ -397,16 +389,12 @@ class CreateCliOptions(CommonCliOptions):
 @optgroup.option("--snapshot", help="Use existing snapshot instead of building")
 @optgroup.option(
     "-b",
-    "--build",
     "--build-arg",
-    "build_arg",
     multiple=True,
     help="Build argument as key=value or --key=value (e.g., -b gpu=h100 -b cpu=2) [repeatable]",
 )
-@optgroup.option("--build-args", help="Space-separated build arguments (e.g., 'gpu=h100 cpu=2')")
-@optgroup.option("-s", "--start", "--start-arg", "start_arg", multiple=True, help="Argument for start [repeatable]")
-@optgroup.option("--start-args", help="Space-separated start arguments (alternative to -s)")
-@optgroup.group("New Host Lifecycle")
+@optgroup.option("-s", "--start-arg", multiple=True, help="Argument for start [repeatable]")
+@optgroup.group("Host Lifecycle")
 @optgroup.option(
     "--idle-timeout",
     type=str,
@@ -630,10 +618,10 @@ def _create_agent(
     # figure out the target host (if we just have a reference)
     resolved_target_host = _resolve_target_host(target_host, mng_ctx, is_start_desired=opts.start_host)
 
-    # Set tags on existing hosts (for new hosts, tags are passed via NewHostOptions).
-    # This ensures local hosts get any --tag values.
+    # Set host labels on existing hosts (for new hosts, labels are passed via NewHostOptions).
+    # This ensures local hosts get any --host-label values.
     if isinstance(resolved_target_host, OnlineHostInterface):
-        _apply_tags_to_host(resolved_target_host, opts.tag)
+        _apply_host_labels(resolved_target_host, opts.host_label)
 
     # Set the project as a label on the agent (labels are agent-level, not host-level)
     if setup.project_name:
@@ -1082,8 +1070,8 @@ def _parse_agent_opts(
     )
 
     # Parse environment options
-    env_vars = resolve_env_vars(opts.pass_agent_env, opts.agent_env)
-    env_files = tuple(Path(f) for f in opts.agent_env_file)
+    env_vars = resolve_env_vars(opts.pass_env, opts.env)
+    env_files = tuple(Path(f) for f in opts.env_file)
 
     environment = AgentEnvironmentOptions(
         env_vars=env_vars,
@@ -1121,15 +1109,15 @@ def _parse_agent_opts(
     # Parse target_path if provided
     parsed_target_path = Path(opts.target_path) if opts.target_path else None
 
-    # Determine agent type: --agent-type takes priority, then positional argument
+    # Determine agent type: --type takes priority, then positional argument
     # However, click may incorrectly assign values after -- to positional_agent_type
     # instead of agent_args. We detect this by checking if the value appears after
     # -- in sys.argv and move it to agent_args if so.
     #
-    # Special case: --agent-cmd implies using the "generic" agent type, which simply
-    # runs the provided command. If --agent-type is also specified to something other
+    # Special case: --command implies using the "generic" agent type, which simply
+    # runs the provided command. If --type is also specified to something other
     # than "generic", that's an error (they are mutually exclusive).
-    resolved_agent_type = opts.agent_type
+    resolved_agent_type = opts.type
     resolved_agent_args = opts.agent_args
 
     if opts.positional_agent_type:
@@ -1142,26 +1130,26 @@ def _parse_agent_opts(
             # Use it as the agent type
             resolved_agent_type = opts.positional_agent_type
         else:
-            # --agent-type was already specified, ignore the positional (could warn here)
+            # --type was already specified, ignore the positional (could warn here)
             pass
 
-    # Handle --agent-cmd: it implies using the "generic" agent type
-    if opts.agent_command:
+    # Handle --command: it implies using the "generic" agent type
+    if opts.command:
         if resolved_agent_type is not None and resolved_agent_type != "generic":
             raise UserInputError(
-                f"--agent-cmd and --agent-type are mutually exclusive. "
-                f"Use --agent-cmd to run a literal command (implicitly uses 'generic' agent type), "
-                f"or use --agent-type to specify an agent type like '{resolved_agent_type}'."
+                f"--command and --type are mutually exclusive. "
+                f"Use --command to run a literal command (implicitly uses 'generic' agent type), "
+                f"or use --type to specify an agent type like '{resolved_agent_type}'."
             )
-        # Automatically use the "generic" agent type when --agent-cmd is provided
+        # Automatically use the "generic" agent type when --command is provided
         resolved_agent_type = "generic"
 
     agent_opts = CreateAgentOptions(
-        agent_id=AgentId(opts.agent_id) if opts.agent_id else None,
+        agent_id=AgentId(opts.id) if opts.id else None,
         agent_type=AgentTypeName(resolved_agent_type) if resolved_agent_type else None,
         name=parsed_agent_name,
-        command=CommandString(opts.agent_command) if opts.agent_command else None,
-        additional_commands=tuple(NamedCommand.from_string(c) for c in opts.add_command),
+        command=CommandString(opts.command) if opts.command else None,
+        additional_commands=tuple(NamedCommand.from_string(c) for c in opts.extra_window),
         agent_args=resolved_agent_args,
         target_path=parsed_target_path,
         initial_message=initial_message,
@@ -1218,29 +1206,20 @@ def _parse_target_host(
         parsed_target_host = host_ref
     elif opts.new_host:
         # Creating a new host
-        # Parse host-level tags
-        tags_dict: dict[str, str] = {}
-        for tag_string in opts.tag:
-            if "=" not in tag_string:
-                raise UserInputError(f"Tag must be in KEY=VALUE format, got: {tag_string}")
-            key, value = tag_string.split("=", 1)
-            tags_dict[key.strip()] = value.strip()
-
-        tags = tags_dict
+        # Parse host-level labels
+        host_labels_dict: dict[str, str] = {}
+        for label_string in opts.host_label:
+            if "=" not in label_string:
+                raise UserInputError(f"Host label must be in KEY=VALUE format, got: {label_string}")
+            key, value = label_string.split("=", 1)
+            host_labels_dict[key.strip()] = value.strip()
 
         # Parse host environment
         host_env_vars = resolve_env_vars(opts.pass_host_env, opts.host_env)
         host_env_files = tuple(Path(f) for f in opts.host_env_file)
 
-        # Combine build args from both individual (-b) and bulk (--build-args) options
         combined_build_args = _split_cli_args(opts.build_arg)
-        if opts.build_args:
-            combined_build_args = shlex.split(opts.build_args) + combined_build_args
-
-        # Combine start args from both individual (-s) and bulk (--start-args) options
         combined_start_args = _split_cli_args(opts.start_arg)
-        if opts.start_args:
-            combined_start_args.extend(shlex.split(opts.start_args))
 
         # Parse build options
         build_options = NewHostBuildOptions(
@@ -1254,7 +1233,7 @@ def _parse_target_host(
             provider=ProviderInstanceName(opts.new_host),
             name=HostName(opts.host_name) if opts.host_name else None,
             name_style=parsed_host_name_style,
-            tags=tags,
+            tags=host_labels_dict,
             build=build_options,
             environment=HostEnvironmentOptions(
                 env_vars=host_env_vars,
@@ -1323,15 +1302,15 @@ def _parse_source_string(source_str: str) -> ParsedSourceString:
 # === Helper Functions (stubs) ===
 
 
-def _apply_tags_to_host(host: OnlineHostInterface, tag_strings: tuple[str, ...]) -> None:
-    """Parse KEY=VALUE tag strings and apply them to an existing host."""
-    tags_to_add: dict[str, str] = {}
-    for tag_string in tag_strings:
-        if "=" in tag_string:
-            key, value = tag_string.split("=", 1)
-            tags_to_add[key.strip()] = value.strip()
-    if tags_to_add:
-        host.add_tags(tags_to_add)
+def _apply_host_labels(host: OnlineHostInterface, label_strings: tuple[str, ...]) -> None:
+    """Parse KEY=VALUE host label strings and apply them to an existing host."""
+    labels_to_add: dict[str, str] = {}
+    for label_string in label_strings:
+        if "=" in label_string:
+            key, value = label_string.split("=", 1)
+            labels_to_add[key.strip()] = value.strip()
+    if labels_to_add:
+        host.add_tags(labels_to_add)
 
 
 def _ensure_clean_work_dir(location: HostLocation) -> None:
@@ -1387,8 +1366,8 @@ def _output_result(result: CreateAgentResult, opts: OutputOptions) -> None:
 _CREATE_HELP_METADATA = CommandHelpMetadata(
     key="create",
     one_line_description="Create and run an agent",
-    synopsis="""mng [create|c] [<AGENT_NAME>] [<AGENT_TYPE>] [-t <TEMPLATE>] [--in <PROVIDER>] [--host <HOST>] [--c WINDOW_NAME=COMMAND]
-    [--label KEY=VALUE] [--tag KEY=VALUE] [--project <PROJECT>] [--from <SOURCE>] [--in-place|--copy|--clone|--worktree]
+    synopsis="""mng [create|c] [<AGENT_NAME>] [<AGENT_TYPE>] [-t <TEMPLATE>] [--in <PROVIDER>] [--host <HOST>] [-w WINDOW_NAME=COMMAND]
+    [--label KEY=VALUE] [--host-label KEY=VALUE] [--project <PROJECT>] [--from <SOURCE>] [--in-place|--copy|--clone|--worktree]
     [--[no-]rsync] [--rsync-args <ARGS>] [--branch [BASE][:NEW]] [--[no-]ensure-clean]
     [--snapshot <ID>] [-b <BUILD_ARG>] [-s <START_ARG>]
     [--env <KEY=VALUE>] [--env-file <FILE>] [--grant <PERMISSION>] [--user-command <COMMAND>] [--upload-file <LOCAL:REMOTE>]
@@ -1396,7 +1375,7 @@ _CREATE_HELP_METADATA = CommandHelpMetadata(
     [--[no-]connect] [--[no-]auto-start] [--] [<AGENT_ARGS>...]""",
     aliases=("c",),
     arguments_description="""- `NAME`: Name for the agent (auto-generated if not provided)
-- `AGENT_TYPE`: Which type of agent to run (default: `claude`). Can also be specified via `--agent-type`
+- `AGENT_TYPE`: Which type of agent to run (default: `claude`). Can also be specified via `--type`
 - `AGENT_ARGS`: Additional arguments passed to the agent""",
     description="""This command sets up an agent's working directory, optionally provisions a
 new host (or uses an existing one), runs the specified agent process, and
@@ -1425,7 +1404,7 @@ the working directory is copied to the remote host.""",
         ("Clone from an existing agent", "mng create new-agent --source other-agent"),
         ("Run directly in-place (no worktree)", "mng create my-agent --in-place"),
         ("Create without connecting", "mng create my-agent --no-connect"),
-        ("Add extra tmux windows", 'mng create my-agent -c server="npm run dev"'),
+        ("Add extra tmux windows", 'mng create my-agent -w server="npm run dev"'),
         ("Reuse existing agent or create if not found", "mng create my-agent --reuse"),
     ),
     see_also=(

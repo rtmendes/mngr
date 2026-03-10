@@ -121,7 +121,7 @@ def test_provision_preserves_existing_env_vars(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 849127",
                 "--source",
                 str(temp_work_dir),
@@ -505,7 +505,7 @@ def test_provision_stopped_modal_agent(
         "--no-ensure-clean",
         "--source",
         str(source_dir),
-        "--agent-cmd",
+        "--command",
         "sleep 999999",
         "--env",
         env_marker,

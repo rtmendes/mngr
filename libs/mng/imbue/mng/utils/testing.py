@@ -408,7 +408,7 @@ def create_test_agent_via_cli(
         [
             "--name",
             agent_name,
-            "--agent-cmd",
+            "--command",
             agent_cmd,
             "--source",
             str(temp_work_dir),

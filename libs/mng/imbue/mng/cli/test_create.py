@@ -42,7 +42,7 @@ def test_cli_create_with_echo_command(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "echo 'hello from cli test' && sleep 958374",
                 "--source",
                 str(temp_work_dir),
@@ -85,7 +85,7 @@ def test_cli_create_via_subprocess(
     env["MNG_HOST_DIR"] = str(temp_host_dir)
     env["MNG_PREFIX"] = mng_test_prefix
     # Prevent loading project config (.mng/settings.toml) which might have
-    # settings like add_command that would interfere with tests
+    # settings like extra_window that would interfere with tests
     env["MNG_ROOT_NAME"] = mng_test_root_name
 
     with tmux_session_cleanup(session_name):
@@ -97,13 +97,13 @@ def test_cli_create_via_subprocess(
                 "create",
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 651472",
                 "--source",
                 str(temp_work_dir),
                 "--no-connect",
                 "--no-ensure-clean",
-                # Note: --agent-cmd automatically implies --agent-type generic
+                # Note: --command automatically implies --type generic
                 # Disable external providers to avoid connection errors in CI
                 "--disable-plugin",
                 "modal",
@@ -151,7 +151,7 @@ def test_connect_flag_calls_tmux_attach_for_local_agent(
 
     opts = default_create_cli_opts.model_copy_update(
         to_update(default_create_cli_opts.field_ref().name, agent_name),
-        to_update(default_create_cli_opts.field_ref().agent_command, "sleep 397265"),
+        to_update(default_create_cli_opts.field_ref().command, "sleep 397265"),
         to_update(default_create_cli_opts.field_ref().source_path, str(temp_work_dir)),
         to_update(default_create_cli_opts.field_ref().connect, True),
         to_update(default_create_cli_opts.field_ref().ensure_clean, False),
@@ -199,7 +199,7 @@ def test_no_connect_flag_skips_tmux_attach(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 529847",
                 "--source",
                 str(temp_work_dir),
@@ -242,7 +242,7 @@ def test_message_file_flag_reads_message_from_file(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "cat",
                 "--message-file",
                 str(message_file),
@@ -287,7 +287,7 @@ def test_message_and_message_file_both_provided_raises_error(
         [
             "--name",
             agent_name,
-            "--agent-cmd",
+            "--command",
             "cat",
             "--message",
             "Hello from flag",
@@ -327,7 +327,7 @@ def test_multiline_message_creates_file_and_pipes(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "cat",
                 "--message-file",
                 str(message_file),
@@ -374,7 +374,7 @@ def test_single_line_message_uses_echo(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "cat",
                 "--message",
                 single_line_message,
@@ -403,13 +403,13 @@ def test_single_line_message_uses_echo(
 
 
 @pytest.mark.tmux
-def test_add_command_with_named_window(
+def test_extra_window_with_named_window(
     cli_runner: CliRunner,
     temp_work_dir: Path,
     mng_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
 ) -> None:
-    """Test that -c with name=command syntax creates a tmux window with the specified name."""
+    """Test that -w with name=command syntax creates a tmux window with the specified name."""
     agent_name = f"test-named-window-{int(time.time())}"
     session_name = f"{mng_test_prefix}{agent_name}"
 
@@ -419,9 +419,9 @@ def test_add_command_with_named_window(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 629481",
-                "-c",
+                "-w",
                 'myserver="sleep 847192"',
                 "--source",
                 str(temp_work_dir),
@@ -457,13 +457,13 @@ def test_add_command_with_named_window(
 
 
 @pytest.mark.tmux
-def test_add_command_without_name_uses_default_window_name(
+def test_extra_window_without_name_uses_default_window_name(
     cli_runner: CliRunner,
     temp_work_dir: Path,
     mng_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
 ) -> None:
-    """Test that -c without name prefix creates a tmux window with default name (cmd-N)."""
+    """Test that -w without name prefix creates a tmux window with default name (cmd-N)."""
     agent_name = f"test-default-window-{int(time.time())}"
     session_name = f"{mng_test_prefix}{agent_name}"
 
@@ -473,9 +473,9 @@ def test_add_command_without_name_uses_default_window_name(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 538274",
-                "-c",
+                "-w",
                 "sleep 719283",
                 "--source",
                 str(temp_work_dir),
@@ -510,23 +510,23 @@ def test_add_command_without_name_uses_default_window_name(
         )
 
 
-def test_agent_cmd_and_agent_type_are_mutually_exclusive(
+def test_command_and_type_are_mutually_exclusive(
     cli_runner: CliRunner,
     temp_work_dir: Path,
     plugin_manager: pluggy.PluginManager,
 ) -> None:
-    """Test that --agent-cmd and --agent-type (other than generic) are mutually exclusive."""
+    """Test that --command and --type (other than generic) are mutually exclusive."""
     agent_name = f"test-mutex-{int(time.time())}"
 
-    # "claude" agent type should conflict with --agent-cmd
+    # "claude" agent type should conflict with --command
     result = cli_runner.invoke(
         create,
         [
             "--name",
             agent_name,
-            "--agent-cmd",
+            "--command",
             "sleep 123456",
-            "--agent-type",
+            "--type",
             "claude",
             "--source",
             str(temp_work_dir),
@@ -537,31 +537,31 @@ def test_agent_cmd_and_agent_type_are_mutually_exclusive(
     )
 
     assert result.exit_code != 0
-    assert "--agent-cmd and --agent-type are mutually exclusive" in result.output
+    assert "--command and --type are mutually exclusive" in result.output
 
 
 @pytest.mark.tmux
-def test_agent_cmd_with_generic_type_is_allowed(
+def test_command_with_generic_type_is_allowed(
     cli_runner: CliRunner,
     temp_work_dir: Path,
     temp_host_dir: Path,
     mng_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
 ) -> None:
-    """Test that --agent-cmd with --agent-type generic is allowed (they are compatible)."""
+    """Test that --command with --type generic is allowed (they are compatible)."""
     agent_name = f"test-generic-{int(time.time())}"
     session_name = f"{mng_test_prefix}{agent_name}"
 
     with tmux_session_cleanup(session_name):
-        # Explicit --agent-type generic is OK with --agent-cmd
+        # Explicit --type generic is OK with --command
         result = cli_runner.invoke(
             create,
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 654321",
-                "--agent-type",
+                "--type",
                 "generic",
                 "--source",
                 str(temp_work_dir),
@@ -610,7 +610,7 @@ def test_edit_message_sends_edited_content(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "cat",
                 "--edit-message",
                 "--source",
@@ -668,7 +668,7 @@ def test_edit_message_with_initial_content(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "cat",
                 "--edit-message",
                 "--message",
@@ -731,7 +731,7 @@ def test_edit_message_empty_content_does_not_send(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 f"echo '{marker_text}' && cat",
                 "--edit-message",
                 "--source",
@@ -791,7 +791,7 @@ no_ensure_clean = true
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 847192",
                 "--source",
                 str(temp_work_dir),
@@ -846,7 +846,7 @@ no_ensure_clean = true
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "cat",
                 "--source",
                 str(temp_work_dir),
@@ -904,7 +904,7 @@ no_ensure_clean = true
         [
             "--name",
             agent_name,
-            "--agent-cmd",
+            "--command",
             "sleep 123456",
             "--source",
             str(temp_work_dir),
@@ -941,7 +941,7 @@ def test_ensure_clean_rejects_dirty_worktree_by_default(
         [
             "--name",
             "test-dirty",
-            "--agent-cmd",
+            "--command",
             "sleep 1",
             "--source",
             str(temp_git_repo),
@@ -983,7 +983,7 @@ def test_ensure_clean_skipped_with_explicit_base_branch(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 847192",
                 "--source",
                 str(temp_git_repo),
