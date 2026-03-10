@@ -138,16 +138,25 @@ def enrich_snapshot_with_github_data(snapshot: BoardSnapshot, remote: GitHubData
 
 def fetch_board_snapshot(
     mng_ctx: MngContext,
-    include_filters: tuple[str, ...] = (),
-    exclude_filters: tuple[str, ...] = (),
+    include_filters: tuple[str, ...],
+    exclude_filters: tuple[str, ...],
+    on_before_refresh: list[RefreshHook] | None,
+    on_after_refresh: list[RefreshHook] | None,
+    prev_snapshot: BoardSnapshot | None,
 ) -> BoardSnapshot:
-    """Full fetch: local snapshot enriched with GitHub PR data.
+    """Full fetch: local snapshot enriched with GitHub PR data, with optional refresh hooks.
 
     Lists agents once and uses the result for both local and remote fetching.
+    Before-hooks run against the previous snapshot's entries (skipped when prev_snapshot is None).
+    After-hooks run against the new snapshot's entries.
+    Hook errors are appended to the snapshot's errors but do not block the refresh.
     """
     start_time = time.monotonic()
     errors: list[str] = []
     cg = mng_ctx.concurrency_group
+
+    if prev_snapshot is not None and on_before_refresh:
+        errors.extend(run_refresh_hooks(cg, on_before_refresh, prev_snapshot.entries))
 
     result = list_agents(
         mng_ctx,
@@ -191,47 +200,23 @@ def fetch_board_snapshot(
             )
         )
 
-    elapsed = time.monotonic() - start_time
-    return BoardSnapshot(
+    snapshot = BoardSnapshot(
         entries=tuple(entries),
         errors=(*errors, *remote.errors),
         prs_loaded=remote.prs_loaded,
-        fetch_time_seconds=elapsed,
+        fetch_time_seconds=time.monotonic() - start_time,
     )
 
-
-def fetch_board_snapshot_with_hooks(
-    mng_ctx: MngContext,
-    on_before_refresh: list[RefreshHook],
-    on_after_refresh: list[RefreshHook],
-    prev_snapshot: BoardSnapshot | None,
-    include_filters: tuple[str, ...] = (),
-    exclude_filters: tuple[str, ...] = (),
-) -> BoardSnapshot:
-    """Full fetch with before/after refresh hooks.
-
-    Before-hooks run against the previous snapshot's entries (skipped on first refresh).
-    After-hooks run against the new snapshot's entries.
-    Hook errors are appended to the snapshot's errors but do not block the refresh.
-    """
-    cg = mng_ctx.concurrency_group
-    hook_errors: list[str] = []
-
-    if prev_snapshot is not None and on_before_refresh:
-        hook_errors.extend(run_refresh_hooks(cg, on_before_refresh, prev_snapshot.entries))
-
-    snapshot = fetch_board_snapshot(mng_ctx, include_filters, exclude_filters)
-
     if on_after_refresh:
-        hook_errors.extend(run_refresh_hooks(cg, on_after_refresh, snapshot.entries))
+        after_errors = run_refresh_hooks(cg, on_after_refresh, snapshot.entries)
+        if after_errors:
+            snapshot = BoardSnapshot(
+                entries=snapshot.entries,
+                errors=(*snapshot.errors, *after_errors),
+                prs_loaded=snapshot.prs_loaded,
+                fetch_time_seconds=snapshot.fetch_time_seconds,
+            )
 
-    if hook_errors:
-        snapshot = BoardSnapshot(
-            entries=snapshot.entries,
-            errors=(*snapshot.errors, *hook_errors),
-            prs_loaded=snapshot.prs_loaded,
-            fetch_time_seconds=snapshot.fetch_time_seconds,
-        )
     return snapshot
 
 

@@ -41,7 +41,6 @@ from imbue.mng_kanpan.data_types import PrState
 from imbue.mng_kanpan.data_types import RefreshHook
 from imbue.mng_kanpan.fetcher import fetch_agent_snapshot
 from imbue.mng_kanpan.fetcher import fetch_board_snapshot
-from imbue.mng_kanpan.fetcher import fetch_board_snapshot_with_hooks
 from imbue.mng_kanpan.fetcher import toggle_agent_mute
 
 DEFAULT_REFRESH_INTERVAL_SECONDS: float = 600.0
@@ -753,20 +752,15 @@ def _start_refresh(loop: MainLoop, state: _KanpanState) -> None:
     state.footer_left_attr.set_attr_map({None: "footer"})
     state.spinner_index = 0
     state.refresh_is_local_only = False
-    if state.on_before_refresh or state.on_after_refresh:
-        state.refresh_future = state.executor.submit(
-            fetch_board_snapshot_with_hooks,
-            state.mng_ctx,
-            state.on_before_refresh,
-            state.on_after_refresh,
-            state.snapshot,
-            state.include_filters,
-            state.exclude_filters,
-        )
-    else:
-        state.refresh_future = state.executor.submit(
-            fetch_board_snapshot, state.mng_ctx, state.include_filters, state.exclude_filters
-        )
+    state.refresh_future = state.executor.submit(
+        fetch_board_snapshot,
+        state.mng_ctx,
+        state.include_filters,
+        state.exclude_filters,
+        state.on_before_refresh or None,
+        state.on_after_refresh or None,
+        state.snapshot,
+    )
     _schedule_spinner_tick(loop, state)
 
 

@@ -18,7 +18,6 @@ from imbue.mng_kanpan.fetcher import _find_git_cwd
 from imbue.mng_kanpan.fetcher import _pr_priority
 from imbue.mng_kanpan.fetcher import fetch_agent_snapshot
 from imbue.mng_kanpan.fetcher import fetch_board_snapshot
-from imbue.mng_kanpan.fetcher import fetch_board_snapshot_with_hooks
 from imbue.mng_kanpan.fetcher import run_refresh_hooks
 from imbue.mng_kanpan.github import FetchPrsResult
 from imbue.mng_kanpan.testing import make_agent_details
@@ -128,7 +127,7 @@ def test_fetch_board_snapshot_integrates_agents_and_prs() -> None:
         patch("imbue.mng_kanpan.fetcher.list_agents", return_value=mock_list_result),
         patch("imbue.mng_kanpan.fetcher.fetch_all_prs", return_value=pr_result),
     ):
-        snapshot = fetch_board_snapshot(mng_ctx)
+        snapshot = fetch_board_snapshot(mng_ctx, (), (), None, None, None)
 
     assert len(snapshot.entries) == 2
     assert snapshot.entries[0].name == AgentName("agent-1")
@@ -159,7 +158,7 @@ def test_fetch_board_snapshot_with_list_errors() -> None:
         patch("imbue.mng_kanpan.fetcher.list_agents", return_value=mock_list_result),
         patch("imbue.mng_kanpan.fetcher.fetch_all_prs", return_value=pr_result),
     ):
-        snapshot = fetch_board_snapshot(mng_ctx)
+        snapshot = fetch_board_snapshot(mng_ctx, (), (), None, None, None)
 
     assert len(snapshot.entries) == 0
     assert len(snapshot.errors) == 1
@@ -206,8 +205,11 @@ def test_fetch_board_snapshot_passes_filters_to_list_agents() -> None:
     ):
         fetch_board_snapshot(
             mng_ctx,
-            include_filters=('state == "RUNNING"',),
-            exclude_filters=('state == "DONE"',),
+            ('state == "RUNNING"',),
+            ('state == "DONE"',),
+            None,
+            None,
+            None,
         )
 
     mock_list.assert_called_once()
@@ -264,7 +266,7 @@ def test_fetch_board_snapshot_surfaces_gh_errors_and_suppresses_create_pr_url(tm
         patch("imbue.mng_kanpan.fetcher.fetch_all_prs", return_value=pr_result),
         patch("imbue.mng_kanpan.fetcher._get_github_repo_path", return_value="org/repo"),
     ):
-        snapshot = fetch_board_snapshot(mng_ctx)
+        snapshot = fetch_board_snapshot(mng_ctx, (), (), None, None, None)
 
     assert len(snapshot.errors) == 1
     assert "gh pr list failed" in snapshot.errors[0]
@@ -404,11 +406,11 @@ def test_run_refresh_hooks_execute_in_order(tmp_path: Path) -> None:
     assert prefixes[4:] == ["3", "3"]
 
 
-# === fetch_board_snapshot_with_hooks ===
+# === fetch_board_snapshot with hooks ===
 
 
-def test_fetch_board_snapshot_with_hooks_no_hooks() -> None:
-    """With empty hooks, behaves identically to fetch_board_snapshot."""
+def test_fetch_board_snapshot_no_hooks() -> None:
+    """With None hooks, no hook execution occurs."""
     agent = make_agent_details(name="agent-1", state=AgentLifecycleState.RUNNING, provider_name="modal")
     pr_result = FetchPrsResult(prs=(), error=None)
     mock_list_result = MagicMock()
@@ -421,13 +423,13 @@ def test_fetch_board_snapshot_with_hooks_no_hooks() -> None:
         patch("imbue.mng_kanpan.fetcher.list_agents", return_value=mock_list_result),
         patch("imbue.mng_kanpan.fetcher.fetch_all_prs", return_value=pr_result),
     ):
-        snapshot = fetch_board_snapshot_with_hooks(mng_ctx, [], [], None)
+        snapshot = fetch_board_snapshot(mng_ctx, (), (), None, None, None)
 
     assert len(snapshot.entries) == 1
     assert snapshot.errors == ()
 
 
-def test_fetch_board_snapshot_with_hooks_after_hooks_run() -> None:
+def test_fetch_board_snapshot_after_hooks_run() -> None:
     """After-hooks run against the new snapshot entries."""
     agent = make_agent_details(name="agent-1", state=AgentLifecycleState.RUNNING, provider_name="modal")
     pr_result = FetchPrsResult(prs=(), error=None)
@@ -446,14 +448,14 @@ def test_fetch_board_snapshot_with_hooks_after_hooks_run() -> None:
             return_value=["Hook 'After hook' failed for agent-1 (exit 1)"],
         ) as mock_hooks,
     ):
-        snapshot = fetch_board_snapshot_with_hooks(mng_ctx, [], [after_hook], None)
+        snapshot = fetch_board_snapshot(mng_ctx, (), (), None, [after_hook], None)
 
     assert len(snapshot.errors) == 1
     assert "After hook" in snapshot.errors[0]
     mock_hooks.assert_called_once()
 
 
-def test_fetch_board_snapshot_with_hooks_before_hooks_skipped_on_first_refresh() -> None:
+def test_fetch_board_snapshot_before_hooks_skipped_on_first_refresh() -> None:
     """Before-hooks are skipped when there is no previous snapshot."""
     agent = make_agent_details(name="agent-1", state=AgentLifecycleState.RUNNING, provider_name="modal")
     pr_result = FetchPrsResult(prs=(), error=None)
@@ -469,13 +471,13 @@ def test_fetch_board_snapshot_with_hooks_before_hooks_skipped_on_first_refresh()
         patch("imbue.mng_kanpan.fetcher.fetch_all_prs", return_value=pr_result),
         patch("imbue.mng_kanpan.fetcher.run_refresh_hooks", return_value=[]) as mock_hooks,
     ):
-        snapshot = fetch_board_snapshot_with_hooks(mng_ctx, [before_hook], [], None)
+        snapshot = fetch_board_snapshot(mng_ctx, (), (), [before_hook], None, None)
 
     mock_hooks.assert_not_called()
     assert snapshot.errors == ()
 
 
-def test_fetch_board_snapshot_with_hooks_before_hooks_run_with_prev_snapshot() -> None:
+def test_fetch_board_snapshot_before_hooks_run_with_prev_snapshot() -> None:
     """Before-hooks run against previous snapshot entries when available."""
     agent = make_agent_details(name="agent-1", state=AgentLifecycleState.RUNNING, provider_name="modal")
     pr_result = FetchPrsResult(prs=(), error=None)
@@ -495,7 +497,7 @@ def test_fetch_board_snapshot_with_hooks_before_hooks_run_with_prev_snapshot() -
         patch("imbue.mng_kanpan.fetcher.fetch_all_prs", return_value=pr_result),
         patch("imbue.mng_kanpan.fetcher.run_refresh_hooks", return_value=[]) as mock_hooks,
     ):
-        fetch_board_snapshot_with_hooks(mng_ctx, [before_hook], [], prev_snapshot)
+        fetch_board_snapshot(mng_ctx, (), (), [before_hook], None, prev_snapshot)
 
     mock_hooks.assert_called_once()
     call_args = mock_hooks.call_args
