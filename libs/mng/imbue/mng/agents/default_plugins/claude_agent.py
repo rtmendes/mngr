@@ -58,6 +58,7 @@ from imbue.mng.interfaces.data_types import FileTransferSpec
 from imbue.mng.interfaces.data_types import RelativePath
 from imbue.mng.interfaces.host import CreateAgentOptions
 from imbue.mng.interfaces.host import OnlineHostInterface
+from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import CommandString
 from imbue.mng.primitives import WorkDirCopyMode
 from imbue.mng.providers.ssh_host_setup import load_resource_script
@@ -75,11 +76,6 @@ _CLAUDE_HOME_SYNC_ITEMS: Final[tuple[str, ...]] = (
     "commands",
     "plugins",
 )
-
-# Whether to symlink (True) or copy (False) user resources from ~/.claude/
-# into local per-agent config dirs. Symlinks avoid duplication and keep the
-# per-agent dir lightweight; copies provide full isolation.
-_SYMLINK_LOCAL_USER_RESOURCES: Final[bool] = True
 
 
 class ClaudeAgentConfig(AgentTypeConfig):
@@ -110,6 +106,12 @@ class ClaudeAgentConfig(AgentTypeConfig):
         description="Extra folder to sync to the repo .claude/ folder in the agent work_dir."
         "(files are transferred after user settings, so they can override)",
     )
+    symlink_user_resources: bool = Field(
+        default=True,
+        description="Whether to symlink (True) or copy (False) user resources from ~/.claude/ "
+        "into local per-agent config dirs. Symlinks avoid duplication and keep the "
+        "per-agent dir lightweight; copies provide full isolation.",
+    )
     convert_macos_credentials: bool = Field(
         default=True,
         description="Whether to convert macOS keychain credentials to flat files for remote hosts",
@@ -138,15 +140,15 @@ class ClaudeAgentConfig(AgentTypeConfig):
     )
 
 
-def _collect_claude_home_dir_files(claude_dir: Path) -> dict[str, Path]:
+def _collect_claude_home_dir_files(claude_dir: Path) -> dict[Path, Path]:
     """Collect files from ~/.claude/ directory items for deployment.
 
-    Returns dict mapping relative path strings (e.g., "settings.json",
-    "skills/my-skill/SKILL.md") to local source paths. Iterates over
+    Returns dict mapping relative paths (e.g., Path("settings.json"),
+    Path("skills/my-skill/SKILL.md")) to local source paths. Iterates over
     _CLAUDE_HOME_SYNC_ITEMS to collect files from both regular files
     and directories (recursively).
     """
-    files: dict[str, Path] = {}
+    files: dict[Path, Path] = {}
     for item_name in _CLAUDE_HOME_SYNC_ITEMS:
         item_path = claude_dir / item_name
         if not item_path.exists():
@@ -154,10 +156,9 @@ def _collect_claude_home_dir_files(claude_dir: Path) -> dict[str, Path]:
         if item_path.is_dir():
             for file_path in item_path.rglob("*"):
                 if file_path.is_file():
-                    relative = str(file_path.relative_to(claude_dir))
-                    files[relative] = file_path
+                    files[file_path.relative_to(claude_dir)] = file_path
         else:
-            files[item_name] = item_path
+            files[Path(item_name)] = item_path
     return files
 
 
@@ -517,11 +518,11 @@ def _provision_remote_api_key(
     host.write_text_file(config_dir / ".claude.json", json.dumps(claude_json_data, indent=2) + "\n")
 
 
-def _sync_local_user_resources(host: OnlineHostInterface, config_dir: Path) -> None:
+def _sync_local_user_resources(host: OnlineHostInterface, config_dir: Path, *, symlink: bool) -> None:
     """Sync user resources from ~/.claude/ into the per-agent config dir.
 
     Symlinks or copies settings.json, skills/, agents/, commands/, plugins/
-    depending on _SYMLINK_LOCAL_USER_RESOURCES.
+    depending on the ``symlink`` flag.
     """
     home_claude = Path.home() / ".claude"
     for item_name in _CLAUDE_HOME_SYNC_ITEMS:
@@ -529,7 +530,7 @@ def _sync_local_user_resources(host: OnlineHostInterface, config_dir: Path) -> N
         if not source.exists():
             continue
         dest = config_dir / item_name
-        if _SYMLINK_LOCAL_USER_RESOURCES:
+        if symlink:
             host.execute_command(f"ln -sf {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0)
         elif source.is_dir():
             host.execute_command(f"cp -r {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0)
@@ -537,19 +538,19 @@ def _sync_local_user_resources(host: OnlineHostInterface, config_dir: Path) -> N
             host.execute_command(f"cp {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0)
 
 
-def _provision_background_scripts(host: OnlineHostInterface) -> None:
-    """Write the background task scripts to $MNG_HOST_DIR/commands/.
+def _provision_background_scripts(host: OnlineHostInterface, agent_state_dir: Path) -> None:
+    """Write the background task scripts to $MNG_AGENT_STATE_DIR/commands/.
 
     Provisions mng_log.sh (shared logging library), stream_transcript.sh, and claude_background_tasks.sh so they can be
     launched by the agent's assemble_command at runtime.
     """
-    commands_dir = host.host_dir / "commands"
+    commands_dir = agent_state_dir / "commands"
     host.execute_command(f"mkdir -p {shlex.quote(str(commands_dir))}", timeout_seconds=5.0)
 
     for script_name in ("mng_log.sh", "stream_transcript.sh", "claude_background_tasks.sh"):
         script_content = load_resource_script(script_name)
         script_path = commands_dir / script_name
-        with log_span("Writing {} to host", script_name):
+        with log_span("Writing {} to agent state dir", script_name):
             host.write_file(script_path, script_content.encode(), mode="0755")
 
 
@@ -632,16 +633,6 @@ class DialogDetectedError(SendMessageError):
         )
 
 
-class PermissionDialogIndicator(DialogIndicator):
-    """Detects Claude Code permission dialogs (e.g., tool approval prompts)."""
-
-    def get_match_string(self) -> str:
-        return "Do you want to proceed?"
-
-    def get_description(self) -> str:
-        return "permission dialog"
-
-
 class TrustDialogIndicator(DialogIndicator):
     """Detects the Claude Code workspace trust dialog shown on first launch in a directory."""
 
@@ -690,9 +681,22 @@ class ClaudeAgent(BaseAgent):
         """
         return self._get_agent_dir() / "plugin" / "claude" / "anthropic"
 
-    def get_extra_env_vars(self) -> dict[str, str]:
-        """Return CLAUDE_CONFIG_DIR pointing to the per-agent config directory."""
-        return {"CLAUDE_CONFIG_DIR": str(self.get_claude_config_dir())}
+    def modify_env_vars(self, host: OnlineHostInterface, env_vars: dict[str, str]) -> None:
+        """Add CLAUDE_CONFIG_DIR pointing to the per-agent config directory."""
+        env_vars["CLAUDE_CONFIG_DIR"] = str(self.get_claude_config_dir())
+
+    def get_lifecycle_state(self) -> AgentLifecycleState:
+        """Get lifecycle state, accounting for Claude-specific permissions_waiting file.
+
+        The PermissionRequest hook creates a 'permissions_waiting' file when Claude
+        is blocked on a permission dialog. When present, this overrides RUNNING to
+        WAITING since the agent cannot make progress without user intervention.
+        """
+        state = super().get_lifecycle_state()
+        if state == AgentLifecycleState.RUNNING:
+            if self._check_file_exists(self._get_agent_dir() / "permissions_waiting"):
+                return AgentLifecycleState.WAITING
+        return state
 
     def get_expected_process_name(self) -> str:
         """Return 'claude' as the expected process name.
@@ -722,7 +726,6 @@ class ClaudeAgent(BaseAgent):
         return "Claude Code"
 
     _DIALOG_INDICATORS: tuple[DialogIndicator, ...] = (
-        PermissionDialogIndicator(),
         TrustDialogIndicator(),
         ThemeSelectionIndicator(),
         EffortCalloutIndicator(),
@@ -731,10 +734,13 @@ class ClaudeAgent(BaseAgent):
     def _preflight_send_message(self, tmux_target: str) -> None:
         """Check for blocking dialogs before sending a message.
 
-        Captures the tmux pane and checks for known dialog indicators
-        (permission prompts, trust dialogs, theme selection, effort callout).
+        Checks the permissions_waiting file (set by the PermissionRequest hook)
+        and captures the tmux pane for other dialog indicators (trust, theme, effort).
         Raises DialogDetectedError if any are found.
         """
+        if self._check_file_exists(self._get_agent_dir() / "permissions_waiting"):
+            raise DialogDetectedError(str(self.name), "permission dialog")
+
         content = self._capture_pane_content(tmux_target)
         if content is None:
             return
@@ -782,11 +788,11 @@ class ClaudeAgent(BaseAgent):
     def _build_background_tasks_command(self, session_name: str) -> str:
         """Build a shell command that starts the background tasks script.
 
-        The background tasks script (provisioned to $MNG_HOST_DIR/commands/)
+        The background tasks script (provisioned to $MNG_AGENT_STATE_DIR/commands/)
         handles both activity tracking and transcript export. It runs in the
         background while the tmux session is alive.
         """
-        script_path = "$MNG_HOST_DIR/commands/claude_background_tasks.sh"
+        script_path = "$MNG_AGENT_STATE_DIR/commands/claude_background_tasks.sh"
         return f"( {script_path} {shlex.quote(session_name)} ) &"
 
     def assemble_command(
@@ -1100,7 +1106,7 @@ class ClaudeAgent(BaseAgent):
             _provision_file_credentials(host, config_dir)
 
         if config.sync_home_settings:
-            _sync_local_user_resources(host, config_dir)
+            _sync_local_user_resources(host, config_dir, symlink=config.symlink_user_resources)
 
     def _setup_remote_config_dir(
         self,
@@ -1124,7 +1130,7 @@ class ClaudeAgent(BaseAgent):
             local_claude_dir = Path.home() / ".claude"
             for relative_path, source_path in _collect_claude_home_dir_files(local_claude_dir).items():
                 # settings.json is handled separately above
-                if relative_path == "settings.json":
+                if relative_path == Path("settings.json"):
                     continue
                 host.write_text_file(config_dir / relative_path, source_path.read_text())
 
@@ -1282,8 +1288,8 @@ class ClaudeAgent(BaseAgent):
         # Configure readiness hooks (for both local and remote hosts)
         self._configure_readiness_hooks(host)
 
-        # Provision background task scripts to the host commands directory
-        _provision_background_scripts(host)
+        # Provision background task scripts to the agent state directory
+        _provision_background_scripts(host, self._get_agent_dir())
 
     def on_destroy(self, host: OnlineHostInterface) -> None:
         """Clean up per-agent credentials and trust entries.
@@ -1404,9 +1410,9 @@ def get_files_for_deploy(
     if include_user_settings:
         # Skills, agents, commands (skip settings.json, handled above)
         for relative_path, source_path in _collect_claude_home_dir_files(local_claude_dir).items():
-            if relative_path == "settings.json":
+            if relative_path == Path("settings.json"):
                 continue
-            files[Path(f"~/.claude/{relative_path}")] = source_path
+            files[Path("~/.claude") / relative_path] = source_path
 
         # ~/.claude/.credentials.json (OAuth tokens)
         credentials = local_claude_dir / ".credentials.json"
