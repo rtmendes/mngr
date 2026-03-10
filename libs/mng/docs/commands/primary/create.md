@@ -150,8 +150,8 @@ See [Provision Options](../secondary/provision.md) for full details.
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
 | `--snapshot` | text | Use existing snapshot instead of building | None |
-| `-b`, `--build` | text | Build argument as key=value or --key=value (e.g., -b gpu=h100 -b cpu=2) [repeatable] | None |
-| `-s`, `--start` | text | Argument for start [repeatable] | None |
+| `-b`, `--build-arg` | text | Build argument as key=value or --key=value (e.g., -b gpu=h100 -b cpu=2) [repeatable] | None |
+| `-s`, `--start-arg` | text | Argument for start [repeatable] | None |
 
 ## Host Lifecycle
 

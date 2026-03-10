@@ -10,7 +10,7 @@ mng create my-agent --in modal
 
 ## Build Arguments
 
-Build arguments configure the Modal sandbox. Pass them using `-b` (or `--build`):
+Build arguments configure the Modal sandbox. Pass them using `-b` (or `--build-arg`):
 
 ```bash
 # Key-value format (recommended)

@@ -10,7 +10,7 @@ mng create my-agent --in docker
 
 ## Build Arguments
 
-Build arguments are passed directly to `docker build`. Use `-b` (or `--build`) to specify them:
+Build arguments are passed directly to `docker build`. Use `-b` (or `--build-arg`) to specify them:
 
 ```bash
 # Build from a Dockerfile
@@ -27,7 +27,7 @@ Run `docker build --help` for the full list of supported flags.
 
 ## Start Arguments
 
-Start arguments are passed directly to `docker run` for container resource limits, networking, volumes, and other runtime configuration. Use `-s` (or `--start`):
+Start arguments are passed directly to `docker run` for container resource limits, networking, volumes, and other runtime configuration. Use `-s` (or `--start-arg`):
 
 ```bash
 # Set CPU and memory limits

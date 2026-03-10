@@ -7,7 +7,7 @@ create = ["""bash -c './scripts/make_tar_of_repo.sh `cat .mng/image_commit_hash`
 
 [create_templates.docker]
 new_host = "docker"
-build = ["--file=libs/mng/imbue/mng/resources/Dockerfile", ".mng/dev/build/"]
+build_arg = ["--file=libs/mng/imbue/mng/resources/Dockerfile", ".mng/dev/build/"]
 target_path = "/code/mng"
 # the agent added these, but I kinda doubt we need them...
 #pass_env = ["ANTHROPIC_API_KEY"]
@@ -19,7 +19,7 @@ extra_window = ["reviewer_0='export IS_SANDBOX=1 && claude --dangerously-skip-pe
 
 [create_templates.modal]
 new_host = "modal"
-build = ["file=libs/mng/imbue/mng/resources/Dockerfile", "context-dir=.mng/dev/build/", "volume=code-review-json:/code_reviews"]
+build_arg = ["file=libs/mng/imbue/mng/resources/Dockerfile", "context-dir=.mng/dev/build/", "volume=code-review-json:/code_reviews"]
 extra_window = ["github_setup='ssh-keyscan github.com >> ~/.ssh/known_hosts && git remote set-url origin https://github.com/imbue-ai/mng.git && gh auth setup-git'"]
 agent_args = ["--dangerously-skip-permissions"]
 target_path = "/code/mng"

@@ -198,8 +198,8 @@ class CreateCliOptions(CommonCliOptions):
     host_env_file: tuple[str, ...]
     pass_host_env: tuple[str, ...]
     snapshot: str | None
-    build: tuple[str, ...]
-    start: tuple[str, ...]
+    build_arg: tuple[str, ...]
+    start_arg: tuple[str, ...]
     reconnect: bool
     interactive: bool | None
     message: str | None
@@ -389,11 +389,11 @@ class CreateCliOptions(CommonCliOptions):
 @optgroup.option("--snapshot", help="Use existing snapshot instead of building")
 @optgroup.option(
     "-b",
-    "--build",
+    "--build-arg",
     multiple=True,
     help="Build argument as key=value or --key=value (e.g., -b gpu=h100 -b cpu=2) [repeatable]",
 )
-@optgroup.option("-s", "--start", multiple=True, help="Argument for start [repeatable]")
+@optgroup.option("-s", "--start-arg", multiple=True, help="Argument for start [repeatable]")
 @optgroup.group("Host Lifecycle")
 @optgroup.option(
     "--idle-timeout",
@@ -1218,8 +1218,8 @@ def _parse_target_host(
         host_env_vars = resolve_env_vars(opts.pass_host_env, opts.host_env)
         host_env_files = tuple(Path(f) for f in opts.host_env_file)
 
-        combined_build_args = _split_cli_args(opts.build)
-        combined_start_args = _split_cli_args(opts.start)
+        combined_build_args = _split_cli_args(opts.build_arg)
+        combined_start_args = _split_cli_args(opts.start_arg)
 
         # Parse build options
         build_options = NewHostBuildOptions(
