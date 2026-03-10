@@ -65,6 +65,14 @@ def _read_host_names() -> list[str]:
         return []
 
 
+def _read_discovery_names() -> tuple[list[str], list[str]]:
+    """Read both agent and host names from the discovery event stream in one pass."""
+    try:
+        return resolve_names_from_discovery_stream()
+    except (OSError, json.JSONDecodeError):
+        return [], []
+
+
 def _read_git_branches() -> list[str]:
     """Read local and remote git branch names via ``git for-each-ref``."""
     try:
@@ -222,10 +230,14 @@ def _get_positional_candidates(command_key: str, cache: dict[str, Any]) -> list[
 
     candidates: list[str] = []
 
-    if command_key in cache.get("agent_name_arguments", []):
-        candidates.extend(_read_agent_names())
-    if command_key in cache.get("host_name_arguments", []):
-        candidates.extend(_read_host_names())
+    needs_agents = command_key in cache.get("agent_name_arguments", [])
+    needs_hosts = command_key in cache.get("host_name_arguments", [])
+    if needs_agents or needs_hosts:
+        agent_names, host_names = _read_discovery_names()
+        if needs_agents:
+            candidates.extend(agent_names)
+        if needs_hosts:
+            candidates.extend(host_names)
     if command_key in cache.get("plugin_name_arguments", []):
         candidates.extend(cache.get("plugin_names", []))
     if command_key in cache.get("config_key_arguments", []):
