@@ -10,6 +10,7 @@ from imbue.mng.config.completion_writer import COMMAND_COMPLETIONS_CACHE_FILENAM
 from imbue.mng.config.completion_writer import flatten_dict_keys
 from imbue.mng.config.completion_writer import get_completion_cache_dir
 from imbue.mng.config.completion_writer import write_cli_completions_cache
+from imbue.mng.config.data_types import MngContext
 
 
 def test_get_completion_cache_dir_uses_env_var(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -193,8 +194,11 @@ def test_write_cli_completions_cache_includes_config_key_arguments(completion_ca
     assert "config.unset" in data["config_key_arguments"]
 
 
-def test_write_cli_completions_cache_dynamic_completions(completion_cache_dir: Path) -> None:
-    """Dynamic completions should be injected into option_choices and stored in cache."""
+def test_write_cli_completions_cache_with_mng_ctx(
+    completion_cache_dir: Path,
+    temp_mng_ctx: MngContext,
+) -> None:
+    """When mng_ctx is provided, dynamic completions should be injected into the cache."""
     group = click.Group(
         name="test",
         commands={
@@ -214,23 +218,20 @@ def test_write_cli_completions_cache_dynamic_completions(completion_cache_dir: P
             ),
         },
     )
-    dynamic = {
-        "agent_type_names": ["claude", "codex"],
-        "template_names": ["dev", "prod"],
-        "provider_names": ["docker", "local", "modal"],
-        "plugin_names": ["myplugin"],
-        "config_keys": ["prefix", "logging.level"],
-    }
 
-    write_cli_completions_cache(cli_group=group, dynamic_completions=dynamic)
+    write_cli_completions_cache(cli_group=group, mng_ctx=temp_mng_ctx)
     data = _read_cache(completion_cache_dir)
 
-    assert data["option_choices"]["create.--agent-type"] == ["claude", "codex"]
-    assert data["option_choices"]["create.--template"] == ["dev", "prod"]
-    assert data["option_choices"]["create.--in"] == ["docker", "local", "modal"]
-    assert data["option_choices"]["list.--provider"] == ["docker", "local", "modal"]
-    assert data["plugin_names"] == ["myplugin"]
-    assert data["config_keys"] == ["prefix", "logging.level"]
+    # Agent types include at least the built-in registered types
+    assert "create.--agent-type" in data["option_choices"]
+    assert len(data["option_choices"]["create.--agent-type"]) > 0
+    # Provider names always include "local"
+    assert "local" in data["option_choices"]["create.--in"]
+    assert "local" in data["option_choices"]["list.--provider"]
+    # Config keys are flattened from the config model
+    assert len(data["config_keys"]) > 0
+    # Plugin names come from the plugin manager
+    assert isinstance(data["plugin_names"], list)
 
 
 def test_write_cli_completions_cache_no_mng_ctx(completion_cache_dir: Path) -> None:

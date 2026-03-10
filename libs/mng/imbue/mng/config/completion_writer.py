@@ -236,7 +236,6 @@ def write_cli_completions_cache(
     *,
     cli_group: click.Group,
     mng_ctx: MngContext | None = None,
-    dynamic_completions: dict[str, list[str]] | None = None,
 ) -> None:
     """Write all CLI commands, options, and choices to the completions cache (best-effort).
 
@@ -250,8 +249,7 @@ def write_cli_completions_cache(
 
     When mng_ctx is provided, runtime-derived completion values (agent types,
     templates, providers, plugin names, config keys) are extracted and injected
-    into the cache. Alternatively, dynamic_completions can be passed directly
-    (used by tests).
+    into the cache.
 
     Catches OSError from cache writes so filesystem failures do not break
     CLI commands. Other exceptions are allowed to propagate.
@@ -323,7 +321,7 @@ def write_cli_completions_cache(
         config_key_args = _filter_keys_by_registered_commands(_CONFIG_KEY_SUBCOMMANDS, canonical_names)
 
         # Inject dynamic choice values from runtime context (config, registries)
-        dynamic = dynamic_completions or (_build_dynamic_completions(mng_ctx) if mng_ctx is not None else None)
+        dynamic = _build_dynamic_completions(mng_ctx) if mng_ctx is not None else None
         if dynamic:
             for opt_key, data_key in _DYNAMIC_CHOICE_OPTIONS.items():
                 cmd_name = opt_key.split(".")[0]
