@@ -70,15 +70,13 @@ _emit_subagents() {
 # ---------------------------------------------------------------------------
 _find_session_file() {
     local session_id="$1"
+    local search_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+    [ -d "$search_dir" ] || return
     local jsonl_file
-    for search_dir in "${CLAUDE_CONFIG_DIR:-}"/projects/ ~/.claude/projects/; do
-        [ -d "$search_dir" ] || continue
-        jsonl_file=$(find "$search_dir" -name "$session_id.jsonl" 2>/dev/null | head -1)
-        if [ -n "$jsonl_file" ] && [ -f "$jsonl_file" ]; then
-            echo "$jsonl_file"
-            return
-        fi
-    done
+    jsonl_file=$(find "$search_dir" -name "$session_id.jsonl" 2>/dev/null | head -1)
+    if [ -n "$jsonl_file" ] && [ -f "$jsonl_file" ]; then
+        echo "$jsonl_file"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -124,8 +122,8 @@ fi
 # 3. Agent dir scan -- find ALL .jsonl files under CLAUDE_CONFIG_DIR/projects/
 # ---------------------------------------------------------------------------
 if [ "$INCLUDE_AGENT_DIR" = "true" ]; then
-    for search_dir in "${CLAUDE_CONFIG_DIR:-}"/projects/ ~/.claude/projects/; do
-        [ -d "$search_dir" ] || continue
+    search_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+    if [ -d "$search_dir" ]; then
         while IFS= read -r jsonl_file; do
             [ -f "$jsonl_file" ] || continue
             # Skip files inside subagents/ directories (handled separately)
@@ -135,5 +133,5 @@ if [ "$INCLUDE_AGENT_DIR" = "true" ]; then
             _emit "mng_agent_dir" "$jsonl_file"
             [ "$INCLUDE_SUBAGENTS" = "true" ] && _emit_subagents "mng_agent_dir" "$jsonl_file"
         done < <(find "$search_dir" -name '*.jsonl' 2>/dev/null | sort)
-    done
+    fi
 fi
