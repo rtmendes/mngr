@@ -11,6 +11,7 @@ from imbue.mng.api.observe import FullAgentStateEvent
 from imbue.mng.api.observe import OBSERVE_EVENT_SOURCE
 from imbue.mng.api.observe import ObserveEventType
 from imbue.mng.api.observe import ObserveLockError
+from imbue.mng.api.observe import _VOLATILE_AGENT_FIELDS
 from imbue.mng.api.observe import acquire_observe_lock
 from imbue.mng.api.observe import append_agent_state_change_event
 from imbue.mng.api.observe import append_observe_event
@@ -175,6 +176,47 @@ def test_append_agent_state_change_event_creates_parent_directories(temp_config:
     event = make_agent_state_change_event(agent, None)
     append_agent_state_change_event(temp_config, event)
     assert events_path.parent.exists()
+
+
+# === Volatile Field Exclusion Tests ===
+
+
+def test_serialize_agent_for_comparison_excludes_volatile_fields() -> None:
+    """Verify that _serialize_agent_for_comparison excludes continuously-changing fields."""
+    agent = make_test_agent_details()
+    result = AgentObserver._serialize_agent_for_comparison(agent)
+    parsed = json.loads(result)
+
+    for field in _VOLATILE_AGENT_FIELDS:
+        assert field not in parsed, f"Volatile field '{field}' should be excluded from comparison"
+
+
+def test_serialize_agent_for_comparison_includes_meaningful_fields() -> None:
+    """Verify that non-volatile fields are included in the comparison JSON."""
+    agent = make_test_agent_details(name="my-agent", state=AgentLifecycleState.RUNNING)
+    result = AgentObserver._serialize_agent_for_comparison(agent)
+    parsed = json.loads(result)
+
+    assert parsed["name"] == "my-agent"
+    assert parsed["state"] == "RUNNING"
+    assert "id" in parsed
+    assert "command" in parsed
+    assert "work_dir" in parsed
+    assert "host" in parsed
+    assert "labels" in parsed
+
+
+def test_volatile_field_only_change_does_not_trigger_event(temp_mng_ctx: MngContext) -> None:
+    """Verify that changing only volatile fields does not trigger an AGENT_STATE event."""
+    observer = AgentObserver(mng_ctx=temp_mng_ctx, mng_binary="/bin/true")
+    agent = make_test_agent_details(name="stable-agent", state=AgentLifecycleState.RUNNING)
+
+    # First emit sets the base state
+    observer._emit_agent_state(agent)
+
+    # Serialize what the observer stored and verify a second identical agent is not "changed"
+    comparison_json = AgentObserver._serialize_agent_for_comparison(agent)
+    assert observer._last_agent_json_by_id[str(agent.id)] == comparison_json
 
 
 # === History Loading Tests ===

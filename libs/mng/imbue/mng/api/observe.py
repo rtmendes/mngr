@@ -35,6 +35,8 @@ from imbue.mng.config.data_types import MngConfig
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import MngError
 from imbue.mng.interfaces.data_types import AgentDetails
+from imbue.mng.primitives import AgentId
+from imbue.mng.primitives import AgentName
 from imbue.mng.primitives import ErrorBehavior
 from imbue.mng.primitives import HostId
 from imbue.mng.primitives import HostName
@@ -91,8 +93,8 @@ class AgentStateChangeEvent(EventEnvelope):
     Written to the agent_states event stream, separate from the main agents stream.
     """
 
-    agent_id: str = Field(description="ID of the agent whose state changed")
-    agent_name: str = Field(description="Name of the agent whose state changed")
+    agent_id: AgentId = Field(description="ID of the agent whose state changed")
+    agent_name: AgentName = Field(description="Name of the agent whose state changed")
     old_state: str | None = Field(description="Previous lifecycle state value, or None if first observation")
     new_state: str = Field(description="New lifecycle state value")
     agent: dict = Field(description="Full serialized AgentDetails at time of state change")
@@ -179,8 +181,8 @@ def make_agent_state_change_event(
         type=EventType(ObserveEventType.AGENT_STATE_CHANGE),
         event_id=event_id,
         source=AGENT_STATES_EVENT_SOURCE,
-        agent_id=str(agent.id),
-        agent_name=str(agent.name),
+        agent_id=agent.id,
+        agent_name=agent.name,
         old_state=old_state,
         new_state=agent.state.value,
         agent=agent.model_dump(mode="json"),
@@ -255,7 +257,8 @@ def load_base_state_from_history(
         agent_id = agent_dict.get("id")
         if agent_id is not None:
             agent_id_str = str(agent_id)
-            last_agent_json_by_id[agent_id_str] = json.dumps(agent_dict, sort_keys=True)
+            filtered = {k: v for k, v in agent_dict.items() if k not in _VOLATILE_AGENT_FIELDS}
+            last_agent_json_by_id[agent_id_str] = json.dumps(filtered, sort_keys=True)
             state = agent_dict.get("state")
             if state is not None:
                 last_agent_state_by_id[agent_id_str] = str(state)
