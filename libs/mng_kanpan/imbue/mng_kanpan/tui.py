@@ -35,6 +35,7 @@ from imbue.mng_kanpan.data_types import AgentBoardEntry
 from imbue.mng_kanpan.data_types import BoardSection
 from imbue.mng_kanpan.data_types import BoardSnapshot
 from imbue.mng_kanpan.data_types import CheckStatus
+from imbue.mng_kanpan.data_types import CustomColumnConfig
 from imbue.mng_kanpan.data_types import CustomCommand
 from imbue.mng_kanpan.data_types import KanpanPluginConfig
 from imbue.mng_kanpan.data_types import PrState
@@ -203,6 +204,10 @@ class _KanpanState(MutableModel):
     retry_cooldown_seconds: float = 60.0
     # Palette attr names for mark indicators (e.g. "mark_d", "mark_p")
     mark_attr_names: tuple[str, ...] = ()
+    # Custom column definitions (empty means use builtin defaults only)
+    column_defs: list["_ColumnDef"] = []
+    # Palette attr names for custom column colors
+    col_attr_names: tuple[str, ...] = ()
     # CEL filter expressions passed from CLI
     include_filters: tuple[str, ...] = ()
     exclude_filters: tuple[str, ...] = ()
@@ -983,6 +988,118 @@ class _ColumnDef(FrozenModel):
     flexible: bool
 
 
+def _custom_col_text(entry: AgentBoardEntry, col_key: str, plugin_name: str | None, field: str | None) -> str:
+    """Get the text value for a custom column from either labels or plugin data."""
+    if plugin_name is not None:
+        return str(entry.plugin_data.get(plugin_name, {}).get(field or "", ""))
+    return entry.labels.get(col_key, "")
+
+
+def _custom_col_markup(
+    entry: AgentBoardEntry,
+    col_key: str,
+    plugin_name: str | None,
+    field: str | None,
+    colors: dict[str, str],
+) -> str | tuple[Hashable, str]:
+    """Get markup for a custom column, applying color when configured."""
+    value = _custom_col_text(entry, col_key, plugin_name, field)
+    if not value:
+        return ""
+    if value in colors:
+        return (f"col_{col_key}_{value}", value)
+    return value
+
+
+class _CustomColTextFn(FrozenModel):
+    """Callable that extracts a custom column's text value from an AgentBoardEntry."""
+
+    col_key: str
+    plugin_name: str | None
+    field: str | None
+
+    def __call__(self, entry: AgentBoardEntry) -> str:
+        return _custom_col_text(entry, self.col_key, self.plugin_name, self.field)
+
+
+class _CustomColMarkupFn(FrozenModel):
+    """Callable that produces urwid markup for a custom column value."""
+
+    col_key: str
+    plugin_name: str | None
+    field: str | None
+    colors: dict[str, str]
+
+    def __call__(self, entry: AgentBoardEntry) -> str | tuple[Hashable, str]:
+        return _custom_col_markup(entry, self.col_key, self.plugin_name, self.field, self.colors)
+
+
+@pure
+def _build_custom_column_defs(columns_config: dict[str, CustomColumnConfig]) -> list[_ColumnDef]:
+    """Build _ColumnDef list from custom column configuration."""
+    defs: list[_ColumnDef] = []
+    for col_key, col_config in columns_config.items():
+        defs.append(
+            _ColumnDef(
+                name=f"custom_{col_key}",
+                header=col_config.header,
+                text_fn=_CustomColTextFn(col_key=col_key, plugin_name=col_config.plugin_name, field=col_config.field),
+                markup_fn=_CustomColMarkupFn(
+                    col_key=col_key,
+                    plugin_name=col_config.plugin_name,
+                    field=col_config.field,
+                    colors=col_config.colors,
+                ),
+                flexible=False,
+            )
+        )
+    return defs
+
+
+@pure
+def _assemble_column_defs(
+    builtin_defs: list[_ColumnDef],
+    custom_defs: list[_ColumnDef],
+    column_order: list[str] | None,
+) -> list[_ColumnDef]:
+    """Assemble the final ordered list of column definitions.
+
+    If column_order is None, default ordering is: builtins (except last) + custom + last builtin.
+    If column_order is provided, definitions are returned in that order (unknown names skipped).
+    The last column in the result always gets flexible=True.
+    """
+    if column_order is None:
+        if not custom_defs:
+            return builtin_defs
+        result = builtin_defs[:-1] + custom_defs + [builtin_defs[-1]]
+    else:
+        registry: dict[str, _ColumnDef] = {d.name: d for d in builtin_defs + custom_defs}
+        result = [registry[name] for name in column_order if name in registry]
+    if not result:
+        return builtin_defs
+    # Ensure all are non-flexible except the last
+    result = [d.model_copy(update={"flexible": False}) if d.flexible else d for d in result[:-1]] + [
+        result[-1].model_copy(update={"flexible": True}) if not result[-1].flexible else result[-1]
+    ]
+    return result
+
+
+@pure
+def _build_column_palette(
+    columns_config: dict[str, CustomColumnConfig],
+) -> tuple[list[tuple[str, str, str]], tuple[str, ...]]:
+    """Build palette entries and attr names for custom column colors."""
+    entries: list[tuple[str, str, str]] = []
+    attr_names: list[str] = []
+    for col_key, col_config in columns_config.items():
+        for value, color in col_config.colors.items():
+            attr = f"col_{col_key}_{value}"
+            entries.append((attr, color, ""))
+            entries.append((f"{attr}_focus", f"{color},standout", ""))
+            attr_names.append(attr)
+    return entries, tuple(attr_names)
+
+
 # Single source of truth for all board column definitions (order matters)
 _BOARD_COLUMN_DEFS: list[_ColumnDef] = [
     _ColumnDef(
@@ -998,24 +1115,32 @@ _BOARD_COLUMN_DEFS: list[_ColumnDef] = [
 ]
 
 
-def _compute_board_column_widths(entries: tuple[AgentBoardEntry, ...]) -> dict[str, int]:
+def _compute_board_column_widths(
+    entries: tuple[AgentBoardEntry, ...],
+    column_defs: list[_ColumnDef] | None = None,
+) -> dict[str, int]:
     """Compute column widths based on content, like tabulate auto-sizing.
 
     Each column is sized to fit the widest value (or header), with the
     last column (link) left flexible to fill remaining terminal space.
     """
+    defs = column_defs if column_defs is not None else _BOARD_COLUMN_DEFS
     # For each fixed-width column, take the wider of the header and the widest cell value
     return {
         defn.name: max(len(defn.header), *(len(defn.text_fn(e)) for e in entries)) if entries else len(defn.header)
-        for defn in _BOARD_COLUMN_DEFS
+        for defn in defs
         if not defn.flexible
     }
 
 
-def _build_column_header(widths: dict[str, int]) -> Columns:
+def _build_column_header(
+    widths: dict[str, int],
+    column_defs: list[_ColumnDef] | None = None,
+) -> Columns:
     """Build the column header row for the board."""
+    defs = column_defs if column_defs is not None else _BOARD_COLUMN_DEFS
     cols: list[tuple[int, Text] | Text] = []
-    for defn in _BOARD_COLUMN_DEFS:
+    for defn in defs:
         if defn.flexible:
             cols.append(Text(defn.header))
         else:
@@ -1028,14 +1153,16 @@ def _build_agent_row(
     section: BoardSection,
     widths: dict[str, int],
     mark: str | None = None,
+    column_defs: list[_ColumnDef] | None = None,
 ) -> _SelectableRow:
     """Build a columnar urwid widget for a single agent row.
 
     Muted agents are rendered entirely in gray. Mark indicators (d/p) replace
     the leading spaces in the name column.
     """
+    defs = column_defs if column_defs is not None else _BOARD_COLUMN_DEFS
     raw_markup: dict[str, str | tuple[Hashable, str] | list[str | tuple[Hashable, str]]] = {
-        defn.name: defn.markup_fn(entry) for defn in _BOARD_COLUMN_DEFS
+        defn.name: defn.markup_fn(entry) for defn in defs
     }
     raw_markup["name"] = _get_name_cell_markup(entry, mark)
 
@@ -1048,7 +1175,7 @@ def _build_agent_row(
         cell_markup = raw_markup
 
     cols: list[tuple[int, Text] | Text] = []
-    for defn in _BOARD_COLUMN_DEFS:
+    for defn in defs:
         widget = Text(cell_markup[defn.name])
         if defn.flexible:
             cols.append(widget)
@@ -1075,6 +1202,8 @@ def _build_board_widgets(
     snapshot: BoardSnapshot | None,
     marks: dict[AgentName, str] | None = None,
     mark_attr_names: tuple[str, ...] = (),
+    column_defs: list[_ColumnDef] | None = None,
+    col_attr_names: tuple[str, ...] = (),
 ) -> tuple[SimpleFocusListWalker[AttrMap | Text | Divider | Columns], dict[int, AgentBoardEntry]]:
     """Build the urwid widget list from a BoardSnapshot, grouped by PR state.
 
@@ -1089,7 +1218,7 @@ def _build_board_widgets(
         return walker, index_to_entry
 
     # Compute column widths from all entries (content-aware sizing)
-    col_widths = _compute_board_column_widths(snapshot.entries)
+    col_widths = _compute_board_column_widths(snapshot.entries, column_defs)
 
     # Classify entries into sections
     by_section: dict[BoardSection, list[AgentBoardEntry]] = {}
@@ -1106,7 +1235,7 @@ def _build_board_widgets(
 
         # Add column header before the first section
         if not has_content:
-            walker.append(_build_column_header(col_widths))
+            walker.append(_build_column_header(col_widths, column_defs))
         else:
             walker.append(Divider())
 
@@ -1123,10 +1252,10 @@ def _build_board_widgets(
 
         for entry in entries:
             mark = marks.get(entry.name) if marks else None
-            item = _build_agent_row(entry, section, col_widths, mark)
+            item = _build_agent_row(entry, section, col_widths, mark, column_defs)
             idx = len(walker)
             focus_map: dict[str | None, str] = {None: "reversed"}
-            for attr in _AGENT_LINE_ATTRS + mark_attr_names:
+            for attr in _AGENT_LINE_ATTRS + mark_attr_names + col_attr_names:
                 focus_map[attr] = f"{attr}_focus"
             walker.append(AttrMap(item, None, focus_map=focus_map))
             index_to_entry[idx] = entry
@@ -1154,7 +1283,13 @@ def _refresh_display(state: _KanpanState) -> None:
     if focused_entry is not None:
         state.focused_agent_name = focused_entry.name
 
-    walker, state.index_to_entry = _build_board_widgets(state.snapshot, state.marks or None, state.mark_attr_names)
+    walker, state.index_to_entry = _build_board_widgets(
+        state.snapshot,
+        state.marks or None,
+        state.mark_attr_names,
+        state.column_defs or None,
+        state.col_attr_names,
+    )
     state.list_walker = walker
     state.frame.body = ListBox(walker)
 
@@ -1188,6 +1323,18 @@ def _load_user_commands(mng_ctx: MngContext) -> dict[str, CustomCommand]:
             result[key] = value
         elif isinstance(value, dict):
             result[key] = CustomCommand(**value)
+    return result
+
+
+def _load_user_columns(mng_ctx: MngContext) -> dict[str, CustomColumnConfig]:
+    """Load user-defined custom columns from plugin config."""
+    config = mng_ctx.get_plugin_config("kanpan", KanpanPluginConfig)
+    result: dict[str, CustomColumnConfig] = {}
+    for key, value in config.columns.items():
+        if isinstance(value, CustomColumnConfig):
+            result[key] = value
+        elif isinstance(value, dict):
+            result[key] = CustomColumnConfig(**value)
     return result
 
 
@@ -1264,6 +1411,12 @@ def run_kanpan(
 
     mark_palette_entries, mark_attr_names = _build_mark_palette(commands)
 
+    # Build custom column definitions
+    user_columns = _load_user_columns(mng_ctx)
+    custom_col_defs = _build_custom_column_defs(user_columns)
+    column_defs = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom_col_defs, plugin_config.column_order)
+    col_palette_entries, col_attr_names = _build_column_palette(user_columns)
+
     state = _KanpanState(
         mng_ctx=mng_ctx,
         frame=frame,
@@ -1274,6 +1427,8 @@ def run_kanpan(
         refresh_interval_seconds=plugin_config.refresh_interval_seconds,
         retry_cooldown_seconds=plugin_config.retry_cooldown_seconds,
         mark_attr_names=mark_attr_names,
+        column_defs=column_defs,
+        col_attr_names=col_attr_names,
         include_filters=include_filters,
         exclude_filters=exclude_filters,
     )
@@ -1283,7 +1438,12 @@ def run_kanpan(
     screen = Screen()
     screen.tty_signal_keys(intr="undefined")
 
-    loop = MainLoop(frame, palette=PALETTE + mark_palette_entries, unhandled_input=input_handler, screen=screen)
+    loop = MainLoop(
+        frame,
+        palette=PALETTE + mark_palette_entries + col_palette_entries,
+        unhandled_input=input_handler,
+        screen=screen,
+    )
     state.loop = loop
 
     # Initial data load with spinner

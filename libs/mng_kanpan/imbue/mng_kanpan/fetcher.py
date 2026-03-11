@@ -67,6 +67,8 @@ def fetch_agent_snapshot(
                 branch=branch,
                 commits_ahead=commits_ahead,
                 is_muted=agent.name in muted_agents,
+                labels=agent.labels,
+                plugin_data=agent.plugin,
             )
         )
 
@@ -185,6 +187,8 @@ def fetch_board_snapshot(
                 commits_ahead=commits_ahead,
                 create_pr_url=create_pr_url,
                 is_muted=agent.name in muted_agents,
+                labels=agent.labels,
+                plugin_data=agent.plugin,
             )
         )
 

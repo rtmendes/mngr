@@ -23,20 +23,27 @@ from imbue.mng_kanpan.data_types import AgentBoardEntry
 from imbue.mng_kanpan.data_types import BoardSection
 from imbue.mng_kanpan.data_types import BoardSnapshot
 from imbue.mng_kanpan.data_types import CheckStatus
+from imbue.mng_kanpan.data_types import CustomColumnConfig
 from imbue.mng_kanpan.data_types import CustomCommand
 from imbue.mng_kanpan.data_types import KanpanPluginConfig
 from imbue.mng_kanpan.data_types import PrInfo
 from imbue.mng_kanpan.data_types import PrState
 from imbue.mng_kanpan.testing import make_pr_info
 from imbue.mng_kanpan.tui import DEFAULT_REFRESH_INTERVAL_SECONDS
+from imbue.mng_kanpan.tui import _BOARD_COLUMN_DEFS
 from imbue.mng_kanpan.tui import _KanpanInputHandler
 from imbue.mng_kanpan.tui import _KanpanState
+from imbue.mng_kanpan.tui import _assemble_column_defs
 from imbue.mng_kanpan.tui import _build_board_widgets
+from imbue.mng_kanpan.tui import _build_column_palette
 from imbue.mng_kanpan.tui import _build_command_map
+from imbue.mng_kanpan.tui import _build_custom_column_defs
 from imbue.mng_kanpan.tui import _build_mark_palette
 from imbue.mng_kanpan.tui import _carry_forward_pr_data
 from imbue.mng_kanpan.tui import _classify_entry
 from imbue.mng_kanpan.tui import _clear_focus
+from imbue.mng_kanpan.tui import _custom_col_markup
+from imbue.mng_kanpan.tui import _custom_col_text
 from imbue.mng_kanpan.tui import _dispatch_command
 from imbue.mng_kanpan.tui import _finish_refresh
 from imbue.mng_kanpan.tui import _format_section_heading
@@ -44,6 +51,7 @@ from imbue.mng_kanpan.tui import _get_focused_entry
 from imbue.mng_kanpan.tui import _get_name_cell_markup
 from imbue.mng_kanpan.tui import _get_state_attr
 from imbue.mng_kanpan.tui import _is_focus_on_first_selectable
+from imbue.mng_kanpan.tui import _load_user_columns
 from imbue.mng_kanpan.tui import _load_user_commands
 from imbue.mng_kanpan.tui import _mute_focused_agent
 from imbue.mng_kanpan.tui import _on_auto_refresh_alarm
@@ -93,6 +101,8 @@ def _make_entry(
     commits_ahead: int | None = None,
     create_pr_url: str | None = None,
     is_muted: bool = False,
+    labels: dict[str, str] | None = None,
+    plugin_data: dict[str, Any] | None = None,
 ) -> AgentBoardEntry:
     if pr is None and pr_state is not None:
         pr = _make_pr(state=pr_state)
@@ -105,6 +115,8 @@ def _make_entry(
         commits_ahead=commits_ahead,
         create_pr_url=create_pr_url,
         is_muted=is_muted,
+        labels=labels or {},
+        plugin_data=plugin_data or {},
     )
 
 
@@ -1340,3 +1352,260 @@ def test_start_local_refresh_noop_when_already_refreshing() -> None:
 
     assert state.refresh_future is existing_future
     assert len(loop.alarms) == 0
+
+
+# =============================================================================
+# Tests for custom column text/markup functions
+# =============================================================================
+
+
+def test_custom_col_text_reads_from_labels() -> None:
+    entry = _make_entry(labels={"blocked": "yes"})
+    assert _custom_col_text(entry, "blocked", None, None) == "yes"
+
+
+def test_custom_col_text_returns_empty_for_missing_label() -> None:
+    entry = _make_entry()
+    assert _custom_col_text(entry, "blocked", None, None) == ""
+
+
+def test_custom_col_text_reads_from_plugin_data() -> None:
+    entry = _make_entry(plugin_data={"claude": {"waiting_reason": "PERMISSIONS"}})
+    assert _custom_col_text(entry, "waiting", "claude", "waiting_reason") == "PERMISSIONS"
+
+
+def test_custom_col_text_returns_empty_for_missing_plugin_data() -> None:
+    entry = _make_entry()
+    assert _custom_col_text(entry, "waiting", "claude", "waiting_reason") == ""
+
+
+def test_custom_col_text_returns_empty_for_missing_plugin_field() -> None:
+    entry = _make_entry(plugin_data={"claude": {}})
+    assert _custom_col_text(entry, "waiting", "claude", "waiting_reason") == ""
+
+
+def test_custom_col_markup_applies_color_when_configured() -> None:
+    entry = _make_entry(labels={"blocked": "yes"})
+    result = _custom_col_markup(entry, "blocked", None, None, {"yes": "light red"})
+    assert result == ("col_blocked_yes", "yes")
+
+
+def test_custom_col_markup_no_color_returns_plain_text() -> None:
+    entry = _make_entry(labels={"blocked": "maybe"})
+    result = _custom_col_markup(entry, "blocked", None, None, {"yes": "light red"})
+    assert result == "maybe"
+
+
+def test_custom_col_markup_empty_value_returns_empty_string() -> None:
+    entry = _make_entry()
+    result = _custom_col_markup(entry, "blocked", None, None, {"yes": "light red"})
+    assert result == ""
+
+
+def test_custom_col_markup_plugin_data_with_color() -> None:
+    entry = _make_entry(plugin_data={"claude": {"reason": "PERMISSIONS"}})
+    result = _custom_col_markup(entry, "wait", "claude", "reason", {"PERMISSIONS": "light red"})
+    assert result == ("col_wait_PERMISSIONS", "PERMISSIONS")
+
+
+# =============================================================================
+# Tests for _build_custom_column_defs
+# =============================================================================
+
+
+def test_build_custom_column_defs_label_source() -> None:
+    config = {"blocked": CustomColumnConfig(header="BLOCKED", colors={"yes": "light red"})}
+    defs = _build_custom_column_defs(config)
+    assert len(defs) == 1
+    assert defs[0].name == "custom_blocked"
+    assert defs[0].header == "BLOCKED"
+    assert defs[0].flexible is False
+
+
+def test_build_custom_column_defs_plugin_source() -> None:
+    config = {
+        "wait": CustomColumnConfig(header="WAIT", plugin_name="claude", field="waiting_reason"),
+    }
+    defs = _build_custom_column_defs(config)
+    assert len(defs) == 1
+    assert defs[0].name == "custom_wait"
+    entry = _make_entry(plugin_data={"claude": {"waiting_reason": "PERMISSIONS"}})
+    assert defs[0].text_fn(entry) == "PERMISSIONS"
+
+
+def test_build_custom_column_defs_text_fn_reads_labels() -> None:
+    config = {"blocked": CustomColumnConfig(header="BLOCKED")}
+    defs = _build_custom_column_defs(config)
+    entry = _make_entry(labels={"blocked": "unblocked"})
+    assert defs[0].text_fn(entry) == "unblocked"
+
+
+def test_build_custom_column_defs_markup_fn_applies_color() -> None:
+    config = {"blocked": CustomColumnConfig(header="BLOCKED", colors={"yes": "light red"})}
+    defs = _build_custom_column_defs(config)
+    entry = _make_entry(labels={"blocked": "yes"})
+    assert defs[0].markup_fn(entry) == ("col_blocked_yes", "yes")
+
+
+def test_build_custom_column_defs_empty_config() -> None:
+    assert _build_custom_column_defs({}) == []
+
+
+# =============================================================================
+# Tests for _assemble_column_defs
+# =============================================================================
+
+
+def test_assemble_column_defs_no_custom_no_order_returns_builtins() -> None:
+    result = _assemble_column_defs(_BOARD_COLUMN_DEFS, [], None)
+    assert result == _BOARD_COLUMN_DEFS
+
+
+def test_assemble_column_defs_custom_inserted_before_link() -> None:
+    config = {"blocked": CustomColumnConfig(header="BLOCKED")}
+    custom = _build_custom_column_defs(config)
+    result = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom, None)
+    names = [d.name for d in result]
+    assert names[-1] == "link"
+    assert names[-2] == "custom_blocked"
+    assert result[-1].flexible is True
+
+
+def test_assemble_column_defs_explicit_order() -> None:
+    config = {"blocked": CustomColumnConfig(header="BLOCKED")}
+    custom = _build_custom_column_defs(config)
+    result = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom, ["name", "custom_blocked", "state", "link"])
+    names = [d.name for d in result]
+    assert names == ["name", "custom_blocked", "state", "link"]
+    assert result[-1].flexible is True
+    assert all(not d.flexible for d in result[:-1])
+
+
+def test_assemble_column_defs_explicit_order_skips_unknown() -> None:
+    result = _assemble_column_defs(_BOARD_COLUMN_DEFS, [], ["name", "nonexistent", "link"])
+    names = [d.name for d in result]
+    assert names == ["name", "link"]
+
+
+def test_assemble_column_defs_empty_order_falls_back_to_builtins() -> None:
+    result = _assemble_column_defs(_BOARD_COLUMN_DEFS, [], [])
+    assert result == _BOARD_COLUMN_DEFS
+
+
+# =============================================================================
+# Tests for _build_column_palette
+# =============================================================================
+
+
+def test_build_column_palette_returns_entries_and_attrs() -> None:
+    config = {
+        "blocked": CustomColumnConfig(header="BLOCKED", colors={"yes": "light red", "no": "light green"}),
+    }
+    entries, attr_names = _build_column_palette(config)
+    assert ("col_blocked_yes", "light red", "") in entries
+    assert ("col_blocked_yes_focus", "light red,standout", "") in entries
+    assert ("col_blocked_no", "light green", "") in entries
+    assert ("col_blocked_no_focus", "light green,standout", "") in entries
+    assert "col_blocked_yes" in attr_names
+    assert "col_blocked_no" in attr_names
+
+
+def test_build_column_palette_empty_config() -> None:
+    entries, attr_names = _build_column_palette({})
+    assert entries == []
+    assert attr_names == ()
+
+
+def test_build_column_palette_no_colors() -> None:
+    config = {"blocked": CustomColumnConfig(header="BLOCKED")}
+    entries, attr_names = _build_column_palette(config)
+    assert entries == []
+    assert attr_names == ()
+
+
+# =============================================================================
+# Tests for _load_user_columns
+# =============================================================================
+
+
+def test_load_user_columns_no_config_returns_empty() -> None:
+    assert _load_user_columns(_make_mng_ctx_with_plugins()) == {}  # ty: ignore[invalid-argument-type]
+
+
+def test_load_user_columns_handles_dict_values() -> None:
+    config = KanpanPluginConfig.model_construct(
+        enabled=True,
+        commands={},
+        columns={"blocked": {"header": "BLOCKED", "colors": {"yes": "light red"}}},
+    )
+    mng_ctx = _make_mng_ctx_with_plugins({PluginName("kanpan"): config})
+    columns = _load_user_columns(mng_ctx)  # ty: ignore[invalid-argument-type]
+    assert "blocked" in columns
+    assert columns["blocked"].header == "BLOCKED"
+    assert columns["blocked"].colors == {"yes": "light red"}
+
+
+def test_load_user_columns_handles_proper_objects() -> None:
+    config = KanpanPluginConfig(
+        columns={"blocked": CustomColumnConfig(header="BLOCKED")},
+    )
+    mng_ctx = _make_mng_ctx_with_plugins({PluginName("kanpan"): config})
+    columns = _load_user_columns(mng_ctx)  # ty: ignore[invalid-argument-type]
+    assert columns["blocked"].header == "BLOCKED"
+
+
+# =============================================================================
+# Tests for custom columns in board rendering
+# =============================================================================
+
+
+def test_build_board_widgets_with_custom_column_renders_values() -> None:
+    config = {"blocked": CustomColumnConfig(header="BLOCKED")}
+    custom_defs = _build_custom_column_defs(config)
+    column_defs = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom_defs, None)
+    entries = (_make_entry(name="agent-1", labels={"blocked": "yes"}),)
+    walker, _ = _build_board_widgets(_make_snapshot(entries=entries), column_defs=column_defs)
+    texts = _extract_text(list(walker))
+    assert _text_contains(texts, "BLOCKED")
+    assert _text_contains(texts, "yes")
+
+
+def test_build_board_widgets_custom_column_empty_when_no_label() -> None:
+    config = {"blocked": CustomColumnConfig(header="BLOCKED")}
+    custom_defs = _build_custom_column_defs(config)
+    column_defs = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom_defs, None)
+    entries = (_make_entry(name="agent-1"),)
+    walker, _ = _build_board_widgets(_make_snapshot(entries=entries), column_defs=column_defs)
+    texts = _extract_text(list(walker))
+    assert _text_contains(texts, "BLOCKED")
+
+
+def test_build_board_widgets_muted_agent_flattens_custom_column_colors() -> None:
+    config = {"blocked": CustomColumnConfig(header="BLOCKED", colors={"yes": "light red"})}
+    custom_defs = _build_custom_column_defs(config)
+    column_defs = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom_defs, None)
+    entries = (_make_entry(name="agent-1", labels={"blocked": "yes"}, is_muted=True),)
+    walker, index_to_entry = _build_board_widgets(_make_snapshot(entries=entries), column_defs=column_defs)
+    agent_idx = next(iter(index_to_entry.keys()))
+    row_widget = walker[agent_idx]
+    inner_row = row_widget.original_widget
+    for child, _options in inner_row.contents:
+        if isinstance(child, Text):
+            markup = child.get_text()
+            if "yes" in str(markup[0]):
+                assert markup[1][0][0] == "muted"
+
+
+def test_build_board_widgets_custom_column_focus_map_includes_col_attrs() -> None:
+    config = {"blocked": CustomColumnConfig(header="BLOCKED", colors={"yes": "light red"})}
+    custom_defs = _build_custom_column_defs(config)
+    column_defs = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom_defs, None)
+    col_palette, col_attr_names = _build_column_palette(config)
+    entries = (_make_entry(name="agent-1", labels={"blocked": "yes"}),)
+    walker, index_to_entry = _build_board_widgets(
+        _make_snapshot(entries=entries), column_defs=column_defs, col_attr_names=col_attr_names
+    )
+    agent_idx = next(iter(index_to_entry.keys()))
+    attr_map_widget = walker[agent_idx]
+    assert "col_blocked_yes" in attr_map_widget.focus_map
+    assert attr_map_widget.focus_map["col_blocked_yes"] == "col_blocked_yes_focus"
