@@ -296,6 +296,7 @@ def poll_until_all_done(
         )
 
         seen_ids: set[str] = set()
+        changed = False
         for agent_detail in list_result.agents:
             agent_id_str = str(agent_detail.id)
             seen_ids.add(agent_id_str)
@@ -312,6 +313,7 @@ def poll_until_all_done(
             final_details[agent_id_str] = agent_detail
             pending_ids.discard(agent_id_str)
             missing_rounds.pop(agent_id_str, None)
+            changed = True
 
             if agent_detail.state == AgentLifecycleState.WAITING:
                 _stop_agent_on_host(host, agent_detail.id, agent_detail.name)
@@ -323,8 +325,9 @@ def poll_until_all_done(
                 if rounds >= _MISSING_AGENT_MAX_ROUNDS:
                     logger.warning("Agent {} disappeared after {} rounds, treating as error", agent_id_str, rounds)
                     pending_ids.discard(agent_id_str)
+                    changed = True
 
-        if report_path is not None:
+        if changed and report_path is not None:
             current_results = build_current_results(agents, final_details, set(), host)
             generate_html_report(current_results, report_path)
 
