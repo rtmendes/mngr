@@ -200,8 +200,8 @@ def resolve_source_location(
     mng_ctx: MngContext,
     *,
     is_start_desired: bool = True,
-) -> HostLocation:
-    """Parse and resolve source location to a concrete host and path.
+) -> ResolvedSource:
+    """Parse and resolve source location to a concrete host, path, and optional agent ID.
 
     source format: [AGENT | AGENT.HOST[.PROVIDER] | AGENT.HOST[.PROVIDER]:PATH | HOST[.PROVIDER]:PATH | PATH]
 
@@ -214,29 +214,6 @@ def resolve_source_location(
     This is useful because it allows the user to specify the source agent / location in a maximally flexible way.
     This is important for making the CLI easy to use in a variety of scenarios.
     """
-    return resolve_source_detailed(
-        source,
-        source_agent,
-        source_host,
-        source_path,
-        agents_by_host,
-        mng_ctx,
-        is_start_desired=is_start_desired,
-    ).location
-
-
-@log_call
-def resolve_source_detailed(
-    source: str | None,
-    source_agent: str | None,
-    source_host: str | None,
-    source_path: str | None,
-    agents_by_host: Mapping[DiscoveredHost, Sequence[DiscoveredAgent]],
-    mng_ctx: MngContext,
-    *,
-    is_start_desired: bool = True,
-) -> ResolvedSource:
-    """Like resolve_source_location, but also returns the resolved agent ID if any."""
     # Parse the source string into components
     with log_span("Parsing source location"):
         parsed = parse_source_string(source, source_agent, source_host, source_path)

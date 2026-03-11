@@ -33,7 +33,7 @@ from imbue.mng.api.find import ensure_agent_started
 from imbue.mng.api.find import ensure_host_started
 from imbue.mng.api.find import get_host_from_list_by_id
 from imbue.mng.api.find import get_unique_host_from_list_by_name
-from imbue.mng.api.find import resolve_source_detailed
+from imbue.mng.api.find import resolve_source_location
 from imbue.mng.api.providers import get_provider_instance
 from imbue.mng.cli.common_opts import CommonCliOptions
 from imbue.mng.cli.common_opts import add_common_options
@@ -921,7 +921,7 @@ def _resolve_source_location(
 
     # Need full resolution across providers
     agents_by_host = agent_and_host_loader()
-    resolved = resolve_source_detailed(
+    resolved = resolve_source_location(
         opts.source,
         opts.source_agent,
         opts.source_host,
