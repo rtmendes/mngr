@@ -112,12 +112,6 @@ def _resolve_adopt_session(adopt_session_arg: str) -> tuple[str, Path]:
     return adopt_session_arg, matches[0].parent
 
 
-def _copy_directory(host: OnlineHostInterface, source: Path, dest: Path, *, label: str | None = None) -> None:
-    """Copy a directory tree from a local source to dest."""
-    with log_span(label or "Copying {} to {}", source, dest):
-        host.copy_directory(host, source, dest)
-
-
 class ClaudeAgentConfig(AgentTypeConfig):
     """Config for the claude agent type."""
 
@@ -1355,7 +1349,8 @@ class ClaudeAgent(BaseAgent):
 
         session_id, source_project_dir = _resolve_adopt_session(adopt_session_arg)
         dest_project_dir = self.get_claude_config_dir() / "projects" / source_project_dir.name
-        _copy_directory(host, source_project_dir, dest_project_dir, label=f"Adopting session {session_id}")
+        with log_span("Adopting session {}", session_id):
+            host.copy_directory(host, source_project_dir, dest_project_dir)
 
         host.write_text_file(self._get_agent_dir() / "claude_session_id", session_id)
         logger.info("Adopted session {}", session_id)
@@ -1379,7 +1374,8 @@ class ClaudeAgent(BaseAgent):
             logger.debug("No plugin directory in source agent, skipping clone transfer")
             return
 
-        _copy_directory(host, source_plugin_dir, dest_plugin_dir, label="Transferring source plugin data")
+        with log_span("Transferring source plugin data"):
+            host.copy_directory(host, source_plugin_dir, dest_plugin_dir)
 
     def on_destroy(self, host: OnlineHostInterface) -> None:
         """Clean up per-agent credentials and trust entries.
