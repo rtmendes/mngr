@@ -18,6 +18,7 @@ from imbue.concurrency_group.subprocess_utils import FinishedProcess
 from imbue.mng.agents.base_agent import BaseAgent
 from imbue.mng.agents.default_plugins.claude_agent import ClaudeAgent
 from imbue.mng.agents.default_plugins.claude_agent import ClaudeAgentConfig
+from imbue.mng.agents.default_plugins.claude_agent import WaitingReason
 from imbue.mng.agents.default_plugins.claude_agent import _build_install_command_hint
 from imbue.mng.agents.default_plugins.claude_agent import _claude_json_has_primary_api_key
 from imbue.mng.agents.default_plugins.claude_agent import _get_claude_version
@@ -672,10 +673,10 @@ def test_agent_field_generators_returns_correct_structure() -> None:
     assert callable(generators["waiting_reason"])
 
 
-def test_agent_field_generators_waiting_reason_returns_permissions_when_file_exists(
+def test_agent_field_generators_waiting_reason_returns_permissions(
     local_provider: LocalProviderInstance, tmp_path: Path, temp_mng_ctx: MngContext
 ) -> None:
-    """waiting_reason generator returns 'permissions' when permissions_waiting file exists."""
+    """waiting_reason returns PERMISSIONS when permissions_waiting file exists."""
     result = agent_field_generators()
     assert result is not None
     _, generators = result
@@ -687,13 +688,13 @@ def test_agent_field_generators_waiting_reason_returns_permissions_when_file_exi
     agent_dir.mkdir(parents=True, exist_ok=True)
     (agent_dir / "permissions_waiting").touch()
 
-    assert waiting_reason(agent, host) == "permissions"
+    assert waiting_reason(agent, host) == WaitingReason.PERMISSIONS
 
 
-def test_agent_field_generators_waiting_reason_returns_none_when_file_absent(
+def test_agent_field_generators_waiting_reason_returns_end_of_turn(
     local_provider: LocalProviderInstance, tmp_path: Path, temp_mng_ctx: MngContext
 ) -> None:
-    """waiting_reason generator returns None when permissions_waiting file does not exist."""
+    """waiting_reason returns END_OF_TURN when no active file and no permissions_waiting."""
     result = agent_field_generators()
     assert result is not None
     _, generators = result
@@ -703,6 +704,24 @@ def test_agent_field_generators_waiting_reason_returns_none_when_file_absent(
 
     agent_dir = host.host_dir / "agents" / str(agent.id)
     agent_dir.mkdir(parents=True, exist_ok=True)
+
+    assert waiting_reason(agent, host) == WaitingReason.END_OF_TURN
+
+
+def test_agent_field_generators_waiting_reason_returns_none_when_active(
+    local_provider: LocalProviderInstance, tmp_path: Path, temp_mng_ctx: MngContext
+) -> None:
+    """waiting_reason returns None when active file exists (agent is running)."""
+    result = agent_field_generators()
+    assert result is not None
+    _, generators = result
+    waiting_reason = generators["waiting_reason"]
+
+    agent, host = make_claude_agent(local_provider, tmp_path, temp_mng_ctx)
+
+    agent_dir = host.host_dir / "agents" / str(agent.id)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    (agent_dir / "active").touch()
 
     assert waiting_reason(agent, host) is None
 

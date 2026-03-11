@@ -31,7 +31,7 @@ while true; do
   case "$STATE" in
     DONE|STOPPED) echo "Agent 'AGENT_NAME' is ready (state: $STATE)"; break ;;
     WAITING)
-      if [ "$REASON" = "permissions" ]; then
+      if [ "$REASON" = "PERMISSIONS" ]; then
         echo "Agent 'AGENT_NAME' waiting on permissions, continuing to poll..."
         sleep 60
       else
