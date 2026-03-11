@@ -25,7 +25,7 @@ members = [
     "mng-recursive",
     "mng-schedule",
     "mng-test-coder",
-    "mng-test-mapreduce",
+    "mng-tmr",
     "mng-ttyd",
     "mng-tutor",
     "sculptor-web",
@@ -2004,7 +2004,7 @@ requires-dist = [
 ]
 
 [[package]]
-name = "mng-test-mapreduce"
+name = "mng-tmr"
 version = "0.1.0"
 source = { editable = "libs/mng_test_mapreduce" }
 dependencies = [

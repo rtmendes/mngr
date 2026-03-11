@@ -59,6 +59,7 @@ _OUTCOME_COLORS: dict[TestOutcome, str] = {
     TestOutcome.FIX_TEST_FAILED: "rgb(244, 67, 54)",
     TestOutcome.FIX_IMPL_FAILED: "rgb(244, 67, 54)",
     TestOutcome.FIX_UNCERTAIN: "rgb(255, 152, 0)",
+    TestOutcome.TIMED_OUT: "rgb(121, 85, 72)",
     TestOutcome.RUN_SUCCEEDED: "rgb(76, 175, 80)",
     TestOutcome.AGENT_ERROR: "rgb(158, 158, 158)",
 }
@@ -69,6 +70,7 @@ _OUTCOME_GROUP_ORDER: list[TestOutcome] = [
     TestOutcome.FIX_IMPL_FAILED,
     TestOutcome.FIX_TEST_FAILED,
     TestOutcome.FIX_UNCERTAIN,
+    TestOutcome.TIMED_OUT,
     TestOutcome.AGENT_ERROR,
     TestOutcome.RUN_SUCCEEDED,
 ]
@@ -252,18 +254,31 @@ def poll_until_all_done(
     mng_ctx: MngContext,
     poll_interval_seconds: float,
     host: OnlineHostInterface,
-) -> dict[str, AgentDetails]:
-    """Poll agents until all have reached a terminal state.
+    deadline: float,
+) -> tuple[dict[str, AgentDetails], set[str]]:
+    """Poll agents until all have reached a terminal state or the deadline is reached.
 
-    Returns a mapping from agent_id (as string) to AgentDetails.
+    Returns (final_details, timed_out_ids) where final_details maps agent_id
+    strings to AgentDetails, and timed_out_ids is the set of agent_id strings
+    that were still running when the deadline was reached.
+
     Agents that disappear from listings are treated as errors after a grace period.
     Agents entering WAITING state are stopped after being recorded.
+    When the deadline is reached, all pending agents are stopped unconditionally.
     """
     pending_ids = {str(info.agent_id) for info in agents}
+    agent_id_to_info = {str(info.agent_id): info for info in agents}
     final_details: dict[str, AgentDetails] = {}
     missing_rounds: dict[str, int] = {}
 
     while pending_ids:
+        if time.monotonic() >= deadline:
+            logger.warning("Timeout reached with {} agent(s) still pending, stopping them", len(pending_ids))
+            for agent_id_str in pending_ids:
+                info = agent_id_to_info[agent_id_str]
+                _stop_agent_on_host(host, AgentId(agent_id_str), info.agent_name)
+            return final_details, set(pending_ids)
+
         logger.info("Polling {} pending agent(s)...", len(pending_ids))
         list_result = list_agents(
             mng_ctx=mng_ctx,
@@ -292,7 +307,6 @@ def poll_until_all_done(
             if agent_detail.state == AgentLifecycleState.WAITING:
                 _stop_agent_on_host(host, agent_detail.id, agent_detail.name)
 
-        # Track agents that were not seen in this polling round
         for agent_id_str in list(pending_ids):
             if agent_id_str not in seen_ids:
                 rounds = missing_rounds.get(agent_id_str, 0) + 1
@@ -304,7 +318,7 @@ def poll_until_all_done(
         if pending_ids:
             time.sleep(poll_interval_seconds)
 
-    return final_details
+    return final_details, set()
 
 
 def _stop_agent_on_host(host: OnlineHostInterface, agent_id: AgentId, agent_name: AgentName) -> None:
@@ -386,6 +400,7 @@ def _get_agent_from_host(
 def gather_results(
     agents: list[TestAgentInfo],
     final_details: dict[str, AgentDetails],
+    timed_out_ids: set[str],
     host: OnlineHostInterface,
     source_dir: Path,
     cg: ConcurrencyGroup,
@@ -395,6 +410,18 @@ def gather_results(
 
     for agent_info in agents:
         agent_id_str = str(agent_info.agent_id)
+
+        if agent_id_str in timed_out_ids:
+            results.append(
+                TestMapReduceResult(
+                    test_node_id=agent_info.test_node_id,
+                    agent_name=agent_info.agent_name,
+                    outcome=TestOutcome.TIMED_OUT,
+                    summary="Agent was stopped because the timeout was reached.",
+                )
+            )
+            continue
+
         detail = final_details.get(agent_id_str)
 
         if detail is None:
@@ -409,11 +436,8 @@ def gather_results(
             continue
 
         test_result = read_agent_result(detail, host)
-
-        # Always record the branch name from the agent for display
         branch_name = detail.initial_branch
 
-        # Pull the branch for successful fix outcomes
         if test_result.outcome in (TestOutcome.FIX_TEST_SUCCEEDED, TestOutcome.FIX_IMPL_SUCCEEDED):
             pull_agent_branch(detail, host, source_dir, cg)
 

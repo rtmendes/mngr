@@ -1,5 +1,6 @@
 """CLI command for test-mapreduce."""
 
+import time
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -27,6 +28,8 @@ from imbue.mng_test_mapreduce.api import generate_html_report
 from imbue.mng_test_mapreduce.api import launch_all_test_agents
 from imbue.mng_test_mapreduce.api import poll_until_all_done
 
+_DEFAULT_TIMEOUT_SECONDS = 3600.0
+
 
 class TmrCliOptions(CommonCliOptions):
     """Options passed from the CLI to the tmr command."""
@@ -34,6 +37,7 @@ class TmrCliOptions(CommonCliOptions):
     pytest_args: tuple[str, ...]
     agent_type: str
     poll_interval: float
+    timeout: float
     output_html: str | None
     source: str | None
 
@@ -101,6 +105,13 @@ def _emit_report_path(path: Path, output_opts: OutputOptions) -> None:
     help="Seconds between polling cycles when waiting for agents to finish",
 )
 @click.option(
+    "--timeout",
+    default=_DEFAULT_TIMEOUT_SECONDS,
+    show_default=True,
+    type=float,
+    help="Maximum seconds to wait for agents after launch (stops all pending agents when reached)",
+)
+@click.option(
     "--output-html",
     default=None,
     type=click.Path(),
@@ -151,18 +162,21 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
     )
     _emit_agents_launched(len(agent_infos), output_opts)
 
-    # Step 4: Poll until all agents are done
-    final_details = poll_until_all_done(
+    # Step 4: Poll until all agents are done (or timeout)
+    deadline = time.monotonic() + opts.timeout
+    final_details, timed_out_ids = poll_until_all_done(
         agents=agent_infos,
         mng_ctx=mng_ctx,
         poll_interval_seconds=opts.poll_interval,
         host=local_host,
+        deadline=deadline,
     )
 
     # Step 5: Gather results (read result.json, pull branches for fixes)
     results = gather_results(
         agents=agent_infos,
         final_details=final_details,
+        timed_out_ids=timed_out_ids,
         host=local_host,
         source_dir=source_dir,
         cg=mng_ctx.concurrency_group,
@@ -194,7 +208,7 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
 CommandHelpMetadata(
     key="tmr",
     one_line_description="Run and fix tests in parallel using agents (test map-reduce)",
-    synopsis="mng tmr [TEST_PATHS...] [-- PYTEST_FLAGS...] [--agent-type <TYPE>] [--poll-interval <SECS>]",
+    synopsis="mng tmr [TEST_PATHS...] [-- PYTEST_FLAGS...] [--timeout <SECS>] [--agent-type <TYPE>]",
     description="""This command implements a map-reduce pattern for tests:
 
 1. Collects tests using pytest --collect-only, passing through all arguments.

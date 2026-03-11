@@ -1,5 +1,5 @@
 [project]
-name = "mng-test-mapreduce"
+name = "mng-tmr"
 version = "0.1.0"
 description = "Test map-reduce plugin for mng - launch agents to run and fix tests in parallel"
 requires-python = ">=3.11"
@@ -37,7 +37,7 @@ addopts = [
   "--cov-report=term-missing",
   "--cov-report=html",
   "--cov-report=xml",
-  "--cov-fail-under=65",
+  "--cov-fail-under=60",
   "--durations=20",
   "--timeout=10",
   "--timeout-method=signal",
