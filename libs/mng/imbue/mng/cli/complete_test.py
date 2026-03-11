@@ -866,7 +866,7 @@ def test_get_completions_config_key_positional(
         config_keys=["prefix", "logging.console_level", "logging.file_level"],
         positional_completions={
             "config.get": [["config_keys"]],
-            "config.set": [["config_keys"], []],
+            "config.set": [["config_keys"], ["config_value_for_key"]],
             "config.unset": [["config_keys"]],
         },
     )
@@ -973,7 +973,7 @@ def test_get_completions_nargs_limit_reached(
         subcommand_by_command={"config": ["get", "set", "unset", "list"]},
         config_keys=["prefix", "logging.console_level"],
         positional_nargs_by_command={"config.set": 2},
-        positional_completions={"config.set": [["config_keys"], []]},
+        positional_completions={"config.set": [["config_keys"], ["config_value_for_key"]]},
     )
     _write_command_cache(completion_cache_dir, data)
     # "mng config set KEY VALUE <TAB>" -- 2 positional args already typed
@@ -994,7 +994,7 @@ def test_get_completions_nargs_limit_not_reached(
         subcommand_by_command={"config": ["set"]},
         config_keys=["prefix", "logging.console_level"],
         positional_nargs_by_command={"config.set": 2},
-        positional_completions={"config.set": [["config_keys"], []]},
+        positional_completions={"config.set": [["config_keys"], ["config_value_for_key"]]},
     )
     _write_command_cache(completion_cache_dir, data)
     # "mng config set <TAB>" -- 0 positional args typed
@@ -1018,11 +1018,12 @@ def test_get_completions_nargs_interleaved_options(
         flag_options_by_command={},
         config_keys=["prefix", "logging.console_level"],
         positional_nargs_by_command={"config.set": 2},
-        positional_completions={"config.set": [["config_keys"], []]},
+        positional_completions={"config.set": [["config_keys"], ["config_value_for_key"]]},
     )
     _write_command_cache(completion_cache_dir, data)
     # "mng config set --scope user KEY <TAB>" -- only 1 positional (KEY), room for VALUE
-    # Position 1 has empty sources (freeform), so no candidates should be offered.
+    # Position 1 uses config_value_for_key, but no config_value_choices are provided,
+    # so no candidates should be offered.
     set_comp_env("mng config set --scope user prefix ", "6")
 
     result = _get_completions()
@@ -1085,7 +1086,7 @@ def test_get_completions_nargs_limit_after_flag(
         flag_options_by_command={"config.set": ["--verbose"]},
         config_keys=["prefix"],
         positional_nargs_by_command={"config.set": 2},
-        positional_completions={"config.set": [["config_keys"], []]},
+        positional_completions={"config.set": [["config_keys"], ["config_value_for_key"]]},
     )
     _write_command_cache(completion_cache_dir, data)
     # "mng config set KEY VALUE --verbose <TAB>" -- 2 positional args + a flag
@@ -1112,7 +1113,7 @@ def test_get_completions_config_set_pos0_offers_keys(
         subcommand_by_command={"config": ["set"]},
         config_keys=["prefix", "logging.console_level"],
         positional_nargs_by_command={"config.set": 2},
-        positional_completions={"config.set": [["config_keys"], []]},
+        positional_completions={"config.set": [["config_keys"], ["config_value_for_key"]]},
     )
     _write_command_cache(completion_cache_dir, data)
     set_comp_env("mng config set ", "3")
@@ -1123,17 +1124,18 @@ def test_get_completions_config_set_pos0_offers_keys(
     assert "logging.console_level" in result
 
 
-def test_get_completions_config_set_pos1_freeform(
+def test_get_completions_config_set_pos1_string_field_no_completions(
     completion_cache_dir: Path,
     set_comp_env: Callable[[str, str], None],
 ) -> None:
-    """config set prefix <TAB> at position 1 should offer nothing (freeform)."""
+    """config set prefix <TAB> at position 1 should offer nothing (string field, no constrained values)."""
     data = CompletionCacheData(
         commands=["config"],
         subcommand_by_command={"config": ["set"]},
         config_keys=["prefix", "logging.console_level"],
         positional_nargs_by_command={"config.set": 2},
-        positional_completions={"config.set": [["config_keys"], []]},
+        positional_completions={"config.set": [["config_keys"], ["config_value_for_key"]]},
+        config_value_choices={"logging.console_level": ["TRACE", "DEBUG", "INFO"]},
     )
     _write_command_cache(completion_cache_dir, data)
     set_comp_env("mng config set prefix ", "4")
@@ -1200,3 +1202,104 @@ def test_get_completions_rename_pos1_freeform(
     result = _get_completions()
 
     assert result == []
+
+
+# =============================================================================
+# Config value completion tests
+# =============================================================================
+
+
+def test_get_completions_config_set_pos1_enum_values(
+    completion_cache_dir: Path,
+    set_comp_env: Callable[[str, str], None],
+) -> None:
+    """config set logging.console_level <TAB> should offer enum values."""
+    data = CompletionCacheData(
+        commands=["config"],
+        subcommand_by_command={"config": ["set"]},
+        config_keys=["prefix", "logging.console_level"],
+        positional_nargs_by_command={"config.set": 2},
+        positional_completions={"config.set": [["config_keys"], ["config_value_for_key"]]},
+        config_value_choices={
+            "logging.console_level": ["TRACE", "DEBUG", "BUILD", "INFO", "WARN", "ERROR", "NONE"],
+        },
+    )
+    _write_command_cache(completion_cache_dir, data)
+    set_comp_env("mng config set logging.console_level ", "4")
+
+    result = _get_completions()
+
+    assert "TRACE" in result
+    assert "DEBUG" in result
+    assert "INFO" in result
+    assert "NONE" in result
+
+
+def test_get_completions_config_set_pos1_enum_values_with_prefix(
+    completion_cache_dir: Path,
+    set_comp_env: Callable[[str, str], None],
+) -> None:
+    """config set logging.console_level D<TAB> should filter to matching enum values."""
+    data = CompletionCacheData(
+        commands=["config"],
+        subcommand_by_command={"config": ["set"]},
+        config_keys=["prefix", "logging.console_level"],
+        positional_nargs_by_command={"config.set": 2},
+        positional_completions={"config.set": [["config_keys"], ["config_value_for_key"]]},
+        config_value_choices={
+            "logging.console_level": ["TRACE", "DEBUG", "BUILD", "INFO", "WARN", "ERROR", "NONE"],
+        },
+    )
+    _write_command_cache(completion_cache_dir, data)
+    set_comp_env("mng config set logging.console_level D", "4")
+
+    result = _get_completions()
+
+    assert result == ["DEBUG"]
+
+
+def test_get_completions_config_set_pos1_bool_values(
+    completion_cache_dir: Path,
+    set_comp_env: Callable[[str, str], None],
+) -> None:
+    """config set headless <TAB> should offer true/false."""
+    data = CompletionCacheData(
+        commands=["config"],
+        subcommand_by_command={"config": ["set"]},
+        config_keys=["headless", "prefix"],
+        positional_nargs_by_command={"config.set": 2},
+        positional_completions={"config.set": [["config_keys"], ["config_value_for_key"]]},
+        config_value_choices={"headless": ["true", "false"]},
+    )
+    _write_command_cache(completion_cache_dir, data)
+    set_comp_env("mng config set headless ", "4")
+
+    result = _get_completions()
+
+    assert result == ["true", "false"]
+
+
+def test_get_completions_config_set_pos1_with_interleaved_options(
+    completion_cache_dir: Path,
+    set_comp_env: Callable[[str, str], None],
+) -> None:
+    """config set --scope user logging.console_level <TAB> should still offer enum values."""
+    data = CompletionCacheData(
+        commands=["config"],
+        subcommand_by_command={"config": ["set"]},
+        options_by_command={"config.set": ["--scope"]},
+        flag_options_by_command={},
+        config_keys=["logging.console_level"],
+        positional_nargs_by_command={"config.set": 2},
+        positional_completions={"config.set": [["config_keys"], ["config_value_for_key"]]},
+        config_value_choices={
+            "logging.console_level": ["TRACE", "DEBUG", "BUILD", "INFO", "WARN", "ERROR", "NONE"],
+        },
+    )
+    _write_command_cache(completion_cache_dir, data)
+    set_comp_env("mng config set --scope user logging.console_level ", "6")
+
+    result = _get_completions()
+
+    assert "TRACE" in result
+    assert "DEBUG" in result

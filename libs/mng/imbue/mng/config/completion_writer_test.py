@@ -8,8 +8,10 @@ import pytest
 
 from imbue.mng.config.completion_cache import COMPLETION_CACHE_FILENAME
 from imbue.mng.config.completion_cache import get_completion_cache_dir
+from imbue.mng.config.completion_writer import _extract_config_value_choices
 from imbue.mng.config.completion_writer import flatten_dict_keys
 from imbue.mng.config.completion_writer import write_cli_completions_cache
+from imbue.mng.config.data_types import MngConfig
 from imbue.mng.config.data_types import MngContext
 
 
@@ -197,7 +199,7 @@ def test_write_cli_completions_cache_includes_positional_completions_for_config(
     data = _read_cache(completion_cache_dir)
 
     assert data["positional_completions"]["config.get"] == [["config_keys"]]
-    assert data["positional_completions"]["config.set"] == [["config_keys"], []]
+    assert data["positional_completions"]["config.set"] == [["config_keys"], ["config_value_for_key"]]
     assert data["positional_completions"]["config.unset"] == [["config_keys"]]
 
 
@@ -348,3 +350,76 @@ def test_positional_nargs_simple_command(completion_cache_dir: Path) -> None:
 
     assert data["positional_nargs_by_command"]["connect"] == 1
     assert data["positional_nargs_by_command"]["list"] == 0
+
+
+# =============================================================================
+# _extract_config_value_choices tests
+# =============================================================================
+
+
+def test_extract_config_value_choices_includes_bool_fields() -> None:
+    """Bool fields should produce ["true", "false"] choices."""
+    choices = _extract_config_value_choices(MngConfig)
+    assert choices["headless"] == ["true", "false"]
+    assert choices["is_nested_tmux_allowed"] == ["true", "false"]
+
+
+def test_extract_config_value_choices_includes_enum_fields() -> None:
+    """Enum fields should produce their string values as choices."""
+    choices = _extract_config_value_choices(MngConfig)
+    assert "logging.console_level" in choices
+    assert "TRACE" in choices["logging.console_level"]
+    assert "DEBUG" in choices["logging.console_level"]
+    assert "INFO" in choices["logging.console_level"]
+    assert "NONE" in choices["logging.console_level"]
+
+
+def test_extract_config_value_choices_includes_nested_bool_fields() -> None:
+    """Bool fields inside nested models should have dotted key paths."""
+    choices = _extract_config_value_choices(MngConfig)
+    assert choices["logging.is_logging_commands"] == ["true", "false"]
+    assert choices["logging.is_logging_env_vars"] == ["true", "false"]
+
+
+def test_extract_config_value_choices_excludes_string_fields() -> None:
+    """String fields (no constrained values) should not appear in choices."""
+    choices = _extract_config_value_choices(MngConfig)
+    assert "prefix" not in choices
+    assert "connect_command" not in choices
+
+
+def test_write_cli_completions_cache_with_mng_ctx_includes_config_value_choices(
+    completion_cache_dir: Path,
+    temp_mng_ctx: MngContext,
+) -> None:
+    """When mng_ctx is provided, config_value_choices should be populated in the cache."""
+    config_group = click.Group(
+        name="config",
+        commands={
+            "get": click.Command("get"),
+            "set": click.Command("set"),
+        },
+    )
+    group = click.Group(name="test", commands={"config": config_group})
+
+    write_cli_completions_cache(cli_group=group, mng_ctx=temp_mng_ctx)
+    data = _read_cache(completion_cache_dir)
+
+    assert "config_value_choices" in data
+    assert data["config_value_choices"]["headless"] == ["true", "false"]
+    assert "TRACE" in data["config_value_choices"]["logging.console_level"]
+
+
+def test_write_cli_completions_cache_no_mng_ctx_empty_config_value_choices(
+    completion_cache_dir: Path,
+) -> None:
+    """When mng_ctx is None, config_value_choices should be empty."""
+    group = click.Group(
+        name="test",
+        commands={"list": click.Command("list")},
+    )
+
+    write_cli_completions_cache(cli_group=group)
+    data = _read_cache(completion_cache_dir)
+
+    assert data["config_value_choices"] == {}

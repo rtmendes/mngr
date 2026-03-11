@@ -1,14 +1,20 @@
 import json
+import types
+import typing
+from enum import Enum
 from typing import Any
 from typing import Final
+from typing import NamedTuple
 
 import click
 from loguru import logger
+from pydantic import BaseModel
 
 from imbue.mng.agents.agent_registry import list_registered_agent_types
 from imbue.mng.config.completion_cache import COMPLETION_CACHE_FILENAME
 from imbue.mng.config.completion_cache import CompletionCacheData
 from imbue.mng.config.completion_cache import get_completion_cache_dir
+from imbue.mng.config.data_types import MngConfig
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.utils.click_utils import detect_alias_to_canonical
 from imbue.mng.utils.file_utils import atomic_write
@@ -43,7 +49,7 @@ _POSITIONAL_COMPLETION_SUBCOMMAND_SPEC: Final[dict[str, list[list[str]]]] = {
     "plugin.enable": [["plugin_names"]],
     "plugin.disable": [["plugin_names"]],
     "config.get": [["config_keys"]],
-    "config.set": [["config_keys"], []],
+    "config.set": [["config_keys"], ["config_value_for_key"]],
     "config.unset": [["config_keys"]],
 }
 
@@ -181,7 +187,67 @@ def flatten_dict_keys(data: dict[str, Any], prefix: str = "") -> list[str]:
     return sorted(result)
 
 
-def _build_dynamic_completions(mng_ctx: MngContext) -> dict[str, list[str]]:
+def _unwrap_optional(annotation: Any) -> Any:
+    """Unwrap Optional[T] or T | None to get the inner type T.
+
+    Python 3.10+ uses types.UnionType for X | Y syntax;
+    typing.Optional[X] / typing.Union[X, None] uses typing.Union.
+    Returns the annotation unchanged if it is not an Optional wrapper.
+    """
+    if isinstance(annotation, types.UnionType):
+        args = [a for a in annotation.__args__ if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+        return annotation
+    if hasattr(annotation, "__origin__") and annotation.__origin__ is typing.Union:
+        args = [a for a in annotation.__args__ if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+        return annotation
+    return annotation
+
+
+def _extract_config_value_choices(
+    model_class: type[BaseModel],
+    prefix: str = "",
+) -> dict[str, list[str]]:
+    """Introspect a pydantic model's fields to find constrained-value types.
+
+    For bool fields, returns ["true", "false"].
+    For Enum subclass fields, returns the string values of the enum members.
+    For nested BaseModel fields, recurses with a dotted prefix.
+    Handles Optional[T] / T | None annotations by unwrapping to the inner type.
+    """
+    result: dict[str, list[str]] = {}
+    for field_name, field_info in model_class.model_fields.items():
+        key = f"{prefix}{field_name}" if prefix else field_name
+        annotation = _unwrap_optional(field_info.annotation)
+
+        if annotation is bool:
+            result[key] = ["true", "false"]
+        elif isinstance(annotation, type) and issubclass(annotation, Enum):
+            result[key] = [str(e.value) for e in annotation]
+        elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            result.update(_extract_config_value_choices(annotation, f"{key}."))
+        else:
+            # Other types (str, int, Path, list, dict, etc.) have no constrained
+            # value set, so we skip them.
+            continue
+    return result
+
+
+class _DynamicCompletions(NamedTuple):
+    """Dynamic completion data extracted from the runtime context."""
+
+    agent_type_names: list[str]
+    template_names: list[str]
+    provider_names: list[str]
+    plugin_names: list[str]
+    config_keys: list[str]
+    config_value_choices: dict[str, list[str]]
+
+
+def _build_dynamic_completions(mng_ctx: MngContext) -> _DynamicCompletions:
     """Build dynamic completion data from the runtime context.
 
     Extracts agent type names, template names, provider names, plugin names,
@@ -197,14 +263,16 @@ def _build_dynamic_completions(mng_ctx: MngContext) -> dict[str, list[str]]:
     provider_names = sorted(set(["local"] + [str(k) for k in config.providers.keys()]))
     plugin_names = sorted({name for name, _ in mng_ctx.pm.list_name_plugin() if name and not name.startswith("_")})
     config_keys = flatten_dict_keys(config.model_dump(mode="json"))
+    config_value_choices = _extract_config_value_choices(MngConfig)
 
-    return {
-        "agent_type_names": agent_type_names,
-        "template_names": template_names,
-        "provider_names": provider_names,
-        "plugin_names": plugin_names,
-        "config_keys": config_keys,
-    }
+    return _DynamicCompletions(
+        agent_type_names=agent_type_names,
+        template_names=template_names,
+        provider_names=provider_names,
+        plugin_names=plugin_names,
+        config_keys=config_keys,
+        config_value_choices=config_value_choices,
+    )
 
 
 def write_cli_completions_cache(
@@ -302,11 +370,12 @@ def write_cli_completions_cache(
 
         # Inject dynamic choice values from runtime context (config, registries)
         dynamic = _build_dynamic_completions(mng_ctx) if mng_ctx is not None else None
-        if dynamic:
+        if dynamic is not None:
+            dynamic_as_dict = dynamic._asdict()
             for opt_key, data_key in _DYNAMIC_CHOICE_OPTIONS.items():
                 cmd_name = opt_key.split(".")[0]
-                if cmd_name in canonical_names and data_key in dynamic:
-                    option_choices[opt_key] = dynamic[data_key]
+                if cmd_name in canonical_names and data_key in dynamic_as_dict:
+                    option_choices[opt_key] = dynamic_as_dict[data_key]
 
         cache_data = CompletionCacheData(
             commands=all_command_names,
@@ -318,10 +387,11 @@ def write_cli_completions_cache(
             git_branch_options=sorted(git_branch_opts),
             host_name_options=sorted(host_name_opts),
             plugin_name_options=sorted(set(plugin_name_opts)),
-            plugin_names=dynamic.get("plugin_names", []) if dynamic else [],
-            config_keys=dynamic.get("config_keys", []) if dynamic else [],
+            plugin_names=dynamic.plugin_names if dynamic is not None else [],
+            config_keys=dynamic.config_keys if dynamic is not None else [],
             positional_nargs_by_command=positional_nargs_by_command,
             positional_completions=positional_completions,
+            config_value_choices=dynamic.config_value_choices if dynamic is not None else {},
         )
 
         cache_path = get_completion_cache_dir() / COMPLETION_CACHE_FILENAME

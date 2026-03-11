@@ -32,6 +32,7 @@ class _CompletionContext(NamedTuple):
     is_group: bool
     cache: CompletionCacheData
     positional_count: int = 0
+    first_positional_word: str | None = None
 
 
 def _read_cache() -> CompletionCacheData:
@@ -133,6 +134,34 @@ def _count_positional_words(
     return count
 
 
+def _find_first_positional_word(
+    words: list[str],
+    start_index: int,
+    end_index: int,
+    flag_options: list[str],
+    all_options: list[str],
+) -> str | None:
+    """Find the first positional word in words[start_index:end_index].
+
+    Uses the same option-skipping logic as _count_positional_words to
+    correctly skip option names and their values.
+    """
+    all_options_set = set(all_options)
+    i = start_index
+    while i < end_index:
+        word = words[i]
+        if word.startswith("-"):
+            if _is_flag_option(word, flag_options):
+                i += 1
+            elif word in all_options_set:
+                i += 2
+            else:
+                i += 1
+        else:
+            return word
+    return None
+
+
 def _parse_completion_context() -> _CompletionContext | None:
     """Parse COMP_WORDS, COMP_CWORD, and the cache into a structured context.
 
@@ -181,6 +210,10 @@ def _parse_completion_context() -> _CompletionContext | None:
     all_options = cache.options_by_command.get(command_key, [])
     positional_count = _count_positional_words(words, arg_start, comp_cword, flag_options, all_options)
 
+    # Extract the first positional word (needed for context-dependent completions
+    # like config value choices that depend on the key at position 0).
+    first_positional_word = _find_first_positional_word(words, arg_start, comp_cword, flag_options, all_options)
+
     return _CompletionContext(
         incomplete=incomplete,
         comp_cword=comp_cword,
@@ -190,6 +223,7 @@ def _parse_completion_context() -> _CompletionContext | None:
         is_group=is_group,
         cache=cache,
         positional_count=positional_count,
+        first_positional_word=first_positional_word,
     )
 
 
@@ -202,7 +236,9 @@ def _get_positional_candidates_with_nargs_limit(ctx: _CompletionContext) -> list
     nargs_limit = ctx.cache.positional_nargs_by_command.get(ctx.command_key)
     if nargs_limit is not None and ctx.positional_count >= nargs_limit:
         return []
-    return _get_positional_candidates(ctx.command_key, ctx.positional_count, ctx.cache)
+    return _get_positional_candidates(
+        ctx.command_key, ctx.positional_count, ctx.cache, first_positional_word=ctx.first_positional_word
+    )
 
 
 def _get_completions() -> list[str]:
@@ -270,10 +306,15 @@ def _get_option_value_candidates(choice_key: str, cache: CompletionCacheData) ->
     return []
 
 
-def _resolve_sources(sources: list[str], cache: CompletionCacheData) -> list[str]:
+def _resolve_sources(
+    sources: list[str],
+    cache: CompletionCacheData,
+    first_positional_word: str | None = None,
+) -> list[str]:
     """Resolve completion source identifiers to actual candidate values.
 
-    Source identifiers: "agent_names", "host_names", "plugin_names", "config_keys".
+    Source identifiers: "agent_names", "host_names", "plugin_names", "config_keys",
+    "config_value_for_key".
     """
     candidates: list[str] = []
     needs_agents = "agent_names" in sources
@@ -288,10 +329,17 @@ def _resolve_sources(sources: list[str], cache: CompletionCacheData) -> list[str
         candidates.extend(cache.plugin_names)
     if "config_keys" in sources:
         candidates.extend(cache.config_keys)
+    if "config_value_for_key" in sources and first_positional_word:
+        candidates.extend(cache.config_value_choices.get(first_positional_word, []))
     return candidates
 
 
-def _get_positional_candidates(command_key: str, positional_count: int, cache: CompletionCacheData) -> list[str]:
+def _get_positional_candidates(
+    command_key: str,
+    positional_count: int,
+    cache: CompletionCacheData,
+    first_positional_word: str | None = None,
+) -> list[str]:
     """Return positional argument candidates for a specific position.
 
     command_key is the dotted command key (e.g. "destroy", "snapshot.create", or "").
@@ -308,7 +356,7 @@ def _get_positional_candidates(command_key: str, positional_count: int, cache: C
     sources = entries[idx]
     if not sources:
         return []
-    return _resolve_sources(sources, cache)
+    return _resolve_sources(sources, cache, first_positional_word=first_positional_word)
 
 
 def _generate_zsh_script() -> str:
