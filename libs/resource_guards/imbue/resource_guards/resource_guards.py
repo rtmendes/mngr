@@ -322,7 +322,7 @@ _WRAPPER_FACTORIES: dict[str, Callable[[str, dict[str, Any], str], Callable[...,
 
 def create_sdk_method_guard(
     name: str,
-    methods: list[tuple[type, str, str]],
+    methods: list[tuple[type, str, MethodKind]],
 ) -> None:
     """Register an SDK guard that monkeypatches one or more methods on classes.
 
@@ -335,7 +335,7 @@ def create_sdk_method_guard(
         ])
     """
     originals: dict[str, Any] = {}
-    patches: list[tuple[type, str, str, str]] = []  # (cls, method_name, key, kind)
+    patches: list[tuple[type, str, str, MethodKind]] = []  # (cls, method_name, key, kind)
 
     for cls, method_name, kind in methods:
         key = uuid4().hex
