@@ -26,6 +26,7 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.errors import ProcessSetupError
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
+from imbue.imbue_common.pure import pure
 from imbue.mng import hookimpl
 from imbue.mng.agents.base_agent import BaseAgent
 from imbue.mng.agents.default_plugins.claude_config import ClaudeDirectoryNotTrustedError
@@ -60,6 +61,7 @@ from imbue.mng.interfaces.host import CreateAgentOptions
 from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.plugins.hookspecs import OnBeforeCreateArgs
 from imbue.mng.plugins.hookspecs import OptionStackItem
+from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import CommandString
 from imbue.mng.primitives import WorkDirCopyMode
 from imbue.mng.providers.ssh_host_setup import load_resource_script
@@ -78,10 +80,42 @@ _CLAUDE_HOME_SYNC_ITEMS: Final[tuple[str, ...]] = (
     "plugins",
 )
 
-# Whether to symlink (True) or copy (False) user resources from ~/.claude/
-# into local per-agent config dirs. Symlinks avoid duplication and keep the
-# per-agent dir lightweight; copies provide full isolation.
-_SYMLINK_LOCAL_USER_RESOURCES: Final[bool] = True
+
+def _resolve_adopt_session(adopt_session_arg: str) -> tuple[str, Path]:
+    """Resolve an --adopt-session argument to a (session_id, project_dir) pair.
+
+    Accepts either:
+    - A path to a .jsonl file (e.g. ~/.claude/projects/foo/abc123.jsonl)
+    - A session ID string (searched in $CLAUDE_CONFIG_DIR/projects/ or ~/.claude/projects/)
+
+    Returns (session_id, source_project_dir).
+    """
+    if adopt_session_arg.endswith(".jsonl"):
+        session_file = Path(adopt_session_arg).resolve()
+        if not session_file.exists():
+            raise UserInputError(f"Session file not found: {session_file}")
+        return session_file.stem, session_file.parent
+
+    # Search by session ID
+    source_config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+    source_projects_dir = source_config_dir / "projects"
+    if not source_projects_dir.exists():
+        raise UserInputError(f"No projects directory found at {source_projects_dir}. Cannot find session to adopt.")
+
+    matches = list(source_projects_dir.glob(f"*/{adopt_session_arg}.jsonl"))
+    if not matches:
+        raise UserInputError(
+            f"Session {adopt_session_arg} not found in {source_projects_dir}. "
+            "Check that the session ID is correct, or pass a path to the .jsonl file."
+        )
+    if len(matches) > 1:
+        match_list = "\n".join(f"  {m}" for m in matches)
+        raise UserInputError(
+            f"Session {adopt_session_arg} found in multiple project directories:\n{match_list}\n"
+            "Pass the full path to the .jsonl file to specify which one."
+        )
+
+    return adopt_session_arg, matches[0].parent
 
 
 class ClaudeAgentConfig(AgentTypeConfig):
@@ -112,6 +146,12 @@ class ClaudeAgentConfig(AgentTypeConfig):
         description="Extra folder to sync to the repo .claude/ folder in the agent work_dir."
         "(files are transferred after user settings, so they can override)",
     )
+    symlink_user_resources: bool = Field(
+        default=True,
+        description="Whether to symlink (True) or copy (False) user resources from ~/.claude/ "
+        "into local per-agent config dirs. Symlinks avoid duplication and keep the "
+        "per-agent dir lightweight; copies provide full isolation.",
+    )
     convert_macos_credentials: bool = Field(
         default=True,
         description="Whether to convert macOS keychain credentials to flat files for remote hosts",
@@ -140,15 +180,15 @@ class ClaudeAgentConfig(AgentTypeConfig):
     )
 
 
-def _collect_claude_home_dir_files(claude_dir: Path) -> dict[str, Path]:
+def _collect_claude_home_dir_files(claude_dir: Path) -> dict[Path, Path]:
     """Collect files from ~/.claude/ directory items for deployment.
 
-    Returns dict mapping relative path strings (e.g., "settings.json",
-    "skills/my-skill/SKILL.md") to local source paths. Iterates over
+    Returns dict mapping relative paths (e.g., Path("settings.json"),
+    Path("skills/my-skill/SKILL.md")) to local source paths. Iterates over
     _CLAUDE_HOME_SYNC_ITEMS to collect files from both regular files
     and directories (recursively).
     """
-    files: dict[str, Path] = {}
+    files: dict[Path, Path] = {}
     for item_name in _CLAUDE_HOME_SYNC_ITEMS:
         item_path = claude_dir / item_name
         if not item_path.exists():
@@ -156,22 +196,21 @@ def _collect_claude_home_dir_files(claude_dir: Path) -> dict[str, Path]:
         if item_path.is_dir():
             for file_path in item_path.rglob("*"):
                 if file_path.is_file():
-                    relative = str(file_path.relative_to(claude_dir))
-                    files[relative] = file_path
+                    files[file_path.relative_to(claude_dir)] = file_path
         else:
-            files[item_name] = item_path
+            files[Path(item_name)] = item_path
     return files
 
 
 def _build_settings_json_content(sync_local: bool) -> str:
     """Build settings.json content for remote/deploy per-agent config dirs.
 
+    Used for remote hosts and deploy only. Local hosts symlink settings.json
+    from ~/.claude/ instead, preserving the user's exact settings.
+
     Uses the local file as a base when sync_local is True and the file exists,
     otherwise uses generated defaults. Forces skipDangerousModePermissionPrompt=True
     and disables fastMode (not supported via the API on remote hosts).
-
-    Not used for local hosts -- those copy ~/.claude/settings.json as-is to
-    preserve the user's exact settings.
     """
     local_path = Path.home() / ".claude" / "settings.json"
     if sync_local and local_path.exists():
@@ -199,9 +238,11 @@ def _build_claude_json_for_agent(
     Returns the dict so callers can do further modifications (e.g. keychain merge)
     before serializing.
     """
-    local_path = Path.home() / ".claude.json"
-    if sync_local and local_path.exists():
-        data: dict[str, Any] = json.loads(local_path.read_text())
+    if sync_local:
+        local_config = read_claude_config(get_claude_config_path())
+        data: dict[str, Any] = (
+            local_config if local_config else _generate_claude_json(version, current_time=current_time)
+        )
     else:
         data = _generate_claude_json(version, current_time=current_time)
     data["bypassPermissionsModeAccepted"] = True
@@ -401,6 +442,7 @@ def _delete_macos_keychain_credential(label: str, concurrency_group: Concurrency
     return result.returncode == 0
 
 
+@pure
 def _compute_keychain_label_suffix(config_dir: Path) -> str:
     """Compute the keychain label suffix Claude Code uses for a given CLAUDE_CONFIG_DIR.
 
@@ -417,6 +459,7 @@ def _write_macos_keychain_credential(label: str, value: str, concurrency_group: 
     Returns True if the credential was written successfully.
     """
     account = getpass.getuser()
+    # Remove any existing entry first -- add-generic-password fails if one already exists
     try:
         concurrency_group.run_process_to_completion(
             ["security", "delete-generic-password", "-s", label, "-a", account],
@@ -491,19 +534,63 @@ def _provision_remote_credentials(
         logger.debug("Skipped .credentials.json (file does not exist)")
 
 
-def _provision_background_scripts(host: OnlineHostInterface) -> None:
-    """Write the background task scripts to $MNG_HOST_DIR/commands/.
+def _provision_remote_api_key(
+    host: OnlineHostInterface,
+    config_dir: Path,
+    claude_json_data: dict[str, Any],
+    config: "ClaudeAgentConfig",
+    concurrency_group: ConcurrencyGroup,
+) -> None:
+    """Inject primaryApiKey from the macOS keychain into the remote .claude.json if needed.
+
+    Re-reads and rewrites .claude.json on the remote host if an API key is found
+    in the keychain but wasn't in the synced local config.
+    """
+    if claude_json_data.get("primaryApiKey"):
+        return
+    if not config.convert_macos_credentials or not is_macos():
+        return
+    keychain_api_key = _read_macos_keychain_credential("Claude Code", concurrency_group)
+    if keychain_api_key is None:
+        return
+    logger.info("Merging macOS keychain API key into remote per-agent .claude.json...")
+    claude_json_data["primaryApiKey"] = keychain_api_key
+    host.write_text_file(config_dir / ".claude.json", json.dumps(claude_json_data, indent=2) + "\n")
+
+
+def _sync_local_user_resources(host: OnlineHostInterface, config_dir: Path, *, symlink: bool) -> None:
+    """Sync user resources from ~/.claude/ into the per-agent config dir.
+
+    Symlinks or copies settings.json, skills/, agents/, commands/, plugins/
+    depending on the ``symlink`` flag.
+    """
+    home_claude = Path.home() / ".claude"
+    for item_name in _CLAUDE_HOME_SYNC_ITEMS:
+        source = home_claude / item_name
+        if not source.exists():
+            continue
+        dest = config_dir / item_name
+        if symlink:
+            host.execute_command(f"ln -sf {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0)
+        elif source.is_dir():
+            host.execute_command(f"cp -r {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0)
+        else:
+            host.execute_command(f"cp {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0)
+
+
+def _provision_background_scripts(host: OnlineHostInterface, agent_state_dir: Path) -> None:
+    """Write the background task scripts to $MNG_AGENT_STATE_DIR/commands/.
 
     Provisions mng_log.sh (shared logging library), stream_transcript.sh, and claude_background_tasks.sh so they can be
     launched by the agent's assemble_command at runtime.
     """
-    commands_dir = host.host_dir / "commands"
+    commands_dir = agent_state_dir / "commands"
     host.execute_command(f"mkdir -p {shlex.quote(str(commands_dir))}", timeout_seconds=5.0)
 
     for script_name in ("mng_log.sh", "stream_transcript.sh", "claude_background_tasks.sh"):
         script_content = load_resource_script(script_name)
         script_path = commands_dir / script_name
-        with log_span("Writing {} to host", script_name):
+        with log_span("Writing {} to agent state dir", script_name):
             host.write_file(script_path, script_content.encode(), mode="0755")
 
 
@@ -586,16 +673,6 @@ class DialogDetectedError(SendMessageError):
         )
 
 
-class PermissionDialogIndicator(DialogIndicator):
-    """Detects Claude Code permission dialogs (e.g., tool approval prompts)."""
-
-    def get_match_string(self) -> str:
-        return "Do you want to proceed?"
-
-    def get_description(self) -> str:
-        return "permission dialog"
-
-
 class TrustDialogIndicator(DialogIndicator):
     """Detects the Claude Code workspace trust dialog shown on first launch in a directory."""
 
@@ -644,9 +721,22 @@ class ClaudeAgent(BaseAgent):
         """
         return self._get_agent_dir() / "plugin" / "claude" / "anthropic"
 
-    def get_extra_env_vars(self) -> dict[str, str]:
-        """Return CLAUDE_CONFIG_DIR pointing to the per-agent config directory."""
-        return {"CLAUDE_CONFIG_DIR": str(self.get_claude_config_dir())}
+    def modify_env_vars(self, host: OnlineHostInterface, env_vars: dict[str, str]) -> None:
+        """Add CLAUDE_CONFIG_DIR pointing to the per-agent config directory."""
+        env_vars["CLAUDE_CONFIG_DIR"] = str(self.get_claude_config_dir())
+
+    def get_lifecycle_state(self) -> AgentLifecycleState:
+        """Get lifecycle state, accounting for Claude-specific permissions_waiting file.
+
+        The PermissionRequest hook creates a 'permissions_waiting' file when Claude
+        is blocked on a permission dialog. When present, this overrides RUNNING to
+        WAITING since the agent cannot make progress without user intervention.
+        """
+        state = super().get_lifecycle_state()
+        if state == AgentLifecycleState.RUNNING:
+            if self._check_file_exists(self._get_agent_dir() / "permissions_waiting"):
+                return AgentLifecycleState.WAITING
+        return state
 
     def get_expected_process_name(self) -> str:
         """Return 'claude' as the expected process name.
@@ -676,7 +766,6 @@ class ClaudeAgent(BaseAgent):
         return "Claude Code"
 
     _DIALOG_INDICATORS: tuple[DialogIndicator, ...] = (
-        PermissionDialogIndicator(),
         TrustDialogIndicator(),
         ThemeSelectionIndicator(),
         EffortCalloutIndicator(),
@@ -685,10 +774,13 @@ class ClaudeAgent(BaseAgent):
     def _preflight_send_message(self, tmux_target: str) -> None:
         """Check for blocking dialogs before sending a message.
 
-        Captures the tmux pane and checks for known dialog indicators
-        (permission prompts, trust dialogs, theme selection, effort callout).
+        Checks the permissions_waiting file (set by the PermissionRequest hook)
+        and captures the tmux pane for other dialog indicators (trust, theme, effort).
         Raises DialogDetectedError if any are found.
         """
+        if self._check_file_exists(self._get_agent_dir() / "permissions_waiting"):
+            raise DialogDetectedError(str(self.name), "permission dialog")
+
         content = self._capture_pane_content(tmux_target)
         if content is None:
             return
@@ -736,11 +828,11 @@ class ClaudeAgent(BaseAgent):
     def _build_background_tasks_command(self, session_name: str) -> str:
         """Build a shell command that starts the background tasks script.
 
-        The background tasks script (provisioned to $MNG_HOST_DIR/commands/)
+        The background tasks script (provisioned to $MNG_AGENT_STATE_DIR/commands/)
         handles both activity tracking and transcript export. It runs in the
         background while the tmux session is alive.
         """
-        script_path = "$MNG_HOST_DIR/commands/claude_background_tasks.sh"
+        script_path = "$MNG_AGENT_STATE_DIR/commands/claude_background_tasks.sh"
         return f"( {script_path} {shlex.quote(session_name)} ) &"
 
     def assemble_command(
@@ -831,17 +923,24 @@ class ClaudeAgent(BaseAgent):
                     "Use --copy or --clone instead."
                 )
 
-        if host.is_local and not mng_ctx.is_interactive and not mng_ctx.is_auto_approve:
-            # Determine trust path based on copy mode
+        config = self._get_claude_config()
+
+        # Validate dialogs for non-interactive local runs so we fail early with
+        # a clear message. Skip when trust_working_directory is True because
+        # provision() will auto-dismiss all dialogs in that case.
+        if (
+            host.is_local
+            and not mng_ctx.is_interactive
+            and not mng_ctx.is_auto_approve
+            and not config.trust_working_directory
+        ):
             copy_mode = options.git.copy_mode if options.git else None
             if copy_mode in (WorkDirCopyMode.WORKTREE, WorkDirCopyMode.COPY):
-                git_common_dir = find_git_common_dir(self.work_dir, mng_ctx.concurrency_group)
-                trust_path = git_common_dir.parent if git_common_dir is not None else self.work_dir
+                source_path = self._find_git_source_path(mng_ctx.concurrency_group)
+                trust_path = source_path if source_path is not None else self.work_dir
             else:
                 trust_path = self.work_dir
             check_claude_dialogs_dismissed(get_claude_config_path(), trust_path)
-
-        config = self._get_claude_config()
         if not config.check_installation:
             logger.debug("Skipped claude installation check (check_installation=False)")
             return
@@ -988,6 +1087,17 @@ class ClaudeAgent(BaseAgent):
         # The bypass-permissions warning is reliably suppressed by
         # skipDangerousModePermissionPrompt in settings.json instead.
 
+    def _find_git_source_path(self, concurrency_group: ConcurrencyGroup) -> Path | None:
+        """Find the source repo path for the agent's work_dir, if it's a git worktree/copy.
+
+        Returns the parent of the git common dir (the source repo root),
+        or None if work_dir is not inside a git repo.
+        """
+        git_common_dir = find_git_common_dir(self.work_dir, concurrency_group)
+        if git_common_dir is None:
+            return None
+        return git_common_dir.parent
+
     def _setup_per_agent_config_dir(
         self,
         host: OnlineHostInterface,
@@ -1027,37 +1137,16 @@ class ClaudeAgent(BaseAgent):
         config_dir: Path,
     ) -> None:
         """Set up the per-agent config dir on a local host."""
-        # 1. Generate per-agent .claude.json
         claude_json_data = self._build_per_agent_claude_json(options, config)
-        config_json_path = config_dir / ".claude.json"
-        host.write_text_file(config_json_path, json.dumps(claude_json_data, indent=2) + "\n")
+        host.write_text_file(config_dir / ".claude.json", json.dumps(claude_json_data, indent=2) + "\n")
 
-        # 2. Provision credentials into the per-agent config dir
         if config.convert_macos_credentials and is_macos():
             _provision_keychain_credentials(config_dir, self.mng_ctx.concurrency_group)
         else:
             _provision_file_credentials(host, config_dir)
 
-        # 3. Sync user resources from ~/.claude/ into the per-agent config dir
         if config.sync_home_settings:
-            home_claude = Path.home() / ".claude"
-            for item_name in _CLAUDE_HOME_SYNC_ITEMS:
-                source = home_claude / item_name
-                if not source.exists():
-                    continue
-                dest = config_dir / item_name
-                if _SYMLINK_LOCAL_USER_RESOURCES:
-                    host.execute_command(
-                        f"ln -sf {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0
-                    )
-                elif source.is_dir():
-                    host.execute_command(
-                        f"cp -r {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0
-                    )
-                else:
-                    host.execute_command(
-                        f"cp {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0
-                    )
+            _sync_local_user_resources(host, config_dir, symlink=config.symlink_user_resources)
 
     def _setup_remote_config_dir(
         self,
@@ -1081,7 +1170,7 @@ class ClaudeAgent(BaseAgent):
             local_claude_dir = Path.home() / ".claude"
             for relative_path, source_path in _collect_claude_home_dir_files(local_claude_dir).items():
                 # settings.json is handled separately above
-                if relative_path == "settings.json":
+                if relative_path == Path("settings.json"):
                     continue
                 host.write_text_file(config_dir / relative_path, source_path.read_text())
 
@@ -1093,15 +1182,10 @@ class ClaudeAgent(BaseAgent):
         if realpath_result.success and realpath_result.stdout.strip():
             resolved_work_dir = Path(realpath_result.stdout.strip())
         claude_json_data = _build_claude_json_for_agent(config.sync_claude_json, resolved_work_dir, config.version)
-        # If the local file lacks primaryApiKey, try the macOS keychain
-        if not claude_json_data.get("primaryApiKey") and config.convert_macos_credentials and is_macos():
-            keychain_api_key = _read_macos_keychain_credential("Claude Code", mng_ctx.concurrency_group)
-            if keychain_api_key is not None:
-                logger.info("Merging macOS keychain API key into per-agent .claude.json...")
-                claude_json_data["primaryApiKey"] = keychain_api_key
         host.write_text_file(config_dir / ".claude.json", json.dumps(claude_json_data, indent=2) + "\n")
 
-        # 4. Ship credentials
+        # 4. Ship credentials (API key via .claude.json, OAuth via .credentials.json)
+        _provision_remote_api_key(host, config_dir, claude_json_data, config, mng_ctx.concurrency_group)
         if config.sync_claude_credentials:
             _provision_remote_credentials(
                 host, config_dir, mng_ctx.concurrency_group, config.convert_macos_credentials
@@ -1136,9 +1220,9 @@ class ClaudeAgent(BaseAgent):
 
         # For worktree/copy mode, extend trust from the source to the work_dir
         if copy_mode in (WorkDirCopyMode.WORKTREE, WorkDirCopyMode.COPY):
-            git_common_dir = find_git_common_dir(self.work_dir, self.mng_ctx.concurrency_group)
-            if git_common_dir is not None:
-                source_path = git_common_dir.parent.resolve()
+            source_path = self._find_git_source_path(self.mng_ctx.concurrency_group)
+            if source_path is not None:
+                source_path = source_path.resolve()
                 global_projects = global_config.get("projects", {})
                 source_config = find_project_config(global_projects, source_path)
                 if source_config is not None:
@@ -1178,9 +1262,7 @@ class ClaudeAgent(BaseAgent):
             source_path: Path | None = None
             copy_mode = options.git.copy_mode if options.git else None
             if copy_mode in (WorkDirCopyMode.WORKTREE, WorkDirCopyMode.COPY):
-                git_common_dir = find_git_common_dir(self.work_dir, mng_ctx.concurrency_group)
-                if git_common_dir is not None:
-                    source_path = git_common_dir.parent
+                source_path = self._find_git_source_path(mng_ctx.concurrency_group)
 
             if config.trust_working_directory:
                 # Auto-approve all dialogs for agents that opt into trust
@@ -1252,8 +1334,8 @@ class ClaudeAgent(BaseAgent):
         # Configure readiness hooks (for both local and remote hosts)
         self._configure_readiness_hooks(host)
 
-        # Provision background task scripts to the host commands directory
-        _provision_background_scripts(host)
+        # Provision background task scripts to the agent state directory
+        _provision_background_scripts(host, self._get_agent_dir())
 
     def on_after_provisioning(
         self,
@@ -1261,62 +1343,34 @@ class ClaudeAgent(BaseAgent):
         options: CreateAgentOptions,
         mng_ctx: MngContext,
     ) -> None:
-        """Adopt a session when --adopt-session is used.
+        """Adopt sessions when --adopt-session is used.
 
-        Searches the user's Claude config directory for the session by ID,
-        copies the containing project directory into the per-agent config dir,
-        and writes the session ID so --resume picks it up.
+        For each specified session, searches the user's Claude config directory
+        by ID (or reads a .jsonl path directly), copies the containing project
+        directory into the per-agent config dir, and writes the last session ID
+        so --resume picks it up.
         """
-        session_id = options.plugin_data.get("adopt_session")
-        if session_id is None:
+        adopt_session_args: tuple[str, ...] = options.plugin_data.get("adopt_session", ())
+        if not adopt_session_args:
             return
 
-        # Find the session file in the user's Claude config dir
-        source_config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
-        source_projects_dir = source_config_dir / "projects"
-        if not source_projects_dir.exists():
-            raise UserInputError(
-                f"No projects directory found at {source_projects_dir}. Cannot find session to adopt."
-            )
-
-        # Search for the session file across all project directories
-        matches = list(source_projects_dir.glob(f"*/{session_id}.jsonl"))
-        if not matches:
-            raise UserInputError(
-                f"Session {session_id} not found in {source_projects_dir}. Check that the session ID is correct."
-            )
-
-        source_session_file = matches[0]
-        source_project_dir = source_session_file.parent
-
-        # Copy the entire project directory into the per-agent config dir
         config_dir = self.get_claude_config_dir()
-        dest_project_dir = config_dir / "projects" / source_project_dir.name
+        last_session_id: str | None = None
+        copied_project_dirs: set[str] = set()
 
-        with log_span("Adopting session {} from {}", session_id, source_project_dir):
-            if host.is_local:
-                host.execute_command(
-                    f"mkdir -p {shlex.quote(str(dest_project_dir))}",
-                    timeout_seconds=5.0,
-                )
-                result = host.execute_command(
-                    f"rsync -a {shlex.quote(str(source_project_dir))}/ {shlex.quote(str(dest_project_dir))}/",
-                    timeout_seconds=60.0,
-                )
-                if not result.success:
-                    raise PluginMngError(
-                        f"Failed to copy session data from {source_project_dir}: {result.stderr}"
-                    )
-            else:
-                for file_path in source_project_dir.rglob("*"):
-                    if file_path.is_file():
-                        relative_path = file_path.relative_to(source_project_dir)
-                        host.write_file(dest_project_dir / relative_path, file_path.read_bytes())
+        for arg in adopt_session_args:
+            session_id, source_project_dir = _resolve_adopt_session(arg)
+            # Deduplicate project dir copies (multiple sessions may be in the same project)
+            if source_project_dir.name not in copied_project_dirs:
+                dest_project_dir = config_dir / "projects" / source_project_dir.name
+                with log_span("Adopting session {}", session_id):
+                    host.copy_directory(host, source_project_dir, dest_project_dir)
+                copied_project_dirs.add(source_project_dir.name)
+            last_session_id = session_id
 
-        # Write the session ID so --resume picks it up
-        agent_state_dir = self._get_agent_dir()
-        host.write_text_file(agent_state_dir / "claude_session_id", session_id)
-        logger.info("Adopted session {}", session_id)
+        assert last_session_id is not None, "adopt_session_args was non-empty but no session ID was set"
+        host.write_text_file(self._get_agent_dir() / "claude_session_id", last_session_id)
+        logger.info("Adopted {} session(s), active session: {}", len(adopt_session_args), last_session_id)
 
     def _transfer_source_plugin_data(
         self,
@@ -1337,21 +1391,8 @@ class ClaudeAgent(BaseAgent):
             logger.debug("No plugin directory in source agent, skipping clone transfer")
             return
 
-        with log_span("Transferring plugin data from {} to {}", source_plugin_dir, dest_plugin_dir):
-            if host.is_local:
-                result = host.execute_command(
-                    f"rsync -a {shlex.quote(str(source_plugin_dir))}/ {shlex.quote(str(dest_plugin_dir))}/",
-                    timeout_seconds=60.0,
-                )
-                if not result.success:
-                    raise PluginMngError(
-                        f"Failed to transfer plugin data from {source_plugin_dir}: {result.stderr}"
-                    )
-            else:
-                for file_path in source_plugin_dir.rglob("*"):
-                    if file_path.is_file():
-                        relative_path = file_path.relative_to(source_plugin_dir)
-                        host.write_file(dest_plugin_dir / relative_path, file_path.read_bytes())
+        with log_span("Transferring source plugin data"):
+            host.copy_directory(host, source_plugin_dir, dest_plugin_dir)
 
     def on_destroy(self, host: OnlineHostInterface) -> None:
         """Clean up per-agent credentials and trust entries.
@@ -1438,10 +1479,9 @@ def register_cli_options(command_name: str) -> Mapping[str, list[OptionStackItem
             "Behavior": [
                 OptionStackItem(
                     param_decls=("--adopt-session",),
-                    default=None,
-                    help="Adopt an existing Claude Code session by ID into this agent. "
-                    "Searches for the session in the current Claude config directory and "
-                    "copies it into the new agent's per-agent config.",
+                    multiple=True,
+                    help="Adopt an existing Claude Code session into this agent. "
+                    "Accepts a session ID or a path to a .jsonl file [repeatable].",
                 ),
             ]
         }
@@ -1455,8 +1495,8 @@ def on_before_create(args: OnBeforeCreateArgs) -> OnBeforeCreateArgs | None:
     When plugin_data contains "adopt_session":
     - Validates the agent type is claude (or unset/default)
     """
-    adopt_session = args.agent_options.plugin_data.get("adopt_session")
-    if adopt_session is None:
+    adopt_session = args.agent_options.plugin_data.get("adopt_session", ())
+    if not adopt_session:
         return None
 
     agent_type = args.agent_options.agent_type
@@ -1508,9 +1548,9 @@ def get_files_for_deploy(
     if include_user_settings:
         # Skills, agents, commands (skip settings.json, handled above)
         for relative_path, source_path in _collect_claude_home_dir_files(local_claude_dir).items():
-            if relative_path == "settings.json":
+            if relative_path == Path("settings.json"):
                 continue
-            files[Path(f"~/.claude/{relative_path}")] = source_path
+            files[Path("~/.claude") / relative_path] = source_path
 
         # ~/.claude/.credentials.json (OAuth tokens)
         credentials = local_claude_dir / ".credentials.json"
