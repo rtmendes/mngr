@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from imbue.mng.utils.testing import get_short_random_string
 from imbue.skitwright.data_types import CommandResult
+from imbue.skitwright.expect import expect
 from imbue.skitwright.runner import run_command
 from imbue.skitwright.session import Session
 
@@ -93,3 +95,27 @@ def _mng_command(args: str) -> str:
 def mng(e2e: Session) -> MngRunFn:
     """Run 'uv run mng <args>' via the e2e session and return the result."""
     return lambda args, timeout=30.0: e2e.run(_mng_command(args), timeout=timeout)
+
+
+CreateAgentFn = Callable[..., str]
+"""Type alias for create_agent fixture: callable(name_prefix, extra_args="") -> agent_name."""
+
+
+def _do_create_agent(mng: MngRunFn, name_prefix: str, extra_args: str = "") -> str:
+    """Create an mng agent with standard e2e flags and return its name.
+
+    Uses --no-connect --await-ready --no-ensure-clean and a dummy sleep command
+    so the agent stays alive without triggering the tmux attach code path.
+    """
+    agent_name = f"{name_prefix}-{get_short_random_string()}"
+    result = mng(
+        f"create {agent_name} --no-connect --await-ready --agent-cmd 'sleep 99999' --no-ensure-clean {extra_args}",
+    )
+    expect(result).to_succeed()
+    return agent_name
+
+
+@pytest.fixture
+def create_agent(mng: MngRunFn) -> CreateAgentFn:
+    """Fixture that creates an mng agent with standard e2e flags."""
+    return lambda name_prefix, extra_args="": _do_create_agent(mng, name_prefix, extra_args)
