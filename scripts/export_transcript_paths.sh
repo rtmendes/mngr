@@ -9,7 +9,7 @@
 #
 # Session IDs are read from $MNG_AGENT_STATE_DIR/claude_session_id_history.
 # If $MNG_CLAUDE_SESSION_ID is set and not already in the history, it is
-# appended so the current session is always included.
+# included in the output so the current session is always covered.
 # The agent_dir mode scans $CLAUDE_CONFIG_DIR/projects/ for all .jsonl files.
 
 set -euo pipefail
