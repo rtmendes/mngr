@@ -181,6 +181,15 @@ def resolve_agent_reference(
         return matching_agents[0]
 
 
+class ResolvedSource(FrozenModel):
+    """Full resolution result from resolve_source_detailed, including agent info when available."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    location: HostLocation = Field(description="The resolved host and path")
+    agent_id: AgentId | None = Field(default=None, description="The resolved source agent ID, if any")
+
+
 @log_call
 def resolve_source_location(
     source: str | None,
@@ -205,6 +214,29 @@ def resolve_source_location(
     This is useful because it allows the user to specify the source agent / location in a maximally flexible way.
     This is important for making the CLI easy to use in a variety of scenarios.
     """
+    return resolve_source_detailed(
+        source,
+        source_agent,
+        source_host,
+        source_path,
+        agents_by_host,
+        mng_ctx,
+        is_start_desired=is_start_desired,
+    ).location
+
+
+@log_call
+def resolve_source_detailed(
+    source: str | None,
+    source_agent: str | None,
+    source_host: str | None,
+    source_path: str | None,
+    agents_by_host: Mapping[DiscoveredHost, Sequence[DiscoveredAgent]],
+    mng_ctx: MngContext,
+    *,
+    is_start_desired: bool = True,
+) -> ResolvedSource:
+    """Like resolve_source_location, but also returns the resolved agent ID if any."""
     # Parse the source string into components
     with log_span("Parsing source location"):
         parsed = parse_source_string(source, source_agent, source_host, source_path)
@@ -253,9 +285,9 @@ def resolve_source_location(
         agent_work_dir_if_available=agent_work_dir,
     )
 
-    return HostLocation(
-        host=online_host,
-        path=resolved_path,
+    return ResolvedSource(
+        location=HostLocation(host=online_host, path=resolved_path),
+        agent_id=resolved_agent.agent_id if resolved_agent is not None else None,
     )
 
 

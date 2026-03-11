@@ -33,7 +33,7 @@ from imbue.mng.api.find import ensure_agent_started
 from imbue.mng.api.find import ensure_host_started
 from imbue.mng.api.find import get_host_from_list_by_id
 from imbue.mng.api.find import get_unique_host_from_list_by_name
-from imbue.mng.api.find import resolve_source_location
+from imbue.mng.api.find import resolve_source_detailed
 from imbue.mng.api.providers import get_provider_instance
 from imbue.mng.cli.common_opts import CommonCliOptions
 from imbue.mng.cli.common_opts import add_common_options
@@ -486,6 +486,7 @@ class _CreateSetup(FrozenModel):
     editor_session: EditorSession | None = Field(default=None, description="Editor session for --edit-message")
     agent_and_host_loader: _CachedAgentHostLoader = Field(description="Lazy loader for agents grouped by host")
     source_location: HostLocation = Field(description="Resolved source location")
+    source_agent_id: AgentId | None = Field(default=None, description="Resolved source agent ID (when --from-agent)")
     project_name: str = Field(description="Project name for agent labels")
     host_lifecycle: HostLifecycleOptions = Field(description="Host lifecycle options")
     plugin_cli_params: dict[str, Any] = Field(
@@ -535,7 +536,9 @@ def _setup_create(
     agent_and_host_loader = _CachedAgentHostLoader(mng_ctx=mng_ctx)
 
     # figure out where the source data is coming from
-    source_location = _resolve_source_location(opts, agent_and_host_loader, mng_ctx, is_start_desired=opts.start_host)
+    source_location, source_agent_id = _resolve_source_location(
+        opts, agent_and_host_loader, mng_ctx, is_start_desired=opts.start_host
+    )
 
     # figure out the project label, in case we need that
     project_name = _parse_project_name(source_location, opts, mng_ctx)
@@ -548,6 +551,7 @@ def _setup_create(
         editor_session=editor_session,
         agent_and_host_loader=agent_and_host_loader,
         source_location=source_location,
+        source_agent_id=source_agent_id,
         project_name=project_name,
         host_lifecycle=host_lifecycle,
         plugin_cli_params=plugin_cli_params or {},
@@ -569,12 +573,10 @@ def _create_agent(
         lifecycle=setup.host_lifecycle,
     )
 
-    # Resolve source agent state dir if cloning from an existing agent
+    # Compute source agent state dir from the resolved agent ID
     source_agent_state_dir: Path | None = None
-    if opts.source_agent is not None:
-        source_agent_state_dir = _find_source_agent_state_dir(
-            opts.source_agent, setup.agent_and_host_loader, setup.source_location.host
-        )
+    if setup.source_agent_id is not None:
+        source_agent_state_dir = get_agent_state_dir_path(setup.source_location.host.host_dir, setup.source_agent_id)
 
     # Parse agent options
     agent_opts, has_explicit_base = _parse_agent_opts(
@@ -875,7 +877,12 @@ def _resolve_source_location(
     mng_ctx: MngContext,
     *,
     is_start_desired: bool,
-) -> HostLocation:
+) -> tuple[HostLocation, AgentId | None]:
+    """Resolve the source location and optionally the source agent ID.
+
+    Returns (source_location, source_agent_id) where source_agent_id is set
+    when the source was resolved from an agent (--from-agent / --source-agent).
+    """
     # figure out the agent source data
     if opts.source is None and opts.source_agent is None and opts.source_host is None:
         # easy, source location is on current host
@@ -886,47 +893,44 @@ def _resolve_source_location(
         provider = get_provider_instance(LOCAL_PROVIDER_NAME, mng_ctx)
         host = provider.get_host(HostName("localhost"))
         online_host, _ = ensure_host_started(host, is_start_desired=is_start_desired, provider=provider)
-        source_location = HostLocation(
-            host=online_host,
-            path=Path(source_path),
-        )
-    else:
-        # Parse the source first to check if it's just a local path.
-        # When --source is a plain filesystem path (no agent or host component),
-        # we can resolve it locally without loading all providers. Loading all
-        # providers is expensive and can fail if a provider's external service
-        # (e.g. Docker daemon, Modal credentials) is unavailable.
-        parsed = _parse_source_string(opts.source) if opts.source else None
-        has_agent_or_host = (
-            (parsed is not None and (parsed.agent_name is not None or parsed.host_name is not None))
-            or opts.source_agent is not None
-            or opts.source_host is not None
-        )
-        if not has_agent_or_host:
-            # Just a local path -- use the fast local-provider path
-            if parsed is not None and parsed.path is not None:
-                source_path = str(parsed.path)
-            elif opts.source_path is not None:
-                source_path = opts.source_path
-            else:
-                source_path = os.getcwd()
-            provider = get_provider_instance(LOCAL_PROVIDER_NAME, mng_ctx)
-            host = provider.get_host(HostName("localhost"))
-            online_host, _ = ensure_host_started(host, is_start_desired=is_start_desired, provider=provider)
-            source_location = HostLocation(host=online_host, path=Path(source_path))
+        return HostLocation(host=online_host, path=Path(source_path)), None
+
+    # Parse the source first to check if it's just a local path.
+    # When --source is a plain filesystem path (no agent or host component),
+    # we can resolve it locally without loading all providers. Loading all
+    # providers is expensive and can fail if a provider's external service
+    # (e.g. Docker daemon, Modal credentials) is unavailable.
+    parsed = _parse_source_string(opts.source) if opts.source else None
+    has_agent_or_host = (
+        (parsed is not None and (parsed.agent_name is not None or parsed.host_name is not None))
+        or opts.source_agent is not None
+        or opts.source_host is not None
+    )
+    if not has_agent_or_host:
+        # Just a local path -- use the fast local-provider path
+        if parsed is not None and parsed.path is not None:
+            source_path = str(parsed.path)
+        elif opts.source_path is not None:
+            source_path = opts.source_path
         else:
-            # Need full resolution across providers
-            agents_by_host = agent_and_host_loader()
-            source_location = resolve_source_location(
-                opts.source,
-                opts.source_agent,
-                opts.source_host,
-                opts.source_path,
-                agents_by_host,
-                mng_ctx,
-                is_start_desired=is_start_desired,
-            )
-    return source_location
+            source_path = os.getcwd()
+        provider = get_provider_instance(LOCAL_PROVIDER_NAME, mng_ctx)
+        host = provider.get_host(HostName("localhost"))
+        online_host, _ = ensure_host_started(host, is_start_desired=is_start_desired, provider=provider)
+        return HostLocation(host=online_host, path=Path(source_path)), None
+
+    # Need full resolution across providers
+    agents_by_host = agent_and_host_loader()
+    resolved = resolve_source_detailed(
+        opts.source,
+        opts.source_agent,
+        opts.source_host,
+        opts.source_path,
+        agents_by_host,
+        mng_ctx,
+        is_start_desired=is_start_desired,
+    )
+    return resolved.location, resolved.agent_id
 
 
 def _resolve_target_host(
@@ -948,20 +952,6 @@ def _resolve_target_host(
     else:
         resolved_target_host = target_host
     return resolved_target_host
-
-
-def _find_source_agent_state_dir(
-    agent_identifier: str,
-    agent_and_host_loader: Callable[[], dict[DiscoveredHost, list[DiscoveredAgent]]],
-    source_host: OnlineHostInterface,
-) -> Path | None:
-    """Find the state directory for a source agent by name or ID."""
-    agents_by_host = agent_and_host_loader()
-    for _host_ref, agent_refs in agents_by_host.items():
-        for agent_ref in agent_refs:
-            if str(agent_ref.agent_id) == agent_identifier or str(agent_ref.agent_name) == agent_identifier:
-                return get_agent_state_dir_path(source_host.host_dir, agent_ref.agent_id)
-    return None
 
 
 def _find_source_location(
