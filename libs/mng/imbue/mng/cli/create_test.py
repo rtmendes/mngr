@@ -864,15 +864,19 @@ def test_parse_agent_address_rejects_multiple_dots() -> None:
         _parse_agent_address("@host.provider.extra")
 
 
-def test_parse_agent_address_rejects_trailing_dot() -> None:
-    """A trailing dot (host name with empty provider) is rejected."""
-    with pytest.raises(UserInputError, match="trailing dot"):
-        _parse_agent_address("foo@host.")
+def test_parse_agent_address_trailing_dot_means_host_only() -> None:
+    """A trailing dot 'host.' means host name with no provider."""
+    result = _parse_agent_address("foo@host.")
+
+    assert result.agent_name == AgentName("foo")
+    assert result.host_name == HostName("host")
+    assert result.provider_name is None
 
 
-def test_parse_agent_address_bare_dot_is_valid() -> None:
-    """A lone dot '@.' means no host and no provider (both empty), not a trailing dot."""
+def test_parse_agent_address_bare_dot_means_nothing() -> None:
+    """'@.' means no host and no provider (both parts empty)."""
     result = _parse_agent_address("foo@.")
+
     assert result.agent_name == AgentName("foo")
     assert result.host_name is None
     assert result.provider_name is None

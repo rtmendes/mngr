@@ -1418,7 +1418,7 @@ def _parse_agent_address(address_str: str) -> AgentAddress:
     agent_name = AgentName(agent_part) if agent_part else None
 
     if not host_part:
-        # "foo@" -> just agent name, trailing @ is ignored
+        # "foo@" -> just agent name, no host component
         return AgentAddress(agent_name=agent_name)
 
     dot_count = host_part.count(".")
@@ -1430,11 +1430,6 @@ def _parse_agent_address(address_str: str) -> AgentAddress:
 
     if dot_count == 1:
         host_str, provider_str = host_part.split(".", 1)
-        if host_str and not provider_str:
-            raise UserInputError(
-                f"Invalid agent address: trailing dot in '{host_part}'. "
-                "Did you mean HOST (without dot) or HOST.PROVIDER?"
-            )
         host_name = HostName(host_str) if host_str else None
         provider_name = ProviderInstanceName(provider_str) if provider_str else None
     else:
