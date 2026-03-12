@@ -27,6 +27,7 @@ from imbue.mng.api.observe import make_full_agent_state_event
 from imbue.mng.api.observe import release_observe_lock
 from imbue.mng.config.data_types import MngConfig
 from imbue.mng.config.data_types import MngContext
+from imbue.mng.interfaces.data_types import AgentDetails
 from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.utils.testing import make_test_agent_details
 from imbue.mng.utils.testing import make_test_discovered_agent
@@ -207,16 +208,26 @@ def test_serialize_agent_for_comparison_includes_meaningful_fields() -> None:
 
 
 def test_volatile_field_only_change_does_not_trigger_event(temp_mng_ctx: MngContext) -> None:
-    """Verify that changing only volatile fields does not trigger an AGENT_STATE event."""
+    """Verify that changing only volatile fields does not trigger an additional AGENT_STATE event."""
     observer = AgentObserver(mng_ctx=temp_mng_ctx, mng_binary="/bin/true")
     agent = make_test_agent_details(name="stable-agent", state=AgentLifecycleState.RUNNING)
 
     # First emit sets the base state
     observer._emit_agent_state(agent)
 
-    # Serialize what the observer stored and verify a second identical agent is not "changed"
-    comparison_json = AgentObserver._serialize_agent_for_comparison(agent)
-    assert observer._last_agent_json_by_id[str(agent.id)] == comparison_json
+    # Build a second agent dict with different volatile fields but identical non-volatile fields
+    second_dict = agent.model_dump(mode="json")
+    second_dict["runtime_seconds"] = 99999.0
+    second_dict["idle_seconds"] = 12345.0
+    second_agent = AgentDetails.model_validate(second_dict)
+
+    # The comparison serialization should be identical despite volatile field differences
+    original_json = AgentObserver._serialize_agent_for_comparison(agent)
+    modified_json = AgentObserver._serialize_agent_for_comparison(second_agent)
+    assert original_json == modified_json
+
+    # The stored tracking JSON should match, so _emit_agent_state would not consider it changed
+    assert observer._last_agent_json_by_id[str(agent.id)] == modified_json
 
 
 # === History Loading Tests ===

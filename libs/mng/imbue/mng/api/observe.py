@@ -56,6 +56,13 @@ _VOLATILE_AGENT_FIELDS: Final[frozenset[str]] = frozenset(
     }
 )
 
+
+def _serialize_dict_for_comparison(data: dict[str, object]) -> str:
+    """Filter volatile fields from a dict and serialize to deterministic JSON for comparison."""
+    filtered = {k: v for k, v in data.items() if k not in _VOLATILE_AGENT_FIELDS}
+    return json.dumps(filtered, sort_keys=True)
+
+
 OBSERVE_EVENT_SOURCE: Final[EventSource] = EventSource("mng/agents")
 AGENT_STATES_EVENT_SOURCE: Final[EventSource] = EventSource("mng/agent_states")
 OBSERVE_LOCK_FILENAME: Final[str] = "observe_lock"
@@ -257,8 +264,7 @@ def load_base_state_from_history(
         agent_id = agent_dict.get("id")
         if agent_id is not None:
             agent_id_str = str(agent_id)
-            filtered = {k: v for k, v in agent_dict.items() if k not in _VOLATILE_AGENT_FIELDS}
-            last_agent_json_by_id[agent_id_str] = json.dumps(filtered, sort_keys=True)
+            last_agent_json_by_id[agent_id_str] = _serialize_dict_for_comparison(agent_dict)
             state = agent_dict.get("state")
             if state is not None:
                 last_agent_state_by_id[agent_id_str] = str(state)
@@ -508,10 +514,7 @@ class AgentObserver(MutableModel):
         Excludes continuously-changing timing fields so that events are only emitted
         for meaningful state changes, not for the mere passage of time.
         """
-        data = agent.model_dump(mode="json")
-        for field in _VOLATILE_AGENT_FIELDS:
-            data.pop(field, None)
-        return json.dumps(data, sort_keys=True)
+        return _serialize_dict_for_comparison(agent.model_dump(mode="json"))
 
     def _fetch_and_emit_agent_state_for_host(self, host_id_str: str) -> None:
         """Fetch current agent state for a host and emit events for changed agents."""
