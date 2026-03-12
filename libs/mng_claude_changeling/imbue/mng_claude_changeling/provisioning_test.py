@@ -722,7 +722,7 @@ def test_create_daily_conversation_runs_inject_and_records_tagged_event() -> Non
     # Should run llm inject with the greeting and LLM_USER_PATH
     inject_commands = [c for c in host.executed_commands if "llm inject" in c]
     assert len(inject_commands) == 1
-    assert "Elena" in inject_commands[0]
+    assert "Selene" in inject_commands[0]
     assert "claude-opus-4.6" in inject_commands[0]
     assert "LLM_USER_PATH=" in inject_commands[0]
 

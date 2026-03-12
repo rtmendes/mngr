@@ -4,8 +4,7 @@
 Serves a web interface where all views (conversations, terminal) are displayed
 in iframes below a persistent navigation header:
 - Main page: shows the web chat for the most recent conversation (or conversation list if none)
-- Chat page: web-based chat with SSE streaming for real-time responses, with
-  optional Inworld WebRTC audio for TTS playback of streamed responses
+- Chat page: web-based chat with SSE streaming for real-time responses
 - Text Chat page: embeds a specific conversation's ttyd in an iframe (legacy terminal chat)
 - Conversations page: lists all conversations with links to open them
 - Terminal page: embeds the primary agent terminal in an iframe
@@ -15,11 +14,6 @@ The web chat uses SSE (Server-Sent Events) for streaming LLM responses and
 receives messages via POST requests from the frontend (plain JavaScript).
 It uses the llm library for calling LLMs and storing results.
 
-When INWORLD_API_KEY is set, the chat page includes an "Audio" toggle button
-that establishes a WebRTC connection to Inworld for real-time TTS. After each
-LLM response finishes streaming, the text is sent to Inworld via a data channel
-and played back as audio through the WebRTC audio track.
-
 The text chat (legacy) uses companion ttyd processes for terminal-based chat.
 
 Environment:
@@ -28,7 +22,6 @@ Environment:
     MNG_HOST_NAME        - Name of the host this agent runs on
     MNG_AGENT_WORK_DIR   - Agent work directory (contains changelings.toml)
     LLM_USER_PATH        - LLM data directory (contains logs.db)
-    INWORLD_API_KEY      - (optional) Inworld API key for WebRTC TTS audio
 """
 
 import hashlib
@@ -42,8 +35,6 @@ import sys
 import threading
 import time
 import tomllib
-import urllib.error
-import urllib.request
 from datetime import datetime
 from datetime import timezone
 from http.server import BaseHTTPRequestHandler
@@ -76,11 +67,6 @@ if not _LLM_USER_PATH:
 
 AGENT_WORK_DIR: Final[str] = os.environ.get("MNG_AGENT_WORK_DIR", "")
 
-# -- Inworld configuration --
-
-INWORLD_API_KEY: Final[str] = os.environ.get("INWORLD_API_KEY", "")
-INWORLD_PROXY: Final[str] = "https://api.inworld.ai"
-
 # -- Constants --
 
 WEB_SERVER_NAME: Final[str] = "web"
@@ -104,43 +90,6 @@ def _html_escape(text: str) -> str:
 def _log(message: str) -> None:
     sys.stderr.write(f"[web-server] {message}\n")
     sys.stderr.flush()
-
-
-# -- Inworld API --
-
-
-def _get_inworld_config() -> dict[str, Any]:
-    """Return Inworld configuration for browser WebRTC audio.
-
-    Fetches ICE servers from Inworld's API and returns the full config
-    needed by the browser to establish a WebRTC connection for TTS.
-    Returns an empty config (no api_key) if INWORLD_API_KEY is not set.
-
-    Security: the API key is returned to the browser so it can establish
-    a direct WebRTC connection to Inworld. This server is intended to run
-    on localhost or within a restricted network (behind the mng forwarding
-    proxy with its own access controls), not exposed to the public internet.
-    """
-    if not INWORLD_API_KEY:
-        return {"api_key": "", "ice_servers": [], "url": ""}
-
-    ice_servers: list[dict[str, Any]] = []
-    try:
-        req = urllib.request.Request(
-            f"{INWORLD_PROXY}/v1/realtime/ice-servers",
-            headers={"Authorization": f"Bearer {INWORLD_API_KEY}"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-            ice_servers = data.get("ice_servers", [])
-    except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
-        _log(f"Failed to fetch ICE servers from Inworld: {e}")
-
-    return {
-        "api_key": INWORLD_API_KEY,
-        "ice_servers": ice_servers,
-        "url": f"{INWORLD_PROXY}/v1/realtime/calls",
-    }
 
 
 # -- Server registration --
@@ -993,7 +942,7 @@ def _render_web_chat_page(agent_name: str, conversation_id: str) -> str:
         "</div>"
     )
     audio_btn = (
-        '<button id="audio-btn" class="icon-btn" onclick="toggleAudio()" title="Toggle audio">'
+        '<button id="audio-btn" class="icon-btn" onclick="alert(\'Not implemented\')" title="Toggle audio">'
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
         ' stroke-linecap="round" stroke-linejoin="round">'
         '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>'
@@ -1121,11 +1070,11 @@ function renderMarkdown(text) {{
 
 function inlineMarkdown(html) {{
   // Links: [text](url)
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   // Bold: **text**
-  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>");
   // Italic: *text*
-  html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  html = html.replace(/\\*([^*]+)\\*/g, "<em>$1</em>");
   return html;
 }}
 
@@ -1242,9 +1191,6 @@ function sendMessage() {{
   }});
 
   function finishStreaming() {{
-    if (fullText && audioEnabled) {{
-      speakText(fullText);
-    }}
     isStreaming = false;
     var ind = document.getElementById("streaming-indicator");
     if (ind) ind.remove();
@@ -1266,261 +1212,9 @@ textarea.addEventListener("keydown", function(e) {{
   }}
 }});
 
-// Demo mode: wait for audio before loading history
-var isDemoMode = new URLSearchParams(window.location.search).get("demo") === "true";
-
-function loadHistoryAndSpeak() {{
-  fetch("api/chat/history?cid=" + encodeURIComponent(conversationId))
-    .then(function(r) {{ return r.json(); }})
-    .then(function(data) {{
-      if (data.messages) {{
-        var spokenText = [];
-        for (var i = 0; i < data.messages.length; i++) {{
-          appendMessage(data.messages[i].role, data.messages[i].content);
-          if (data.messages[i].role === "assistant") {{
-            spokenText.push(data.messages[i].content);
-          }}
-        }}
-        if (spokenText.length > 0) {{
-          speakText(spokenText.join("\\n"));
-        }}
-      }}
-    }})
-    .catch(function(e) {{ console.error("Failed to load history:", e); }});
-}}
-
-// Load history on page load (unless demo mode, which waits for audio)
-if (conversationId && conversationId !== "NEW" && !isDemoMode) {{
+// Load history on page load
+if (conversationId && conversationId !== "NEW") {{
   loadHistory();
-}}
-
-// -- Audio (Inworld WebRTC TTS) --
-var audioEnabled = false;
-var audioPc = null;
-var audioDc = null;
-var audioEl = null;
-var audioCtx = null;
-
-function toggleAudio() {{
-  if (audioEnabled) {{
-    stopAudio();
-  }} else {{
-    startAudio();
-  }}
-}}
-
-async function startAudio() {{
-  var btn = document.getElementById("audio-btn");
-  btn.disabled = true;
-  btn.title = "Connecting...";
-  try {{
-    console.log("[audio] Fetching audio config...");
-    var resp = await fetch("api/audio/config");
-    var cfg = await resp.json();
-    console.log("[audio] Config received:", JSON.stringify({{
-      has_api_key: !!cfg.api_key,
-      ice_server_count: cfg.ice_servers ? cfg.ice_servers.length : 0,
-      url: cfg.url
-    }}));
-    if (!cfg.api_key) {{
-      console.warn("[audio] No API key in config");
-      btn.title = "No API key";
-      setTimeout(function() {{ btn.title = "Toggle audio"; btn.disabled = false; }}, 2000);
-      return;
-    }}
-
-    // Pre-create audio element during user gesture to satisfy autoplay policy.
-    // Browsers allow play() if initiated from a click handler.
-    audioEl = document.createElement("audio");
-    audioEl.autoplay = true;
-    audioEl.className = "inworld-audio";
-    document.body.appendChild(audioEl);
-    console.log("[audio] Audio element pre-created during user gesture");
-
-    audioPc = new RTCPeerConnection({{ iceServers: cfg.ice_servers }});
-    console.log("[audio] RTCPeerConnection created");
-
-    // Log all connection state changes
-    audioPc.onconnectionstatechange = function() {{
-      console.log("[audio] Connection state:", audioPc.connectionState);
-    }};
-    audioPc.oniceconnectionstatechange = function() {{
-      console.log("[audio] ICE connection state:", audioPc.iceConnectionState);
-    }};
-    audioPc.onsignalingstatechange = function() {{
-      console.log("[audio] Signaling state:", audioPc.signalingState);
-    }};
-
-    audioDc = audioPc.createDataChannel("oai-events", {{ ordered: true }});
-    console.log("[audio] Data channel created");
-
-    // Create a silent audio track to send to Inworld. A recvonly transceiver
-    // negotiates correctly in SDP, but Inworld's media server won't send RTP
-    // audio packets unless it receives incoming audio first. Sending silence
-    // satisfies this requirement without needing microphone access.
-    audioCtx = new AudioContext();
-    var silentDest = audioCtx.createMediaStreamDestination();
-    var silentTrack = silentDest.stream.getAudioTracks()[0];
-    audioPc.addTrack(silentTrack, silentDest.stream);
-    console.log("[audio] Added silent audio send track (no microphone needed)");
-
-    audioPc.ontrack = function(e) {{
-      console.log("[audio] ontrack fired! kind:", e.track.kind, "readyState:", e.track.readyState, "muted:", e.track.muted, "enabled:", e.track.enabled);
-      console.log("[audio] Track settings:", JSON.stringify(e.track.getSettings()));
-      // Attach incoming audio track to pre-created element
-      audioEl.srcObject = new MediaStream([e.track]);
-      audioEl.play().then(function() {{
-        console.log("[audio] Audio element playing successfully");
-      }}).catch(function(err) {{
-        console.error("[audio] Audio element play() failed:", err);
-      }});
-      // Monitor track state
-      e.track.onmute = function() {{ console.log("[audio] Track muted"); }};
-      e.track.onunmute = function() {{ console.log("[audio] Track unmuted"); }};
-      e.track.onended = function() {{ console.log("[audio] Track ended"); }};
-    }};
-
-    audioDc.onopen = function() {{
-      console.log("[audio] Data channel opened, sending session.update");
-      var sessionConfig = {{
-        type: "session.update",
-        session: {{
-          type: "realtime",
-          model: "openai/gpt-4o-mini",
-          instructions: "Read the user message aloud exactly as written. Do not add or change anything.",
-          output_modalities: ["audio"],
-          audio: {{
-            output: {{ model: "inworld-tts-1.5-max", voice: "Selene", "speakingRate": 1.4, "temperature": 0.8 }}
-          }}
-        }}
-      }};
-      console.log("[audio] session.update payload:", JSON.stringify(sessionConfig));
-      audioDc.send(JSON.stringify(sessionConfig));
-      audioEnabled = true;
-      btn.title = "Audio on";
-      btn.disabled = false;
-      btn.classList.add("active");
-      console.log("[audio] Audio enabled, waiting for speakText calls");
-      if (isDemoMode && conversationId && conversationId !== "NEW") {{
-        console.log("[audio] Demo mode: loading history now that audio is ready");
-        loadHistoryAndSpeak();
-      }}
-    }};
-    audioDc.onclose = function() {{
-      console.log("[audio] Data channel closed");
-      stopAudio();
-    }};
-    audioDc.onerror = function(e) {{
-      console.error("[audio] Data channel error:", e);
-      stopAudio();
-    }};
-    audioDc.onmessage = function(e) {{
-      try {{
-        var msg = JSON.parse(e.data);
-        console.log("[audio] DC message:", msg.type, msg);
-      }} catch(err) {{
-        console.log("[audio] DC raw message:", e.data);
-      }}
-    }};
-
-    console.log("[audio] Creating SDP offer...");
-    var offer = await audioPc.createOffer();
-    await audioPc.setLocalDescription(offer);
-    console.log("[audio] Local description set, gathering ICE candidates...");
-    console.log("[audio] ICE gathering state:", audioPc.iceGatheringState);
-
-    await new Promise(function(resolve) {{
-      if (audioPc.iceGatheringState === "complete") {{
-        console.log("[audio] ICE gathering already complete");
-        resolve();
-        return;
-      }}
-      var t;
-      var done = function() {{ clearTimeout(t); console.log("[audio] ICE gathering done"); resolve(); }};
-      audioPc.onicecandidate = function(e) {{
-        if (e.candidate) {{
-          console.log("[audio] ICE candidate:", e.candidate.candidate.substring(0, 80));
-          clearTimeout(t);
-          t = setTimeout(done, 500);
-        }} else {{
-          console.log("[audio] ICE candidate gathering complete (null candidate)");
-        }}
-      }};
-      audioPc.onicegatheringstatechange = function() {{
-        console.log("[audio] ICE gathering state changed:", audioPc.iceGatheringState);
-        if (audioPc.iceGatheringState === "complete") done();
-      }};
-      setTimeout(done, 3000);
-    }});
-
-    console.log("[audio] Sending SDP offer to Inworld...");
-    console.log("[audio] SDP offer media lines:", audioPc.localDescription.sdp.split("\\n").filter(function(l) {{ return l.startsWith("m="); }}));
-    var res = await fetch(cfg.url, {{
-      method: "POST",
-      headers: {{ "Content-Type": "application/sdp", "Authorization": "Bearer " + cfg.api_key }},
-      body: audioPc.localDescription.sdp
-    }});
-    console.log("[audio] SDP response status:", res.status);
-    if (!res.ok) {{
-      var errBody = await res.text();
-      console.error("[audio] SDP exchange failed:", res.status, errBody);
-      throw new Error("SDP exchange failed: " + res.status + " " + errBody);
-    }}
-    var answerSdp = await res.text();
-    console.log("[audio] SDP answer media lines:", answerSdp.split("\\n").filter(function(l) {{ return l.startsWith("m=") || l.startsWith("a=sendonly") || l.startsWith("a=recvonly") || l.startsWith("a=sendrecv"); }}));
-    await audioPc.setRemoteDescription({{ type: "answer", sdp: answerSdp }});
-    console.log("[audio] Remote description set, connection state:", audioPc.connectionState, "ICE state:", audioPc.iceConnectionState);
-  }} catch(e) {{
-    console.error("[audio] Audio start failed:", e);
-    stopAudio();
-  }}
-}}
-
-function stopAudio() {{
-  console.log("[audio] stopAudio called");
-  if (audioPc) {{
-    console.log("[audio] Closing peer connection, state was:", audioPc.connectionState);
-    audioPc.close();
-  }}
-  if (audioCtx) {{ audioCtx.close().catch(function() {{}}); audioCtx = null; }}
-  if (audioEl) {{ audioEl.remove(); audioEl = null; }}
-  document.querySelectorAll(".inworld-audio").forEach(function(a) {{ a.remove(); }});
-  audioPc = null;
-  audioDc = null;
-  audioEnabled = false;
-  var btn = document.getElementById("audio-btn");
-  if (btn) {{ btn.title = "Toggle audio"; btn.disabled = false; btn.classList.remove("active"); }}
-}}
-
-function speakText(text) {{
-  // Strip blockquote lines and markdown syntax so TTS reads clean text
-  text = text.split("\\n").filter(function(l) {{ return !l.startsWith("> "); }}).join("\\n");
-  // Strip bold/italic markers and link syntax
-  text = text.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1");
-  text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  console.log("[audio] speakText called, audioEnabled:", audioEnabled, "dc readyState:", audioDc ? audioDc.readyState : "null", "text length:", text.length);
-  if (!audioEnabled || !audioDc || audioDc.readyState !== "open" || !text.trim()) {{
-    console.log("[audio] speakText bailing out: enabled=" + audioEnabled + " dc=" + (audioDc ? audioDc.readyState : "null") + " textEmpty=" + !text.trim());
-    return;
-  }}
-  var createMsg = {{
-    type: "conversation.item.create",
-    item: {{ type: "message", role: "user", content: [{{ type: "input_text", text: text }}] }}
-  }};
-  console.log("[audio] Sending conversation.item.create, text preview:", text.substring(0, 100));
-  audioDc.send(JSON.stringify(createMsg));
-  console.log("[audio] Sending response.create");
-  audioDc.send(JSON.stringify({{ type: "response.create" }}));
-  console.log("[audio] speakText commands sent, waiting for audio...");
-  // Log PC state
-  if (audioPc) {{
-    console.log("[audio] PC state: connection=" + audioPc.connectionState + " ice=" + audioPc.iceConnectionState + " signaling=" + audioPc.signalingState);
-    var receivers = audioPc.getReceivers();
-    console.log("[audio] Receivers:", receivers.length);
-    receivers.forEach(function(r, i) {{
-      console.log("[audio] Receiver " + i + ": kind=" + r.track.kind + " readyState=" + r.track.readyState + " muted=" + r.track.muted + " enabled=" + r.track.enabled);
-    }});
-  }}
 }}
 </script>
 </body>
@@ -1592,8 +1286,6 @@ class _WebServerHandler(BaseHTTPRequestHandler):
             else:
                 messages = _read_message_history(conversation_id)
                 self._send_json({"messages": messages, "conversation_id": conversation_id})
-        elif path == "/api/audio/config":
-            self._send_json(_get_inworld_config())
         elif path == "/api/conversations":
             conversations = _read_conversations()
             self._send_json({"conversations": conversations})
