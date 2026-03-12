@@ -234,7 +234,16 @@ def cmd_assemble(args: argparse.Namespace) -> None:
 def cmd_from_vet(args: argparse.Namespace) -> None:
     vet_repo = _resolve_vet_repo(args.vet_repo)
     if vet_repo is None:
-        print("error: vet repo not found. Use --vet-repo or set VET_REPO env var.", file=sys.stderr)
+        print(
+            "error: vet repo not found.\n"
+            "\n"
+            "You modified a vet-generated file (scripts/branch-categories.md or\n"
+            "scripts/conversation-categories.md). To validate against vet, set VET_REPO\n"
+            "or regenerate with:\n"
+            "\n"
+            "    uv run python scripts/generate_verify_skills.py from-vet --vet-repo /path/to/vet\n",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
     vet_repo = vet_repo.resolve()
     if not (vet_repo / "vet").is_dir():
