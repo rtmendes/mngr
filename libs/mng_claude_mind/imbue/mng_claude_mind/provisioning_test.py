@@ -12,8 +12,6 @@ from imbue.mng_claude_mind.conftest import StubCommandResult
 from imbue.mng_claude_mind.conftest import StubHost
 from imbue.mng_claude_mind.conftest import create_mind_conversations_table_in_test_db
 from imbue.mng_claude_mind.conftest import write_conversation_to_db
-from imbue.mng_claude_mind.data_types import ProvisioningSettings
-from imbue.mng_claude_mind.provisioning import MIND_CONVERSATIONS_TABLE_SQL
 from imbue.mng_claude_mind.provisioning import TalkingRoleConstraintError
 from imbue.mng_claude_mind.provisioning import build_memory_sync_hooks_config
 from imbue.mng_claude_mind.provisioning import compute_claude_project_dir_name
