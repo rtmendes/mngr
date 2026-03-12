@@ -58,7 +58,7 @@ class LoggingConfig(FrozenModel):
     )
     event_type: NonEmptyStr = Field(
         default=NonEmptyStr(_DEFAULT_EVENT_TYPE),
-        description="Event type for JSONL log events (e.g. 'mng', 'changelings')",
+        description="Event type for JSONL log events (e.g. 'mng', 'minds')",
     )
     event_source: NonEmptyStr = Field(
         default=NonEmptyStr(_DEFAULT_EVENT_SOURCE),
