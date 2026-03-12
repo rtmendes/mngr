@@ -70,7 +70,7 @@ def _create_agent(
     args = [
         "create",
         name,
-        "--agent-type",
+        "--type",
         "claude",
         "--no-connect",
         "--no-ensure-clean",
