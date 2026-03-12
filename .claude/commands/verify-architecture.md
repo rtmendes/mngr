@@ -13,9 +13,12 @@ If you do not already know what the changes on this branch are supposed to accom
 
 Write a CONCISE description of the problem the branch is trying to solve, based on your knowledge of the work done so far. This description must contain ONLY the problem -- not any part of the solution. Describe what should work differently afterward, what is currently broken, or what structural problem exists in the code. Do not mention any mechanism, technique, data structure, or approach used to fix it. The analysis agent needs to evaluate the approach independently, so any hint about the implementation will bias its judgment.
 
-## Phase 2: Validate the Diff
+## Context
 
-Base branch: !`echo "${GIT_BASE_BRANCH:-main}"`
+- Default base branch: !`echo "${GIT_BASE_BRANCH:-main}"` (use this unless the user specified a different one)
+- Current HEAD: !`git rev-parse HEAD`
+
+## Phase 2: Validate the Diff
 
 Read the diff validation prompt from `.claude/skills/autofix/validate-diff.md`. Spawn an Agent (`subagent_type: "general-purpose"`, `model: "haiku"`) with that prompt, providing the base branch name and the problem description from Phase 1.
 
@@ -26,18 +29,16 @@ Based on the agent's response:
 
 ## Phase 3: Prepare a Worktree
 
-Resolve both commit hashes now, before spawning anything:
+Resolve the base branch commit hash:
 
 ```bash
-base_hash=$(git rev-parse {base_branch})
-tip_hash=$(git rev-parse HEAD)
+git rev-parse {base_branch}
 ```
 
-Create a temporary worktree with a unique name so the analysis agent can read the pre-change codebase:
+Create a temporary worktree so the analysis agent can read the pre-change codebase:
 
 ```bash
-worktree_path="/tmp/arch-verify-$(head -c 8 /dev/urandom | xxd -p)"
-git worktree add --detach $worktree_path $base_hash
+git worktree add --detach /tmp/arch-verify-!`head -c 8 /dev/urandom | xxd -p` {base_hash}
 ```
 
 ## Phase 4: Spawn Analysis Agent
