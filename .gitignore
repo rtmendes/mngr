@@ -254,11 +254,10 @@ current.tar.gz
 # Changelings deploy-time build artifacts
 .changelings/
 
-# Autofix plans, verification markers, and stuck tracking (session artifacts)
+# Autofix plans and verification markers (session artifacts)
 .autofix/plans/
-.autofix/blocked_commits
 
-# Stuck agent tracking for main stop hook (CI failures escape valve)
+# Stuck agent tracking (stop hook escape valve)
 .claude/blocked_stop_commits
 
 # Demo recordings (asciinema .cast, .txt, and scripts)

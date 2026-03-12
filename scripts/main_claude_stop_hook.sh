@@ -192,6 +192,14 @@ if [[ "$IS_INFORMATIONAL_ONLY" == "true" ]]; then
     exit 0
 fi
 
+# Gate on autofix verification before creating PR
+_log_to_file "INFO" "Checking autofix verification..."
+"$SCRIPT_DIR/run_autofix.sh" && AUTOFIX_EXIT=0 || AUTOFIX_EXIT=$?
+if [[ $AUTOFIX_EXIT -ne 0 ]]; then
+    _log_to_file "INFO" "Autofix gate blocked (exit $AUTOFIX_EXIT)"
+    exit $AUTOFIX_EXIT
+fi
+
 # Export variables needed by child scripts
 export TMUX_SESSION SCRIPT_DIR CURRENT_BRANCH BASE_BRANCH
 export RED GREEN YELLOW NC
