@@ -51,6 +51,17 @@ class PrInfo(FrozenModel):
     is_draft: bool = Field(description="Whether the PR is a draft")
 
 
+class ColumnData(FrozenModel):
+    """Data sources available to custom columns for a single agent."""
+
+    labels: dict[str, str] = Field(default_factory=dict, description="Agent labels (key-value pairs)")
+    plugin_data: dict[str, Any] = Field(default_factory=dict, description="Plugin fields from AgentDetails.plugin")
+    plugin_state: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Plugin data from certified data (data.json) and reported state dir files",
+    )
+
+
 class AgentBoardEntry(FrozenModel):
     """A single agent entry on the pankan board."""
 
@@ -65,12 +76,7 @@ class AgentBoardEntry(FrozenModel):
     )
     create_pr_url: str | None = Field(default=None, description="URL to create a new PR for this branch")
     is_muted: bool = Field(default=False, description="Whether the agent is muted (relegated to bottom)")
-    labels: dict[str, str] = Field(default_factory=dict, description="Agent labels (key-value pairs)")
-    plugin_data: dict[str, Any] = Field(default_factory=dict, description="Plugin fields from AgentDetails.plugin")
-    plugin_state: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Plugin data from certified data (data.json) and reported state dir files",
-    )
+    column_data: ColumnData = Field(default_factory=ColumnData, description="Data sources for custom columns")
 
 
 class BoardSnapshot(FrozenModel):

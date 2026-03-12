@@ -17,8 +17,10 @@ from imbue.mng.interfaces.data_types import AgentDetails
 from imbue.mng.primitives import AgentName
 from imbue.mng.primitives import ErrorBehavior
 from imbue.mng.primitives import LOCAL_PROVIDER_NAME
+from imbue.mng.primitives import ProviderInstanceName
 from imbue.mng_kanpan.data_types import AgentBoardEntry
 from imbue.mng_kanpan.data_types import BoardSnapshot
+from imbue.mng_kanpan.data_types import ColumnData
 from imbue.mng_kanpan.data_types import GitHubData
 from imbue.mng_kanpan.data_types import PrInfo
 from imbue.mng_kanpan.data_types import PrState
@@ -50,7 +52,7 @@ def fetch_agent_snapshot(
     for error in result.errors:
         errors.append(f"{error.exception_type}: {error.message}")
 
-    muted_agents, plugin_data_by_agent = _load_agent_metadata(mng_ctx)
+    muted_agents, plugin_state_by_agent = _load_agent_metadata(mng_ctx)
 
     entries: list[AgentBoardEntry] = []
     for agent in result.agents:
@@ -67,9 +69,11 @@ def fetch_agent_snapshot(
                 branch=branch,
                 commits_ahead=commits_ahead,
                 is_muted=agent.name in muted_agents,
-                labels=agent.labels,
-                plugin_data=agent.plugin,
-                plugin_state=plugin_data_by_agent.get(agent.name, {}),
+                column_data=ColumnData(
+                    labels=agent.labels,
+                    plugin_data=agent.plugin,
+                    plugin_state=plugin_state_by_agent.get(agent.name, {}),
+                ),
             )
         )
 
@@ -159,7 +163,7 @@ def fetch_board_snapshot(
     for error in result.errors:
         errors.append(f"{error.exception_type}: {error.message}")
 
-    muted_agents, plugin_data_by_agent = _load_agent_metadata(mng_ctx)
+    muted_agents, plugin_state_by_agent = _load_agent_metadata(mng_ctx)
 
     # Fetch remote data (GitHub PRs)
     remote = fetch_github_data(mng_ctx, result.agents)
@@ -188,9 +192,11 @@ def fetch_board_snapshot(
                 commits_ahead=commits_ahead,
                 create_pr_url=create_pr_url,
                 is_muted=agent.name in muted_agents,
-                labels=agent.labels,
-                plugin_data=agent.plugin,
-                plugin_state=plugin_data_by_agent.get(agent.name, {}),
+                column_data=ColumnData(
+                    labels=agent.labels,
+                    plugin_data=agent.plugin,
+                    plugin_state=plugin_state_by_agent.get(agent.name, {}),
+                ),
             )
         )
 
@@ -223,50 +229,71 @@ def toggle_agent_mute(mng_ctx: MngContext, agent_name: AgentName) -> bool:
 def _load_agent_metadata(
     mng_ctx: MngContext,
 ) -> tuple[set[AgentName], dict[AgentName, dict[str, Any]]]:
-    """Load muted agents and per-agent plugin data from discovery.
+    """Load muted agents and per-agent plugin state from discovery.
 
-    Plugin data is collected from two sources:
-    - Certified data (data.json "plugin" section, available for all agents)
-    - Reported plugin files ($state_dir/plugin/<name>/<file>, local agents only)
-
-    Reported files override certified data for the same plugin/field.
-    Returns (muted_agents, plugin_data_by_agent).
+    Returns (muted_agents, plugin_state_by_agent).
     """
     muted: set[AgentName] = set()
-    plugin_data_by_agent: dict[AgentName, dict[str, Any]] = {}
+    plugin_state_by_agent: dict[AgentName, dict[str, Any]] = {}
     try:
         agents_by_host, providers = discover_all_hosts_and_agents(mng_ctx)
         provider_by_name = {p.name: p for p in providers}
         for host_ref, agent_refs in agents_by_host.items():
             provider = provider_by_name.get(host_ref.provider_name)
             for agent_ref in agent_refs:
-                certified_plugin: dict[str, Any] = dict(agent_ref.certified_data.get("plugin", {}))
-                if certified_plugin.get(PLUGIN_NAME, {}).get("muted", False):
+                if _is_agent_muted(agent_ref.certified_data):
                     muted.add(agent_ref.agent_name)
-
-                # Read reported plugin files from state dir (local agents only)
-                if provider is not None and host_ref.provider_name == LOCAL_PROVIDER_NAME:
-                    reported = _read_reported_plugin_files(provider.host_dir, agent_ref.agent_id)
-                    for pname, fields in reported.items():
-                        if pname not in certified_plugin:
-                            certified_plugin[pname] = {}
-                        certified_plugin[pname].update(fields)
-
-                if certified_plugin:
-                    plugin_data_by_agent[agent_ref.agent_name] = certified_plugin
+                plugin_state = _collect_plugin_state(
+                    agent_ref.certified_data, agent_ref.agent_id, host_ref.provider_name, provider
+                )
+                if plugin_state:
+                    plugin_state_by_agent[agent_ref.agent_name] = plugin_state
     except Exception as e:
         logger.debug("Failed to load agent metadata: {}", e)
-    return muted, plugin_data_by_agent
+    return muted, plugin_state_by_agent
+
+
+def _is_agent_muted(certified_data: Any) -> bool:
+    """Check if an agent is muted based on its certified data."""
+    return certified_data.get("plugin", {}).get(PLUGIN_NAME, {}).get("muted", False)
+
+
+def _collect_plugin_state(
+    certified_data: Any,
+    agent_id: Any,
+    provider_name: ProviderInstanceName,
+    provider: Any,
+) -> dict[str, Any]:
+    """Collect plugin state from certified data and reported state dir files.
+
+    Certified data comes from data.json. Reported files (local agents only)
+    override certified data for the same plugin/field.
+    """
+    result: dict[str, Any] = dict(certified_data.get("plugin", {}))
+    if provider is not None and provider_name == LOCAL_PROVIDER_NAME:
+        reported = _read_reported_plugin_files(provider.host_dir, agent_id)
+        for pname, fields in reported.items():
+            if pname not in result:
+                result[pname] = {}
+            result[pname].update(fields)
+    return result
+
+
+def _get_agent_plugin_dir(host_dir: Path, agent_id: object) -> Path:
+    """Construct the path to an agent's plugin state directory.
+
+    Mirrors BaseAgent._get_agent_dir() / "plugin" from libs/mng.
+    """
+    return host_dir / "agents" / str(agent_id) / "plugin"
 
 
 def _read_reported_plugin_files(host_dir: Path, agent_id: object) -> dict[str, dict[str, str]]:
     """Read all reported plugin files from an agent's state directory.
 
-    Returns {plugin_name: {filename: content}} for files found under
-    $host_dir/agents/$agent_id/plugin/<plugin_name>/<filename>.
+    Returns {plugin_name: {filename: content}}.
     """
     result: dict[str, dict[str, str]] = {}
-    plugin_dir = host_dir / "agents" / str(agent_id) / "plugin"
+    plugin_dir = _get_agent_plugin_dir(host_dir, agent_id)
     if not plugin_dir.is_dir():
         return result
     try:

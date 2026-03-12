@@ -204,8 +204,8 @@ class _KanpanState(MutableModel):
     retry_cooldown_seconds: float = 60.0
     # Palette attr names for mark indicators (e.g. "mark_d", "mark_p")
     mark_attr_names: tuple[str, ...] = ()
-    # Custom column definitions (empty means use builtin defaults only)
-    column_defs: list["_ColumnDef"] = []
+    # Column definitions (builtins + any custom columns from config)
+    column_defs: list["_ColumnDef"] = []  # populated from _BOARD_COLUMN_DEFS at startup
     # Palette attr names for custom column colors
     col_attr_names: tuple[str, ...] = ()
     # CEL filter expressions passed from CLI
@@ -993,9 +993,9 @@ def _custom_col_text(
 ) -> str:
     """Get the text value for a custom column from labels, plugin_data, or plugin_state."""
     if plugin_name is not None:
-        data = entry.plugin_data if source == "agent" else entry.plugin_state
+        data = entry.column_data.plugin_data if source == "agent" else entry.column_data.plugin_state
         return str(data.get(plugin_name, {}).get(field or "", ""))
-    return entry.labels.get(col_key, "")
+    return entry.column_data.labels.get(col_key, "")
 
 
 def _custom_col_markup(
@@ -1129,30 +1129,27 @@ _BOARD_COLUMN_DEFS: list[_ColumnDef] = [
 
 def _compute_board_column_widths(
     entries: tuple[AgentBoardEntry, ...],
-    column_defs: list[_ColumnDef] | None = None,
+    column_defs: list[_ColumnDef],
 ) -> dict[str, int]:
     """Compute column widths based on content, like tabulate auto-sizing.
 
     Each column is sized to fit the widest value (or header), with the
     last column (link) left flexible to fill remaining terminal space.
     """
-    defs = column_defs if column_defs is not None else _BOARD_COLUMN_DEFS
-    # For each fixed-width column, take the wider of the header and the widest cell value
     return {
         defn.name: max(len(defn.header), *(len(defn.text_fn(e)) for e in entries)) if entries else len(defn.header)
-        for defn in defs
+        for defn in column_defs
         if not defn.flexible
     }
 
 
 def _build_column_header(
     widths: dict[str, int],
-    column_defs: list[_ColumnDef] | None = None,
+    column_defs: list[_ColumnDef],
 ) -> Columns:
     """Build the column header row for the board."""
-    defs = column_defs if column_defs is not None else _BOARD_COLUMN_DEFS
     cols: list[tuple[int, Text] | Text] = []
-    for defn in defs:
+    for defn in column_defs:
         if defn.flexible:
             cols.append(Text(defn.header))
         else:
@@ -1164,17 +1161,16 @@ def _build_agent_row(
     entry: AgentBoardEntry,
     section: BoardSection,
     widths: dict[str, int],
+    column_defs: list[_ColumnDef],
     mark: str | None = None,
-    column_defs: list[_ColumnDef] | None = None,
 ) -> _SelectableRow:
     """Build a columnar urwid widget for a single agent row.
 
     Muted agents are rendered entirely in gray. Mark indicators (d/p) replace
     the leading spaces in the name column.
     """
-    defs = column_defs if column_defs is not None else _BOARD_COLUMN_DEFS
     raw_markup: dict[str, str | tuple[Hashable, str] | list[str | tuple[Hashable, str]]] = {
-        defn.name: defn.markup_fn(entry) for defn in defs
+        defn.name: defn.markup_fn(entry) for defn in column_defs
     }
     raw_markup["name"] = _get_name_cell_markup(entry, mark)
 
@@ -1187,7 +1183,7 @@ def _build_agent_row(
         cell_markup = raw_markup
 
     cols: list[tuple[int, Text] | Text] = []
-    for defn in defs:
+    for defn in column_defs:
         widget = Text(cell_markup[defn.name])
         if defn.flexible:
             cols.append(widget)
@@ -1212,9 +1208,9 @@ def _format_section_heading(section: BoardSection, count: int) -> list[str | tup
 @pure
 def _build_board_widgets(
     snapshot: BoardSnapshot | None,
+    column_defs: list[_ColumnDef],
     marks: dict[AgentName, str] | None = None,
     mark_attr_names: tuple[str, ...] = (),
-    column_defs: list[_ColumnDef] | None = None,
     col_attr_names: tuple[str, ...] = (),
 ) -> tuple[SimpleFocusListWalker[AttrMap | Text | Divider | Columns], dict[int, AgentBoardEntry]]:
     """Build the urwid widget list from a BoardSnapshot, grouped by PR state.
@@ -1264,7 +1260,7 @@ def _build_board_widgets(
 
         for entry in entries:
             mark = marks.get(entry.name) if marks else None
-            item = _build_agent_row(entry, section, col_widths, mark, column_defs)
+            item = _build_agent_row(entry, section, col_widths, column_defs, mark)
             idx = len(walker)
             focus_map: dict[str | None, str] = {None: "reversed"}
             for attr in _AGENT_LINE_ATTRS + mark_attr_names + col_attr_names:
@@ -1297,9 +1293,9 @@ def _refresh_display(state: _KanpanState) -> None:
 
     walker, state.index_to_entry = _build_board_widgets(
         state.snapshot,
+        state.column_defs,
         state.marks or None,
         state.mark_attr_names,
-        state.column_defs or None,
         state.col_attr_names,
     )
     state.list_walker = walker

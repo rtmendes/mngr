@@ -23,6 +23,7 @@ from imbue.mng_kanpan.data_types import AgentBoardEntry
 from imbue.mng_kanpan.data_types import BoardSection
 from imbue.mng_kanpan.data_types import BoardSnapshot
 from imbue.mng_kanpan.data_types import CheckStatus
+from imbue.mng_kanpan.data_types import ColumnData
 from imbue.mng_kanpan.data_types import CustomColumnConfig
 from imbue.mng_kanpan.data_types import CustomCommand
 from imbue.mng_kanpan.data_types import KanpanPluginConfig
@@ -116,9 +117,11 @@ def _make_entry(
         commits_ahead=commits_ahead,
         create_pr_url=create_pr_url,
         is_muted=is_muted,
-        labels=labels or {},
-        plugin_data=plugin_data or {},
-        plugin_state=plugin_state or {},
+        column_data=ColumnData(
+            labels=labels or {},
+            plugin_data=plugin_data or {},
+            plugin_state=plugin_state or {},
+        ),
     )
 
 
@@ -183,7 +186,7 @@ def _make_state_with_focus(
     """Create a state with board widgets built and focus on the first agent."""
     snapshot = _make_snapshot(entries=entries)
     state = _make_state(snapshot=snapshot, commands=commands)
-    walker, index_to_entry = _build_board_widgets(snapshot)
+    walker, index_to_entry = _build_board_widgets(snapshot, _BOARD_COLUMN_DEFS)
     state.list_walker = walker
     state.index_to_entry = index_to_entry
     agent_idx = next(iter(index_to_entry.keys()))
@@ -307,34 +310,34 @@ def test_format_section_heading_still_cooking() -> None:
 
 
 def test_build_board_widgets_none_snapshot_shows_loading() -> None:
-    walker, _ = _build_board_widgets(None)
+    walker, _ = _build_board_widgets(None, _BOARD_COLUMN_DEFS)
     assert len(walker) == 1
     assert isinstance(walker[0], Text)
 
 
 def test_build_board_widgets_empty_snapshot_shows_no_agents() -> None:
-    walker, _ = _build_board_widgets(_make_snapshot())
+    walker, _ = _build_board_widgets(_make_snapshot(), _BOARD_COLUMN_DEFS)
     assert len(walker) == 1
     assert "No agents found" in str(walker[0].get_text()[0])
 
 
 def test_build_board_widgets_with_entries_creates_sections() -> None:
     entries = (_make_entry(name="cooking"), _make_entry(name="merged", pr=_make_pr(state=PrState.MERGED)))
-    walker, index_to_entry = _build_board_widgets(_make_snapshot(entries=entries))
+    walker, index_to_entry = _build_board_widgets(_make_snapshot(entries=entries), _BOARD_COLUMN_DEFS)
     assert len(walker) >= 4
     assert len(index_to_entry) == 2
 
 
 def test_build_board_widgets_populates_index_to_entry() -> None:
     entries = (_make_entry(name="agent-a"), _make_entry(name="agent-b"))
-    _, index_to_entry = _build_board_widgets(_make_snapshot(entries=entries))
+    _, index_to_entry = _build_board_widgets(_make_snapshot(entries=entries), _BOARD_COLUMN_DEFS)
     names = {entry.name for entry in index_to_entry.values()}
     assert AgentName("agent-a") in names
     assert AgentName("agent-b") in names
 
 
 def test_build_board_widgets_with_errors_shows_them() -> None:
-    walker, _ = _build_board_widgets(_make_snapshot(errors=("Something went wrong",)))
+    walker, _ = _build_board_widgets(_make_snapshot(errors=("Something went wrong",)), _BOARD_COLUMN_DEFS)
     all_text = " ".join(str(w.get_text()[0]) for w in walker if isinstance(w, Text))
     assert "Errors:" in all_text
     assert "Something went wrong" in all_text
@@ -920,7 +923,7 @@ def test_build_board_widgets_shows_mark_indicator() -> None:
     entry = _make_entry()
     snapshot = BoardSnapshot(entries=(entry,), fetch_time_seconds=0.1)
     marks = {AgentName("test-agent"): "d"}
-    walker, index_to_entry = _build_board_widgets(snapshot, marks)
+    walker, index_to_entry = _build_board_widgets(snapshot, _BOARD_COLUMN_DEFS, marks)
     agent_idx = min(index_to_entry.keys())
     texts = _extract_text([walker[agent_idx]])
     assert len(texts) == 1
@@ -1057,7 +1060,7 @@ def test_first_load_pr_failure_shows_prs_not_loaded() -> None:
         prs_loaded=False,
         fetch_time_seconds=1.0,
     )
-    walker, _ = _build_board_widgets(snapshot)
+    walker, _ = _build_board_widgets(snapshot, _BOARD_COLUMN_DEFS)
 
     texts = _extract_text(list(walker))
     assert _text_contains(texts, "PRs not loaded")
@@ -1080,7 +1083,7 @@ def test_first_load_pr_success_shows_normal_heading() -> None:
         prs_loaded=True,
         fetch_time_seconds=1.0,
     )
-    walker, _ = _build_board_widgets(snapshot)
+    walker, _ = _build_board_widgets(snapshot, _BOARD_COLUMN_DEFS)
 
     texts = _extract_text(list(walker))
     assert _text_contains(texts, "no PR yet")
@@ -1115,7 +1118,7 @@ def test_second_load_pr_failure_shows_carried_forward_prs() -> None:
     )
 
     carried = _carry_forward_pr_data(old, new)
-    walker, _ = _build_board_widgets(carried)
+    walker, _ = _build_board_widgets(carried, _BOARD_COLUMN_DEFS)
 
     texts = _extract_text(list(walker))
     assert _text_contains(texts, "github.com/org/repo/pull/42")
@@ -1580,7 +1583,7 @@ def test_build_board_widgets_with_custom_column_renders_values() -> None:
     custom_defs = _build_custom_column_defs(config)
     column_defs = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom_defs, None)
     entries = (_make_entry(name="agent-1", labels={"blocked": "yes"}),)
-    walker, _ = _build_board_widgets(_make_snapshot(entries=entries), column_defs=column_defs)
+    walker, _ = _build_board_widgets(_make_snapshot(entries=entries), column_defs)
     texts = _extract_text(list(walker))
     assert _text_contains(texts, "BLOCKED")
     assert _text_contains(texts, "yes")
@@ -1591,7 +1594,7 @@ def test_build_board_widgets_custom_column_empty_when_no_label() -> None:
     custom_defs = _build_custom_column_defs(config)
     column_defs = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom_defs, None)
     entries = (_make_entry(name="agent-1"),)
-    walker, _ = _build_board_widgets(_make_snapshot(entries=entries), column_defs=column_defs)
+    walker, _ = _build_board_widgets(_make_snapshot(entries=entries), column_defs)
     texts = _extract_text(list(walker))
     assert _text_contains(texts, "BLOCKED")
 
@@ -1601,7 +1604,7 @@ def test_build_board_widgets_muted_agent_flattens_custom_column_colors() -> None
     custom_defs = _build_custom_column_defs(config)
     column_defs = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom_defs, None)
     entries = (_make_entry(name="agent-1", labels={"blocked": "yes"}, is_muted=True),)
-    walker, index_to_entry = _build_board_widgets(_make_snapshot(entries=entries), column_defs=column_defs)
+    walker, index_to_entry = _build_board_widgets(_make_snapshot(entries=entries), column_defs)
     agent_idx = next(iter(index_to_entry.keys()))
     row_widget = walker[agent_idx]
     inner_row = row_widget.original_widget
@@ -1619,7 +1622,7 @@ def test_build_board_widgets_custom_column_focus_map_includes_col_attrs() -> Non
     col_palette, col_attr_names = _build_column_palette(config)
     entries = (_make_entry(name="agent-1", labels={"blocked": "yes"}),)
     walker, index_to_entry = _build_board_widgets(
-        _make_snapshot(entries=entries), column_defs=column_defs, col_attr_names=col_attr_names
+        _make_snapshot(entries=entries), column_defs, col_attr_names=col_attr_names
     )
     agent_idx = next(iter(index_to_entry.keys()))
     attr_map_widget = walker[agent_idx]

@@ -254,8 +254,8 @@ def test_fetch_board_snapshot_passes_labels_and_plugin_data() -> None:
     ):
         snapshot = fetch_board_snapshot(mng_ctx)
 
-    assert snapshot.entries[0].labels == {"blocked": "yes"}
-    assert snapshot.entries[0].plugin_data == {"claude": {"waiting_reason": "PERMISSIONS"}}
+    assert snapshot.entries[0].column_data.labels == {"blocked": "yes"}
+    assert snapshot.entries[0].column_data.plugin_data == {"claude": {"waiting_reason": "PERMISSIONS"}}
 
 
 def test_fetch_agent_snapshot_passes_labels_and_plugin_data() -> None:
@@ -277,10 +277,9 @@ def test_fetch_agent_snapshot_passes_labels_and_plugin_data() -> None:
     with patch("imbue.mng_kanpan.fetcher.list_agents", return_value=mock_list_result):
         snapshot = fetch_agent_snapshot(mng_ctx)
 
-    assert snapshot.entries[0].labels == {"project": "mng"}
-    assert snapshot.entries[0].plugin_data == {"kanpan": {"muted": True}}
-    # plugin_state comes from _load_agent_metadata (which falls back to empty on errors)
-    assert snapshot.entries[0].plugin_state == {}
+    assert snapshot.entries[0].column_data.labels == {"project": "mng"}
+    assert snapshot.entries[0].column_data.plugin_data == {"kanpan": {"muted": True}}
+    assert snapshot.entries[0].column_data.plugin_state == {}
 
 
 def test_fetch_board_snapshot_surfaces_gh_errors_and_suppresses_create_pr_url(tmp_path: Path) -> None:
