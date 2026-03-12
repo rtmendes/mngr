@@ -33,7 +33,6 @@ from imbue.mng.api.find import ensure_host_started
 from imbue.mng.api.find import get_host_from_list_by_id
 from imbue.mng.api.find import resolve_source_location
 from imbue.mng.api.providers import get_provider_instance
-from imbue.mng.cli.common_opts import CommonCliOptions
 from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.env_utils import resolve_env_vars
@@ -42,6 +41,7 @@ from imbue.mng.cli.help_formatter import add_pager_help_option
 from imbue.mng.cli.output_helpers import emit_event
 from imbue.mng.cli.output_helpers import emit_final_json
 from imbue.mng.cli.output_helpers import write_human_line
+from imbue.mng.config.data_types import CreateCliOptions
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.errors import AgentNotFoundError
@@ -168,87 +168,6 @@ class AgentAddress(FrozenModel):
     def is_creating_new_host(self, new_host_flag: bool) -> bool:
         """Whether this address combined with the --new-host flag means creating a new host."""
         return new_host_flag or self.is_new_host_implied
-
-
-class CreateCliOptions(CommonCliOptions):
-    """Options passed from the CLI to the create command.
-
-    This captures all the click parameters so we can pass them as a single object
-    to helper functions instead of passing dozens of individual parameters.
-
-    Inherits common options (output_format, quiet, verbose, etc.) from CommonCliOptions.
-
-    Note that this class VERY INTENTIONALLY DOES NOT use Field() decorators with descriptions, defaults, etc.
-    For that information, see the click.option() and click.argument() decorators on the create() function itself.
-    """
-
-    positional_name: str | None
-    positional_agent_type: str | None
-    agent_args: tuple[str, ...]
-    template: tuple[str, ...]
-    type: str | None
-    reuse: bool
-    connect: bool
-    connect_command: str | None
-    ensure_clean: bool
-    name: str | None
-    id: str | None
-    name_style: str
-    command: str | None
-    extra_window: tuple[str, ...]
-    source: str | None
-    source_agent: str | None
-    source_host: str | None
-    source_path: str | None
-    target: str | None
-    target_path: str | None
-    in_place: bool
-    copy_source: bool
-    clone: bool
-    worktree: bool
-    rsync: bool | None
-    rsync_args: str | None
-    include_git: bool
-    include_unclean: bool | None
-    include_gitignored: bool
-    branch: str
-    depth: int | None
-    shallow_since: str | None
-    env: tuple[str, ...]
-    env_file: tuple[str, ...]
-    pass_env: tuple[str, ...]
-    provider: str | None
-    new_host: bool
-    host_name_style: str
-    host_label: tuple[str, ...]
-    label: tuple[str, ...]
-    project: str | None
-    host_env: tuple[str, ...]
-    host_env_file: tuple[str, ...]
-    pass_host_env: tuple[str, ...]
-    snapshot: str | None
-    build_arg: tuple[str, ...]
-    start_arg: tuple[str, ...]
-    reconnect: bool
-    interactive: bool | None
-    message: str | None
-    message_file: str | None
-    edit_message: bool
-    retry: int
-    retry_delay: str
-    attach_command: str | None
-    idle_timeout: str | None
-    idle_mode: str | None
-    activity_sources: str | None
-    start_on_boot: bool | None
-    start_host: bool
-    grant: tuple[str, ...]
-    user_command: tuple[str, ...]
-    sudo_command: tuple[str, ...]
-    upload_file: tuple[str, ...]
-    append_to_file: tuple[str, ...]
-    prepend_to_file: tuple[str, ...]
-    yes: bool
 
 
 @click.command()

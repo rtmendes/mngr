@@ -10,11 +10,11 @@ import pytest
 from click.testing import CliRunner
 
 from imbue.imbue_common.model_update import to_update
-from imbue.mng.cli.create import CreateCliOptions
 from imbue.mng.cli.create import _create_agent
 from imbue.mng.cli.create import _parse_agent_address
 from imbue.mng.cli.create import _setup_create
 from imbue.mng.cli.create import create
+from imbue.mng.config.data_types import CreateCliOptions
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.utils.logging import LoggingConfig
@@ -783,7 +783,7 @@ def test_template_applies_values_from_config(
     settings_file = mng_dir / "settings.toml"
     settings_file.write_text("""
 [create_templates.mytemplate]
-no_ensure_clean = true
+ensure_clean = false
 """)
 
     with tmux_session_cleanup(session_name):
@@ -838,7 +838,7 @@ def test_template_cli_args_take_precedence(
     settings_file.write_text("""
 [create_templates.mytemplate]
 message = "template-message"
-no_ensure_clean = true
+ensure_clean = false
 """)
 
     with tmux_session_cleanup(session_name):
@@ -897,7 +897,7 @@ def test_template_unknown_template_raises_error(
     settings_file = mng_dir / "settings.toml"
     settings_file.write_text("""
 [create_templates.existing]
-no_ensure_clean = true
+ensure_clean = false
 """)
 
     result = cli_runner.invoke(

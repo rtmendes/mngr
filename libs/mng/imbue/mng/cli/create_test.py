@@ -9,7 +9,6 @@ from click.testing import CliRunner
 
 from imbue.imbue_common.model_update import to_update
 from imbue.mng.cli.create import AgentAddress
-from imbue.mng.cli.create import CreateCliOptions
 from imbue.mng.cli.create import _parse_agent_address
 from imbue.mng.cli.create import _parse_agent_opts
 from imbue.mng.cli.create import _parse_branch_flag
@@ -20,6 +19,7 @@ from imbue.mng.cli.create import _resolve_target_host
 from imbue.mng.cli.create import _split_cli_args
 from imbue.mng.cli.create import _try_reuse_existing_agent
 from imbue.mng.cli.create import create
+from imbue.mng.config.data_types import CreateCliOptions
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import UserInputError
 from imbue.mng.hosts.host import HostLocation
