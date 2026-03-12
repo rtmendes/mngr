@@ -233,7 +233,8 @@ while true; do
         wait "$PR_CI_PID" && PR_CI_EXIT=0 || PR_CI_EXIT=$?
         _log_to_file "INFO" "PR/CI process (pid=$PR_CI_PID) exited with code $PR_CI_EXIT"
         if [[ $PR_CI_EXIT -eq 2 ]]; then
-            log_error "PR/CI hook failed (exit code 2)"
+            log_error "PR/CI hook failed -- go fix the CI failures first."
+            log_error "If autofix has run, check .autofix/all_issues.jsonl for identified issues."
             _log_to_file "INFO" "Killing autofix tree (pid=$AUTOFIX_PID) before exiting"
             disown "$AUTOFIX_PID" 2>/dev/null || true
             _kill_tree "$AUTOFIX_PID"
@@ -249,7 +250,7 @@ while true; do
         wait "$AUTOFIX_PID" && AUTOFIX_EXIT=0 || AUTOFIX_EXIT=$?
         _log_to_file "INFO" "Autofix process (pid=$AUTOFIX_PID) exited with code $AUTOFIX_EXIT"
         if [[ $AUTOFIX_EXIT -eq 2 ]]; then
-            log_error "Autofix hook failed (exit code 2)"
+            log_error "Autofix has not been run yet. Run /autofix to verify your changes."
             _log_to_file "INFO" "Killing PR/CI tree (pid=$PR_CI_PID) before exiting"
             disown "$PR_CI_PID" 2>/dev/null || true
             _kill_tree "$PR_CI_PID"
