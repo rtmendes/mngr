@@ -70,7 +70,7 @@ def _upload_deploy_files(
     futures: list[Future[None]] = []
     count = 0
     with ConcurrencyGroupExecutor(
-        parent_cg=mng_ctx.concurrency_group, name="upload_deploy_files", max_workers=32
+        parent_cg=mng_ctx.concurrency_group, name="upload_deploy_files", max_workers=4
     ) as executor:
         for dest_path, source in deploy_files.items():
             resolved_path = _resolve_remote_path(dest_path, remote_home)
@@ -87,7 +87,7 @@ def _upload_deploy_files(
                 futures.append(executor.submit(host.write_text_file, path=resolved_path, content=source))
                 # host.write_text_file(path=resolved_path, content=source)
             # wait -- just curious if the executor is the problem here
-            futures[-1].result()
+            # futures[-1].result()
 
             logger.trace("Uploaded deploy file: {} -> {}", dest_path, resolved_path)
             count += 1
