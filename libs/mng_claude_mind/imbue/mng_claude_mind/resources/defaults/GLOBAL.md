@@ -6,30 +6,26 @@ You are capable of modifying yourself by changing the files (for your role) in t
 
 ## Repository structure
 
-This repository defines the configuration, prompts, and skills for all of the roles in the larger system. It is structured as follows:
+This repository defines the configuration, prompts, and skills for all roles in the larger system. It is structured as follows:
 
-- `GLOBAL.md` - this file. Shared instructions for all agent roles (symlinked as `CLAUDE.md`).
-- `talking/` - the talking agent role (user-facing conversation voice).
-    - `talking/PROMPT.md` - prompt for the talking agent (used as the system prompt for the `llm` tool).
-    - The talking role CANNOT have `.claude/` because it runs via the `llm` tool, not Claude Code.
+- `GLOBAL.md` - this file. Shared instructions for all agent roles.
+- `talking/` - the talking agent role (user-facing conversational agent).
 - `thinking/` - the thinking agent role (inner monologue, event processor, orchestrator).
 - `working/` - the working agent role (executes delegated tasks).
 - `verifying/` - the verifying agent role (validates completed work).
 - `(custom roles)/` - any other top-level folders define other custom roles
 
-All roles (other than `talking`) have the following structure:
+All roles may have any of the following:
 - `<role>/PROMPT.md` - prompt for the agent role (symlinked as `CLAUDE.local.md` when this role is active).
-- `<role>/.claude/` - Claude Code configuration for this role (symlinked as `.claude/` at the repo root when this role is active).
-    - `<role>/.claude/settings.json` - Claude Code settings for the role.
-    - `<role>/.claude/skills/` - skills available to the role.
-    - `<role>/.claude/settings.local.json` - mng-managed hooks (gitignored, written during provisioning).
 - `<role>/memory/` - per-role memory directory (synced into Claude's project memory via hooks).
+- `<role>/skills/` - skills available to the role.
+- `<role>/<agent-harness-specific>` - configuration that is specific to the agent harness being used for this role (For example: `.claude` or `.pi` directories)
 
-When a role is active, the repo root `.claude/` is a symlink to that role's `.claude/` directory.
+When a role is active, the agent will start from the `<role>` directory.
 
 ## How the system works
 
-See [the docs](../../../../README.md) for a high-level overview of how the system works.
+See [the `minds` docs](../../../../README.md) for a high-level overview of how the `minds` system works.
 
 ### Agent management
 
