@@ -22,16 +22,14 @@ from imbue.mng_mind import event_watcher as event_watcher_module
 register_plugin_test_fixtures(globals())
 
 
-@pytest.fixture(autouse=True)
-def _reset_loguru() -> Generator[None, None, None]:
+def reset_loguru_impl() -> Generator[None, None, None]:
     """Reset loguru handlers before and after each test to prevent handler leakage."""
     logger.remove()
     yield
     logger.remove()
 
 
-@pytest.fixture(autouse=True)
-def _isolate_tmux_server(
+def isolate_tmux_server_impl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Generator[None, None, None]:
     """Give each test its own isolated tmux server.
@@ -64,6 +62,18 @@ def _isolate_tmux_server(
     except OSError:
         logger.debug("tmux kill-server failed (expected when no tmux session was started)")
     shutil.rmtree(tmux_tmpdir, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _reset_loguru() -> Generator[None, None, None]:
+    yield from reset_loguru_impl()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_tmux_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
+    yield from isolate_tmux_server_impl(monkeypatch)
 
 
 class StubCommandResult:
