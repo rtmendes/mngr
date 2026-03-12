@@ -1,15 +1,25 @@
-"""Generate verify skill markdown files from vet's identification guides.
+"""Generate and assemble verify skill markdown files.
 
-Requires a checkout of imbue-ai/vet. Pass the path via --vet-repo or VET_REPO env var.
+Two modes:
 
-Generated files (do not edit directly -- run this script to regenerate):
-  .claude/skills/verify-conversation/categories.md
-  .claude/skills/autofix/verify-and-fix.md
+  assemble    Combine local source files into final skill files (no external deps).
+              Sources: scripts/verify-and-fix-preamble.md, scripts/branch-categories.md,
+                       scripts/conversation-categories.md
+              Output:  .claude/skills/autofix/verify-and-fix.md
+                       .claude/skills/verify-conversation/categories.md
+
+  from-vet    Regenerate vet-sourced intermediate files from a checkout of imbue-ai/vet.
+              Requires --vet-repo or VET_REPO env var.
+              Output:  scripts/branch-categories.md
+                       scripts/conversation-categories.md
+
+Both modes support --check to verify on-disk files are up to date without writing.
 
 Usage:
-    uv run python scripts/generate_verify_skills.py --vet-repo /path/to/vet
-    VET_REPO=/path/to/vet uv run python scripts/generate_verify_skills.py
-    uv run python scripts/generate_verify_skills.py --check
+    uv run python scripts/generate_verify_skills.py assemble
+    uv run python scripts/generate_verify_skills.py assemble --check
+    uv run python scripts/generate_verify_skills.py from-vet --vet-repo /path/to/vet
+    VET_REPO=/path/to/vet uv run python scripts/generate_verify_skills.py from-vet --check
 """
 
 from __future__ import annotations
@@ -22,17 +32,42 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-SKILL_PATHS = {
-    "conversation": REPO_ROOT / ".claude" / "skills" / "verify-conversation" / "categories.md",
-    "verify-and-fix": REPO_ROOT / ".claude" / "skills" / "autofix" / "verify-and-fix.md",
-}
-PREAMBLE_PATHS = {
-    "verify-and-fix": SCRIPT_DIR / "verify-and-fix-preamble.md",
+
+# Source files (checked in, hand-edited or vet-generated)
+PREAMBLE_PATH = SCRIPT_DIR / "verify-and-fix-preamble.md"
+BRANCH_CATEGORIES_PATH = SCRIPT_DIR / "branch-categories.md"
+CONVERSATION_CATEGORIES_PATH = SCRIPT_DIR / "conversation-categories.md"
+
+# Final skill files (assembled from source files above)
+VERIFY_AND_FIX_PATH = REPO_ROOT / ".claude" / "skills" / "autofix" / "verify-and-fix.md"
+CONVERSATION_CATEGORIES_SKILL_PATH = REPO_ROOT / ".claude" / "skills" / "verify-conversation" / "categories.md"
+
+
+# ---------------------------------------------------------------------------
+# Assemble mode: combine local files into final skill files
+# ---------------------------------------------------------------------------
+
+
+def assemble_verify_and_fix() -> str:
+    """Assemble verify-and-fix.md from preamble + branch categories."""
+    preamble = PREAMBLE_PATH.read_text()
+    categories = BRANCH_CATEGORIES_PATH.read_text()
+    return preamble.rstrip() + "\n\n---\n\n" + categories
+
+
+def assemble_conversation_categories() -> str:
+    """Assemble conversation categories (direct copy from source)."""
+    return CONVERSATION_CATEGORIES_PATH.read_text()
+
+
+ASSEMBLE_TARGETS: dict[str, tuple[Path, callable]] = {
+    "verify-and-fix": (VERIFY_AND_FIX_PATH, assemble_verify_and_fix),
+    "conversation-categories": (CONVERSATION_CATEGORIES_SKILL_PATH, assemble_conversation_categories),
 }
 
 
 # ---------------------------------------------------------------------------
-# Formatting helpers (mirror generate_verify_md.py from vet)
+# From-vet mode: regenerate vet-sourced files
 # ---------------------------------------------------------------------------
 
 
@@ -62,10 +97,6 @@ def format_guide_section(guide) -> str:
     lines.append("")
     return "\n".join(lines)
 
-
-# ---------------------------------------------------------------------------
-# Preambles and output formats
-# ---------------------------------------------------------------------------
 
 BRANCH_PREAMBLE = textwrap.dedent("""\
     # Issue Categories
@@ -97,63 +128,35 @@ CONVERSATION_OUTPUT_FORMAT = textwrap.dedent("""\
 """)
 
 
-# ---------------------------------------------------------------------------
-# Generation
-# ---------------------------------------------------------------------------
+def generate_branch_categories(vet_modules) -> str:
+    """Generate branch issue categories from vet: batched commit + correctness guides."""
+    codes_batch = vet_modules["ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK"]
+    codes_correctness = vet_modules["ISSUE_CODES_FOR_CORRECTNESS_CHECK"]
+    guides_by_code = vet_modules["ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE"]
 
-
-def generate_branch_markdown(vet_modules) -> str:
-    """Generate branch issue categories: batched commit + correctness guides."""
-    ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK = vet_modules["ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK"]
-    ISSUE_CODES_FOR_CORRECTNESS_CHECK = vet_modules["ISSUE_CODES_FOR_CORRECTNESS_CHECK"]
-    ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE = vet_modules["ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE"]
-
-    # Deduplicate while preserving order.
     seen: set = set()
     codes = []
-    for code in (*ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK, *ISSUE_CODES_FOR_CORRECTNESS_CHECK):
+    for code in (*codes_batch, *codes_correctness):
         if code not in seen:
             seen.add(code)
             codes.append(code)
 
-    guides = [ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE[code] for code in codes]
-
     sections: list[str] = [BRANCH_PREAMBLE]
-    for guide in guides:
-        sections.append(format_guide_section(guide))
+    for code in codes:
+        sections.append(format_guide_section(guides_by_code[code]))
     return "\n".join(sections)
 
 
-def generate_conversation_markdown(vet_modules) -> str:
-    """Generate categories.md: conversation history guides."""
-    ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK = vet_modules["ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK"]
-    ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE = vet_modules["ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE"]
-
-    guides = [ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE[code] for code in ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK]
+def generate_conversation_categories(vet_modules) -> str:
+    """Generate conversation categories from vet."""
+    codes = vet_modules["ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK"]
+    guides_by_code = vet_modules["ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE"]
 
     sections: list[str] = [CONVERSATION_PREAMBLE]
-    for guide in guides:
-        sections.append(format_guide_section(guide))
+    for code in codes:
+        sections.append(format_guide_section(guides_by_code[code]))
     sections.append(CONVERSATION_OUTPUT_FORMAT)
     return "\n".join(sections)
-
-
-def generate_verify_and_fix_markdown(vet_modules) -> str:
-    """Generate verify-and-fix.md: preamble + branch issue categories."""
-    preamble = PREAMBLE_PATHS["verify-and-fix"].read_text()
-    branch_categories = generate_branch_markdown(vet_modules)
-    return preamble.rstrip() + "\n\n---\n\n" + branch_categories
-
-
-MODES = {
-    "conversation": generate_conversation_markdown,
-    "verify-and-fix": generate_verify_and_fix_markdown,
-}
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 
 def load_vet(vet_repo: Path) -> dict:
@@ -162,14 +165,12 @@ def load_vet(vet_repo: Path) -> dict:
     if vet_str not in sys.path:
         sys.path.insert(0, vet_str)
 
-    from vet.imbue_core.data_types import IssueCode
     from vet.issue_identifiers.identification_guides import ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK
     from vet.issue_identifiers.identification_guides import ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK
     from vet.issue_identifiers.identification_guides import ISSUE_CODES_FOR_CORRECTNESS_CHECK
     from vet.issue_identifiers.identification_guides import ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE
 
     return {
-        "IssueCode": IssueCode,
         "ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK": ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK,
         "ISSUE_CODES_FOR_CORRECTNESS_CHECK": ISSUE_CODES_FOR_CORRECTNESS_CHECK,
         "ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK": ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK,
@@ -177,85 +178,114 @@ def load_vet(vet_repo: Path) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Shared check/write logic
+# ---------------------------------------------------------------------------
+
+
+def check_or_write(targets: dict[str, tuple[Path, str]], *, check: bool) -> bool:
+    """Check or write a set of targets. Returns True if all OK."""
+    ok = True
+    for label, (path, content) in targets.items():
+        rel = path.relative_to(REPO_ROOT)
+        if check:
+            if not path.exists():
+                print(f"MISSING {rel}", file=sys.stderr)
+                ok = False
+            elif path.read_text() != content:
+                print(f"STALE   {rel}", file=sys.stderr)
+                ok = False
+            else:
+                print(f"OK      {rel}", file=sys.stderr)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            existing = path.read_text() if path.exists() else None
+            if content != existing:
+                path.write_text(content)
+                print(f"Updated: {rel}", file=sys.stderr)
+            else:
+                print(f"OK:      {rel}", file=sys.stderr)
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
 def _resolve_vet_repo(explicit: Path | None) -> Path | None:
-    """Resolve the vet repo path from explicit arg, env var, or default location."""
+    """Resolve the vet repo path from explicit arg or env var."""
     if explicit is not None:
         return explicit
     env = os.environ.get("VET_REPO")
     if env:
         return Path(env)
-    # Default fallback
-    default = Path.home() / "vet"
-    if (default / "vet").is_dir():
-        return default
     return None
+
+
+def cmd_assemble(args: argparse.Namespace) -> None:
+    targets = {label: (path, gen_fn()) for label, (path, gen_fn) in ASSEMBLE_TARGETS.items()}
+    ok = check_or_write(targets, check=args.check)
+    if args.check and not ok:
+        print("Run 'uv run python scripts/generate_verify_skills.py assemble' to regenerate.", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def cmd_from_vet(args: argparse.Namespace) -> None:
+    vet_repo = _resolve_vet_repo(args.vet_repo)
+    if vet_repo is None:
+        print("error: vet repo not found. Use --vet-repo or set VET_REPO env var.", file=sys.stderr)
+        raise SystemExit(1)
+    vet_repo = vet_repo.resolve()
+    if not (vet_repo / "vet").is_dir():
+        print(f"error: does not look like a vet checkout: {vet_repo}", file=sys.stderr)
+        raise SystemExit(1)
+
+    vet_modules = load_vet(vet_repo)
+    targets = {
+        "branch-categories": (BRANCH_CATEGORIES_PATH, generate_branch_categories(vet_modules)),
+        "conversation-categories": (CONVERSATION_CATEGORIES_PATH, generate_conversation_categories(vet_modules)),
+    }
+    # Note: both targets are in scripts/. After updating, run `assemble` to propagate to skill files.
+    ok = check_or_write(targets, check=args.check)
+    if args.check and not ok:
+        print(
+            "Run 'uv run python scripts/generate_verify_skills.py from-vet --vet-repo <path>' to regenerate.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate verify skill markdown from vet's identification guides.",
+        description="Generate and assemble verify skill markdown files.",
     )
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # assemble subcommand
+    p_assemble = subparsers.add_parser(
+        "assemble",
+        help="Assemble final skill files from local source files (no external deps).",
+    )
+    p_assemble.add_argument("--check", action="store_true", help="Check without writing.")
+    p_assemble.set_defaults(func=cmd_assemble)
+
+    # from-vet subcommand
+    p_vet = subparsers.add_parser(
+        "from-vet",
+        help="Regenerate vet-sourced files from a vet checkout.",
+    )
+    p_vet.add_argument(
         "--vet-repo",
         type=Path,
         default=None,
-        help="Path to vet repo checkout. Falls back to VET_REPO env var, then ~/vet.",
+        help="Path to vet repo checkout. Falls back to VET_REPO env var.",
     )
-    parser.add_argument(
-        "mode",
-        choices=[*MODES.keys(), "all"],
-        nargs="?",
-        default="all",
-        help="Which skill to generate (default: all).",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Check that on-disk files match what would be generated. Exits non-zero if stale.",
-    )
+    p_vet.add_argument("--check", action="store_true", help="Check without writing.")
+    p_vet.set_defaults(func=cmd_from_vet)
+
     args = parser.parse_args()
-
-    vet_repo = _resolve_vet_repo(args.vet_repo)
-    if vet_repo is None:
-        parser.error("Could not find vet repo. Use --vet-repo, VET_REPO env var, or clone to ~/vet.")
-    vet_repo = vet_repo.resolve()
-    if not (vet_repo / "vet").is_dir():
-        parser.error(f"Does not look like a vet checkout: {vet_repo}")
-
-    vet_modules = load_vet(vet_repo)
-
-    modes_to_run = MODES.keys() if args.mode == "all" else [args.mode]
-
-    if args.check:
-        ok = True
-        for mode in modes_to_run:
-            path = SKILL_PATHS[mode]
-            expected = MODES[mode](vet_modules)
-            if not path.exists():
-                print(f"MISSING {path.relative_to(REPO_ROOT)}", file=sys.stderr)
-                ok = False
-            elif path.read_text() != expected:
-                print(f"STALE   {path.relative_to(REPO_ROOT)}", file=sys.stderr)
-                ok = False
-            else:
-                print(f"OK      {path.relative_to(REPO_ROOT)}", file=sys.stderr)
-        if ok:
-            print("All generated files are up to date.", file=sys.stderr)
-        else:
-            print("Run without --check to regenerate.", file=sys.stderr)
-            raise SystemExit(1)
-        return
-
-    for mode in modes_to_run:
-        path = SKILL_PATHS[mode]
-        content = MODES[mode](vet_modules)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        existing = path.read_text() if path.exists() else None
-        if content != existing:
-            path.write_text(content)
-            print(f"Updated: {path.relative_to(REPO_ROOT)}", file=sys.stderr)
-        else:
-            print(f"OK:      {path.relative_to(REPO_ROOT)}", file=sys.stderr)
+    args.func(args)
 
 
 if __name__ == "__main__":
