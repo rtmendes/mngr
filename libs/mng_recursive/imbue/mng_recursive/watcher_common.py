@@ -2,7 +2,7 @@
 
 Provides common watchdog integration, logging, and polling infrastructure
 used by supporting services in mng_llm (conversation_watcher, web_server)
-and mng_claude_mind (event_watcher, transcript_watcher).
+and mng_claude_mind (event_watcher).
 
 Lives in mng_recursive so that all plugins that need watcher infrastructure
 can depend on it without introducing circular dependencies.

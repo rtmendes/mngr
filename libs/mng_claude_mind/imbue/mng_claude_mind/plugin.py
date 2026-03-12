@@ -47,9 +47,6 @@ CONV_WATCHER_COMMAND: Final[str] = "mng llmconversations"
 EVENT_WATCHER_WINDOW_NAME: Final[str] = "events"
 EVENT_WATCHER_COMMAND: Final[str] = "mng mindevents"
 
-TRANSCRIPT_WATCHER_WINDOW_NAME: Final[str] = "transcript"
-TRANSCRIPT_WATCHER_COMMAND: Final[str] = "mng mindtranscript"
-
 # Web server: serves the main web interface with conversation selector
 # and agent list page.
 WEB_SERVER_WINDOW_NAME: Final[str] = "web_server"
@@ -68,6 +65,11 @@ class ClaudeMindConfig(ClaudeAgentConfig):
         default=True,
         description="Automatically trust the agent's working directory in ~/.claude.json. "
         "Enabled by default for minds since they run in-place in their own repo.",
+    )
+    emit_common_transcript: bool = Field(
+        default=True,
+        description="Emit a common, agent-agnostic transcript alongside the raw Claude transcript. "
+        "Enabled by default for minds so that other watchers can consume structured events.",
     )
     install_llm: bool = Field(
         default=True,
@@ -95,7 +97,6 @@ class ClaudeMindAgent(ClaudeAgent):
     - Conversation watcher (syncs llm DB to events/messages/events.jsonl)
     - Event watcher (sends new events to primary role agent via mng message)
     - Web server (main web interface with conversation selector and agent list)
-    - Transcript watcher (converts claude_transcript to common_transcript)
     """
 
     enter_submission_timeout_seconds: float = Field(
@@ -245,7 +246,6 @@ def inject_supporting_services(params: dict[str, Any]) -> None:
         f'{CONV_WATCHER_WINDOW_NAME}="{CONV_WATCHER_COMMAND}"',
         f'{EVENT_WATCHER_WINDOW_NAME}="{EVENT_WATCHER_COMMAND}"',
         f'{WEB_SERVER_WINDOW_NAME}="{WEB_SERVER_COMMAND}"',
-        f'{TRANSCRIPT_WATCHER_WINDOW_NAME}="{TRANSCRIPT_WATCHER_COMMAND}"',
     )
 
 

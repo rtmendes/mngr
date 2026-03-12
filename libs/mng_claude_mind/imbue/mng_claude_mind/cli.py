@@ -27,17 +27,8 @@ def mindevents() -> None:
     main()
 
 
-@click.command("mindtranscript", hidden=True)
-def mindtranscript() -> None:
-    """Run the mind transcript watcher (internal)."""
-    from imbue.mng_claude_mind.resources.transcript_watcher import main
-
-    main()
-
-
 def get_all_commands() -> Sequence[click.Command]:
     """Return all CLI commands to register with mng."""
     return [
         mindevents,
-        mindtranscript,
     ]
