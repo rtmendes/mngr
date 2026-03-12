@@ -18,39 +18,39 @@ from imbue.mng_claude_mind.conftest import StubHost
 from imbue.mng_claude_mind.conftest import create_mind_conversations_table_in_test_db
 from imbue.mng_claude_mind.conftest import write_conversation_to_db
 from imbue.mng_claude_mind.data_types import CommonToolResultEvent
-from imbue.mng_claude_mind.data_types import ProvisioningSettings
-from imbue.mng_claude_mind.provisioning import MIND_CONVERSATIONS_TABLE_SQL
 from imbue.mng_claude_mind.provisioning import TalkingRoleConstraintError
-from imbue.mng_claude_mind.provisioning import _LLM_TOOL_FILES
-from imbue.mng_claude_mind.provisioning import _SERVICE_SCRIPT_FILES
-from imbue.mng_claude_mind.provisioning import _TTYD_DISPATCH_SCRIPTS
 from imbue.mng_claude_mind.provisioning import build_memory_sync_hooks_config
 from imbue.mng_claude_mind.provisioning import compute_claude_project_dir_name
-from imbue.mng_claude_mind.provisioning import configure_llm_user_path
-from imbue.mng_claude_mind.provisioning import create_daily_conversation
-from imbue.mng_claude_mind.provisioning import create_event_log_directories
 from imbue.mng_claude_mind.provisioning import create_mind_symlinks
-from imbue.mng_claude_mind.provisioning import create_slack_notifications_conversation
-from imbue.mng_claude_mind.provisioning import create_system_notifications_conversation
-from imbue.mng_claude_mind.provisioning import install_llm_toolchain
 from imbue.mng_claude_mind.provisioning import load_mind_resource
 from imbue.mng_claude_mind.provisioning import provision_default_content
-from imbue.mng_claude_mind.provisioning import provision_llm_tools
-from imbue.mng_claude_mind.provisioning import provision_supporting_services
-from imbue.mng_claude_mind.provisioning import resolve_work_dir_abs
 from imbue.mng_claude_mind.provisioning import setup_memory_directory
 from imbue.mng_claude_mind.provisioning import validate_talking_role_constraints
-from imbue.mng_claude_mind.resources import context_tool as context_tool_module
-from imbue.mng_claude_mind.resources import extra_context_tool as extra_context_tool_module
-from imbue.mng_claude_mind.resources.watcher_common import MngNotInstalledError
-from imbue.mng_claude_mind.resources.watcher_common import get_mng_command
+from imbue.mng_llm.data_types import ProvisioningSettings
+from imbue.mng_llm.provisioning import MIND_CONVERSATIONS_TABLE_SQL
+from imbue.mng_llm.provisioning import _LLM_TOOL_FILES
+from imbue.mng_llm.provisioning import _SERVICE_SCRIPT_FILES
+from imbue.mng_llm.provisioning import _TTYD_DISPATCH_SCRIPTS
+from imbue.mng_llm.provisioning import configure_llm_user_path
+from imbue.mng_llm.provisioning import create_daily_conversation
+from imbue.mng_llm.provisioning import create_slack_notifications_conversation
+from imbue.mng_llm.provisioning import create_system_notifications_conversation
+from imbue.mng_llm.provisioning import install_llm_toolchain
+from imbue.mng_llm.provisioning import load_llm_resource
+from imbue.mng_llm.provisioning import provision_llm_tools
+from imbue.mng_llm.provisioning import provision_supporting_services
+from imbue.mng_llm.provisioning import resolve_work_dir_abs
+from imbue.mng_llm.resources import context_tool as context_tool_module
+from imbue.mng_llm.resources import extra_context_tool as extra_context_tool_module
+from imbue.mng_recursive.watcher_common import MngNotInstalledError
+from imbue.mng_recursive.watcher_common import get_mng_command
 
 _DEFAULT_PROVISIONING = ProvisioningSettings()
 
 
 def test_load_mind_resource_loads_resource() -> None:
     """Check that the load_mind_resource works at all"""
-    content = load_mind_resource("chat.sh")
+    content = load_mind_resource("transcript_watcher.sh")
     assert "#!/bin/bash" in content
 
 
@@ -282,7 +282,10 @@ def _load_transcript_watcher_module() -> dict[str, Any]:
     content = load_mind_resource("transcript_watcher.py")
     # Also load watcher_common.py (stripped above its watchdog marker) so
     # transcript_watcher.py can import Logger from it.
-    watcher_common_content = load_mind_resource("watcher_common.py")
+    watcher_common_module = importlib.import_module("imbue.mng_recursive.watcher_common")
+    assert watcher_common_module.__file__ is not None
+    watcher_common_path = Path(watcher_common_module.__file__)
+    watcher_common_content = watcher_common_path.read_text()
     watcher_common_stripped = _strip_below_watchdog_marker(watcher_common_content)
 
     stripped = _strip_below_watchdog_marker(content)
@@ -604,28 +607,6 @@ def test_provision_llm_tools_writes_all_tool_files() -> None:
         assert any(tool_file in name for name in written_names), f"{tool_file} not written"
 
 
-def test_create_event_log_directories_creates_all_source_dirs() -> None:
-    host = StubHost()
-    create_event_log_directories(cast(Any, host), Path("/tmp/mng-test/agents/agent-123"), _DEFAULT_PROVISIONING)
-
-    for source in (
-        "messages",
-        "scheduled",
-        "mng/agents",
-        "stop",
-        "monitor",
-        "delivery_failures",
-        "common_transcript",
-        "servers",
-    ):
-        assert any(source in c and "mkdir" in c for c in host.executed_commands), f"Missing mkdir for {source}"
-
-    # Also verify log directories are created
-    assert any("claude_transcript" in c and "mkdir" in c for c in host.executed_commands), (
-        "Missing mkdir for logs/claude_transcript"
-    )
-
-
 # -- Schema sync tests --
 
 
@@ -637,7 +618,7 @@ def test_conversation_db_schema_matches_provisioning() -> None:
     checking that every column definition from the authoritative schema appears
     in the resource file source.
     """
-    source = load_mind_resource("conversation_db.py")
+    source = load_llm_resource("conversation_db.py")
     # Extract column definitions from the authoritative schema constant.
     # Each "X TEXT ..." clause must appear in conversation_db.py's source.
     for fragment in MIND_CONVERSATIONS_TABLE_SQL.split("(", 1)[1].rsplit(")", 1)[0].split(","):

@@ -93,7 +93,7 @@ insert_conversation_record() {
     local created_at
     created_at=$(iso_timestamp_ns)
 
-    mng minddb insert "$_LLM_DB" "$conversation_id" "$tags" "$created_at"
+    mng llmdb insert "$_LLM_DB" "$conversation_id" "$tags" "$created_at"
     log "Inserted conversation record: conversation_id=$conversation_id tags=$tags"
 }
 
@@ -178,7 +178,7 @@ new_conversation() {
         local _max_rowid
         _max_rowid=0
         if [ -f "$_LLM_DB" ]; then
-            _max_rowid=$(mng minddb max-rowid "$_LLM_DB")
+            _max_rowid=$(mng llmdb max-rowid "$_LLM_DB")
         fi
 
         (
@@ -186,7 +186,7 @@ new_conversation() {
             for _i in $(seq 1 60); do
                 sleep 1
                 if [ -f "$_LLM_DB" ]; then
-                    _new_conversation_id=$(mng minddb poll-new "$_LLM_DB" "$_max_rowid")
+                    _new_conversation_id=$(mng llmdb poll-new "$_LLM_DB" "$_max_rowid")
                     if [ -n "$_new_conversation_id" ]; then
                         insert_conversation_record "$_new_conversation_id" '{"name":"(new chat)"}'
                         log "Recorded conversation for new conversation_id=$_new_conversation_id (rowid > $_max_rowid)"
@@ -213,7 +213,7 @@ resume_conversation() {
 
     # Get the model from the mind_conversations table
     local model
-    model=$(mng minddb lookup-model "$_LLM_DB" "$conversation_id")
+    model=$(mng llmdb lookup-model "$_LLM_DB" "$conversation_id")
     if [ -z "$model" ]; then
         model=$(get_default_model)
     fi
@@ -241,7 +241,7 @@ list_conversations() {
 
     # Check if the mind_conversations table exists and has rows
     local _row_count
-    _row_count=$(mng minddb count "$_LLM_DB")
+    _row_count=$(mng llmdb count "$_LLM_DB")
     if [ "$_row_count" = "0" ]; then
         echo "No conversations yet."
         return 0

@@ -39,12 +39,12 @@ from uuid import uuid4
 
 from loguru import logger
 
-from imbue.mng_claude_mind.resources.watcher_common import DEFAULT_CEL_FILTER
-from imbue.mng_claude_mind.resources.watcher_common import MngNotInstalledError
-from imbue.mng_claude_mind.resources.watcher_common import get_mng_command
-from imbue.mng_claude_mind.resources.watcher_common import load_watchers_section
-from imbue.mng_claude_mind.resources.watcher_common import require_env
-from imbue.mng_claude_mind.resources.watcher_common import setup_watcher_logging
+from imbue.mng_recursive.watcher_common import DEFAULT_CEL_FILTER
+from imbue.mng_recursive.watcher_common import MngNotInstalledError
+from imbue.mng_recursive.watcher_common import get_mng_command
+from imbue.mng_recursive.watcher_common import load_watchers_section
+from imbue.mng_recursive.watcher_common import require_env
+from imbue.mng_recursive.watcher_common import setup_watcher_logging
 
 # -- Constants --
 # NOTE: These defaults must be kept in sync with the Field defaults in

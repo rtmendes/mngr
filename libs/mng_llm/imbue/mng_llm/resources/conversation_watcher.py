@@ -23,11 +23,11 @@ from pathlib import Path
 
 from loguru import logger
 
-from imbue.mng_claude_mind.resources.watcher_common import load_watchers_section
-from imbue.mng_claude_mind.resources.watcher_common import read_event_ids_from_jsonl
-from imbue.mng_claude_mind.resources.watcher_common import require_env
-from imbue.mng_claude_mind.resources.watcher_common import run_watcher_loop
-from imbue.mng_claude_mind.resources.watcher_common import setup_watcher_logging
+from imbue.mng_recursive.watcher_common import load_watchers_section
+from imbue.mng_recursive.watcher_common import read_event_ids_from_jsonl
+from imbue.mng_recursive.watcher_common import require_env
+from imbue.mng_recursive.watcher_common import run_watcher_loop
+from imbue.mng_recursive.watcher_common import setup_watcher_logging
 
 
 def _load_poll_interval(agent_work_dir: Path) -> int:

@@ -1,10 +1,11 @@
-"""Shared utilities for mind supporting service scripts.
+"""Shared utilities for agent supporting service scripts.
 
-This module is provisioned alongside the supporting service scripts
-(event_watcher.py, conversation_watcher.py, transcript_watcher.py) to
-$MNG_AGENT_STATE_DIR/commands/ and imported by them at runtime. It provides the
-common watchdog integration, logging, and polling infrastructure that all
-supporting services share.
+Provides common watchdog integration, logging, and polling infrastructure
+used by supporting services in mng_llm (conversation_watcher, web_server)
+and mng_claude_mind (event_watcher, transcript_watcher).
+
+Lives in mng_recursive so that all plugins that need watcher infrastructure
+can depend on it without introducing circular dependencies.
 """
 
 from __future__ import annotations

@@ -31,11 +31,11 @@ from typing import Any
 
 from loguru import logger
 
-from imbue.mng_claude_mind.resources.watcher_common import load_watchers_section
-from imbue.mng_claude_mind.resources.watcher_common import read_event_ids_from_jsonl
-from imbue.mng_claude_mind.resources.watcher_common import require_env
-from imbue.mng_claude_mind.resources.watcher_common import run_watcher_loop
-from imbue.mng_claude_mind.resources.watcher_common import setup_watcher_logging
+from imbue.mng_recursive.watcher_common import load_watchers_section
+from imbue.mng_recursive.watcher_common import read_event_ids_from_jsonl
+from imbue.mng_recursive.watcher_common import require_env
+from imbue.mng_recursive.watcher_common import run_watcher_loop
+from imbue.mng_recursive.watcher_common import setup_watcher_logging
 
 # Maximum length for tool input preview and tool output
 _MAX_INPUT_PREVIEW_LENGTH = 200

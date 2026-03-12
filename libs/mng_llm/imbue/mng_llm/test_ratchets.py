@@ -59,14 +59,14 @@ def test_prevent_base_exception_catch() -> None:
 
 
 def test_prevent_builtin_exception_raises() -> None:
-    rc.check_builtin_exception_raises(_DIR, snapshot(8))
+    rc.check_builtin_exception_raises(_DIR, snapshot(5))
 
 
 # --- Import style ---
 
 
 def test_prevent_inline_imports() -> None:
-    rc.check_inline_imports(_DIR, snapshot(41))
+    rc.check_inline_imports(_DIR, snapshot(13))
 
 
 def test_prevent_relative_imports() -> None:
@@ -78,7 +78,7 @@ def test_prevent_import_datetime() -> None:
 
 
 def test_prevent_importlib_import_module() -> None:
-    rc.check_importlib_import_module(_DIR, snapshot(1))
+    rc.check_importlib_import_module(_DIR, snapshot(0))
 
 
 def test_prevent_getattr() -> None:
@@ -86,7 +86,7 @@ def test_prevent_getattr() -> None:
 
 
 def test_prevent_setattr() -> None:
-    rc.check_setattr(_DIR, snapshot(1))
+    rc.check_setattr(_DIR, snapshot(0))
 
 
 # --- Banned libraries and patterns ---
@@ -101,7 +101,7 @@ def test_prevent_pandas_import() -> None:
 
 
 def test_prevent_dataclasses_import() -> None:
-    rc.check_dataclasses_import(_DIR, snapshot(1))
+    rc.check_dataclasses_import(_DIR, snapshot(0))
 
 
 def test_prevent_namedtuple_usage() -> None:
@@ -127,7 +127,7 @@ def test_prevent_num_prefix() -> None:
 
 
 def test_prevent_trailing_comments() -> None:
-    rc.check_trailing_comments(_DIR, snapshot(39))
+    rc.check_trailing_comments(_DIR, snapshot(20))
 
 
 def test_prevent_init_docstrings() -> None:
@@ -189,7 +189,7 @@ def test_prevent_unittest_mock_imports() -> None:
 
 
 def test_prevent_monkeypatch_setattr() -> None:
-    rc.check_monkeypatch_setattr(_DIR, snapshot(7))
+    rc.check_monkeypatch_setattr(_DIR, snapshot(0))
 
 
 def test_prevent_test_container_classes() -> None:
@@ -208,18 +208,18 @@ def test_prevent_os_fork() -> None:
 
 
 def test_prevent_direct_subprocess_usage() -> None:
-    rc.check_direct_subprocess(_DIR, snapshot(15))
+    rc.check_direct_subprocess(_DIR, snapshot(2))
 
 
 # --- AST-based ratchets ---
 
 
 def test_prevent_if_elif_without_else() -> None:
-    rc.check_if_elif_without_else(_DIR, snapshot(5))
+    rc.check_if_elif_without_else(_DIR, snapshot(3))
 
 
 def test_prevent_inline_functions_in_non_test_code() -> None:
-    rc.check_inline_functions(_DIR, snapshot(7))
+    rc.check_inline_functions(_DIR, snapshot(4))
 
 
 def test_prevent_importing_underscore_prefixed_names_in_non_test_code() -> None:
@@ -227,7 +227,7 @@ def test_prevent_importing_underscore_prefixed_names_in_non_test_code() -> None:
 
 
 def test_prevent_init_methods_in_non_exception_classes() -> None:
-    rc.check_init_methods_in_non_exception_classes(_DIR, snapshot(10))
+    rc.check_init_methods_in_non_exception_classes(_DIR, snapshot(3))
 
 
 def test_prevent_cast_usage() -> None:

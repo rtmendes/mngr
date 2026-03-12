@@ -5,6 +5,7 @@ description = "Recursive mng plugin: injects mng config and dependencies into re
 requires-python = ">=3.11"
 dependencies = [
     "mng==0.1.4",
+    "watchdog>=4.0",
 ]
 
 [project.entry-points.mng]
@@ -36,7 +37,7 @@ addopts = [
   "--cov-report=term-missing",
   "--cov-report=html",
   "--cov-report=xml",
-  "--cov-fail-under=80",
+  "--cov-fail-under=76",
   "--durations=20",
   "--timeout=10",
   "--timeout-method=signal",

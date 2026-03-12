@@ -1,6 +1,13 @@
+import importlib.resources
 from typing import Any
 
+from loguru import logger
+
 from imbue.mng import hookimpl
+from imbue.mng.config.data_types import MngContext
+from imbue.mng.interfaces.agent import AgentInterface
+from imbue.mng.interfaces.host import OnlineHostInterface
+from imbue.mng_ttyd import resources as ttyd_resources
 
 TTYD_WINDOW_NAME = "terminal"
 TTYD_SERVER_NAME = "terminal"
@@ -73,3 +80,31 @@ def override_command_options(
 
     existing = params.get("extra_window", ())
     params["extra_window"] = (*existing, f'{TTYD_WINDOW_NAME}="{TTYD_COMMAND}"')
+
+
+def _load_ttyd_resource(filename: str) -> str:
+    """Load a resource file from the mng_ttyd resources package."""
+    resource_files = importlib.resources.files(ttyd_resources)
+    return resource_files.joinpath(filename).read_text()
+
+
+@hookimpl
+def on_after_provisioning(
+    agent: AgentInterface,
+    host: OnlineHostInterface,
+    mng_ctx: MngContext,
+) -> None:
+    """Provision the ttyd agent terminal dispatch script.
+
+    Writes commands/ttyd/agent.sh so that the ttyd server can attach
+    to the primary agent's tmux session via URL-arg dispatch (?arg=agent).
+    """
+    agent_dir = host.host_dir / "agents" / str(agent.id)
+    ttyd_dir = agent_dir / "commands" / "ttyd"
+
+    host.execute_command(f"mkdir -p '{ttyd_dir}'", timeout_seconds=10.0)
+
+    script_content = _load_ttyd_resource("ttyd_agent.sh")
+    script_path = ttyd_dir / "agent.sh"
+    logger.debug("Writing ttyd/agent.sh to {}", script_path)
+    host.write_file(script_path, script_content.encode(), mode="0755")

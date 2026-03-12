@@ -5,6 +5,8 @@ description = "Claude mind agent plugin for mng - base class for mind agents bui
 requires-python = ">=3.11"
 dependencies = [
     "mng==0.1.4",
+    "mng-llm==0.1.0",
+    "mng-recursive==0.1.0",
     "mng-ttyd==0.1.0",
     "watchdog>=4.0",
 ]
@@ -21,6 +23,8 @@ packages = ["imbue"]
 
 [tool.uv.sources]
 mng = { workspace = true }
+mng-llm = { workspace = true }
+mng-recursive = { workspace = true }
 mng-ttyd = { workspace = true }
 
 # Shared pytest settings (markers, filterwarnings, coverage report config)

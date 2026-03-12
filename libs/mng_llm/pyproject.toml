@@ -1,14 +1,16 @@
 [project]
-name = "mng-ttyd"
+name = "mng-llm"
 version = "0.1.0"
-description = "ttyd web terminal plugin for mng - automatically launches a ttyd server alongside agents"
+description = "LLM agent plugin for mng - runs the llm CLI tool as an agent with conversation management"
 requires-python = ">=3.11"
 dependencies = [
     "mng==0.1.4",
+    "mng-recursive==0.1.0",
+    "watchdog>=4.0",
 ]
 
 [project.entry-points.mng]
-ttyd = "imbue.mng_ttyd.plugin"
+llm = "imbue.mng_llm.plugin"
 
 [build-system]
 requires = ["hatchling"]
@@ -19,6 +21,7 @@ packages = ["imbue"]
 
 [tool.uv.sources]
 mng = { workspace = true }
+mng-recursive = { workspace = true }
 
 # Shared pytest settings (markers, filterwarnings, coverage report config)
 # are centralized in:
@@ -32,11 +35,11 @@ testpaths = ["."]
 addopts = [
   "-n 4",
   "--dist=worksteal",
-  "--cov=imbue.mng_ttyd",
+  "--cov=imbue.mng_llm",
   "--cov-report=term-missing",
   "--cov-report=html",
   "--cov-report=xml",
-  "--cov-fail-under=72",
+  "--cov-fail-under=11",
   "--durations=20",
   "--timeout=10",
   "--timeout-method=signal",

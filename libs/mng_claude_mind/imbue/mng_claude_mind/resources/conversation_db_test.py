@@ -9,14 +9,14 @@ from pathlib import Path
 import pytest
 
 from imbue.mng_claude_mind.conftest import create_mind_conversations_table_in_test_db
-from imbue.mng_claude_mind.resources.conversation_db import _warn
-from imbue.mng_claude_mind.resources.conversation_db import _write_stdout
-from imbue.mng_claude_mind.resources.conversation_db import count
-from imbue.mng_claude_mind.resources.conversation_db import insert
-from imbue.mng_claude_mind.resources.conversation_db import lookup_model
-from imbue.mng_claude_mind.resources.conversation_db import main
-from imbue.mng_claude_mind.resources.conversation_db import max_rowid
-from imbue.mng_claude_mind.resources.conversation_db import poll_new
+from imbue.mng_llm.resources.conversation_db import _warn
+from imbue.mng_llm.resources.conversation_db import _write_stdout
+from imbue.mng_llm.resources.conversation_db import count
+from imbue.mng_llm.resources.conversation_db import insert
+from imbue.mng_llm.resources.conversation_db import lookup_model
+from imbue.mng_llm.resources.conversation_db import main
+from imbue.mng_llm.resources.conversation_db import max_rowid
+from imbue.mng_llm.resources.conversation_db import poll_new
 
 
 def _create_db(db_path: Path) -> None:

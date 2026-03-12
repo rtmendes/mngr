@@ -45,8 +45,8 @@ from typing import Final
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
-from imbue.mng_claude_mind.resources.watcher_common import MngNotInstalledError
-from imbue.mng_claude_mind.resources.watcher_common import get_mng_command
+from imbue.mng_recursive.watcher_common import MngNotInstalledError
+from imbue.mng_recursive.watcher_common import get_mng_command
 
 # -- Environment and paths --
 

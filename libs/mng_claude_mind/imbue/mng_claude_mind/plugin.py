@@ -24,26 +24,25 @@ from imbue.mng.interfaces.host import CreateAgentOptions
 from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.primitives import CommandString
 from imbue.mng_claude_mind.provisioning import build_memory_sync_hooks_config
-from imbue.mng_claude_mind.provisioning import configure_llm_user_path
-from imbue.mng_claude_mind.provisioning import create_daily_conversation
-from imbue.mng_claude_mind.provisioning import create_event_log_directories
-from imbue.mng_claude_mind.provisioning import create_mind_conversations_table
 from imbue.mng_claude_mind.provisioning import create_mind_symlinks
-from imbue.mng_claude_mind.provisioning import create_slack_notifications_conversation
-from imbue.mng_claude_mind.provisioning import create_system_notifications_conversation
-from imbue.mng_claude_mind.provisioning import install_llm_toolchain
 from imbue.mng_claude_mind.provisioning import provision_default_content
-from imbue.mng_claude_mind.provisioning import provision_llm_tools
-from imbue.mng_claude_mind.provisioning import provision_supporting_services
-from imbue.mng_claude_mind.provisioning import resolve_work_dir_abs
 from imbue.mng_claude_mind.provisioning import setup_memory_directory
 from imbue.mng_claude_mind.provisioning import validate_talking_role_constraints
-from imbue.mng_claude_mind.settings import load_settings_from_host
+from imbue.mng_llm.provisioning import configure_llm_user_path
+from imbue.mng_llm.provisioning import create_daily_conversation
+from imbue.mng_llm.provisioning import create_mind_conversations_table
+from imbue.mng_llm.provisioning import create_slack_notifications_conversation
+from imbue.mng_llm.provisioning import create_system_notifications_conversation
+from imbue.mng_llm.provisioning import install_llm_toolchain
+from imbue.mng_llm.provisioning import provision_llm_tools
+from imbue.mng_llm.provisioning import provision_supporting_services
+from imbue.mng_llm.provisioning import resolve_work_dir_abs
+from imbue.mng_llm.settings import load_settings_from_host
 
 # Supporting service tmux window names and commands.
 # These are run as additional tmux windows alongside the primary role agent.
 CONV_WATCHER_WINDOW_NAME: Final[str] = "conv_watcher"
-CONV_WATCHER_COMMAND: Final[str] = "mng mindconversations"
+CONV_WATCHER_COMMAND: Final[str] = "mng llmconversations"
 
 EVENT_WATCHER_WINDOW_NAME: Final[str] = "events"
 EVENT_WATCHER_COMMAND: Final[str] = "mng mindevents"
@@ -54,7 +53,7 @@ TRANSCRIPT_WATCHER_COMMAND: Final[str] = "mng mindtranscript"
 # Web server: serves the main web interface with conversation selector
 # and agent list page.
 WEB_SERVER_WINDOW_NAME: Final[str] = "web_server"
-WEB_SERVER_COMMAND: Final[str] = "mng mindweb"
+WEB_SERVER_COMMAND: Final[str] = "mng llmweb"
 
 
 class ClaudeMindConfig(ClaudeAgentConfig):
@@ -87,9 +86,8 @@ class ClaudeMindAgent(ClaudeAgent):
       before running Claude Code, so .claude/ is discovered naturally
 
     During provisioning:
-    - Installs the llm toolchain (llm, llm-anthropic, llm-live-chat)
+    - Installs the llm toolchain (via mng_llm plugin)
     - Provisions supporting service scripts and chat utilities
-    - Sets up event log directories (events/<source>/events.jsonl)
     - Syncs per-role memory/ into Claude project memory via hooks
 
     Via tmux windows (injected by override_command_options), the following
@@ -101,7 +99,6 @@ class ClaudeMindAgent(ClaudeAgent):
     """
 
     enter_submission_timeout_seconds: float = Field(
-        # increased timeout because we don't want to send duplicate events if we can avoid it
         default=15.0,
         description="Timeout in seconds for waiting on the enter submission signal",
     )
@@ -125,12 +122,7 @@ class ClaudeMindAgent(ClaudeAgent):
         active_role: str,
         role_dir_abs: str,
     ) -> None:
-        """Write all hooks (readiness + memory sync) to the active role's settings.local.json.
-
-        Writes directly to <active_role>/.claude/settings.local.json because
-        that is where the role's Claude Code configuration lives (Claude Code
-        runs from within the role directory).
-        """
+        """Write all hooks (readiness + memory sync) to the active role's settings.local.json."""
         settings_path = self.work_dir / active_role / ".claude" / "settings.local.json"
 
         existing_settings: dict[str, Any] = {}
@@ -140,13 +132,11 @@ class ClaudeMindAgent(ClaudeAgent):
         except FileNotFoundError:
             pass
 
-        # Merge readiness hooks
         readiness_config = build_readiness_hooks_config()
         merged = merge_hooks_config(existing_settings, readiness_config)
         if merged is not None:
             existing_settings = merged
 
-        # Merge memory sync hooks
         memory_config = build_memory_sync_hooks_config(role_dir_abs)
         merged = merge_hooks_config(existing_settings, memory_config)
         if merged is not None:
@@ -157,13 +147,7 @@ class ClaudeMindAgent(ClaudeAgent):
 
     @staticmethod
     def _get_role_from_env(options: CreateAgentOptions) -> str:
-        """Read the ROLE env var from the agent's environment options.
-
-        The ROLE env var must be passed via ``--env ROLE=<role>`` when creating
-        the agent. It determines which role directory Claude Code runs from.
-
-        Raises RuntimeError if ROLE is not set.
-        """
+        """Read the ROLE env var from the agent's environment options."""
         for env_var in options.environment.env_vars:
             if env_var.key == "ROLE":
                 return env_var.value
@@ -177,15 +161,7 @@ class ClaudeMindAgent(ClaudeAgent):
         host: OnlineHostInterface,
         env_vars: dict[str, str],
     ) -> None:
-        """Set UV_TOOL_DIR, UV_TOOL_BIN_DIR, and prepend bin dir to PATH.
-
-        These env vars ensure that ``uv tool install`` (run by the
-        mng_recursive plugin) places the mng binary and its venv into
-        the agent's state directory, and that any subsequent ``uv tool``
-        invocations within the agent's processes also use the same paths.
-
-        PATH is prepended so that ``mng`` is found directly by name.
-        """
+        """Set UV_TOOL_DIR and UV_TOOL_BIN_DIR for per-agent tool isolation."""
         agent_state_dir = env_vars.get("MNG_AGENT_STATE_DIR", "")
         if agent_state_dir:
             bin_dir = f"{agent_state_dir}/bin"
@@ -198,15 +174,7 @@ class ClaudeMindAgent(ClaudeAgent):
         agent_args: tuple[str, ...],
         command_override: CommandString | None,
     ) -> CommandString:
-        """Prepend ``cd "$ROLE" &&`` so Claude Code runs from within the role directory.
-
-        The ``$ROLE`` env var is set via ``--env ROLE=<role>`` when the agent
-        is created (passed by ``mind deploy`` or manually by the user).
-
-        This causes Claude Code to naturally discover ``.claude/``, skills,
-        and ``CLAUDE.local.md`` from the role directory, while ``CLAUDE.md``
-        at the repo root is found by walking up the directory tree.
-        """
+        """Prepend ``cd "$ROLE" &&`` so Claude Code runs from within the role directory."""
         base_command = super().assemble_command(host, agent_args, command_override)
         return CommandString(f'cd "$ROLE" && {base_command}')
 
@@ -222,19 +190,14 @@ class ClaudeMindAgent(ClaudeAgent):
         0. Per-agent mng installation (via mng_recursive, before super())
         1. Settings loading from minds.toml
         2. Talking role constraint validation (no skills or settings allowed)
-        3. llm + plugin installation
+        3. llm + plugin installation (via mng_llm)
         4. Default content (GLOBAL.md, role prompts, role .claude/ config)
         5. Symlinks (CLAUDE.md -> GLOBAL.md, <role>/CLAUDE.local.md -> <role>/PROMPT.md)
         6. All hooks (readiness + memory sync) written to <role>/.claude/settings.local.json
-        7. Supporting service scripts and chat utilities
-        8. Event log directory structure (events/<source>/events.jsonl)
-        9. LLM tool scripts for conversation context
-        10. Per-role memory directory setup
+        7. Supporting service scripts and chat utilities (via mng_llm)
+        8. LLM tool scripts for conversation context (via mng_llm)
+        9. Per-role memory directory setup
         """
-        # Install mng before anything else so that supporting services
-        # (event_watcher, web_server, etc.) can find it via UV_TOOL_BIN_DIR.
-        # The env vars (UV_TOOL_DIR, UV_TOOL_BIN_DIR) are already written
-        # to the agent env file by this point (host writes env before provision).
         from imbue.mng_recursive.provisioning import provision_mng_for_agent
 
         provision_mng_for_agent(agent=self, host=host, mng_ctx=mng_ctx)
@@ -244,7 +207,6 @@ class ClaudeMindAgent(ClaudeAgent):
         config = self._get_mind_config()
         active_role = self._get_role_from_env(options)
 
-        # Load settings from minds.toml (falls back to defaults)
         settings = load_settings_from_host(host, self.work_dir)
         provisioning = settings.provisioning
 
@@ -256,9 +218,6 @@ class ClaudeMindAgent(ClaudeAgent):
         provision_default_content(host, self.work_dir, provisioning)
         create_mind_symlinks(host, self.work_dir, active_role, provisioning)
 
-        # Write all hooks (readiness + memory sync) directly to the role's
-        # settings.local.json. We write to the role directory because that's
-        # where Claude Code runs and discovers its .claude/ config.
         work_dir_abs = resolve_work_dir_abs(host, self.work_dir, provisioning)
         role_dir_abs = f"{work_dir_abs}/{active_role}"
         self._configure_role_hooks(host, active_role, role_dir_abs)
@@ -267,7 +226,6 @@ class ClaudeMindAgent(ClaudeAgent):
 
         provision_supporting_services(host, agent_state_dir, provisioning)
         provision_llm_tools(host, agent_state_dir, provisioning)
-        create_event_log_directories(host, agent_state_dir, provisioning)
 
         configure_llm_user_path(host, agent_state_dir, provisioning)
         create_mind_conversations_table(host, agent_state_dir, provisioning)
@@ -282,17 +240,7 @@ class ClaudeMindAgent(ClaudeAgent):
 
 
 def inject_supporting_services(params: dict[str, Any]) -> None:
-    """Inject all mind supporting service tmux windows into the create command parameters.
-
-    Adds:
-    - Conversation watcher (syncs llm DB to JSONL files)
-    - Event watcher (sends new events to primary role agent via mng message)
-    - Web server (main web interface with conversation selector and agent list)
-    - Transcript watcher (converts claude_transcript to common_transcript)
-
-    Agent and chat terminal access is provided by the consolidated ttyd
-    server (from mng_ttyd) via URL-arg dispatch to commands/ttyd/*.sh scripts.
-    """
+    """Inject all mind supporting service tmux windows into the create command parameters."""
     existing = params.get("extra_window", ())
     params["extra_window"] = (
         *existing,
@@ -338,14 +286,7 @@ def override_command_options(
     command_class: type,
     params: dict[str, Any],
 ) -> None:
-    """Add mind supporting service windows when creating claude-mind role agents (or subtypes).
-
-    Injects: conversation watcher, event watcher, web server,
-    and transcript watcher as supporting services.
-
-    Matches any agent type whose registered class is ClaudeMindAgent or
-    a subclass of it (e.g. elena-code, custom mind types).
-    """
+    """Add mind supporting service windows when creating claude-mind role agents (or subtypes)."""
     if command_name != "create":
         return
 

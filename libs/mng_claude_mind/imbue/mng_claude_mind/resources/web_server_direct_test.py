@@ -12,18 +12,18 @@ from pathlib import Path
 
 import pytest
 
-from imbue.mng_claude_mind.resources.web_server import _get_default_chat_model
-from imbue.mng_claude_mind.resources.web_server import _get_most_recent_conversation_id
-from imbue.mng_claude_mind.resources.web_server import _html_escape
-from imbue.mng_claude_mind.resources.web_server import _iso_timestamp
-from imbue.mng_claude_mind.resources.web_server import _log
-from imbue.mng_claude_mind.resources.web_server import _make_event_id
-from imbue.mng_claude_mind.resources.web_server import _read_message_history
-from imbue.mng_claude_mind.resources.web_server import _render_agents_page
-from imbue.mng_claude_mind.resources.web_server import _render_conversations_page
-from imbue.mng_claude_mind.resources.web_server import _render_header
-from imbue.mng_claude_mind.resources.web_server import _render_iframe_page
-from imbue.mng_claude_mind.resources.web_server import _render_web_chat_page
+from imbue.mng_llm.resources.web_server import _get_default_chat_model
+from imbue.mng_llm.resources.web_server import _get_most_recent_conversation_id
+from imbue.mng_llm.resources.web_server import _html_escape
+from imbue.mng_llm.resources.web_server import _iso_timestamp
+from imbue.mng_llm.resources.web_server import _log
+from imbue.mng_llm.resources.web_server import _make_event_id
+from imbue.mng_llm.resources.web_server import _read_message_history
+from imbue.mng_llm.resources.web_server import _render_agents_page
+from imbue.mng_llm.resources.web_server import _render_conversations_page
+from imbue.mng_llm.resources.web_server import _render_header
+from imbue.mng_llm.resources.web_server import _render_iframe_page
+from imbue.mng_llm.resources.web_server import _render_web_chat_page
 
 
 def test_html_escape_escapes_ampersand() -> None:
@@ -132,7 +132,7 @@ def test_render_agents_page_shows_empty_state() -> None:
 
 
 def test_render_agents_page_lists_cached_agents() -> None:
-    import imbue.mng_claude_mind.resources.web_server as ws
+    import imbue.mng_llm.resources.web_server as ws
 
     original = ws._cached_agents
     ws._cached_agents = [
@@ -151,7 +151,7 @@ def test_render_agents_page_lists_cached_agents() -> None:
 
 def test_register_server_creates_jsonl_file(tmp_path: Path) -> None:
     """_register_server should write a server record to the JSONL file."""
-    import imbue.mng_claude_mind.resources.web_server as ws
+    import imbue.mng_llm.resources.web_server as ws
 
     original_path = ws.SERVERS_JSONL_PATH
     jsonl_path = tmp_path / "events" / "servers" / "events.jsonl"

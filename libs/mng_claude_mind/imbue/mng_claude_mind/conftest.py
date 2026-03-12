@@ -14,9 +14,9 @@ from loguru import logger
 from imbue.mng.providers.ssh_host_setup import load_resource_script
 from imbue.mng.utils.plugin_testing import register_plugin_test_fixtures
 from imbue.mng.utils.testing import init_git_repo_with_config
-from imbue.mng_claude_mind.provisioning import MIND_CONVERSATIONS_TABLE_SQL
-from imbue.mng_claude_mind.provisioning import load_mind_resource
 from imbue.mng_claude_mind.resources import event_watcher as event_watcher_module
+from imbue.mng_llm.provisioning import MIND_CONVERSATIONS_TABLE_SQL
+from imbue.mng_llm.provisioning import load_llm_resource
 
 register_plugin_test_fixtures(globals())
 
@@ -138,7 +138,7 @@ class ChatScriptEnv:
         commands_dir.mkdir(parents=True)
 
         self.chat_script = commands_dir / "chat.sh"
-        self.chat_script.write_text(load_mind_resource("chat.sh"))
+        self.chat_script.write_text(load_llm_resource("chat.sh"))
         os.chmod(self.chat_script, 0o755)
 
         # Write the shared logging library (sourced by chat.sh and other scripts)
@@ -421,7 +421,7 @@ def web_server_test_server() -> Generator[tuple[object, int], None, None]:
     from http.server import ThreadingHTTPServer
 
     # Import inside fixture to avoid underscore-prefixed import at module level
-    from imbue.mng_claude_mind.resources import web_server as ws_mod
+    from imbue.mng_llm.resources import web_server as ws_mod
 
     handler_class = ws_mod._WebServerHandler  # noqa: SLF001
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_class)

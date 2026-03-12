@@ -12,7 +12,7 @@ import pytest
 
 from imbue.mng_claude_mind.conftest import create_mind_conversations_table_in_test_db
 from imbue.mng_claude_mind.conftest import write_conversation_to_db
-from imbue.mng_claude_mind.provisioning import load_mind_resource
+from imbue.mng_llm.provisioning import load_llm_resource
 
 
 def _create_test_db_with_conversations(db_path: Path, conversations: list[tuple[str, str, str]]) -> None:
@@ -43,7 +43,7 @@ def web_server_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setenv("MNG_HOST_NAME", "test-host-82741")
     monkeypatch.setenv("LLM_USER_PATH", str(llm_data_dir))
 
-    source = load_mind_resource("web_server.py")
+    source = load_llm_resource("web_server.py")
     module = types.ModuleType("web_server_test_module")
     module.__file__ = "web_server.py"
     exec(compile(source, "web_server.py", "exec"), module.__dict__)  # noqa: S102

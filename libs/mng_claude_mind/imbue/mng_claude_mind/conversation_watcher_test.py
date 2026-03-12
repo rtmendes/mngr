@@ -8,10 +8,10 @@ import pytest
 from imbue.mng_claude_mind.conftest import create_test_llm_db
 from imbue.mng_claude_mind.conftest import write_conversation_to_db
 from imbue.mng_claude_mind.conftest import write_minds_settings_toml
-from imbue.mng_claude_mind.resources.conversation_watcher import _get_llm_db_path
-from imbue.mng_claude_mind.resources.conversation_watcher import _get_tracked_conversation_ids
-from imbue.mng_claude_mind.resources.conversation_watcher import _load_poll_interval
-from imbue.mng_claude_mind.resources.conversation_watcher import _sync_messages
+from imbue.mng_llm.resources.conversation_watcher import _get_llm_db_path
+from imbue.mng_llm.resources.conversation_watcher import _get_tracked_conversation_ids
+from imbue.mng_llm.resources.conversation_watcher import _load_poll_interval
+from imbue.mng_llm.resources.conversation_watcher import _sync_messages
 
 # -- _load_poll_interval tests --
 

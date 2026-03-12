@@ -10,16 +10,23 @@ from typing import cast
 import pytest
 from loguru import logger
 
-from imbue.mng_claude_mind.conftest import write_minds_settings_toml
-from imbue.mng_claude_mind.resources.watcher_common import ChangeHandler
-from imbue.mng_claude_mind.resources.watcher_common import load_watchers_section
-from imbue.mng_claude_mind.resources.watcher_common import mtime_poll_directories
-from imbue.mng_claude_mind.resources.watcher_common import mtime_poll_files
-from imbue.mng_claude_mind.resources.watcher_common import read_event_ids_from_jsonl
-from imbue.mng_claude_mind.resources.watcher_common import require_env
-from imbue.mng_claude_mind.resources.watcher_common import setup_watchdog_for_directories
-from imbue.mng_claude_mind.resources.watcher_common import setup_watchdog_for_files
-from imbue.mng_claude_mind.resources.watcher_common import setup_watcher_logging
+from imbue.mng_recursive.watcher_common import ChangeHandler
+from imbue.mng_recursive.watcher_common import load_watchers_section
+from imbue.mng_recursive.watcher_common import mtime_poll_directories
+from imbue.mng_recursive.watcher_common import mtime_poll_files
+from imbue.mng_recursive.watcher_common import read_event_ids_from_jsonl
+from imbue.mng_recursive.watcher_common import require_env
+from imbue.mng_recursive.watcher_common import setup_watchdog_for_directories
+from imbue.mng_recursive.watcher_common import setup_watchdog_for_files
+from imbue.mng_recursive.watcher_common import setup_watcher_logging
+
+
+def _write_minds_settings_toml(base_dir: Path, content: str) -> Path:
+    """Write minds.toml in the given directory for watcher tests."""
+    settings_path = base_dir / "minds.toml"
+    settings_path.write_text(content)
+    return settings_path
+
 
 # -- setup_watcher_logging tests --
 
@@ -92,18 +99,18 @@ def test_load_watchers_section_returns_empty_when_no_file(tmp_path: Path) -> Non
 
 
 def test_load_watchers_section_reads_watchers_table(tmp_path: Path) -> None:
-    write_minds_settings_toml(tmp_path, "[watchers]\nconversation_poll_interval_seconds = 15\n")
+    _write_minds_settings_toml(tmp_path, "[watchers]\nconversation_poll_interval_seconds = 15\n")
     result = load_watchers_section(tmp_path)
     assert result["conversation_poll_interval_seconds"] == 15
 
 
 def test_load_watchers_section_handles_corrupt_file(tmp_path: Path) -> None:
-    write_minds_settings_toml(tmp_path, "this is not valid toml {{{")
+    _write_minds_settings_toml(tmp_path, "this is not valid toml {{{")
     assert load_watchers_section(tmp_path) == {}
 
 
 def test_load_watchers_section_returns_empty_for_missing_section(tmp_path: Path) -> None:
-    write_minds_settings_toml(tmp_path, "[other_section]\nkey = 1\n")
+    _write_minds_settings_toml(tmp_path, "[other_section]\nkey = 1\n")
     assert load_watchers_section(tmp_path) == {}
 
 
