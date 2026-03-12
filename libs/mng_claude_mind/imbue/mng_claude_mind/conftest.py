@@ -20,6 +20,8 @@ from imbue.mng_llm.conftest import write_conversation_to_db as write_conversatio
 from imbue.mng_llm.conftest import write_minds_settings_toml as write_minds_settings_toml
 from imbue.mng_llm.provisioning import MIND_CONVERSATIONS_TABLE_SQL as MIND_CONVERSATIONS_TABLE_SQL
 from imbue.mng_llm.provisioning import load_llm_resource
+from imbue.mng_mind.conftest import StubCommandResult as StubCommandResult
+from imbue.mng_mind.conftest import StubHost as StubHost
 
 register_plugin_test_fixtures(globals())
 
@@ -162,59 +164,6 @@ class ChatScriptEnv:
 def chat_env(temp_host_dir: Path) -> ChatScriptEnv:
     """Provide a ChatScriptEnv for testing chat.sh."""
     return ChatScriptEnv(temp_host_dir)
-
-
-class StubCommandResult:
-    """Concrete test double for command execution results."""
-
-    def __init__(self, *, success: bool = True, stderr: str = "", stdout: str = "") -> None:
-        self.success = success
-        self.stderr = stderr
-        self.stdout = stdout
-
-
-class StubHost:
-    """Concrete test double for OnlineHostInterface that records operations."""
-
-    def __init__(
-        self,
-        host_dir: Path = Path("/tmp/mng-test/host"),
-        command_results: dict[str, StubCommandResult] | None = None,
-        text_file_contents: dict[str, str] | None = None,
-        execute_mkdir: bool = False,
-    ) -> None:
-        self.host_dir = host_dir
-        self.executed_commands: list[str] = []
-        self.written_files: list[tuple[Path, bytes, str]] = []
-        self.written_text_files: list[tuple[Path, str]] = []
-        self._command_results = command_results or {}
-        self._text_file_contents = text_file_contents or {}
-        self._execute_mkdir = execute_mkdir
-
-    def execute_command(self, command: str, **kwargs: Any) -> StubCommandResult:
-        self.executed_commands.append(command)
-        if self._execute_mkdir and "mkdir -p" in command:
-            path = command.split("mkdir -p ")[1].strip("'\"")
-            Path(path).mkdir(parents=True, exist_ok=True)
-        for pattern, result in self._command_results.items():
-            if pattern in command:
-                return result
-        if "&& pwd" in command and "cd " in command:
-            path = command.split("cd ")[1].split(" &&")[0].strip("'\"")
-            return StubCommandResult(stdout=path + "\n")
-        return StubCommandResult()
-
-    def read_text_file(self, path: Path) -> str:
-        for pattern, content in self._text_file_contents.items():
-            if pattern in str(path):
-                return content
-        raise FileNotFoundError(f"No stub content for {path}")
-
-    def write_file(self, path: Path, content: bytes, mode: str = "0644") -> None:
-        self.written_files.append((path, content, mode))
-
-    def write_text_file(self, path: Path, content: str) -> None:
-        self.written_text_files.append((path, content))
 
 
 @pytest.fixture()

@@ -142,7 +142,9 @@ def _create_symlink_if_target_exists(
         label="mkdir",
     )
 
-    cmd = f"ln -sf {shlex.quote(str(target_path))} {shlex.quote(str(link_path))}"
+    # Use -n so ln treats an existing directory destination as a file
+    # (otherwise ln -sf creates a symlink inside the directory rather than replacing it)
+    cmd = f"ln -sfn {shlex.quote(str(target_path))} {shlex.quote(str(link_path))}"
     with log_span("Creating symlink: {} -> {}", link_path, target_path):
         result = execute_with_timing(
             host,
