@@ -161,13 +161,15 @@ def test_every_project_has_pypi_readme() -> None:
             missing_field.append(project_dir.name)
             continue
 
-        # readme can be a string (filename) or a table with a "file" key
+        # readme can be a string (filename) or a table with a "file" key;
+        # inline text (table with "text" key) is not accepted because the
+        # point of this ratchet is to ensure a README file exists on disk.
         if isinstance(readme_value, str):
             readme_path = project_dir / readme_value
         elif isinstance(readme_value, dict):
             readme_file = readme_value.get("file")
             if readme_file is None:
-                # readme is inline text, which is fine
+                missing_field.append(project_dir.name)
                 continue
             readme_path = project_dir / readme_file
         else:
