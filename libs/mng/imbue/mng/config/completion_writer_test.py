@@ -107,15 +107,14 @@ def _read_cache(cache_dir: Path) -> dict:
 
 
 def test_write_cli_completions_cache_includes_host_name_options(completion_cache_dir: Path) -> None:
-    """Cache should include host_name_options for create --host and --target-host."""
+    """Cache should include host_name_options for create --target."""
     group = click.Group(
         name="test",
         commands={
             "create": click.Command(
                 "create",
                 params=[
-                    click.Option(["--host"]),
-                    click.Option(["--target-host"]),
+                    click.Option(["--target"]),
                 ],
             ),
         },
@@ -124,8 +123,7 @@ def test_write_cli_completions_cache_includes_host_name_options(completion_cache
     write_cli_completions_cache(cli_group=group)
     data = _read_cache(completion_cache_dir)
 
-    assert "create.--host" in data["host_name_options"]
-    assert "create.--target-host" in data["host_name_options"]
+    assert "create.--target" in data["host_name_options"]
 
 
 def test_write_cli_completions_cache_includes_positional_completions_for_events(
@@ -226,7 +224,7 @@ def test_write_cli_completions_cache_with_mng_ctx(
                 params=[
                     click.Option(["--type"]),
                     click.Option(["--template"]),
-                    click.Option(["--in"]),
+                    click.Option(["--provider"]),
                 ],
             ),
             "list": click.Command(
@@ -247,7 +245,7 @@ def test_write_cli_completions_cache_with_mng_ctx(
     assert "create.--type" in data["option_choices"]
     assert len(data["option_choices"]["create.--type"]) > 0
     # Provider names always include "local"
-    assert "local" in data["option_choices"]["create.--in"]
+    assert "local" in data["option_choices"]["create.--provider"]
     assert "local" in data["option_choices"]["list.--provider"]
     # Config keys are flattened from the config model
     assert len(data["config_keys"]) > 0

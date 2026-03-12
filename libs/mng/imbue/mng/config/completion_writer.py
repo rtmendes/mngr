@@ -67,8 +67,7 @@ _GIT_BRANCH_OPTIONS: Final[frozenset[str]] = frozenset(
 # event stream. Uses the same "command.--option" notation.
 _HOST_NAME_OPTIONS: Final[frozenset[str]] = frozenset(
     {
-        "create.--host",
-        "create.--target-host",
+        "create.--target",
     }
 )
 
@@ -95,7 +94,7 @@ _EXCLUDED_CONFIG_KEY_PREFIXES: Final[frozenset[str]] = frozenset(
 _DYNAMIC_CHOICE_OPTIONS: Final[dict[str, str]] = {
     "create.--type": "agent_type_names",
     "create.--template": "template_names",
-    "create.--in": "provider_names",
+    "create.--provider": "provider_names",
     "create.--new-host": "provider_names",
     "list.--provider": "provider_names",
 }
