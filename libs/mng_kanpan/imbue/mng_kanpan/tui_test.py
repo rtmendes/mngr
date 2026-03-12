@@ -1376,7 +1376,7 @@ def test_custom_col_text_returns_empty_for_missing_label() -> None:
 
 def test_custom_col_text_reads_from_plugin_state() -> None:
     entry = _make_entry(plugin_state={"claude": {"waiting_reason": "PERMISSIONS"}})
-    assert _custom_col_text(entry, "waiting", "claude", "waiting_reason") == "PERMISSIONS"
+    assert _custom_col_text(entry, "waiting", "claude", "waiting_reason", source="state") == "PERMISSIONS"
 
 
 def test_custom_col_text_reads_from_plugin_data_with_agent_source() -> None:
@@ -1386,35 +1386,35 @@ def test_custom_col_text_reads_from_plugin_data_with_agent_source() -> None:
 
 def test_custom_col_text_returns_empty_for_missing_plugin_state() -> None:
     entry = _make_entry()
-    assert _custom_col_text(entry, "waiting", "claude", "waiting_reason") == ""
+    assert _custom_col_text(entry, "waiting", "claude", "waiting_reason", source="state") == ""
 
 
 def test_custom_col_text_returns_empty_for_missing_plugin_field() -> None:
     entry = _make_entry(plugin_state={"claude": {}})
-    assert _custom_col_text(entry, "waiting", "claude", "waiting_reason") == ""
+    assert _custom_col_text(entry, "waiting", "claude", "waiting_reason", source="state") == ""
 
 
 def test_custom_col_markup_applies_color_when_configured() -> None:
     entry = _make_entry(labels={"blocked": "yes"})
-    result = _custom_col_markup(entry, "blocked", None, None, {"yes": "light red"})
+    result = _custom_col_markup(entry, "blocked", None, None, {"yes": "light red"}, source="labels")
     assert result == ("col_blocked_yes", "yes")
 
 
 def test_custom_col_markup_no_color_returns_plain_text() -> None:
     entry = _make_entry(labels={"blocked": "maybe"})
-    result = _custom_col_markup(entry, "blocked", None, None, {"yes": "light red"})
+    result = _custom_col_markup(entry, "blocked", None, None, {"yes": "light red"}, source="labels")
     assert result == "maybe"
 
 
 def test_custom_col_markup_empty_value_returns_empty_string() -> None:
     entry = _make_entry()
-    result = _custom_col_markup(entry, "blocked", None, None, {"yes": "light red"})
+    result = _custom_col_markup(entry, "blocked", None, None, {"yes": "light red"}, source="labels")
     assert result == ""
 
 
 def test_custom_col_markup_plugin_state_with_color() -> None:
     entry = _make_entry(plugin_state={"claude": {"reason": "PERMISSIONS"}})
-    result = _custom_col_markup(entry, "wait", "claude", "reason", {"PERMISSIONS": "light red"})
+    result = _custom_col_markup(entry, "wait", "claude", "reason", {"PERMISSIONS": "light red"}, source="state")
     assert result == ("col_wait_PERMISSIONS", "PERMISSIONS")
 
 
@@ -1432,9 +1432,9 @@ def test_build_custom_column_defs_label_source() -> None:
     assert defs[0].flexible is False
 
 
-def test_build_custom_column_defs_plugin_source() -> None:
+def test_build_custom_column_defs_state_source() -> None:
     config = {
-        "wait": CustomColumnConfig(header="WAIT", plugin_name="claude", field="waiting_reason"),
+        "wait": CustomColumnConfig(header="WAIT", source="state", plugin_name="claude", field="waiting_reason"),
     }
     defs = _build_custom_column_defs(config)
     assert len(defs) == 1
@@ -1445,7 +1445,7 @@ def test_build_custom_column_defs_plugin_source() -> None:
 
 def test_build_custom_column_defs_agent_source() -> None:
     config = {
-        "cost": CustomColumnConfig(header="COST", plugin_name="claude", field="total_cost", source="agent"),
+        "cost": CustomColumnConfig(header="COST", source="agent", plugin_name="claude", field="total_cost"),
     }
     defs = _build_custom_column_defs(config)
     entry = _make_entry(plugin_data={"claude": {"total_cost": "1.50"}})

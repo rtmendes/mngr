@@ -102,13 +102,13 @@ class CustomColumnConfig(FrozenModel):
 
     header: str = Field(description="Column header text")
     colors: dict[str, str] = Field(default_factory=dict, description="Mapping from value to urwid color name")
-    plugin_name: str | None = Field(default=None, description="Plugin name for plugin-backed columns")
-    field: str | None = Field(default=None, description="Field name within plugin data")
     source: str = Field(
-        default="state",
-        description="Data source for plugin columns: 'state' (certified data + state dir files) "
+        default="labels",
+        description="Data source: 'labels' (agent labels), 'state' (certified data + state dir files), "
         "or 'agent' (AgentDetails.plugin, populated by agent_field_generators)",
     )
+    plugin_name: str | None = Field(default=None, description="Plugin name (required for 'state' and 'agent' sources)")
+    field: str | None = Field(default=None, description="Field name within plugin data")
 
 
 class CustomCommand(FrozenModel):

@@ -989,13 +989,14 @@ class _ColumnDef(FrozenModel):
 
 
 def _custom_col_text(
-    entry: AgentBoardEntry, col_key: str, plugin_name: str | None, field: str | None, source: str = "state"
+    entry: AgentBoardEntry, col_key: str, plugin_name: str | None, field: str | None, source: str = "labels"
 ) -> str:
-    """Get the text value for a custom column from labels, plugin_data, or plugin_state."""
-    if plugin_name is not None:
-        data = entry.column_data.plugin_data if source == "agent" else entry.column_data.plugin_state
-        return str(data.get(plugin_name, {}).get(field or "", ""))
-    return entry.column_data.labels.get(col_key, "")
+    """Get the text value for a custom column from the configured source."""
+    if source == "labels":
+        return entry.column_data.labels.get(col_key, "")
+    if source == "agent":
+        return str(entry.column_data.plugin_data.get(plugin_name or "", {}).get(field or "", ""))
+    return str(entry.column_data.plugin_state.get(plugin_name or "", {}).get(field or "", ""))
 
 
 def _custom_col_markup(
@@ -1007,7 +1008,7 @@ def _custom_col_markup(
     source: str = "state",
 ) -> str | tuple[Hashable, str]:
     """Get markup for a custom column, applying color when configured."""
-    value = _custom_col_text(entry, col_key, plugin_name, field, source)
+    value = _custom_col_text(entry, col_key, plugin_name, field, source=source)
     if not value:
         return ""
     if value in colors:

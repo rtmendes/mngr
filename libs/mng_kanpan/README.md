@@ -52,25 +52,26 @@ refresh_afterwards = true
 
 ## Custom columns
 
-Add extra columns to the board that display per-agent data. Each column reads from one of two sources:
+Add extra columns to the board that display per-agent data. The `source` field selects where the column reads from:
 
-- **Labels** (default) -- reads `agent.labels[key]`, where `key` is the column's config key.
-- **Plugin state** (default for plugin columns) -- reads from certified data in `data.json` (written by `set_plugin_data()`) and reported plugin state files at `$STATE_DIR/plugin/<plugin_name>/<field>` (written by `set_reported_plugin_file()`). State files take precedence when both exist.
-- **Plugin agent data** -- reads from `AgentDetails.plugin`, populated by `agent_field_generators`. Set `source = "agent"` to use this source.
+- **`"labels"`** (default) -- reads `agent.labels[key]`, where `key` is the column's config key.
+- **`"state"`** -- reads from certified data in `data.json` (written by `set_plugin_data()`) and reported plugin state files at `$STATE_DIR/plugin/<plugin_name>/<field>` (written by `set_reported_plugin_file()`). Requires `plugin_name` and `field`. State files take precedence when both exist.
+- **`"agent"`** -- reads from `AgentDetails.plugin`, populated by `agent_field_generators`. Requires `plugin_name` and `field`.
 
 Values can be colored by mapping specific strings to urwid color names.
 
 ```toml
-# Label-backed column: shows agent.labels["blocked"]
+# Label-backed column (source = "labels" is the default)
 [plugins.kanpan.columns.blocked]
 header = "BLOCKED"
 [plugins.kanpan.columns.blocked.colors]
 unblocked = "light green"
 blocked = "light red"
 
-# Plugin-data-backed column: shows plugin data for claude/waiting_reason
+# Plugin state column: reads from certified data / state dir files
 [plugins.kanpan.columns.waiting]
 header = "WAIT"
+source = "state"
 plugin_name = "claude"
 field = "waiting_reason"
 [plugins.kanpan.columns.waiting.colors]
