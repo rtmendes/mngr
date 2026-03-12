@@ -1,6 +1,7 @@
 """Unit tests for the mng_ttyd plugin."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from typing import cast
 
@@ -8,6 +9,7 @@ from imbue.mng.interfaces.host import NamedCommand
 from imbue.mng_ttyd.plugin import TTYD_COMMAND
 from imbue.mng_ttyd.plugin import TTYD_SERVER_NAME
 from imbue.mng_ttyd.plugin import TTYD_WINDOW_NAME
+from imbue.mng_ttyd.plugin import on_after_provisioning
 from imbue.mng_ttyd.plugin import override_command_options
 
 
@@ -134,10 +136,6 @@ def test_ttyd_command_scans_ttyd_scripts_for_events() -> None:
 
 def test_on_after_provisioning_writes_agent_script(tmp_path: Path) -> None:
     """Verify that on_after_provisioning writes ttyd/agent.sh to the agent state dir."""
-    from types import SimpleNamespace
-
-    from imbue.mng_ttyd.plugin import on_after_provisioning
-
     host_dir = tmp_path / "host"
     host_dir.mkdir()
     agent_id = "test-agent-123"
@@ -170,10 +168,6 @@ def test_on_after_provisioning_writes_agent_script(tmp_path: Path) -> None:
 
 def test_on_after_provisioning_creates_ttyd_directory(tmp_path: Path) -> None:
     """Verify that on_after_provisioning creates the commands/ttyd/ directory."""
-    from types import SimpleNamespace
-
-    from imbue.mng_ttyd.plugin import on_after_provisioning
-
     host_dir = tmp_path / "host"
     host_dir.mkdir()
 

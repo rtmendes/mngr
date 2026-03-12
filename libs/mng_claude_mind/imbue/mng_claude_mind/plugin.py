@@ -162,11 +162,9 @@ class ClaudeMindAgent(ClaudeAgent):
         env_vars: dict[str, str],
     ) -> None:
         """Set UV_TOOL_DIR and UV_TOOL_BIN_DIR for per-agent tool isolation."""
-        agent_state_dir = env_vars.get("MNG_AGENT_STATE_DIR", "")
-        if agent_state_dir:
-            bin_dir = f"{agent_state_dir}/bin"
-            env_vars["UV_TOOL_DIR"] = f"{agent_state_dir}/tools"
-            env_vars["UV_TOOL_BIN_DIR"] = bin_dir
+        from imbue.mng_llm.plugin import set_uv_tool_env_vars
+
+        set_uv_tool_env_vars(env_vars)
 
     def assemble_command(
         self,

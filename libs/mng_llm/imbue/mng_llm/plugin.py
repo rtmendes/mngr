@@ -28,6 +28,20 @@ from imbue.mng_llm.provisioning import provision_supporting_services
 from imbue.mng_llm.settings import load_settings_from_host
 
 
+def set_uv_tool_env_vars(env_vars: dict[str, str]) -> None:
+    """Set UV_TOOL_DIR and UV_TOOL_BIN_DIR from MNG_AGENT_STATE_DIR.
+
+    Ensures that ``uv tool install`` (run by the mng_recursive plugin)
+    places binaries into the agent's state directory, and that subsequent
+    ``uv tool`` invocations use the same paths. Shared by LlmAgent and
+    ClaudeMindAgent.
+    """
+    agent_state_dir = env_vars.get("MNG_AGENT_STATE_DIR", "")
+    if agent_state_dir:
+        env_vars["UV_TOOL_DIR"] = f"{agent_state_dir}/tools"
+        env_vars["UV_TOOL_BIN_DIR"] = f"{agent_state_dir}/bin"
+
+
 class LlmAgentConfig(AgentTypeConfig):
     """Config for the llm agent type.
 
@@ -91,18 +105,8 @@ class LlmAgent(BaseAgent):
         host: OnlineHostInterface,
         env_vars: dict[str, str],
     ) -> None:
-        """Set UV_TOOL_DIR and UV_TOOL_BIN_DIR for per-agent tool isolation.
-
-        These env vars ensure that ``uv tool install`` (run by the
-        mng_recursive plugin) places the mng binary and its venv into
-        the agent's state directory, and that any subsequent ``uv tool``
-        invocations within the agent's processes also use the same paths.
-        """
-        agent_state_dir = env_vars.get("MNG_AGENT_STATE_DIR", "")
-        if agent_state_dir:
-            bin_dir = f"{agent_state_dir}/bin"
-            env_vars["UV_TOOL_DIR"] = f"{agent_state_dir}/tools"
-            env_vars["UV_TOOL_BIN_DIR"] = bin_dir
+        """Set UV_TOOL_DIR and UV_TOOL_BIN_DIR for per-agent tool isolation."""
+        set_uv_tool_env_vars(env_vars)
 
     def provision(
         self,

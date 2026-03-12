@@ -282,9 +282,10 @@ def _load_transcript_watcher_module() -> dict[str, Any]:
     content = load_mind_resource("transcript_watcher.py")
     # Also load watcher_common.py (stripped above its watchdog marker) so
     # transcript_watcher.py can import Logger from it.
-    watcher_common_module = importlib.import_module("imbue.mng_recursive.watcher_common")
-    assert watcher_common_module.__file__ is not None
-    watcher_common_path = Path(watcher_common_module.__file__)
+    import imbue.mng_recursive.watcher_common as _wc_mod
+
+    assert _wc_mod.__file__ is not None
+    watcher_common_path = Path(_wc_mod.__file__)
     watcher_common_content = watcher_common_path.read_text()
     watcher_common_stripped = _strip_below_watchdog_marker(watcher_common_content)
 
