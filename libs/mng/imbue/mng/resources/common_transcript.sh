@@ -1,5 +1,5 @@
-#!/bin/bash
-# Common transcript converter for Claude agents.
+#!/usr/bin/env bash
+# Transcript watcher for claude agents.
 #
 # Watches the raw Claude transcript at
 # logs/claude_transcript/events.jsonl (produced by stream_transcript.sh)

@@ -26,6 +26,7 @@ import pluggy
 import pytest
 from click.testing import CliRunner
 
+from imbue.mng.agents.default_plugins.claude_config import encode_claude_project_dir_name
 from imbue.mng.cli.create import create
 from imbue.mng.cli.list import list_command
 from imbue.mng.utils.testing import tmux_session_cleanup
@@ -41,7 +42,6 @@ from imbue.mng_claude_mind.conftest import write_conversation_to_db
 from imbue.mng_claude_mind.provisioning import _DEFAULT_SKILL_DIRS
 from imbue.mng_claude_mind.provisioning import _DEFAULT_THINKING_DIR_FILES
 from imbue.mng_claude_mind.provisioning import _DEFAULT_WORK_DIR_FILES
-from imbue.mng_claude_mind.provisioning import compute_claude_project_dir_name
 from imbue.mng_claude_mind.provisioning import create_mind_symlinks
 from imbue.mng_claude_mind.provisioning import load_mind_resource
 from imbue.mng_claude_mind.provisioning import provision_default_content
@@ -269,7 +269,7 @@ def test_provisioning_syncs_memory_directory(
 
     # Project dir name is derived from work dir (parent of role dir),
     # matching build_memory_sync_hooks_config
-    project_dir_name = compute_claude_project_dir_name(abs_work_dir)
+    project_dir_name = encode_claude_project_dir_name(Path(abs_work_dir))
     project_memory = Path.home() / ".claude" / "projects" / project_dir_name / "memory"
     assert project_memory.is_dir(), "Claude project memory should be a real directory"
     assert not project_memory.is_symlink(), "Claude project memory should NOT be a symlink"

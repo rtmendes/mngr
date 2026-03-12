@@ -18,6 +18,7 @@ from typing import Final
 from loguru import logger
 
 from imbue.imbue_common.logging import log_span
+from imbue.mng.agents.default_plugins.claude_config import encode_claude_project_dir_name
 from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng_claude_mind import resources as mind_resources
 from imbue.mng_llm.data_types import ProvisioningSettings
@@ -260,7 +261,10 @@ def setup_memory_directory(
     - Initial rsync of contents from role memory/ to claude project memory/
     """
     memory_dir = work_dir / active_role / "memory"
-    project_dir_name = compute_claude_project_dir_name(str(Path(role_dir_abs).parent))
+    # Use .parent because Claude Code's project dir is named after the git repo
+    # root (the mind dir), not the role subdirectory within it. This must
+    # match the path used by build_memory_sync_hooks_config.
+    project_dir_name = encode_claude_project_dir_name(Path(role_dir_abs).parent)
 
     quoted_project_dir_name = shlex.quote(project_dir_name)
     project_memory_shell = f'"$HOME/.claude/projects/"{quoted_project_dir_name}/memory'
@@ -292,7 +296,7 @@ def build_memory_sync_hooks_config(role_dir_abs: str) -> dict[str, Any]:
     Returns a hooks config dict with PreToolUse and PostToolUse entries that
     rsync the memory directory in the appropriate direction.
     """
-    project_dir_name = compute_claude_project_dir_name(str(Path(role_dir_abs).parent))
+    project_dir_name = encode_claude_project_dir_name(Path(role_dir_abs).parent)
     quoted_work_memory = shlex.quote(f"{role_dir_abs}/memory")
     quoted_project_dir_name = shlex.quote(project_dir_name)
     project_memory_shell = f'"$HOME/.claude/projects/"{quoted_project_dir_name}/memory'
