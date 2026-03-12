@@ -55,7 +55,7 @@ refresh_afterwards = true
 Add extra columns to the board that display per-agent data. Each column reads from one of two sources:
 
 - **Labels** (default) -- reads `agent.labels[key]`, where `key` is the column's config key.
-- **Plugin data** -- reads `agent.plugin[plugin_name][field]` when `plugin_name` and `field` are set.
+- **Plugin data** -- reads from the agent's plugin data when `plugin_name` and `field` are set. Plugin data is collected from two places: the certified data in `data.json` (written by `set_plugin_data()`) and reported plugin state files at `$STATE_DIR/plugin/<plugin_name>/<field>` (written by `set_reported_plugin_file()`). State files take precedence when both exist.
 
 Values can be colored by mapping specific strings to urwid color names.
 
@@ -67,7 +67,7 @@ header = "BLOCKED"
 unblocked = "light green"
 blocked = "light red"
 
-# Plugin-data-backed column: shows agent.plugin["claude"]["waiting_reason"]
+# Plugin-data-backed column: shows plugin data for claude/waiting_reason
 [plugins.kanpan.columns.waiting]
 header = "WAIT"
 plugin_name = "claude"
