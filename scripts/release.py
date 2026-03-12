@@ -540,6 +540,12 @@ def main() -> None:
     # Compute the full bump set (includes cascades and mng-always rule)
     to_bump = _compute_bump_set(directly_changed_for_bump)
 
+    # Remove confirmed new packages from bump set -- they publish at current version,
+    # not a bumped version. They may have entered to_bump via cascade (e.g. mng is
+    # always bumped, and most packages depend on mng).
+    for name in confirmed_new:
+        to_bump.pop(name, None)
+
     # Warn if any overrides target packages not in the bump set
     for pkg_name in overrides:
         if pkg_name not in to_bump:
