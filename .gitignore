@@ -254,8 +254,9 @@ current.tar.gz
 # Changelings deploy-time build artifacts
 .changelings/
 
-# Autofix plans and verification markers (session artifacts)
+# Autofix plans, verification markers, and stuck tracking (session artifacts)
 .autofix/plans/
+.autofix/blocked_commits
 
 # Demo recordings (asciinema .cast, .txt, and scripts)
 .demos/

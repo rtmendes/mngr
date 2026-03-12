@@ -28,7 +28,28 @@ fi
 HASH=$(git rev-parse HEAD 2>/dev/null) || exit 0
 
 if [ -f ".autofix/plans/${HASH}_verified.md" ]; then
+    # Verified -- clear any stuck tracking and allow stop.
+    rm -f .autofix/blocked_commits
     exit 0
+fi
+
+# Track how many times we've blocked at the same commit. If the agent is stuck
+# (e.g. /autofix crashes before writing the marker), allow it through after 3
+# attempts rather than looping forever.
+STUCK_FILE=".autofix/blocked_commits"
+echo "$HASH" >> "$STUCK_FILE"
+if [ -f "$STUCK_FILE" ]; then
+    LAST_THREE=$(tail -n 3 "$STUCK_FILE")
+    ENTRY_COUNT=$(echo "$LAST_THREE" | wc -l | tr -d ' ')
+    if [ "$ENTRY_COUNT" -ge 3 ]; then
+        UNIQUE_COUNT=$(echo "$LAST_THREE" | sort -u | wc -l | tr -d ' ')
+        if [ "$UNIQUE_COUNT" -eq 1 ]; then
+            echo "WARNING: Autofix has been unable to verify this commit after 3 attempts." >&2
+            echo "WARNING: Allowing stop to proceed. Please investigate manually." >&2
+            rm -f "$STUCK_FILE"
+            exit 0
+        fi
+    fi
 fi
 
 EXTRA_ARGS=$(_read_config "extra_args" "")
