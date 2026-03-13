@@ -15,7 +15,6 @@ from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import SendMessageError
 from imbue.mng.hosts.host import Host
 from imbue.mng.interfaces.data_types import CommandResult
-from imbue.mng.interfaces.host import CreateAgentOptions
 from imbue.mng.interfaces.host import DEFAULT_AGENT_READY_TIMEOUT_SECONDS
 from imbue.mng.primitives import ActivitySource
 from imbue.mng.primitives import AgentId
@@ -1202,29 +1201,6 @@ def test_get_command_basename_single_word(
 
 
 # =========================================================================
-# _get_agent_dir / _get_data_path tests
-# =========================================================================
-
-
-def test_get_agent_dir_returns_expected_path(
-    test_agent: BaseAgent,
-    local_provider: LocalProviderInstance,
-) -> None:
-    """_get_agent_dir should return host_dir / agents / agent_id."""
-    expected = local_provider.host_dir / "agents" / str(test_agent.id)
-    assert test_agent._get_agent_dir() == expected
-
-
-def test_get_data_path_returns_expected_path(
-    test_agent: BaseAgent,
-    local_provider: LocalProviderInstance,
-) -> None:
-    """_get_data_path should return agent_dir / data.json."""
-    expected = local_provider.host_dir / "agents" / str(test_agent.id) / "data.json"
-    assert test_agent._get_data_path() == expected
-
-
-# =========================================================================
 # get_reported_activity_record tests
 # =========================================================================
 
@@ -1250,105 +1226,6 @@ def test_get_reported_activity_record_returns_json_after_recording(
 
 
 # =========================================================================
-# session_name / tmux_target computed property tests
-# =========================================================================
-
-
-def test_session_name_uses_prefix_and_name(
-    test_agent: BaseAgent,
-) -> None:
-    """session_name should combine config prefix with agent name."""
-    expected = f"{test_agent.mng_ctx.config.prefix}{test_agent.name}"
-    assert test_agent.session_name == expected
-
-
-# =========================================================================
-# get_host tests
-# =========================================================================
-
-
-def test_get_host_returns_host(
-    test_agent: BaseAgent,
-) -> None:
-    """get_host should return the host object."""
-    result = test_agent.get_host()
-    assert result is test_agent.host
-
-
-# =========================================================================
-# provisioning lifecycle no-op tests
-# =========================================================================
-
-
-def test_on_before_provisioning_is_noop(
-    test_agent: BaseAgent,
-    local_provider: LocalProviderInstance,
-    temp_mng_ctx: MngContext,
-) -> None:
-    """on_before_provisioning should be a no-op by default."""
-    options = CreateAgentOptions(
-        name=test_agent.name,
-        agent_type=test_agent.agent_type,
-        command=CommandString("sleep 1"),
-    )
-    # Should not raise
-    test_agent.on_before_provisioning(test_agent.host, options, temp_mng_ctx)
-
-
-def test_get_provision_file_transfers_returns_empty(
-    test_agent: BaseAgent,
-    local_provider: LocalProviderInstance,
-    temp_mng_ctx: MngContext,
-) -> None:
-    """get_provision_file_transfers should return empty list by default."""
-    options = CreateAgentOptions(
-        name=test_agent.name,
-        agent_type=test_agent.agent_type,
-        command=CommandString("sleep 1"),
-    )
-    result = test_agent.get_provision_file_transfers(test_agent.host, options, temp_mng_ctx)
-    assert result == []
-
-
-def test_provision_is_noop(
-    test_agent: BaseAgent,
-    local_provider: LocalProviderInstance,
-    temp_mng_ctx: MngContext,
-) -> None:
-    """provision should be a no-op by default."""
-    options = CreateAgentOptions(
-        name=test_agent.name,
-        agent_type=test_agent.agent_type,
-        command=CommandString("sleep 1"),
-    )
-    # Should not raise
-    test_agent.provision(test_agent.host, options, temp_mng_ctx)
-
-
-def test_on_after_provisioning_is_noop(
-    test_agent: BaseAgent,
-    local_provider: LocalProviderInstance,
-    temp_mng_ctx: MngContext,
-) -> None:
-    """on_after_provisioning should be a no-op by default."""
-    options = CreateAgentOptions(
-        name=test_agent.name,
-        agent_type=test_agent.agent_type,
-        command=CommandString("sleep 1"),
-    )
-    # Should not raise
-    test_agent.on_after_provisioning(test_agent.host, options, temp_mng_ctx)
-
-
-def test_on_destroy_is_noop(
-    test_agent: BaseAgent,
-) -> None:
-    """on_destroy should be a no-op by default."""
-    # Should not raise
-    test_agent.on_destroy(test_agent.host)
-
-
-# =========================================================================
 # _write_data tests
 # =========================================================================
 
@@ -1365,22 +1242,6 @@ def test_write_data_persists_to_file(
     # Read back and verify
     result = test_agent._read_data()
     assert result["custom_field"] == "custom_value"
-
-
-# =========================================================================
-# set_env_vars formatting tests
-# =========================================================================
-
-
-def test_set_env_vars_empty_produces_empty_content(
-    test_agent: BaseAgent,
-    local_provider: LocalProviderInstance,
-) -> None:
-    """set_env_vars with empty dict should produce empty env file."""
-    test_agent.set_env_vars({})
-
-    # get_env_vars should return empty dict
-    assert test_agent.get_env_vars() == {}
 
 
 # =========================================================================

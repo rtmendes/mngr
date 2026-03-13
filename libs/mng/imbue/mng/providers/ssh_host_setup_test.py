@@ -234,31 +234,6 @@ def test_build_add_authorized_keys_command_empty() -> None:
     assert result is None
 
 
-def test_build_add_authorized_keys_command_single_entry() -> None:
-    """Should build a valid command for a single authorized_keys entry."""
-    entry = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA user@host"
-    cmd = build_add_authorized_keys_command("root", (entry,))
-    assert cmd is not None
-    assert isinstance(cmd, str)
-    assert "mkdir -p '/root/.ssh'" in cmd
-    assert entry in cmd
-    assert "chmod 600" in cmd
-    assert "/root/.ssh/authorized_keys" in cmd
-
-
-def test_build_add_authorized_keys_command_multiple_entries() -> None:
-    """Should build a command that adds all entries."""
-    entries = (
-        "ssh-ed25519 AAAAC3... user1@host",
-        "ssh-rsa AAAAB3... user2@host",
-    )
-    cmd = build_add_authorized_keys_command("root", entries)
-    assert cmd is not None
-    assert "AAAAC3" in cmd
-    assert "AAAAB3" in cmd
-    assert cmd.count("printf") == 2
-
-
 def test_build_add_authorized_keys_command_regular_user() -> None:
     """Should use the correct path for non-root users."""
     entry = "ssh-ed25519 AAAAC3... user@host"

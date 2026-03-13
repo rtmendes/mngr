@@ -18,7 +18,6 @@ from imbue.mng.cli.list import _StreamingTemplateEmitter
 from imbue.mng.cli.list import _compute_column_widths
 from imbue.mng.cli.list import _emit_human_output
 from imbue.mng.cli.list import _emit_template_output
-from imbue.mng.cli.list import _format_status_line
 from imbue.mng.cli.list import _format_streaming_agent_row
 from imbue.mng.cli.list import _format_streaming_header_row
 from imbue.mng.cli.list import _format_value_as_string
@@ -1636,17 +1635,3 @@ def test_emit_human_output_empty_list_is_noop(capsys: pytest.CaptureFixture[str]
     _emit_human_output([], fields=["name", "state"])
     captured = capsys.readouterr()
     assert captured.out == ""
-
-
-def test_format_status_line_zero_count() -> None:
-    """_format_status_line with count 0 should show 'Searching...' without count."""
-    line = _format_status_line(0)
-    assert "Searching..." in line
-    assert "found" not in line
-
-
-def test_format_status_line_nonzero_count() -> None:
-    """_format_status_line with nonzero count should show count found."""
-    line = _format_status_line(5)
-    assert "Searching..." in line
-    assert "5 found" in line

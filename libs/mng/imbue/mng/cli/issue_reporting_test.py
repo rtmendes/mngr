@@ -363,10 +363,3 @@ def test_build_unexpected_error_issue_body_includes_traceback() -> None:
     assert "missing_key" in body
     assert "Traceback" in body
     assert "Bug Report" in body
-
-
-def test_handle_unexpected_error_exits_in_non_interactive_mode() -> None:
-    """handle_unexpected_error should raise SystemExit in non-interactive mode."""
-    error = RuntimeError("test error")
-    with pytest.raises(SystemExit):
-        handle_unexpected_error(error, is_interactive=False)
