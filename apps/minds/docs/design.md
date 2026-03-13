@@ -31,7 +31,7 @@ agent_type = "elena-code"
 
 ## Settings
 
-Minds read per-deployment settings from `minds.toml` in the agent work directory (`$MNG_AGENT_WORK_DIR/minds.toml`). This file is optional -- if it does not exist, all settings use their built-in defaults.
+Minds read per-mind settings from `minds.toml` in the agent work directory (`$MNG_AGENT_WORK_DIR/minds.toml`). This file is optional -- if it does not exist, all settings use their built-in defaults.
 
 The settings are modeled by `ClaudeMindSettings` in `imbue.mng_claude_mind.data_types`.
 

@@ -21,7 +21,7 @@ from imbue.minds.testing import run_mng
 
 @pytest.mark.release
 @pytest.mark.timeout(120)
-def test_deploy_test_coder_and_verify_matched_responses_model(deployed_test_coder: dict[str, object]) -> None:
+def test_create_test_coder_and_verify_matched_responses_model(created_test_coder: dict[str, object]) -> None:
     """Create a test-coder mind and verify the matched-responses model works end-to-end.
 
     Verifies:
@@ -30,7 +30,7 @@ def test_deploy_test_coder_and_verify_matched_responses_model(deployed_test_code
     3. The chat settings are configured with model = "matched-responses"
     4. The env-var-based response override works in the agent environment
     """
-    agent_name = str(deployed_test_coder["name"])
+    agent_name = str(created_test_coder["name"])
 
     # Verify the model returns the expected default response
     test_message = "Hello from end-to-end test"
@@ -41,7 +41,7 @@ def test_deploy_test_coder_and_verify_matched_responses_model(deployed_test_code
     assert extract_response(exec_result) == f"Echo: {test_message}"
 
     # Verify the chat settings have the matched-responses model configured
-    work_dir = str(deployed_test_coder["work_dir"])
+    work_dir = str(created_test_coder["work_dir"])
     settings_path = Path(work_dir) / "minds.toml"
     assert settings_path.exists(), f"Settings file not found at {settings_path}"
     settings_content = settings_path.read_text()

@@ -19,7 +19,7 @@ from imbue.mng.utils.polling import wait_for
 
 
 @pytest.fixture(scope="module")
-def deployed_test_coder() -> Generator[dict[str, object], None, None]:
+def created_test_coder() -> Generator[dict[str, object], None, None]:
     """Create a test-coder mind agent and yield its agent record.
 
     Module-scoped so all tests in the module share a single agent,
