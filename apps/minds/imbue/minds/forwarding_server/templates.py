@@ -199,7 +199,7 @@ _AUTH_ERROR_TEMPLATE: Final[str] = """<!DOCTYPE html>
   <div class="error">
     <h2>Authentication Failed</h2>
     <p>{{ message }}</p>
-    <p>Please generate a new login URL for this device. Each login URL can only be used once.</p>
+    <p>Each login URL can only be used once. Please use the login URL printed in the terminal where the server is running, or restart the server to generate a new one.</p>
   </div>
 </body>
 </html>"""

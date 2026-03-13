@@ -40,7 +40,7 @@ def test_render_auth_error_page_shows_error_message() -> None:
     html = render_auth_error_page(message="This code has already been used.")
     assert "This code has already been used." in html
     assert "Authentication Failed" in html
-    assert "generate a new login URL" in html
+    assert "restart the server" in html
 
 
 def test_agent_id_rejects_invalid_format() -> None:
