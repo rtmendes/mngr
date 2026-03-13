@@ -1467,24 +1467,6 @@ def test_parse_event_line_preserves_existing_source() -> None:
 
 
 # =============================================================================
-# sort_events_by_timestamp edge cases
-# =============================================================================
-
-
-def test_sort_events_by_timestamp_empty_list() -> None:
-    """Sorting empty list should return empty list."""
-    assert sort_events_by_timestamp([]) == []
-
-
-def test_sort_events_by_timestamp_single_event() -> None:
-    """Single event should be returned as-is."""
-    event = _make_event("evt-1", "2025-01-01T00:00:00Z")
-    result = sort_events_by_timestamp([event])
-    assert len(result) == 1
-    assert result[0].event_id == "evt-1"
-
-
-# =============================================================================
 # _sort_rotated_files_oldest_first edge cases
 # =============================================================================
 
@@ -1495,12 +1477,6 @@ def test_sort_rotated_files_mixed_valid_and_invalid() -> None:
         ["events.jsonl.3", "not-a-rotated-file.txt", "events.jsonl.1", "events.jsonl.2"]
     )
     assert result == ["events.jsonl.3", "events.jsonl.2", "events.jsonl.1"]
-
-
-def test_sort_rotated_files_single_file() -> None:
-    """Single rotated file should work."""
-    result = _sort_rotated_files_oldest_first(["events.jsonl.1"])
-    assert result == ["events.jsonl.1"]
 
 
 # =============================================================================

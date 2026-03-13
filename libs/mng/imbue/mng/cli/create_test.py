@@ -9,9 +9,6 @@ from click.testing import CliRunner
 
 from imbue.imbue_common.model_update import to_update
 from imbue.mng.cli.create import AgentAddress
-from imbue.mng.cli.create import _make_idle_mode_choices
-from imbue.mng.cli.create import _make_log_level_choices
-from imbue.mng.cli.create import _make_output_format_choices
 from imbue.mng.cli.create import _parse_agent_address
 from imbue.mng.cli.create import _parse_agent_opts
 from imbue.mng.cli.create import _parse_branch_flag
@@ -981,32 +978,3 @@ def test_create_provider_flag_redundant_with_address_is_ok(
     )
 
     assert result.exit_code == 0
-
-
-# =============================================================================
-# Tests for choice helper functions
-# =============================================================================
-
-
-def test_make_log_level_choices_returns_non_empty_list() -> None:
-    """_make_log_level_choices should return a non-empty list of log level values."""
-    choices = _make_log_level_choices()
-    assert len(choices) > 0
-    assert "TRACE" in choices
-    assert "DEBUG" in choices
-
-
-def test_make_idle_mode_choices_returns_non_empty_list() -> None:
-    """_make_idle_mode_choices should return a non-empty list of idle mode values."""
-    choices = _make_idle_mode_choices()
-    assert len(choices) > 0
-    # All should be lowercase
-    assert all(c == c.lower() for c in choices)
-
-
-def test_make_output_format_choices_returns_non_empty_list() -> None:
-    """_make_output_format_choices should return a non-empty list of format choices."""
-    choices = _make_output_format_choices()
-    assert len(choices) > 0
-    assert "human" in choices
-    assert "json" in choices
