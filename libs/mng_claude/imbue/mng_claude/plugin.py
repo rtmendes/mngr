@@ -246,8 +246,8 @@ def _build_claude_json_for_agent(
     Used for remote hosts and deploys where all dialogs must be suppressed
     to prevent them from intercepting automated tmux input. Uses the local
     file as a base when sync_local is True and the file exists, otherwise
-    uses generated defaults. Forces bypassPermissionsModeAccepted and
-    effortCalloutDismissed.
+    uses generated defaults. Forces bypassPermissionsModeAccepted,
+    effortCalloutDismissed, and hasAcknowledgedCostThreshold.
 
     Returns the dict so callers can do further modifications (e.g. keychain merge)
     before serializing.
@@ -1289,8 +1289,9 @@ class ClaudeAgent(BaseAgent):
 
         Starts from the user's global ~/.claude.json to preserve all existing
         dialog states (trust, effort callout, bypass permissions, onboarding).
-        Only adds per-agent identity: worktree source project config and
-        primaryApiKey. Falls back to generated defaults if no global config exists.
+        Adds per-agent identity (worktree source project config, primaryApiKey)
+        and forces hasAcknowledgedCostThreshold to suppress the cost threshold
+        dialog. Falls back to generated defaults if no global config exists.
 
         Trust for work_dir is added by extending from the source directory
         (for worktree/copy modes), by trust_working_directory config, or

@@ -47,6 +47,7 @@ from imbue.mng_claude.claude_config import ClaudeEffortCalloutNotDismissedError
 from imbue.mng_claude.claude_config import build_readiness_hooks_config
 from imbue.mng_claude.plugin import ClaudeAgent
 from imbue.mng_claude.plugin import ClaudeAgentConfig
+from imbue.mng_claude.plugin import CostThresholdDialogIndicator
 from imbue.mng_claude.plugin import WaitingReason
 from imbue.mng_claude.plugin import _build_install_command_hint
 from imbue.mng_claude.plugin import _claude_json_has_primary_api_key
@@ -149,6 +150,7 @@ _ALL_DIALOGS_DISMISSED = {
     "effortCalloutDismissed": True,
     "hasCompletedOnboarding": True,
     "bypassPermissionsModeAccepted": True,
+    "hasAcknowledgedCostThreshold": True,
 }
 
 
@@ -1533,6 +1535,43 @@ def test_on_before_provisioning_succeeds_with_credentials(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
     agent.on_before_provisioning(host=host, options=_DEFAULT_CREDENTIAL_CHECK_OPTIONS, mng_ctx=temp_mng_ctx)
+
+
+# =============================================================================
+# CostThresholdDialogIndicator Tests
+# =============================================================================
+
+
+def test_cost_threshold_indicator_matches_when_both_strings_present() -> None:
+    """CostThresholdDialogIndicator.matches should return True when both strings are present."""
+    indicator = CostThresholdDialogIndicator()
+    content = (
+        "You've spent $5 on the Anthropic API this session.\n\n"
+        "Learn more about how to monitor your spending:\n"
+        "https://code.claude.com/docs/en/costs"
+    )
+    assert indicator.matches(content) is True
+
+
+def test_cost_threshold_indicator_no_match_with_only_spending_text() -> None:
+    """CostThresholdDialogIndicator.matches should return False with only the spending text."""
+    indicator = CostThresholdDialogIndicator()
+    content = "Learn more about how to monitor your spending:\nhttps://example.com"
+    assert indicator.matches(content) is False
+
+
+def test_cost_threshold_indicator_no_match_with_only_url() -> None:
+    """CostThresholdDialogIndicator.matches should return False with only the docs URL."""
+    indicator = CostThresholdDialogIndicator()
+    content = "Visit https://code.claude.com/docs for help"
+    assert indicator.matches(content) is False
+
+
+def test_cost_threshold_indicator_no_match_with_neither_string() -> None:
+    """CostThresholdDialogIndicator.matches should return False with unrelated content."""
+    indicator = CostThresholdDialogIndicator()
+    content = "Claude Code is running normally"
+    assert indicator.matches(content) is False
 
 
 # =============================================================================

@@ -7,6 +7,7 @@ import pytest
 
 from imbue.mng_claude.claude_config import ClaudeDirectoryNotTrustedError
 from imbue.mng_claude.claude_config import ClaudeEffortCalloutNotDismissedError
+from imbue.mng_claude.claude_config import acknowledge_cost_threshold
 from imbue.mng_claude.claude_config import add_claude_trust_for_path
 from imbue.mng_claude.claude_config import check_claude_dialogs_dismissed
 from imbue.mng_claude.claude_config import check_effort_callout_dismissed
@@ -491,6 +492,57 @@ def test_dismiss_effort_callout_handles_empty_config() -> None:
     assert config["effortCalloutDismissed"] is True
 
 
+# Tests for acknowledge_cost_threshold
+
+
+def test_acknowledge_cost_threshold_sets_field() -> None:
+    """Test that acknowledge_cost_threshold sets hasAcknowledgedCostThreshold to true."""
+    config_file = get_claude_config_path()
+    config = {"projects": {}}
+    config_file.write_text(json.dumps(config, indent=2))
+
+    acknowledge_cost_threshold(config_file)
+
+    updated = json.loads(config_file.read_text())
+    assert updated["hasAcknowledgedCostThreshold"] is True
+    assert "projects" in updated
+
+
+def test_acknowledge_cost_threshold_is_noop_when_already_set() -> None:
+    """Test that acknowledge_cost_threshold is a no-op when already acknowledged."""
+    config_file = get_claude_config_path()
+    backup_file = get_claude_config_backup_path()
+    config = {"hasAcknowledgedCostThreshold": True, "projects": {}}
+    config_file.write_text(json.dumps(config, indent=2))
+
+    acknowledge_cost_threshold(config_file)
+
+    assert not backup_file.exists()
+
+
+def test_acknowledge_cost_threshold_creates_config_when_none_exists() -> None:
+    """Test that acknowledge_cost_threshold creates config file if it doesn't exist."""
+    config_file = get_claude_config_path()
+    assert not config_file.exists()
+
+    acknowledge_cost_threshold(config_file)
+
+    assert config_file.exists()
+    config = json.loads(config_file.read_text())
+    assert config["hasAcknowledgedCostThreshold"] is True
+
+
+def test_acknowledge_cost_threshold_handles_empty_config() -> None:
+    """Test that acknowledge_cost_threshold handles empty config file."""
+    config_file = get_claude_config_path()
+    config_file.write_text("")
+
+    acknowledge_cost_threshold(config_file)
+
+    config = json.loads(config_file.read_text())
+    assert config["hasAcknowledgedCostThreshold"] is True
+
+
 # Tests for check_claude_dialogs_dismissed / ensure_claude_dialogs_dismissed
 
 
@@ -559,6 +611,7 @@ def test_ensure_claude_dialogs_dismissed_sets_all(tmp_path: Path) -> None:
     updated = json.loads(config_file.read_text())
     assert updated["effortCalloutDismissed"] is True
     assert updated["hasCompletedOnboarding"] is True
+    assert updated["hasAcknowledgedCostThreshold"] is True
     assert updated["projects"][str(source_path)]["hasTrustDialogAccepted"] is True
     # bypassPermissionsModeAccepted is NOT set (Claude Code resets it;
     # skipDangerousModePermissionPrompt in settings.json handles this instead)
