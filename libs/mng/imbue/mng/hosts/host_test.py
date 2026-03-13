@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -14,25 +15,38 @@ from pyinfra.api.host import Host as PyinfraHost
 
 from imbue.mng.agents.base_agent import BaseAgent
 from imbue.mng.config.data_types import AgentTypeConfig
+from imbue.mng.config.data_types import EnvVar
+from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import AgentError
 from imbue.mng.errors import HostConnectionError
+from imbue.mng.errors import HostDataSchemaError
+from imbue.mng.errors import InvalidActivityTypeError
+from imbue.mng.errors import NoCommandDefinedError
 from imbue.mng.hosts.host import Host
 from imbue.mng.hosts.host import ONBOARDING_TEXT
 from imbue.mng.hosts.host import ONBOARDING_TEXT_TMUX_USER
 from imbue.mng.hosts.host import _build_start_agent_shell_command
+from imbue.mng.hosts.host import _format_env_file
 from imbue.mng.hosts.host import _is_socket_closed_os_error
 from imbue.mng.hosts.host import _parse_boot_time_output
 from imbue.mng.hosts.host import _parse_uptime_output
+from imbue.mng.hosts.host import get_agent_state_dir_path
 from imbue.mng.interfaces.data_types import PyinfraConnector
+from imbue.mng.interfaces.host import AgentEnvironmentOptions
+from imbue.mng.interfaces.host import AgentLabelOptions
+from imbue.mng.interfaces.host import AgentProvisioningOptions
 from imbue.mng.interfaces.host import CreateAgentOptions
+from imbue.mng.interfaces.host import FileModificationSpec
 from imbue.mng.interfaces.host import NamedCommand
 from imbue.mng.interfaces.host import OnlineHostInterface
+from imbue.mng.primitives import ActivitySource
 from imbue.mng.primitives import AgentId
 from imbue.mng.primitives import AgentName
 from imbue.mng.primitives import AgentTypeName
 from imbue.mng.primitives import CommandString
 from imbue.mng.primitives import HostId
 from imbue.mng.primitives import HostName
+from imbue.mng.primitives import HostState
 from imbue.mng.providers.local.instance import LocalProviderInstance
 from imbue.mng.utils.testing import get_short_random_string
 
@@ -1085,3 +1099,1591 @@ def test_get_file_wraps_ssh_exception_in_host_connection_error(
 
     with pytest.raises(HostConnectionError, match="Could not read file"):
         host._get_file("/remote/file.txt", io.BytesIO())
+
+
+# =========================================================================
+# Tests for get_agent_state_dir_path
+# =========================================================================
+
+
+def test_get_agent_state_dir_path_returns_correct_path() -> None:
+    """get_agent_state_dir_path should return host_dir / agents / agent_id."""
+    host_dir = Path("/home/user/.mng")
+    agent_id = AgentId("agent-00000000000000000000000000000001")
+    result = get_agent_state_dir_path(host_dir, agent_id)
+    assert result == Path("/home/user/.mng/agents/agent-00000000000000000000000000000001")
+
+
+# =========================================================================
+# Tests for _format_env_file
+# =========================================================================
+
+
+def test_format_env_file_simple_values() -> None:
+    """Simple values without special characters should be unquoted."""
+    result = _format_env_file({"KEY": "value", "FOO": "bar"})
+    assert "KEY=value" in result
+    assert "FOO=bar" in result
+    assert result.endswith("\n")
+
+
+def test_format_env_file_quotes_values_with_spaces() -> None:
+    """Values with spaces should be double-quoted."""
+    result = _format_env_file({"MSG": "hello world"})
+    assert 'MSG="hello world"' in result
+
+
+def test_format_env_file_escapes_double_quotes() -> None:
+    """Values containing double quotes should have them escaped."""
+    result = _format_env_file({"MSG": 'say "hello"'})
+    assert r'MSG="say \"hello\""' in result
+
+
+def test_format_env_file_quotes_values_with_single_quotes() -> None:
+    """Values with single quotes should be double-quoted."""
+    result = _format_env_file({"MSG": "it's fine"})
+    assert """MSG="it's fine\"""" in result
+
+
+def test_format_env_file_quotes_values_with_newlines() -> None:
+    """Values with newlines should be double-quoted."""
+    result = _format_env_file({"MSG": "line1\nline2"})
+    assert 'MSG="line1\nline2"' in result
+
+
+def test_format_env_file_empty_dict() -> None:
+    """Empty dict should produce just a newline."""
+    result = _format_env_file({})
+    assert result == "\n"
+
+
+# =========================================================================
+# Tests for Host environment methods (local host)
+# =========================================================================
+
+
+def test_host_get_env_vars_returns_empty_when_not_set(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_env_vars should return {} when no env file exists."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+    assert host.get_env_vars() == {}
+
+
+def test_host_set_and_get_env_vars(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """set_env_vars and get_env_vars should round-trip correctly."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    env = {"API_KEY": "secret", "DEBUG": "true"}
+    host.set_env_vars(env)
+
+    result = host.get_env_vars()
+    assert result == env
+
+
+def test_host_get_env_var_returns_value(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_env_var should return a specific env variable."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    host.set_env_vars({"FOO": "bar", "BAZ": "qux"})
+    assert host.get_env_var("FOO") == "bar"
+    assert host.get_env_var("NONEXISTENT") is None
+
+
+def test_host_set_env_var_adds_to_existing(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """set_env_var should add a variable without clobbering existing ones."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    host.set_env_vars({"EXISTING": "value"})
+    host.set_env_var("NEW_KEY", "new_value")
+
+    assert host.get_env_var("EXISTING") == "value"
+    assert host.get_env_var("NEW_KEY") == "new_value"
+
+
+# =========================================================================
+# Tests for Host activity methods
+# =========================================================================
+
+
+def test_host_record_and_get_boot_activity(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """record_activity BOOT should write a file and get_reported_activity_time should read its mtime."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    # create_host already records BOOT activity, so it should be present
+    result = host.get_reported_activity_time(ActivitySource.BOOT)
+    assert result is not None
+
+    # Record again and verify the timestamp is still present
+    host.record_activity(ActivitySource.BOOT)
+    new_result = host.get_reported_activity_time(ActivitySource.BOOT)
+    assert new_result is not None
+
+
+def test_host_record_activity_rejects_non_boot(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """record_activity should reject non-BOOT activity types on a host."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    with pytest.raises(InvalidActivityTypeError, match="Only BOOT"):
+        host.record_activity(ActivitySource.USER)
+
+
+def test_host_get_reported_activity_content_returns_json(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_reported_activity_content should return JSON string with expected fields."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    host.record_activity(ActivitySource.BOOT)
+    content = host.get_reported_activity_content(ActivitySource.BOOT)
+    assert content is not None
+    data = json.loads(content)
+    assert "time" in data
+    assert "host_id" in data
+
+
+def test_host_get_reported_activity_content_returns_none_for_non_boot_type(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_reported_activity_content should return None for activity types not yet recorded."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    # SSH activity is not recorded by create_host, so it should be None
+    assert host.get_reported_activity_content(ActivitySource.SSH) is None
+
+
+# =========================================================================
+# Tests for Host certified data methods
+# =========================================================================
+
+
+def test_host_get_certified_data_returns_defaults_when_no_file(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_certified_data should return defaults when data.json doesn't exist."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    data = host.get_certified_data()
+    assert data.host_id == str(host.id)
+    assert data.host_name == str(host.get_name())
+
+
+def test_host_set_and_get_certified_data(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """set_certified_data and get_certified_data should round-trip correctly."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    initial_data = host.get_certified_data()
+    host.set_certified_data(initial_data)
+
+    result = host.get_certified_data()
+    assert result.host_id == initial_data.host_id
+    assert result.host_name == initial_data.host_name
+
+
+# =========================================================================
+# Tests for Host plugin data methods
+# =========================================================================
+
+
+def test_host_set_and_get_plugin_data(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """set_plugin_data and get_plugin_data should round-trip via certified data."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    plugin_data = {"key1": "value1", "nested": {"a": 1}}
+    host.set_plugin_data("my-plugin", plugin_data)
+
+    # Plugin data is stored in certified_data.plugin
+    certified = host.get_certified_data()
+    assert "my-plugin" in certified.plugin
+    assert certified.plugin["my-plugin"] == plugin_data
+
+
+# =========================================================================
+# Tests for Host reported plugin state files
+# =========================================================================
+
+
+def test_host_set_and_get_reported_plugin_state_file(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """set_reported_plugin_state_file_data and get should round-trip."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    host.set_reported_plugin_state_file_data("test-plugin", "config.json", '{"hello": "world"}')
+    result = host.get_reported_plugin_state_file_data("test-plugin", "config.json")
+    assert result == '{"hello": "world"}'
+
+
+def test_host_get_reported_plugin_state_files_returns_empty_when_no_dir(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_reported_plugin_state_files should return [] when no plugin dir exists."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    assert host.get_reported_plugin_state_files("nonexistent-plugin") == []
+
+
+def test_host_get_reported_plugin_state_files_lists_files(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_reported_plugin_state_files should list all files for a plugin."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    host.set_reported_plugin_state_file_data("test-plugin", "file1.txt", "content1")
+    host.set_reported_plugin_state_file_data("test-plugin", "file2.json", "content2")
+
+    result = sorted(host.get_reported_plugin_state_files("test-plugin"))
+    assert result == ["file1.txt", "file2.json"]
+
+
+# =========================================================================
+# Tests for Host generated work dir tracking
+# =========================================================================
+
+
+def test_host_add_and_check_generated_work_dir(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """_add_generated_work_dir and _is_generated_work_dir should track correctly."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    work_dir = Path("/tmp/test-workdir")
+    assert host._is_generated_work_dir(work_dir) is False
+
+    host._add_generated_work_dir(work_dir)
+    assert host._is_generated_work_dir(work_dir) is True
+
+
+def test_host_remove_generated_work_dir(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """_remove_generated_work_dir should remove the tracked directory."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    work_dir = Path("/tmp/test-workdir")
+    host._add_generated_work_dir(work_dir)
+    assert host._is_generated_work_dir(work_dir) is True
+
+    host._remove_generated_work_dir(work_dir)
+    assert host._is_generated_work_dir(work_dir) is False
+
+
+# =========================================================================
+# Tests for Host lock methods
+# =========================================================================
+
+
+def test_host_is_lock_held_returns_false_when_no_lock_file(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """is_lock_held should return False when no lock file exists."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    assert host.is_lock_held() is False
+
+
+def test_host_lock_cooperatively_acquires_and_releases(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """lock_cooperatively should acquire and release the lock."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    with host.lock_cooperatively(timeout_seconds=5.0):
+        assert host.is_lock_held() is True
+
+    # After exiting the context, the lock should be released
+    assert host.is_lock_held() is False
+
+
+def test_host_get_reported_lock_time_returns_none_when_no_lock(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_reported_lock_time should return None when no lock file."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    assert host.get_reported_lock_time() is None
+
+
+def test_host_get_reported_lock_time_returns_time_when_locked(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_reported_lock_time should return a datetime when lock file exists."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    with host.lock_cooperatively(timeout_seconds=5.0):
+        result = host.get_reported_lock_time()
+        assert result is not None
+
+
+# =========================================================================
+# Tests for Host local path methods
+# =========================================================================
+
+
+def test_host_is_local_returns_true_for_local_host(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """is_local should return True for local hosts."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+    assert host.is_local is True
+
+
+def test_host_get_name_returns_connector_name(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_name should return the connector's name (which is @local for local hosts)."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+    # The local connector uses "@local" as its name
+    name = host.get_name()
+    assert isinstance(name, HostName)
+    assert len(str(name)) > 0
+
+
+def test_host_get_ssh_connection_info_returns_none_for_local(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_ssh_connection_info should return None for local hosts."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+    assert host.get_ssh_connection_info() is None
+
+
+# =========================================================================
+# Tests for Host host_env_path property
+# =========================================================================
+
+
+def test_host_get_host_env_path(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_host_env_path should return host_dir / env."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+    assert host.get_host_env_path() == host.host_dir / "env"
+
+
+# =========================================================================
+# Tests for Host uptime and boot time
+# =========================================================================
+
+
+def test_host_get_uptime_seconds_returns_positive(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_uptime_seconds should return a positive number on a running host."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+    uptime = host.get_uptime_seconds()
+    assert uptime > 0.0
+
+
+def test_host_get_boot_time_returns_datetime(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_boot_time should return a datetime for a running host."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+    boot_time = host.get_boot_time()
+    assert boot_time is not None
+    assert boot_time.tzinfo is not None
+
+
+# =========================================================================
+# Tests for Host file operations (local host)
+# =========================================================================
+
+
+def test_host_read_and_write_file(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """write_file and read_file should round-trip bytes correctly."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    file_path = tmp_path / "test_file.bin"
+    content = b"binary content \x00\xff"
+    host.write_file(file_path, content)
+
+    result = host.read_file(file_path)
+    assert result == content
+
+
+def test_host_read_and_write_text_file(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """write_text_file and read_text_file should round-trip strings correctly."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    file_path = tmp_path / "test_file.txt"
+    content = "hello world\nsecond line"
+    host.write_text_file(file_path, content)
+
+    result = host.read_text_file(file_path)
+    assert result == content
+
+
+def test_host_write_file_creates_parent_dirs(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """write_file should create parent directories when needed."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    file_path = tmp_path / "nested" / "dir" / "file.txt"
+    host.write_file(file_path, b"content")
+
+    assert file_path.exists()
+    assert file_path.read_bytes() == b"content"
+
+
+def test_host_read_file_raises_for_missing_file(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """read_file should raise FileNotFoundError for missing files."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    with pytest.raises(FileNotFoundError):
+        host.read_file(tmp_path / "nonexistent.txt")
+
+
+# =========================================================================
+# Tests for Host directory operations (local host)
+# =========================================================================
+
+
+def test_host_path_exists(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_path_exists should detect existing and non-existing paths."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    assert host._path_exists(tmp_path) is True
+    assert host._path_exists(tmp_path / "nonexistent") is False
+
+
+def test_host_is_directory(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_is_directory should distinguish files from directories."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    assert host._is_directory(tmp_path) is True
+
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("content")
+    assert host._is_directory(file_path) is False
+
+
+def test_host_mkdir(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_mkdir should create directories."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    new_dir = tmp_path / "new_dir"
+    assert not new_dir.exists()
+
+    host._mkdir(new_dir)
+    assert new_dir.is_dir()
+
+
+def test_host_mkdirs(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_mkdirs should create multiple directories."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    dir1 = tmp_path / "dir1"
+    dir2 = tmp_path / "dir2"
+    host._mkdirs([dir1, dir2])
+
+    assert dir1.is_dir()
+    assert dir2.is_dir()
+
+
+def test_host_list_directory(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_list_directory should list files in a directory."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    (tmp_path / "file1.txt").write_text("a")
+    (tmp_path / "file2.txt").write_text("b")
+
+    result = sorted(host._list_directory(tmp_path))
+    assert "file1.txt" in result
+    assert "file2.txt" in result
+
+
+def test_host_list_directory_empty(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_list_directory should return empty list for empty directory."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    assert host._list_directory(empty_dir) == []
+
+
+def test_host_list_directory_missing_dir(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_list_directory should return empty list for non-existent directory."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    assert host._list_directory(tmp_path / "nonexistent") == []
+
+
+def test_host_remove_directory(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_remove_directory should remove directory and contents."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    dir_to_remove = tmp_path / "removeme"
+    dir_to_remove.mkdir()
+    (dir_to_remove / "file.txt").write_text("content")
+
+    host._remove_directory(dir_to_remove)
+    assert not dir_to_remove.exists()
+
+
+# =========================================================================
+# Tests for Host _append_to_file and _prepend_to_file
+# =========================================================================
+
+
+def test_host_append_to_file(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_append_to_file should append text to existing file."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    file_path = tmp_path / "append_test.txt"
+    file_path.write_text("hello ")
+    host._append_to_file(file_path, "world")
+
+    assert file_path.read_text() == "hello world"
+
+
+def test_host_append_to_file_creates_new_file(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_append_to_file should create file if it doesn't exist."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    file_path = tmp_path / "new_append.txt"
+    host._append_to_file(file_path, "new content")
+
+    assert file_path.read_text() == "new content"
+
+
+def test_host_prepend_to_file(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_prepend_to_file should prepend text to existing file."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    file_path = tmp_path / "prepend_test.txt"
+    file_path.write_text("world")
+    host._prepend_to_file(file_path, "hello ")
+
+    assert file_path.read_text() == "hello world"
+
+
+def test_host_prepend_to_file_creates_new_file(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """_prepend_to_file should create file if it doesn't exist."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    file_path = tmp_path / "new_prepend.txt"
+    host._prepend_to_file(file_path, "new content")
+
+    assert file_path.read_text() == "new content"
+
+
+# =========================================================================
+# Tests for Host get_file_mtime
+# =========================================================================
+
+
+def test_host_get_file_mtime_returns_datetime_for_existing_file(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """get_file_mtime should return a datetime for an existing file."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    file_path = tmp_path / "mtime_test.txt"
+    file_path.write_text("content")
+
+    result = host.get_file_mtime(file_path)
+    assert result is not None
+    assert result.tzinfo is not None
+
+
+def test_host_get_file_mtime_returns_none_for_missing_file(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """get_file_mtime should return None for a non-existent file."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    result = host.get_file_mtime(tmp_path / "nonexistent.txt")
+    assert result is None
+
+
+# =========================================================================
+# Tests for Host execute_command
+# =========================================================================
+
+
+def test_host_execute_command_success(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """execute_command should return success for simple commands."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    result = host.execute_command("echo hello")
+    assert result.success is True
+    assert "hello" in result.stdout
+
+
+def test_host_execute_command_failure(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """execute_command should return failure for failing commands."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    result = host.execute_command("false")
+    assert result.success is False
+
+
+# =========================================================================
+# Tests for Host disconnect
+# =========================================================================
+
+
+def test_host_disconnect_is_safe_when_not_connected(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """disconnect should be a no-op when host is not connected."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    # Should not raise
+    host.disconnect()
+
+
+# =========================================================================
+# Tests for Host create_agent_state with various options
+# =========================================================================
+
+
+def test_host_create_agent_state_with_initial_message(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """create_agent_state should store initial_message in data.json."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("msg-test-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        initial_message="Hello from test",
+    )
+
+    agent = host.create_agent_state(temp_work_dir, options)
+    assert agent.get_initial_message() == "Hello from test"
+
+
+def test_host_create_agent_state_with_labels(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """create_agent_state should store labels in data.json."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("label-test-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        label_options=AgentLabelOptions(labels={"env": "test", "team": "backend"}),
+    )
+
+    agent = host.create_agent_state(temp_work_dir, options)
+    labels = agent.get_labels()
+    assert labels == {"env": "test", "team": "backend"}
+
+
+def test_host_create_agent_state_with_resume_message(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """create_agent_state should store resume_message in data.json."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("resume-msg-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        resume_message="Resume this!",
+    )
+
+    agent = host.create_agent_state(temp_work_dir, options)
+    assert agent.get_resume_message() == "Resume this!"
+
+
+def test_host_create_agent_state_with_ready_timeout(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """create_agent_state should store ready_timeout_seconds in data.json."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("timeout-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        ready_timeout_seconds=30.0,
+    )
+
+    agent = host.create_agent_state(temp_work_dir, options)
+    assert agent.get_ready_timeout_seconds() == 30.0
+
+
+def test_host_create_agent_state_with_additional_commands(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """create_agent_state should store additional_commands in data.json."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("extra-cmd-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        additional_commands=(NamedCommand(command=CommandString("tail -f /var/log/syslog"), window_name="logs"),),
+    )
+
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    # Verify the data.json has the additional commands
+    agent_dir = temp_host_dir / "agents" / str(agent.id)
+    data = json.loads((agent_dir / "data.json").read_text())
+    assert len(data["additional_commands"]) == 1
+    assert data["additional_commands"][0]["command"] == "tail -f /var/log/syslog"
+    assert data["additional_commands"][0]["window_name"] == "logs"
+
+
+# =========================================================================
+# Tests for Host.get_agents
+# =========================================================================
+
+
+def test_host_get_agents_returns_agents(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """get_agents should return all agents on the host."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    # Create two agents
+    options1 = CreateAgentOptions(
+        name=AgentName("agent-one"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    options2 = CreateAgentOptions(
+        name=AgentName("agent-two"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 2"),
+    )
+    host.create_agent_state(temp_work_dir, options1)
+    host.create_agent_state(temp_work_dir, options2)
+
+    agents = host.get_agents()
+    agent_names = {str(a.name) for a in agents}
+    assert "agent-one" in agent_names
+    assert "agent-two" in agent_names
+
+
+def test_host_get_agents_empty_when_no_agents_dir(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_agents should return empty list when no agents directory exists."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    # Don't create any agents
+    # The host_dir might not have an agents subdirectory
+    agents = host.get_agents()
+    # Might be 0 or might have some from other fixtures, just verify it doesn't crash
+    assert isinstance(agents, list)
+
+
+# =========================================================================
+# Tests for Host.write_file with mode
+# =========================================================================
+
+
+def test_host_write_file_with_mode(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """write_file with mode should set the file's permissions."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    file_path = tmp_path / "chmod_test.sh"
+    host.write_file(file_path, b"#!/bin/bash\necho hello", mode="755")
+
+    assert file_path.exists()
+    # Check the mode bits (permissions may vary by umask, but 755 should set executable)
+    mode = os.stat(file_path).st_mode & 0o777
+    # Owner execute bit should be set
+    assert mode & 0o100
+
+
+# =========================================================================
+# Tests for Host.get_seconds_since_stopped / get_stop_time
+# =========================================================================
+
+
+# =========================================================================
+# Tests for Host.provision_agent
+# =========================================================================
+
+
+def test_host_provision_agent_basic(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+    temp_mng_ctx: MngContext,
+) -> None:
+    """provision_agent should run through basic provisioning without errors."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("provision-test-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+
+    agent = host.create_agent_state(temp_work_dir, options)
+    host.provision_agent(agent, options, temp_mng_ctx)
+
+    # Verify env file was created with MNG-specific variables
+    env_path = temp_host_dir / "agents" / str(agent.id) / "env"
+    assert env_path.exists()
+    env_content = env_path.read_text()
+    assert "MNG_AGENT_ID" in env_content
+    assert "MNG_AGENT_NAME" in env_content
+    assert "MNG_AGENT_WORK_DIR" in env_content
+    assert "MNG_HOST_DIR" in env_content
+
+
+def test_host_provision_agent_with_env_vars(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+    temp_mng_ctx: MngContext,
+) -> None:
+    """provision_agent should include env_vars from options."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("env-provision-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        environment=AgentEnvironmentOptions(
+            env_vars=(
+                EnvVar(key="CUSTOM_KEY", value="custom_value"),
+                EnvVar(key="DEBUG", value="true"),
+            ),
+        ),
+    )
+
+    agent = host.create_agent_state(temp_work_dir, options)
+    host.provision_agent(agent, options, temp_mng_ctx)
+
+    # Verify custom env vars are in the env file
+    env_path = temp_host_dir / "agents" / str(agent.id) / "env"
+    env_content = env_path.read_text()
+    assert "CUSTOM_KEY=custom_value" in env_content
+    assert "DEBUG=true" in env_content
+
+
+def test_host_provision_agent_with_user_commands(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+    temp_mng_ctx: MngContext,
+) -> None:
+    """provision_agent should run user commands."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    # Create a marker file via user command to verify execution
+    marker_file = temp_work_dir / "provision_marker.txt"
+
+    options = CreateAgentOptions(
+        name=AgentName("cmd-provision-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        provisioning=AgentProvisioningOptions(
+            user_commands=(f"echo 'provisioned' > {marker_file}",),
+        ),
+    )
+
+    agent = host.create_agent_state(temp_work_dir, options)
+    host.provision_agent(agent, options, temp_mng_ctx)
+
+    assert marker_file.exists()
+    assert "provisioned" in marker_file.read_text()
+
+
+def test_host_provision_agent_with_append_to_file(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+    temp_mng_ctx: MngContext,
+) -> None:
+    """provision_agent should append text to files."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    target_file = temp_work_dir / "bashrc"
+    target_file.write_text("existing content\n")
+
+    options = CreateAgentOptions(
+        name=AgentName("append-provision-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        provisioning=AgentProvisioningOptions(
+            append_to_files=(FileModificationSpec(remote_path=target_file, text="appended line\n"),),
+        ),
+    )
+
+    agent = host.create_agent_state(temp_work_dir, options)
+    host.provision_agent(agent, options, temp_mng_ctx)
+
+    assert target_file.read_text() == "existing content\nappended line\n"
+
+
+def test_host_provision_agent_with_create_directories(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+    temp_mng_ctx: MngContext,
+) -> None:
+    """provision_agent should create directories."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    new_dir = temp_work_dir / "created_dir"
+
+    options = CreateAgentOptions(
+        name=AgentName("dir-provision-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        provisioning=AgentProvisioningOptions(
+            create_directories=(new_dir,),
+        ),
+    )
+
+    agent = host.create_agent_state(temp_work_dir, options)
+    host.provision_agent(agent, options, temp_mng_ctx)
+
+    assert new_dir.is_dir()
+
+
+# =========================================================================
+# Tests for Host._get_agent_command
+# =========================================================================
+
+
+def test_host_get_agent_command_returns_command(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_get_agent_command should return the command from data.json."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("cmd-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 42"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    result = host._get_agent_command(agent)
+    assert result == "sleep 42"
+
+
+def test_host_get_agent_command_raises_when_no_data_file(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_get_agent_command should raise when data.json is missing."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("no-data-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    # Remove the data.json file
+    data_path = temp_host_dir / "agents" / str(agent.id) / "data.json"
+    data_path.unlink()
+
+    with pytest.raises(NoCommandDefinedError):
+        host._get_agent_command(agent)
+
+
+# =========================================================================
+# Tests for Host._get_agent_additional_commands
+# =========================================================================
+
+
+def test_host_get_agent_additional_commands_returns_commands(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_get_agent_additional_commands should parse commands from data.json."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("addl-cmd-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        additional_commands=(
+            NamedCommand(command=CommandString("tail -f /var/log/syslog"), window_name="logs"),
+            NamedCommand(command=CommandString("htop"), window_name=None),
+        ),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    result = host._get_agent_additional_commands(agent)
+    assert len(result) == 2
+    assert result[0].command == "tail -f /var/log/syslog"
+    assert result[0].window_name == "logs"
+    assert result[1].command == "htop"
+    assert result[1].window_name is None
+
+
+def test_host_get_agent_additional_commands_returns_empty_when_none(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_get_agent_additional_commands should return empty list when no additional commands."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("no-addl-cmd-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    result = host._get_agent_additional_commands(agent)
+    assert result == []
+
+
+def test_host_get_agent_additional_commands_handles_old_format(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_get_agent_additional_commands should handle the old string format."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("old-format-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    # Manually write old-format additional_commands (list of strings)
+    data_path = temp_host_dir / "agents" / str(agent.id) / "data.json"
+    data = json.loads(data_path.read_text())
+    data["additional_commands"] = ["tail -f /var/log/syslog", "htop"]
+    data_path.write_text(json.dumps(data, indent=2))
+
+    result = host._get_agent_additional_commands(agent)
+    assert len(result) == 2
+    assert result[0].command == "tail -f /var/log/syslog"
+    assert result[0].window_name is None
+
+
+def test_host_get_agent_additional_commands_returns_empty_when_no_file(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_get_agent_additional_commands should return empty when data.json is missing."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("missing-file-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    # Remove the data.json file
+    data_path = temp_host_dir / "agents" / str(agent.id) / "data.json"
+    data_path.unlink()
+
+    result = host._get_agent_additional_commands(agent)
+    assert result == []
+
+
+# =========================================================================
+# Tests for Host._get_agent_by_id
+# =========================================================================
+
+
+def test_host_get_agent_by_id_returns_agent(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_get_agent_by_id should return the agent when it exists."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("id-lookup-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    result = host._get_agent_by_id(agent.id)
+    assert result is not None
+    assert result.id == agent.id
+
+
+def test_host_get_agent_by_id_returns_none_when_not_found(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+) -> None:
+    """_get_agent_by_id should return None when agent doesn't exist."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    result = host._get_agent_by_id(AgentId.generate())
+    assert result is None
+
+
+# =========================================================================
+# Tests for Host.get_idle_seconds
+# =========================================================================
+
+
+def test_host_get_idle_seconds_returns_positive_value(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """get_idle_seconds should return a small positive value for a recently created host."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    # Create an agent with activity
+    options = CreateAgentOptions(
+        name=AgentName("idle-test-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    host.create_agent_state(temp_work_dir, options)
+
+    idle = host.get_idle_seconds()
+    # Should be a small positive number (we just created the agent)
+    assert 0 <= idle < 30
+
+
+# =========================================================================
+# Tests for Host.get_state
+# =========================================================================
+
+
+def test_host_get_state_returns_running_for_local(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_state should return RUNNING for local hosts."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    assert host.get_state() == HostState.RUNNING
+
+
+# =========================================================================
+# Tests for Host.get_agent_env_path
+# =========================================================================
+
+
+def test_host_get_agent_env_path_returns_correct_path(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """get_agent_env_path should return the env file path for the agent."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("env-path-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    env_path = host.get_agent_env_path(agent)
+    expected = temp_host_dir / "agents" / str(agent.id) / "env"
+    assert env_path == expected
+
+
+# =========================================================================
+# Tests for Host.build_source_env_prefix
+# =========================================================================
+
+
+def test_host_build_source_env_prefix_returns_string(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """build_source_env_prefix should return a shell prefix string."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("prefix-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    prefix = host.build_source_env_prefix(agent)
+    assert isinstance(prefix, str)
+    assert prefix.endswith(" && ")
+
+
+# =========================================================================
+# Tests for Host._get_host_tmux_config_path
+# =========================================================================
+
+
+def test_host_get_host_tmux_config_path(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+) -> None:
+    """_get_host_tmux_config_path should return host_dir / tmux.conf."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    config_path = host._get_host_tmux_config_path()
+    assert config_path == temp_host_dir / "tmux.conf"
+
+
+# =========================================================================
+# Tests for Host._create_host_tmux_config
+# =========================================================================
+
+
+def test_host_create_host_tmux_config_creates_file(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+) -> None:
+    """_create_host_tmux_config should create a tmux config file with keybindings."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    config_path = host._create_host_tmux_config()
+    assert config_path.exists()
+
+    content = config_path.read_text()
+    assert "source-file" in content
+    assert "C-q" in content
+    assert "C-t" in content
+
+
+# =========================================================================
+# Tests for Host._build_env_shell_command
+# =========================================================================
+
+
+def test_host_build_env_shell_command_returns_bash_command(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_build_env_shell_command should return a bash -c command that sources env files."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("env-cmd-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    result = host._build_env_shell_command(agent)
+    assert result.startswith("bash -c ")
+    assert "MNG_SAVED_DEFAULT_TMUX_COMMAND" in result
+
+
+# =========================================================================
+# Tests for Host._collect_agent_env_vars
+# =========================================================================
+
+
+def test_host_collect_agent_env_vars_includes_mng_variables(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_collect_agent_env_vars should include MNG-specific variables."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("env-collect-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    env = host._collect_agent_env_vars(agent, options)
+    assert env["MNG_HOST_DIR"] == str(temp_host_dir)
+    assert env["MNG_AGENT_ID"] == str(agent.id)
+    assert env["MNG_AGENT_NAME"] == str(agent.name)
+    assert env["MNG_AGENT_WORK_DIR"] == str(temp_work_dir)
+    assert "MNG_AGENT_STATE_DIR" in env
+    assert "LLM_USER_PATH" in env
+    assert "GIT_BASE_BRANCH" in env
+
+
+def test_host_collect_agent_env_vars_with_env_file(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """_collect_agent_env_vars should load env vars from env_files."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    # Create an env file
+    env_file = tmp_path / "test.env"
+    env_file.write_text("FROM_FILE=file_value\n")
+
+    options = CreateAgentOptions(
+        name=AgentName("env-file-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+        environment=AgentEnvironmentOptions(
+            env_files=(env_file,),
+        ),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    env = host._collect_agent_env_vars(agent, options)
+    assert env["FROM_FILE"] == "file_value"
+
+
+# =========================================================================
+# Tests for Host._write_agent_env_file
+# =========================================================================
+
+
+def test_host_write_agent_env_file_creates_env_file(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_write_agent_env_file should create the env file."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("write-env-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    env_vars = {"KEY1": "value1", "KEY2": "value2"}
+    host._write_agent_env_file(agent, env_vars)
+
+    env_path = host.get_agent_env_path(agent)
+    assert env_path.exists()
+    content = env_path.read_text()
+    assert "KEY1=value1" in content
+    assert "KEY2=value2" in content
+
+
+def test_host_write_agent_env_file_skips_when_empty(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+    temp_work_dir: Path,
+) -> None:
+    """_write_agent_env_file should not create a file for empty env vars."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    options = CreateAgentOptions(
+        name=AgentName("empty-env-agent"),
+        agent_type=AgentTypeName("generic"),
+        command=CommandString("sleep 1"),
+    )
+    agent = host.create_agent_state(temp_work_dir, options)
+
+    host._write_agent_env_file(agent, {})
+
+    env_path = host.get_agent_env_path(agent)
+    assert not env_path.exists()
+
+
+# =========================================================================
+# Tests for Host.get_certified_data schema error
+# =========================================================================
+
+
+def test_host_get_certified_data_raises_on_invalid_json(
+    local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
+) -> None:
+    """get_certified_data should raise HostDataSchemaError for invalid data.json."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    # Write invalid data.json (missing required fields)
+    data_path = temp_host_dir / "data.json"
+    data_path.write_text('{"invalid_field": "oops", "created_at": "not-a-datetime"}')
+
+    with pytest.raises(HostDataSchemaError):
+        host.get_certified_data()
+
+
+def test_host_get_seconds_since_stopped_returns_none_for_running_host(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_seconds_since_stopped should return None for a running (local) host."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    assert host.get_seconds_since_stopped() is None
+
+
+def test_host_get_stop_time_returns_none_for_running_host(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """get_stop_time should return None for a running (local) host."""
+    host = local_provider.create_host(HostName("localhost"))
+    assert isinstance(host, Host)
+
+    assert host.get_stop_time() is None

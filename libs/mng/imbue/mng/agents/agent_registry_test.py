@@ -2,6 +2,7 @@
 
 from pydantic import Field
 
+from imbue.mng.agents.agent_registry import _register_agent
 from imbue.mng.agents.agent_registry import list_registered_agent_types
 from imbue.mng.agents.base_agent import BaseAgent
 from imbue.mng.agents.default_plugins.codex_agent import CodexAgentConfig
@@ -137,3 +138,15 @@ def test_resolve_agent_type_custom_type_without_parent_uses_base_agent() -> None
 
     assert resolved.agent_class == BaseAgent
     assert resolved.agent_config.command == CommandString("my-agent-binary")
+
+
+def test_register_agent_registers_class_and_config() -> None:
+    """_register_agent should register both class and config."""
+    _register_agent(
+        agent_type="runtime-test-type",
+        agent_class=BaseAgent,
+        config_class=AgentTypeConfig,
+    )
+
+    assert get_agent_class("runtime-test-type") == BaseAgent
+    assert get_agent_config_class("runtime-test-type") == AgentTypeConfig
