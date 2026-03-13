@@ -118,9 +118,10 @@ $ mng plugin list --format '{name}\t{enabled}'
 
 Install a plugin package.
 
-Provide exactly one of NAME (positional), --path, or --git. NAME is a PyPI
-package specifier (e.g., 'mng-pair' or 'mng-pair>=1.0'). --path installs
-from a local directory in editable mode. --git installs from a git URL.
+Provide at least one of NAME (positional), --path (repeatable), or --git.
+NAME is a PyPI package specifier (e.g., 'mng-pair' or 'mng-pair>=1.0').
+--path installs from a local directory in editable mode and can be repeated
+to install multiple plugins in a single command. --git installs from a git URL.
 
 **Usage:**
 
@@ -150,7 +151,7 @@ mng plugin add [OPTIONS] [NAME]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--path` | text | Install from a local path (editable mode) | None |
+| `--path` | text | Install from a local path (editable mode) [repeatable] | None |
 | `--git` | text | Install from a git URL | None |
 
 
@@ -172,6 +173,12 @@ $ mng plugin add mng-pair>=1.0
 
 ```bash
 $ mng plugin add --path ./my-plugin
+```
+
+**Install multiple local plugins at once**
+
+```bash
+$ mng plugin add --path ./plugin-a --path ./plugin-b
 ```
 
 **Install from a git URL**
@@ -215,7 +222,7 @@ mng plugin remove [OPTIONS] [NAME]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--path` | text | Remove by local path (reads package name from pyproject.toml) | None |
+| `--path` | text | Remove by local path (reads package name from pyproject.toml) [repeatable] | None |
 
 
 ## Examples
@@ -388,6 +395,12 @@ $ mng plugin add mng-pair
 
 ```bash
 $ mng plugin add --path ./my-plugin
+```
+
+**Install multiple local plugins**
+
+```bash
+$ mng plugin add --path ./plugin-a --path ./plugin-b
 ```
 
 **Install a plugin from git**

@@ -40,10 +40,9 @@ from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.errors import PluginSpecifierError
 from imbue.mng.primitives import OutputFormat
 from imbue.mng.primitives import PluginName
-from imbue.mng.uv_tool import build_uv_tool_install_add
-from imbue.mng.uv_tool import build_uv_tool_install_add_git
-from imbue.mng.uv_tool import build_uv_tool_install_add_path
-from imbue.mng.uv_tool import build_uv_tool_install_remove
+from imbue.mng.uv_tool import ToolRequirement
+from imbue.mng.uv_tool import build_uv_tool_install_add_requirements
+from imbue.mng.uv_tool import build_uv_tool_install_remove_multiple
 from imbue.mng.uv_tool import read_receipt
 from imbue.mng.uv_tool import require_uv_tool_receipt
 
@@ -64,7 +63,7 @@ class PluginCliOptions(CommonCliOptions):
     fields: str | None = None
     name: str | None = None
     scope: str | None = None
-    path: str | None = None
+    path: tuple[str, ...] = ()
     git: str | None = None
 
 
@@ -392,7 +391,7 @@ def _plugin_list_impl(ctx: click.Context, **kwargs: Any) -> None:
 
 @plugin.command(name="add")
 @click.argument("name", required=False, default=None)
-@click.option("--path", default=None, help="Install from a local path (editable mode)")
+@click.option("--path", multiple=True, help="Install from a local path (editable mode) [repeatable]")
 @click.option("--git", default=None, help="Install from a git URL")
 @add_common_options
 @click.pass_context
@@ -406,7 +405,9 @@ def plugin_add(ctx: click.Context, **kwargs: Any) -> None:
 
 @plugin.command(name="remove")
 @click.argument("name", required=False, default=None)
-@click.option("--path", default=None, help="Remove by local path (reads package name from pyproject.toml)")
+@click.option(
+    "--path", multiple=True, help="Remove by local path (reads package name from pyproject.toml) [repeatable]"
+)
 @add_common_options
 @click.pass_context
 def plugin_remove(ctx: click.Context, **kwargs: Any) -> None:
@@ -440,47 +441,57 @@ _RemoveSource = _PypiSource | _PathSource
 
 
 @pure
-def _parse_add_source(opts: PluginCliOptions) -> _AddSource:
-    """Parse and validate the plugin source for an add command.
+def _parse_add_sources(opts: PluginCliOptions) -> list[_AddSource]:
+    """Parse and validate the plugin source(s) for an add command.
 
-    Exactly one of name, --path, or --git must be provided.
+    Provide at least one of NAME, --path (repeatable), or --git.
+    These three source types are mutually exclusive.
     """
-    source_count = sum(x is not None for x in (opts.name, opts.path, opts.git))
-    if source_count == 0:
-        raise AbortError("Provide exactly one of NAME, --path, or --git")
-    if source_count > 1:
+    has_paths = len(opts.path) > 0
+    has_name = opts.name is not None
+    has_git = opts.git is not None
+
+    source_type_count = sum([has_paths, has_name, has_git])
+    if source_type_count == 0:
+        raise AbortError("Provide at least one of NAME, --path, or --git")
+    if source_type_count > 1:
         raise AbortError("NAME, --path, and --git are mutually exclusive")
 
-    if opts.path is not None:
-        return _PathSource(path=opts.path)
-    if opts.git is not None:
-        return _GitSource(url=opts.git)
+    if has_paths:
+        return [_PathSource(path=p) for p in opts.path]
+    if has_git:
+        assert opts.git is not None
+        return [_GitSource(url=opts.git)]
 
     assert opts.name is not None
     if _parse_pypi_package_name(opts.name) is None:
         raise AbortError(f"Invalid package name '{opts.name}'")
-    return _PypiSource(name=opts.name)
+    return [_PypiSource(name=opts.name)]
 
 
 @pure
-def _parse_remove_source(opts: PluginCliOptions) -> _RemoveSource:
-    """Parse and validate the plugin source for a remove command.
+def _parse_remove_sources(opts: PluginCliOptions) -> list[_RemoveSource]:
+    """Parse and validate the plugin source(s) for a remove command.
 
-    Exactly one of name or --path must be provided.
+    Provide at least one of NAME or --path (repeatable).
+    These two source types are mutually exclusive.
     """
-    source_count = sum(x is not None for x in (opts.name, opts.path))
-    if source_count == 0:
-        raise AbortError("Provide exactly one of NAME or --path")
-    if source_count > 1:
+    has_paths = len(opts.path) > 0
+    has_name = opts.name is not None
+
+    source_type_count = sum([has_paths, has_name])
+    if source_type_count == 0:
+        raise AbortError("Provide at least one of NAME or --path")
+    if source_type_count > 1:
         raise AbortError("NAME and --path are mutually exclusive")
 
-    if opts.path is not None:
-        return _PathSource(path=opts.path)
+    if has_paths:
+        return [_PathSource(path=p) for p in opts.path]
 
     assert opts.name is not None
     if _parse_pypi_package_name(opts.name) is None:
         raise AbortError(f"Invalid package name '{opts.name}'")
-    return _PypiSource(name=opts.name)
+    return [_PypiSource(name=opts.name)]
 
 
 def _plugin_add_impl(ctx: click.Context) -> None:
@@ -493,61 +504,74 @@ def _plugin_add_impl(ctx: click.Context) -> None:
 
     # Validate arguments before checking uv tool receipt so users get clear
     # argument-validation errors rather than a "not installed via uv tool" error.
-    source = _parse_add_source(opts)
+    sources = _parse_add_sources(opts)
 
     receipt_path = require_uv_tool_receipt()
     receipt = read_receipt(receipt_path)
 
-    # Build the uv tool install command and determine the display specifier
-    match source:
-        case _PathSource(path=path):
-            resolved_path = str(Path(path).expanduser().resolve())
-            specifier = path
-            try:
-                package_name = _read_package_name_from_pyproject(path)
-            except PluginSpecifierError:
-                logger.debug("Could not read package name from pyproject.toml at '{}', using raw path", path)
-                package_name = path
-            command = build_uv_tool_install_add_path(receipt, resolved_path, package_name)
-        case _GitSource(url=url):
-            specifier = url
-            command = build_uv_tool_install_add_git(receipt, url)
-        case _PypiSource(name=name):
-            specifier = name
-            command = build_uv_tool_install_add(receipt, name)
-        case _ as unreachable:
-            assert_never(unreachable)
+    # Build new requirements and track metadata for each source.
+    # Each entry in source_info is (specifier, resolved_package_name).
+    # For git sources, resolved_package_name is set to the URL initially and
+    # updated after install by diffing the installed packages.
+    new_requirements: list[ToolRequirement] = []
+    source_info: list[tuple[str, str]] = []
+    has_git_source = False
+
+    for source in sources:
+        match source:
+            case _PathSource(path=path):
+                resolved_path = str(Path(path).expanduser().resolve())
+                try:
+                    package_name = _read_package_name_from_pyproject(path)
+                except PluginSpecifierError:
+                    logger.debug("Could not read package name from pyproject.toml at '{}', using raw path", path)
+                    package_name = path
+                new_requirements.append(ToolRequirement(name=package_name, editable=resolved_path))
+                source_info.append((path, package_name))
+            case _GitSource(url=url):
+                git_url = url if url.startswith("git+") else f"git+{url}"
+                new_requirements.append(ToolRequirement(name=git_url))
+                source_info.append((url, url))
+                has_git_source = True
+            case _PypiSource(name=name):
+                new_requirements.append(ToolRequirement(name=name))
+                source_info.append((name, _parse_pypi_package_name(name) or name))
+            case _ as unreachable:
+                assert_never(unreachable)
 
     # For git installs, snapshot installed packages before install so we can diff afterward
     packages_before: set[str] | None = None
-    if isinstance(source, _GitSource):
+    if has_git_source:
         packages_before = _get_installed_package_names(mng_ctx.concurrency_group)
 
-    with log_span("Installing plugin package '{}'", specifier):
+    # Build a single uv tool install command with all new requirements
+    command = build_uv_tool_install_add_requirements(receipt, new_requirements)
+
+    all_specifiers = ", ".join(spec for spec, _ in source_info)
+    with log_span("Installing plugin packages: {}", all_specifiers):
         try:
             mng_ctx.concurrency_group.run_process_to_completion(command)
         except ProcessError as e:
             raise AbortError(
-                f"Failed to install plugin package '{specifier}': {e.stderr.strip() or e.stdout.strip()}",
+                f"Failed to install plugin packages: {e.stderr.strip() or e.stdout.strip()}",
                 original_exception=e,
             ) from e
 
-    # Resolve the canonical package name from the install
-    match source:
-        case _PypiSource(name=name):
-            resolved_package_name = _parse_pypi_package_name(name) or name
-        case _PathSource():
-            resolved_package_name = package_name
-        case _GitSource(url=url):
-            assert packages_before is not None
-            packages_after = _get_installed_package_names(mng_ctx.concurrency_group)
-            new_packages = packages_after - packages_before
-            resolved_package_name = next(iter(new_packages)) if new_packages else url
-        case _ as unreachable:
-            assert_never(unreachable)
+    # For git installs, resolve the canonical package name by diffing installed packages.
+    # Git is single-valued and mutually exclusive with other source types, so there is
+    # exactly one entry in source_info when has_git_source is True.
+    if has_git_source:
+        assert packages_before is not None
+        packages_after = _get_installed_package_names(mng_ctx.concurrency_group)
+        new_packages = packages_after - packages_before
+        if new_packages:
+            specifier, _ = source_info[0]
+            source_info = [(specifier, next(iter(new_packages)))]
 
-    has_entry_points = _check_for_mng_entry_points(resolved_package_name)
-    _emit_plugin_add_result(specifier, resolved_package_name, has_entry_points, output_opts)
+    # Report results for each source
+    for specifier, resolved_package_name in source_info:
+        has_entry_points = _check_for_mng_entry_points(resolved_package_name)
+        _emit_plugin_add_result(specifier, resolved_package_name, has_entry_points, output_opts)
 
 
 def _plugin_remove_impl(ctx: click.Context) -> None:
@@ -560,40 +584,46 @@ def _plugin_remove_impl(ctx: click.Context) -> None:
 
     # Validate arguments before checking uv tool receipt so users get clear
     # argument-validation errors rather than a "not installed via uv tool" error.
-    source = _parse_remove_source(opts)
+    sources = _parse_remove_sources(opts)
 
     receipt_path = require_uv_tool_receipt()
     receipt = read_receipt(receipt_path)
 
-    match source:
-        case _PathSource(path=path):
-            try:
-                package_name = _read_package_name_from_pyproject(path)
-            except PluginSpecifierError as e:
-                raise AbortError(str(e)) from e
-        case _PypiSource(name=name):
-            # _parse_remove_source already validated the name; this extracts the canonical form
-            package_name = _parse_pypi_package_name(name) or name
-        case _ as unreachable:
-            assert_never(unreachable)
+    # Resolve package names for all sources
+    package_names: list[str] = []
+    for source in sources:
+        match source:
+            case _PathSource(path=path):
+                try:
+                    package_names.append(_read_package_name_from_pyproject(path))
+                except PluginSpecifierError as e:
+                    raise AbortError(str(e)) from e
+            case _PypiSource(name=name):
+                package_names.append(_parse_pypi_package_name(name) or name)
+            case _ as unreachable:
+                assert_never(unreachable)
 
-    # Verify the package is actually a dependency before trying to remove
+    # Verify all packages are actually dependencies before trying to remove
     extra_names = {r.name for r in receipt.extras}
-    if package_name not in extra_names:
-        raise AbortError(f"Package '{package_name}' is not installed as a plugin")
+    for package_name in package_names:
+        if package_name not in extra_names:
+            raise AbortError(f"Package '{package_name}' is not installed as a plugin")
 
-    command = build_uv_tool_install_remove(receipt, package_name)
+    # Build a single command that removes all requested packages
+    command = build_uv_tool_install_remove_multiple(receipt, set(package_names))
 
-    with log_span("Removing plugin package '{}'", package_name):
+    all_names = ", ".join(package_names)
+    with log_span("Removing plugin packages: {}", all_names):
         try:
             mng_ctx.concurrency_group.run_process_to_completion(command)
         except ProcessError as e:
             raise AbortError(
-                f"Failed to remove plugin package '{package_name}': {e.stderr.strip() or e.stdout.strip()}",
+                f"Failed to remove plugin packages: {e.stderr.strip() or e.stdout.strip()}",
                 original_exception=e,
             ) from e
 
-    _emit_plugin_remove_result(package_name, output_opts)
+    for package_name in package_names:
+        _emit_plugin_remove_result(package_name, output_opts)
 
 
 # FOLLOWUP: in addition to the above, I also want a sub-command for "mng plugin search" so that you can easily search across all plugins (once there are a bunch of them)
@@ -734,6 +764,7 @@ Plugins provide agent types, provider backends, CLI commands, and lifecycle hook
         ("Show specific fields", "mng plugin list --fields name,enabled"),
         ("Install a plugin from PyPI", "mng plugin add mng-pair"),
         ("Install a local plugin", "mng plugin add --path ./my-plugin"),
+        ("Install multiple local plugins", "mng plugin add --path ./plugin-a --path ./plugin-b"),
         ("Install a plugin from git", "mng plugin add --git https://github.com/user/mng-plugin.git"),
         ("Remove a plugin", "mng plugin remove mng-pair"),
         ("Enable a plugin", "mng plugin enable modal"),
@@ -773,13 +804,15 @@ CommandHelpMetadata(
     key="plugin.add",
     one_line_description="Install a plugin package",
     synopsis="mng plugin add [NAME] [OPTIONS]",
-    description="""Provide exactly one of NAME (positional), --path, or --git. NAME is a PyPI
-package specifier (e.g., 'mng-pair' or 'mng-pair>=1.0'). --path installs
-from a local directory in editable mode. --git installs from a git URL.""",
+    description="""Provide at least one of NAME (positional), --path (repeatable), or --git.
+NAME is a PyPI package specifier (e.g., 'mng-pair' or 'mng-pair>=1.0').
+--path installs from a local directory in editable mode and can be repeated
+to install multiple plugins in a single command. --git installs from a git URL.""",
     examples=(
         ("Install from PyPI", "mng plugin add mng-pair"),
         ("Install with version constraint", "mng plugin add mng-pair>=1.0"),
         ("Install from a local path", "mng plugin add --path ./my-plugin"),
+        ("Install multiple local plugins at once", "mng plugin add --path ./plugin-a --path ./plugin-b"),
         ("Install from a git URL", "mng plugin add --git https://github.com/user/mng-plugin.git"),
     ),
     see_also=(
