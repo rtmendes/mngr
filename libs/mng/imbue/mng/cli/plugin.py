@@ -496,6 +496,8 @@ def _plugin_add_impl(ctx: click.Context) -> None:
         ctx=ctx,
         command_name="plugin",
         command_class=PluginCliOptions,
+        # this is set so that, even if we cannot find an existing provider from our config, the command still works
+        strict=False,
     )
 
     # Validate arguments before checking uv tool receipt so users get clear
