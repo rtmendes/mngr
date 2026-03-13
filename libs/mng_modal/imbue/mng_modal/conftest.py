@@ -1,4 +1,6 @@
+import json
 import os
+import subprocess
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -31,6 +33,9 @@ from imbue.mng.utils.testing import make_mng_ctx
 from imbue.mng.utils.testing import register_modal_test_app
 from imbue.mng.utils.testing import register_modal_test_environment
 from imbue.mng.utils.testing import register_modal_test_volume
+from imbue.mng.utils.testing import worker_modal_app_names
+from imbue.mng.utils.testing import worker_modal_environment_names
+from imbue.mng.utils.testing import worker_modal_volume_names
 from imbue.mng_modal.backend import ModalProviderBackend
 from imbue.mng_modal.backend import STATE_VOLUME_SUFFIX
 from imbue.mng_modal.config import ModalProviderConfig
@@ -302,3 +307,142 @@ def temp_source_dir(tmp_path: Path) -> Path:
     source_dir.mkdir()
     (source_dir / "test.txt").write_text("test content")
     return source_dir
+
+
+# =============================================================================
+# Modal cleanup fixtures
+#
+# These are importable by consuming packages via pytest_plugins so that
+# ModalProviderBackend state is properly cleaned up between tests.
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _reset_modal_app_registry() -> Generator[None, None, None]:
+    """Reset the Modal app registry after each test for isolation."""
+    yield
+    ModalProviderBackend.reset_app_registry()
+
+
+def _get_leaked_modal_apps() -> list[tuple[str, str]]:
+    if not worker_modal_app_names:
+        return []
+    try:
+        result = subprocess.run(
+            ["uv", "run", "modal", "app", "list", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return []
+        apps = json.loads(result.stdout)
+        return [
+            (app.get("App ID", ""), app.get("Description", ""))
+            for app in apps
+            if app.get("Description", "") in worker_modal_app_names and app.get("State", "") != "stopped"
+        ]
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        return []
+
+
+def _stop_modal_apps(apps: list[tuple[str, str]]) -> None:
+    for app_id, _ in apps:
+        try:
+            subprocess.run(["uv", "run", "modal", "app", "stop", app_id], capture_output=True, timeout=30)
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+            pass
+
+
+def _get_leaked_modal_volumes() -> list[str]:
+    if not worker_modal_volume_names:
+        return []
+    try:
+        result = subprocess.run(
+            ["uv", "run", "modal", "volume", "list", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return []
+        volumes = json.loads(result.stdout)
+        return [v.get("Name", "") for v in volumes if v.get("Name", "") in worker_modal_volume_names]
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        return []
+
+
+def _delete_modal_volumes(volume_names: list[str]) -> None:
+    for name in volume_names:
+        try:
+            subprocess.run(["uv", "run", "modal", "volume", "delete", name, "--yes"], capture_output=True, timeout=30)
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+            pass
+
+
+def _get_leaked_modal_environments() -> list[str]:
+    if not worker_modal_environment_names:
+        return []
+    try:
+        result = subprocess.run(
+            ["uv", "run", "modal", "environment", "list", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return []
+        envs = json.loads(result.stdout)
+        return [e.get("name", "") for e in envs if e.get("name", "") in worker_modal_environment_names]
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        return []
+
+
+def _delete_modal_environments(environment_names: list[str]) -> None:
+    for name in environment_names:
+        try:
+            subprocess.run(
+                ["uv", "run", "modal", "environment", "delete", name, "--yes"], capture_output=True, timeout=30
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+            pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def modal_session_cleanup() -> Generator[None, None, None]:
+    """Detect and clean up leaked Modal resources at the end of the test session."""
+    yield
+    errors: list[str] = []
+    leaked_apps = _get_leaked_modal_apps()
+    if leaked_apps:
+        errors.append(
+            "Leftover Modal apps found!\n"
+            "Tests should destroy their Modal hosts before completing.\n"
+            + "\n".join(f"  {aid} ({aname})" for aid, aname in leaked_apps)
+        )
+    leaked_volumes = _get_leaked_modal_volumes()
+    if leaked_volumes:
+        errors.append(
+            "Leftover Modal volumes found!\n"
+            "Tests should delete their Modal volumes before completing.\n"
+            + "\n".join(f"  {n}" for n in leaked_volumes)
+        )
+    leaked_envs = _get_leaked_modal_environments()
+    if leaked_envs:
+        errors.append(
+            "Leftover Modal environments found!\n"
+            "Tests should delete their Modal environments before completing.\n"
+            + "\n".join(f"  {n}" for n in leaked_envs)
+        )
+    _stop_modal_apps(leaked_apps)
+    _delete_modal_volumes(leaked_volumes)
+    _delete_modal_environments(leaked_envs)
+    if errors:
+        raise AssertionError(
+            "=" * 70
+            + "\nMODAL SESSION CLEANUP FOUND LEAKED RESOURCES!\n"
+            + "=" * 70
+            + "\n\n"
+            + "\n\n".join(errors)
+            + "\n\nThese resources have been cleaned up, but tests should not leak!\n"
+        )
