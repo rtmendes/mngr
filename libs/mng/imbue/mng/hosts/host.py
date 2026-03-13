@@ -16,9 +16,11 @@ from typing import IO
 from typing import Iterator
 from typing import Mapping
 from typing import Sequence
+from typing import cast
 from uuid import uuid4
 
 from loguru import logger
+from paramiko import SFTPClient
 from paramiko import SSHException
 from pydantic import Field
 from pydantic import ValidationError
@@ -346,6 +348,14 @@ class Host(BaseHost, OnlineHostInterface):
         if not isinstance(filename_or_io, str):
             filename_or_io.seek(0)
         try:
+            # For remote hosts with an SSH client, use a dedicated SFTP channel
+            # instead of pyinfra's memoized one. pyinfra caches a single
+            # SFTPClient per connection, which is not thread-safe -- concurrent
+            # put_file calls deadlock. By creating a fresh SFTPClient from the
+            # shared Transport (which IS thread-safe), each call gets its own
+            # SFTP channel and parallel uploads work.
+            if not self.is_local and self._has_ssh_client():
+                return self._put_file_via_paramiko(filename_or_io, remote_filename)
             return self.connector.host.put_file(
                 filename_or_io,
                 remote_filename,
@@ -358,6 +368,49 @@ class Host(BaseHost, OnlineHostInterface):
                 raise
             else:
                 raise
+
+    def _has_ssh_client(self) -> bool:
+        """Check if the pyinfra host has a paramiko SSH client for SFTP uploads.
+
+        Returns True only when the connector chain exposes a paramiko SSHClient
+        (i.e., the host is connected via SSH, not a local or fake connector).
+        """
+        pyinfra_connector = self.connector.host
+        if not hasattr(pyinfra_connector, "connector"):
+            return False
+        ssh_connector = pyinfra_connector.connector
+        return hasattr(ssh_connector, "client") and ssh_connector.client is not None
+
+    def _put_file_via_paramiko(
+        self,
+        filename_or_io: str | IO[str] | IO[bytes],
+        remote_filename: str,
+    ) -> bool:
+        """Upload a file using a dedicated paramiko SFTP channel.
+
+        Creates a fresh SFTPClient from the shared SSH transport for each call.
+        This is thread-safe because paramiko transports can multiplex channels.
+
+        Caller must verify _has_ssh_client() before calling.
+        """
+        # The pyinfra connector type hierarchy does not expose `client` on
+        # BaseConnector (only SSHConnector has it). We use _has_ssh_client()
+        # as a precondition guard, then cast to Any to access dynamically.
+        ssh_connector = cast(Any, self.connector.host.connector)
+        transport = ssh_connector.client.get_transport()
+        if transport is None:
+            raise HostConnectionError("No active SSH transport")
+        sftp = SFTPClient.from_transport(transport)
+        if sftp is None:
+            raise HostConnectionError("Failed to create SFTP channel from transport")
+        try:
+            if isinstance(filename_or_io, str):
+                sftp.put(filename_or_io, remote_filename)
+            else:
+                sftp.putfo(filename_or_io, remote_filename)
+            return True
+        finally:
+            sftp.close()
 
     # =========================================================================
     # Convenience methods (built on core primitives)

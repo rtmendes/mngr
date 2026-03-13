@@ -1,13 +1,15 @@
 """Janky script to test parallel file uploads to a Modal host.
 
 Tests whether running multiple host.write_file() calls in parallel (from
-different threads) causes hangs. Uses the hard-coded Modal host "spica".
+different threads) causes hangs, and whether the mitigation of using
+separate paramiko SFTP channels per thread works.
 
-RESULT: Confirmed that parallel write_file hangs. Sequential uploads work
-fine (~0.29s each, 10 files in 2.88s), but as soon as 2 threads call
-write_file concurrently on the same Host object, both threads deadlock
-indefinitely. The root cause is that pyinfra/paramiko's SSH/SFTP connection
-is not thread-safe -- concurrent put_file calls on the same connection hang.
+RESULT (before mitigation): parallel write_file hangs because pyinfra
+uses a single memoized SFTPClient (channel) for all uploads, and paramiko
+channels are not thread-safe.
+
+MITIGATION: Create a new SFTPClient per thread from the shared paramiko
+Transport (which IS thread-safe). Each thread gets its own SFTP channel.
 
 Usage:
     PYTHONUNBUFFERED=1 uv run python scripts/check_parallel_uploads.py
@@ -38,11 +40,11 @@ from imbue.mng.providers.registry import load_backends_from_plugins
 HOST_NAME = HostName("spica")
 NUM_FILES = 10
 FILE_SIZE_BYTES = 1024  # 1 KB of random data per file
-PARALLEL_TIMEOUT_SECONDS = 30  # short timeout since we expect a hang
+PARALLEL_TIMEOUT_SECONDS = 30
 
 
 def get_host(mng_ctx: MngContext) -> OnlineHostInterface:
-    """Find the 'spica' host and return it as an online host."""
+    """Find the 'spica' host and return it."""
     print("  Discovering hosts (modal only)...")
     agents_by_host, _providers = discover_all_hosts_and_agents(mng_ctx, provider_names=("modal",))
     print(f"  Discovery complete. Found {len(agents_by_host)} host(s).")
@@ -61,8 +63,8 @@ def get_host(mng_ctx: MngContext) -> OnlineHostInterface:
     )
 
 
-def write_single_file(host: OnlineHostInterface, file_index: int) -> tuple[int, float, str]:
-    """Write a single random file to /tmp/ on the host. Returns (index, duration, status)."""
+def write_file_via_pyinfra(host: OnlineHostInterface, file_index: int) -> tuple[int, float, str]:
+    """Write using host.write_file() (the normal path -- hangs in parallel)."""
     path = Path(f"/tmp/parallel_upload_test_{file_index}.bin")
     content = os.urandom(FILE_SIZE_BYTES)
     thread_name = current_thread().name
@@ -86,23 +88,21 @@ def run_sequential(host: OnlineHostInterface) -> None:
     start = time.monotonic()
     results = []
     for i in range(NUM_FILES):
-        results.append(write_single_file(host, i))
+        results.append(write_file_via_pyinfra(host, i))
     total = time.monotonic() - start
     print(f"\nSequential total: {total:.2f}s")
     for idx, elapsed, status in results:
         print(f"  File {idx}: {elapsed:.2f}s [{status}]")
 
 
-def run_parallel(host: OnlineHostInterface, max_workers: int) -> bool:
+def run_parallel(label: str, fn, fn_arg, max_workers: int) -> bool:
     """Run uploads in parallel. Detects hangs via timeout. Returns True if hung."""
-    print(
-        f"\n--- Parallel uploads ({NUM_FILES} files, {max_workers} workers, timeout={PARALLEL_TIMEOUT_SECONDS}s) ---"
-    )
+    print(f"\n--- {label} ({NUM_FILES} files, {max_workers} workers, timeout={PARALLEL_TIMEOUT_SECONDS}s) ---")
     start = time.monotonic()
     results: list[tuple[int, float, str]] = []
 
     executor = ThreadPoolExecutor(max_workers=max_workers)
-    futures = {executor.submit(write_single_file, host, i): i for i in range(NUM_FILES)}
+    futures = {executor.submit(fn, fn_arg, i): i for i in range(NUM_FILES)}
     try:
         for future in as_completed(futures, timeout=PARALLEL_TIMEOUT_SECONDS):
             results.append(future.result())
@@ -111,17 +111,13 @@ def run_parallel(host: OnlineHostInterface, max_workers: int) -> bool:
         completed = len(results)
         pending = NUM_FILES - completed
         print(f"\n  HUNG! Timed out after {total:.2f}s. {completed}/{NUM_FILES} completed, {pending} still pending.")
-        print("  This confirms that parallel write_file calls deadlock.")
-        # Force-shutdown without waiting for deadlocked threads (they're stuck
-        # in paramiko and will never return). cancel_futures prevents queued
-        # work from starting; wait=False avoids blocking on hung threads.
         executor.shutdown(wait=False, cancel_futures=True)
         return True
 
     executor.shutdown(wait=True)
     total = time.monotonic() - start
     results.sort(key=lambda r: r[0])
-    print(f"\nParallel total: {total:.2f}s")
+    print(f"\nTotal: {total:.2f}s")
     for idx, elapsed, status in results:
         print(f"  File {idx}: {elapsed:.2f}s [{status}]")
     return False
@@ -147,9 +143,9 @@ def main() -> None:
         host = get_host(mng_ctx)
         print(f"Found host: {host.get_name()} (id={host.id})")
 
-        # First, verify a single upload works
+        # Sanity check
         print("\n--- Single upload sanity check ---")
-        idx, elapsed, status = write_single_file(host, 999)
+        idx, elapsed, status = write_file_via_pyinfra(host, 999)
         if status != "ok":
             print(f"Single upload failed: {status}")
             sys.exit(1)
@@ -158,13 +154,19 @@ def main() -> None:
         # Sequential baseline
         run_sequential(host)
 
-        # Parallel with 2 workers -- this is where the hang occurs
-        is_hung = run_parallel(host, max_workers=2)
-
+        # Test: Parallel via host.write_file() (now fixed to use separate
+        # paramiko SFTP channels per call instead of pyinfra's memoized one)
+        is_hung = run_parallel(
+            "Parallel via host.write_file() (fixed)",
+            write_file_via_pyinfra,
+            host,
+            max_workers=5,
+        )
         if is_hung:
-            # Can't clean up reliably if the connection is deadlocked
-            print("\nExiting (skipping cleanup due to deadlocked connection).")
+            print("\n  FAILED: parallel host.write_file() still hangs.")
             sys.exit(1)
+        else:
+            print("\n  SUCCESS: parallel host.write_file() works.")
 
         # Cleanup
         print("\n--- Cleanup ---")

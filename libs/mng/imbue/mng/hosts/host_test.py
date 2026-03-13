@@ -9,6 +9,7 @@ from typing import IO
 from typing import cast
 
 import pytest
+from paramiko import SFTPClient
 from paramiko import SSHException
 from pyinfra.api.host import Host as PyinfraHost
 
@@ -1071,6 +1072,131 @@ def test_put_file_propagates_non_socket_closed_os_error(
         host._put_file(io.BytesIO(b"content"), "/remote/file.txt")
 
     assert fake._put_file_call_count == 1
+
+
+def test_has_ssh_client_returns_false_for_fake_host(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """_has_ssh_client should return False when the pyinfra host has no connector attribute."""
+    fake = _FakePyinfraHost()
+    host = _create_host_with_fake_connector(local_provider, fake)
+
+    assert host._has_ssh_client() is False
+
+
+def test_put_file_falls_back_to_pyinfra_when_no_ssh_client(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """When _has_ssh_client returns False, _put_file should fall back to pyinfra's put_file."""
+    fake = _FakePyinfraHost(put_file_results=[True])
+    host = _create_host_with_fake_connector(local_provider, fake)
+
+    result = host._put_file(io.BytesIO(b"content"), "/remote/file.txt")
+
+    assert result is True
+    assert fake._put_file_call_count == 1
+
+
+class _FakeSSHClient:
+    """Minimal fake paramiko SSHClient for testing the paramiko upload path."""
+
+    def __init__(self, transport_return: object = None) -> None:
+        self._transport = transport_return
+
+    def get_transport(self) -> object:
+        return self._transport
+
+
+class _FakeSSHConnector:
+    """Minimal fake SSH connector with a client attribute."""
+
+    def __init__(self, client: _FakeSSHClient | None = None) -> None:
+        self.client = client
+
+
+class _FakeHostWithSSH(_FakePyinfraHost):
+    """Fake pyinfra host that has a connector with an SSH client."""
+
+    def __init__(
+        self,
+        ssh_client: _FakeSSHClient | None = None,
+        get_file_results: list[bool | Exception] | None = None,
+        put_file_results: list[bool | Exception] | None = None,
+    ) -> None:
+        super().__init__(get_file_results=get_file_results, put_file_results=put_file_results)
+        self.connector = _FakeSSHConnector(client=ssh_client)
+
+
+def test_has_ssh_client_returns_true_for_ssh_host(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """_has_ssh_client should return True when the connector has a client."""
+    fake = _FakeHostWithSSH(ssh_client=_FakeSSHClient())
+    host = _create_host_with_fake_connector(local_provider, fake)
+
+    assert host._has_ssh_client() is True
+
+
+def test_has_ssh_client_returns_false_when_client_is_none(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """_has_ssh_client should return False when client is None."""
+    fake = _FakeHostWithSSH(ssh_client=None)
+    host = _create_host_with_fake_connector(local_provider, fake)
+
+    assert host._has_ssh_client() is False
+
+
+def test_has_ssh_client_returns_false_for_non_ssh_connector(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """_has_ssh_client should return False when the connector has no client attribute."""
+
+    class _FakeHostWithNonSSHConnector(_FakePyinfraHost):
+        connector = object()
+
+    fake = _FakeHostWithNonSSHConnector()
+    host = _create_host_with_fake_connector(local_provider, fake)
+
+    assert host._has_ssh_client() is False
+
+
+def test_put_file_via_paramiko_raises_when_no_transport(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """_put_file_via_paramiko should raise HostConnectionError when transport is None."""
+    fake = _FakeHostWithSSH(ssh_client=_FakeSSHClient(transport_return=None))
+    host = _create_host_with_fake_connector(local_provider, fake)
+
+    with pytest.raises(HostConnectionError, match="No active SSH transport"):
+        host._put_file_via_paramiko(io.BytesIO(b"content"), "/remote/file.txt")
+
+
+def test_put_file_via_paramiko_uploads_via_fresh_sftp_channel(
+    local_provider: LocalProviderInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_put_file_via_paramiko should create a fresh SFTP channel and upload."""
+    uploaded: dict[str, bytes] = {}
+
+    class _FakeSFTP:
+        def putfo(self, fl: io.BytesIO, remote_path: str) -> None:
+            uploaded[remote_path] = fl.read()
+
+        def close(self) -> None:
+            pass
+
+    class _FakeTransport:
+        pass
+
+    monkeypatch.setattr(SFTPClient, "from_transport", staticmethod(lambda transport: _FakeSFTP()))
+
+    fake = _FakeHostWithSSH(ssh_client=_FakeSSHClient(transport_return=_FakeTransport()))
+    host = _create_host_with_fake_connector(local_provider, fake)
+    result = host._put_file_via_paramiko(io.BytesIO(b"hello world"), "/tmp/test.txt")
+
+    assert result is True
+    assert uploaded["/tmp/test.txt"] == b"hello world"
 
 
 def test_get_file_wraps_ssh_exception_in_host_connection_error(
