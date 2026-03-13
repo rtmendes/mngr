@@ -5,11 +5,11 @@ import json
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import Any
 from typing import IO
 from typing import cast
 
 import pytest
-from paramiko import SFTPClient
 from paramiko import SSHException
 from pyinfra.api.host import Host as PyinfraHost
 
@@ -1174,7 +1174,6 @@ def test_put_file_via_paramiko_raises_when_no_transport(
 
 def test_put_file_via_paramiko_uploads_via_fresh_sftp_channel(
     local_provider: LocalProviderInstance,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """_put_file_via_paramiko should create a fresh SFTP channel and upload."""
     uploaded: dict[str, bytes] = {}
@@ -1189,10 +1188,20 @@ def test_put_file_via_paramiko_uploads_via_fresh_sftp_channel(
     class _FakeTransport:
         pass
 
-    monkeypatch.setattr(SFTPClient, "from_transport", staticmethod(lambda transport: _FakeSFTP()))
+    class _HostWithFakeSFTP(Host):
+        """Host subclass that returns a fake SFTP client for testing."""
+
+        def _create_sftp_client(self, transport: object) -> Any:
+            return _FakeSFTP()
 
     fake = _FakeHostWithSSH(ssh_client=_FakeSSHClient(transport_return=_FakeTransport()))
-    host = _create_host_with_fake_connector(local_provider, fake)
+    connector = PyinfraConnector(cast(PyinfraHost, fake))
+    host = _HostWithFakeSFTP(
+        id=HostId.generate(),
+        connector=connector,
+        provider_instance=local_provider,
+        mng_ctx=local_provider.mng_ctx,
+    )
     result = host._put_file_via_paramiko(io.BytesIO(b"hello world"), "/tmp/test.txt")
 
     assert result is True

@@ -381,6 +381,13 @@ class Host(BaseHost, OnlineHostInterface):
         ssh_connector = pyinfra_connector.connector
         return hasattr(ssh_connector, "client") and ssh_connector.client is not None
 
+    def _create_sftp_client(self, transport: object) -> SFTPClient | None:
+        """Create an SFTPClient from a paramiko Transport.
+
+        Extracted as a method so tests can override it without monkeypatching.
+        """
+        return SFTPClient.from_transport(transport)
+
     def _put_file_via_paramiko(
         self,
         filename_or_io: str | IO[str] | IO[bytes],
@@ -400,7 +407,7 @@ class Host(BaseHost, OnlineHostInterface):
         transport = ssh_connector.client.get_transport()
         if transport is None:
             raise HostConnectionError("No active SSH transport")
-        sftp = SFTPClient.from_transport(transport)
+        sftp = self._create_sftp_client(transport)
         if sftp is None:
             raise HostConnectionError("Failed to create SFTP channel from transport")
         try:
