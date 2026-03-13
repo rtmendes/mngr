@@ -468,11 +468,7 @@ class MngConfig(FrozenModel):
         merged_unset_vars = merge_list_fields(self.unset_vars, override.unset_vars)
 
         # Merge enabled_backends (list - override wins if not None/empty, otherwise keep base)
-        merged_enabled_backends = (
-            override.enabled_backends
-            if override.enabled_backends is not None and override.enabled_backends
-            else self.enabled_backends
-        )
+        merged_enabled_backends = override.enabled_backends if override.enabled_backends else self.enabled_backends
 
         # Merge agent_types (dict - merge keys, with per-key merge)
         merged_agent_types: dict[AgentTypeName, AgentTypeConfig] = {}
