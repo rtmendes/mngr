@@ -580,9 +580,9 @@ def test_emit_plugin_remove_result_jsonl_format(capsys: pytest.CaptureFixture[st
 
 
 def _make_plugin_cli_options(
-    name: str | None = None,
+    names: tuple[str, ...] = (),
     path: tuple[str, ...] = (),
-    git: str | None = None,
+    git: tuple[str, ...] = (),
 ) -> PluginCliOptions:
     """Create a PluginCliOptions with the given source fields and minimal defaults."""
     return PluginCliOptions(
@@ -596,7 +596,7 @@ def _make_plugin_cli_options(
         project_context_path=None,
         plugin=(),
         disable_plugin=(),
-        name=name,
+        names=names,
         path=path,
         git=git,
     )
@@ -614,23 +614,9 @@ def test_parse_add_sources_no_source_raises_abort() -> None:
         _parse_add_sources(opts)
 
 
-def test_parse_add_sources_multiple_source_types_raises_abort() -> None:
-    """_parse_add_sources should raise AbortError when multiple source types are provided."""
-    opts = _make_plugin_cli_options(name="mng-opencode", path=("./my-plugin",))
-    with pytest.raises(AbortError, match="mutually exclusive"):
-        _parse_add_sources(opts)
-
-
-def test_parse_add_sources_name_and_git_raises_abort() -> None:
-    """_parse_add_sources should raise AbortError when name and git are both provided."""
-    opts = _make_plugin_cli_options(name="mng-opencode", git="https://github.com/user/repo.git")
-    with pytest.raises(AbortError, match="mutually exclusive"):
-        _parse_add_sources(opts)
-
-
 def test_parse_add_sources_valid_pypi_name() -> None:
     """_parse_add_sources should return a list with _PypiSource for a valid PyPI name."""
-    opts = _make_plugin_cli_options(name="mng-opencode")
+    opts = _make_plugin_cli_options(names=("mng-opencode",))
     sources = _parse_add_sources(opts)
     assert len(sources) == 1
     assert isinstance(sources[0], _PypiSource)
@@ -639,11 +625,22 @@ def test_parse_add_sources_valid_pypi_name() -> None:
 
 def test_parse_add_sources_valid_pypi_name_with_version() -> None:
     """_parse_add_sources should return a list with _PypiSource for a name with version constraint."""
-    opts = _make_plugin_cli_options(name="mng-opencode>=1.0")
+    opts = _make_plugin_cli_options(names=("mng-opencode>=1.0",))
     sources = _parse_add_sources(opts)
     assert len(sources) == 1
     assert isinstance(sources[0], _PypiSource)
     assert sources[0].name == "mng-opencode>=1.0"
+
+
+def test_parse_add_sources_multiple_names() -> None:
+    """_parse_add_sources should return multiple _PypiSource for multiple names."""
+    opts = _make_plugin_cli_options(names=("pkg-a", "pkg-b"))
+    sources = _parse_add_sources(opts)
+    assert len(sources) == 2
+    assert isinstance(sources[0], _PypiSource)
+    assert isinstance(sources[1], _PypiSource)
+    assert sources[0].name == "pkg-a"
+    assert sources[1].name == "pkg-b"
 
 
 def test_parse_add_sources_single_path() -> None:
@@ -670,16 +667,44 @@ def test_parse_add_sources_multiple_paths() -> None:
 
 def test_parse_add_sources_valid_git_url() -> None:
     """_parse_add_sources should return a list with _GitSource for a git URL."""
-    opts = _make_plugin_cli_options(git="https://github.com/user/repo.git")
+    opts = _make_plugin_cli_options(git=("https://github.com/user/repo.git",))
     sources = _parse_add_sources(opts)
     assert len(sources) == 1
     assert isinstance(sources[0], _GitSource)
     assert sources[0].url == "https://github.com/user/repo.git"
 
 
+def test_parse_add_sources_multiple_git_urls() -> None:
+    """_parse_add_sources should return multiple _GitSource for multiple git URLs."""
+    opts = _make_plugin_cli_options(git=("https://example.com/a.git", "https://example.com/b.git"))
+    sources = _parse_add_sources(opts)
+    assert len(sources) == 2
+    assert isinstance(sources[0], _GitSource)
+    assert isinstance(sources[1], _GitSource)
+    assert sources[0].url == "https://example.com/a.git"
+    assert sources[1].url == "https://example.com/b.git"
+
+
+def test_parse_add_sources_mixed_source_types() -> None:
+    """_parse_add_sources should combine all source types into one list."""
+    opts = _make_plugin_cli_options(
+        names=("pkg-a",),
+        path=("./local-b",),
+        git=("https://example.com/c.git",),
+    )
+    sources = _parse_add_sources(opts)
+    assert len(sources) == 3
+    assert isinstance(sources[0], _PypiSource)
+    assert isinstance(sources[1], _PathSource)
+    assert isinstance(sources[2], _GitSource)
+    assert sources[0].name == "pkg-a"
+    assert sources[1].path == "./local-b"
+    assert sources[2].url == "https://example.com/c.git"
+
+
 def test_parse_add_sources_invalid_name_raises_abort() -> None:
     """_parse_add_sources should raise AbortError for an invalid package name."""
-    opts = _make_plugin_cli_options(name="not a valid!!spec$$")
+    opts = _make_plugin_cli_options(names=("not a valid!!spec$$",))
     with pytest.raises(AbortError, match="Invalid package name"):
         _parse_add_sources(opts)
 
@@ -696,20 +721,24 @@ def test_parse_remove_sources_no_source_raises_abort() -> None:
         _parse_remove_sources(opts)
 
 
-def test_parse_remove_sources_multiple_source_types_raises_abort() -> None:
-    """_parse_remove_sources should raise AbortError when both name and path are provided."""
-    opts = _make_plugin_cli_options(name="mng-opencode", path=("./my-plugin",))
-    with pytest.raises(AbortError, match="mutually exclusive"):
-        _parse_remove_sources(opts)
-
-
 def test_parse_remove_sources_valid_pypi_name() -> None:
     """_parse_remove_sources should return a list with _PypiSource for a valid PyPI name."""
-    opts = _make_plugin_cli_options(name="mng-opencode")
+    opts = _make_plugin_cli_options(names=("mng-opencode",))
     sources = _parse_remove_sources(opts)
     assert len(sources) == 1
     assert isinstance(sources[0], _PypiSource)
     assert sources[0].name == "mng-opencode"
+
+
+def test_parse_remove_sources_multiple_names() -> None:
+    """_parse_remove_sources should return multiple _PypiSource for multiple names."""
+    opts = _make_plugin_cli_options(names=("pkg-a", "pkg-b"))
+    sources = _parse_remove_sources(opts)
+    assert len(sources) == 2
+    assert isinstance(sources[0], _PypiSource)
+    assert isinstance(sources[1], _PypiSource)
+    assert sources[0].name == "pkg-a"
+    assert sources[1].name == "pkg-b"
 
 
 def test_parse_remove_sources_single_path() -> None:
@@ -732,8 +761,19 @@ def test_parse_remove_sources_multiple_paths() -> None:
     assert sources[1].path == "./plugin-b"
 
 
+def test_parse_remove_sources_mixed_names_and_paths() -> None:
+    """_parse_remove_sources should combine names and paths into one list."""
+    opts = _make_plugin_cli_options(names=("pkg-a",), path=("./local-b",))
+    sources = _parse_remove_sources(opts)
+    assert len(sources) == 2
+    assert isinstance(sources[0], _PypiSource)
+    assert isinstance(sources[1], _PathSource)
+    assert sources[0].name == "pkg-a"
+    assert sources[1].path == "./local-b"
+
+
 def test_parse_remove_sources_invalid_name_raises_abort() -> None:
     """_parse_remove_sources should raise AbortError for an invalid package name."""
-    opts = _make_plugin_cli_options(name="not a valid!!spec$$")
+    opts = _make_plugin_cli_options(names=("not a valid!!spec$$",))
     with pytest.raises(AbortError, match="Invalid package name"):
         _parse_remove_sources(opts)

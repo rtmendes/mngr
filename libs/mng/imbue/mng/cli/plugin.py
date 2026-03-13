@@ -62,9 +62,10 @@ class PluginCliOptions(CommonCliOptions):
     is_active: bool = False
     fields: str | None = None
     name: str | None = None
+    names: tuple[str, ...] = ()
     scope: str | None = None
     path: tuple[str, ...] = ()
-    git: str | None = None
+    git: tuple[str, ...] = ()
 
 
 class PluginInfo(FrozenModel):
@@ -390,9 +391,9 @@ def _plugin_list_impl(ctx: click.Context, **kwargs: Any) -> None:
 
 
 @plugin.command(name="add")
-@click.argument("name", required=False, default=None)
+@click.argument("names", nargs=-1)
 @click.option("--path", multiple=True, help="Install from a local path (editable mode) [repeatable]")
-@click.option("--git", default=None, help="Install from a git URL")
+@click.option("--git", multiple=True, help="Install from a git URL [repeatable]")
 @add_common_options
 @click.pass_context
 def plugin_add(ctx: click.Context, **kwargs: Any) -> None:
@@ -404,7 +405,7 @@ def plugin_add(ctx: click.Context, **kwargs: Any) -> None:
 
 
 @plugin.command(name="remove")
-@click.argument("name", required=False, default=None)
+@click.argument("names", nargs=-1)
 @click.option(
     "--path", multiple=True, help="Remove by local path (reads package name from pyproject.toml) [repeatable]"
 )
@@ -444,54 +445,49 @@ _RemoveSource = _PypiSource | _PathSource
 def _parse_add_sources(opts: PluginCliOptions) -> list[_AddSource]:
     """Parse and validate the plugin source(s) for an add command.
 
-    Provide at least one of NAME, --path (repeatable), or --git.
-    These three source types are mutually exclusive.
+    All source types (positional names, --path, --git) can be freely mixed
+    and each is repeatable. At least one source must be provided.
     """
-    has_paths = len(opts.path) > 0
-    has_name = opts.name is not None
-    has_git = opts.git is not None
+    sources: list[_AddSource] = []
 
-    source_type_count = sum([has_paths, has_name, has_git])
-    if source_type_count == 0:
+    for name in opts.names:
+        if _parse_pypi_package_name(name) is None:
+            raise AbortError(f"Invalid package name '{name}'")
+        sources.append(_PypiSource(name=name))
+
+    for path in opts.path:
+        sources.append(_PathSource(path=path))
+
+    for url in opts.git:
+        sources.append(_GitSource(url=url))
+
+    if not sources:
         raise AbortError("Provide at least one of NAME, --path, or --git")
-    if source_type_count > 1:
-        raise AbortError("NAME, --path, and --git are mutually exclusive")
 
-    if has_paths:
-        return [_PathSource(path=p) for p in opts.path]
-    if has_git:
-        assert opts.git is not None
-        return [_GitSource(url=opts.git)]
-
-    assert opts.name is not None
-    if _parse_pypi_package_name(opts.name) is None:
-        raise AbortError(f"Invalid package name '{opts.name}'")
-    return [_PypiSource(name=opts.name)]
+    return sources
 
 
 @pure
 def _parse_remove_sources(opts: PluginCliOptions) -> list[_RemoveSource]:
     """Parse and validate the plugin source(s) for a remove command.
 
-    Provide at least one of NAME or --path (repeatable).
-    These two source types are mutually exclusive.
+    Both source types (positional names, --path) can be freely mixed
+    and each is repeatable. At least one source must be provided.
     """
-    has_paths = len(opts.path) > 0
-    has_name = opts.name is not None
+    sources: list[_RemoveSource] = []
 
-    source_type_count = sum([has_paths, has_name])
-    if source_type_count == 0:
+    for name in opts.names:
+        if _parse_pypi_package_name(name) is None:
+            raise AbortError(f"Invalid package name '{name}'")
+        sources.append(_PypiSource(name=name))
+
+    for path in opts.path:
+        sources.append(_PathSource(path=path))
+
+    if not sources:
         raise AbortError("Provide at least one of NAME or --path")
-    if source_type_count > 1:
-        raise AbortError("NAME and --path are mutually exclusive")
 
-    if has_paths:
-        return [_PathSource(path=p) for p in opts.path]
-
-    assert opts.name is not None
-    if _parse_pypi_package_name(opts.name) is None:
-        raise AbortError(f"Invalid package name '{opts.name}'")
-    return [_PypiSource(name=opts.name)]
+    return sources
 
 
 def _plugin_add_impl(ctx: click.Context) -> None:
@@ -510,11 +506,11 @@ def _plugin_add_impl(ctx: click.Context) -> None:
     receipt = read_receipt(receipt_path)
 
     # Build new requirements and track metadata for each source.
-    # Each entry in source_info is (specifier, resolved_package_name).
+    # Each entry in source_info is (specifier, resolved_package_name, is_git).
     # For git sources, resolved_package_name is set to the URL initially and
     # updated after install by diffing the installed packages.
     new_requirements: list[ToolRequirement] = []
-    source_info: list[tuple[str, str]] = []
+    source_info: list[tuple[str, str, bool]] = []
     has_git_source = False
 
     for source in sources:
@@ -527,15 +523,15 @@ def _plugin_add_impl(ctx: click.Context) -> None:
                     logger.debug("Could not read package name from pyproject.toml at '{}', using raw path", path)
                     package_name = path
                 new_requirements.append(ToolRequirement(name=package_name, editable=resolved_path))
-                source_info.append((path, package_name))
+                source_info.append((path, package_name, False))
             case _GitSource(url=url):
                 git_url = url if url.startswith("git+") else f"git+{url}"
                 new_requirements.append(ToolRequirement(name=git_url))
-                source_info.append((url, url))
+                source_info.append((url, url, True))
                 has_git_source = True
             case _PypiSource(name=name):
                 new_requirements.append(ToolRequirement(name=name))
-                source_info.append((name, _parse_pypi_package_name(name) or name))
+                source_info.append((name, _parse_pypi_package_name(name) or name, False))
             case _ as unreachable:
                 assert_never(unreachable)
 
@@ -547,7 +543,7 @@ def _plugin_add_impl(ctx: click.Context) -> None:
     # Build a single uv tool install command with all new requirements
     command = build_uv_tool_install_add_requirements(receipt, new_requirements)
 
-    all_specifiers = ", ".join(spec for spec, _ in source_info)
+    all_specifiers = ", ".join(spec for spec, _, _ in source_info)
     with log_span("Installing plugin packages: {}", all_specifiers):
         try:
             mng_ctx.concurrency_group.run_process_to_completion(command)
@@ -557,19 +553,22 @@ def _plugin_add_impl(ctx: click.Context) -> None:
                 original_exception=e,
             ) from e
 
-    # For git installs, resolve the canonical package name by diffing installed packages.
-    # Git is single-valued and mutually exclusive with other source types, so there is
-    # exactly one entry in source_info when has_git_source is True.
+    # For git installs, resolve canonical package names by diffing installed packages
     if has_git_source:
         assert packages_before is not None
         packages_after = _get_installed_package_names(mng_ctx.concurrency_group)
         new_packages = packages_after - packages_before
-        if new_packages:
-            specifier, _ = source_info[0]
-            source_info = [(specifier, next(iter(new_packages)))]
+        # Best-effort: assign new package names to git sources in order.
+        # When multiple git sources are installed, we cannot reliably
+        # map each URL to its package name, so we assign in iteration order.
+        new_names_iter = iter(new_packages)
+        source_info = [
+            (spec, next(new_names_iter, url), is_git) if is_git else (spec, url, is_git)
+            for spec, url, is_git in source_info
+        ]
 
     # Report results for each source
-    for specifier, resolved_package_name in source_info:
+    for specifier, resolved_package_name, _ in source_info:
         has_entry_points = _check_for_mng_entry_points(resolved_package_name)
         _emit_plugin_add_result(specifier, resolved_package_name, has_entry_points, output_opts)
 
@@ -764,8 +763,7 @@ Plugins provide agent types, provider backends, CLI commands, and lifecycle hook
         ("Show specific fields", "mng plugin list --fields name,enabled"),
         ("Install a plugin from PyPI", "mng plugin add mng-pair"),
         ("Install a local plugin", "mng plugin add --path ./my-plugin"),
-        ("Install multiple local plugins", "mng plugin add --path ./plugin-a --path ./plugin-b"),
-        ("Install a plugin from git", "mng plugin add --git https://github.com/user/mng-plugin.git"),
+        ("Install multiple plugins at once", "mng plugin add pkg-a --path ./local-b --git https://example.com/c.git"),
         ("Remove a plugin", "mng plugin remove mng-pair"),
         ("Enable a plugin", "mng plugin enable modal"),
         ("Disable a plugin", "mng plugin disable modal --scope user"),
@@ -803,17 +801,19 @@ add_pager_help_option(plugin_list)
 CommandHelpMetadata(
     key="plugin.add",
     one_line_description="Install a plugin package",
-    synopsis="mng plugin add [NAME] [OPTIONS]",
-    description="""Provide at least one of NAME (positional), --path (repeatable), or --git.
+    synopsis="mng plugin add [NAME...] [OPTIONS]",
+    description="""All source types are repeatable and can be freely mixed in one command.
 NAME is a PyPI package specifier (e.g., 'mng-pair' or 'mng-pair>=1.0').
---path installs from a local directory in editable mode and can be repeated
-to install multiple plugins in a single command. --git installs from a git URL.""",
+--path installs from a local directory in editable mode.
+--git installs from a git URL.
+All plugins are installed in a single operation for speed.""",
     examples=(
         ("Install from PyPI", "mng plugin add mng-pair"),
         ("Install with version constraint", "mng plugin add mng-pair>=1.0"),
         ("Install from a local path", "mng plugin add --path ./my-plugin"),
-        ("Install multiple local plugins at once", "mng plugin add --path ./plugin-a --path ./plugin-b"),
+        ("Install multiple local plugins", "mng plugin add --path ./plugin-a --path ./plugin-b"),
         ("Install from a git URL", "mng plugin add --git https://github.com/user/mng-plugin.git"),
+        ("Mix all source types", "mng plugin add pkg-a --path ./local-b --git https://example.com/c.git"),
     ),
     see_also=(
         ("plugin remove", "Uninstall a plugin package"),
@@ -825,14 +825,15 @@ add_pager_help_option(plugin_add)
 CommandHelpMetadata(
     key="plugin.remove",
     one_line_description="Uninstall a plugin package",
-    synopsis="mng plugin remove [NAME] [OPTIONS]",
-    description="""Provide at least one of NAME (positional) or --path (repeatable).
+    synopsis="mng plugin remove [NAME...] [OPTIONS]",
+    description="""Both source types are repeatable and can be freely mixed in one command.
 For local paths, the package name is read from pyproject.toml.
---path can be repeated to remove multiple plugins in a single command.""",
+All plugins are removed in a single operation.""",
     examples=(
         ("Remove by name", "mng plugin remove mng-pair"),
+        ("Remove multiple by name", "mng plugin remove mng-pair mng-opencode"),
         ("Remove by local path", "mng plugin remove --path ./my-plugin"),
-        ("Remove multiple local plugins", "mng plugin remove --path ./plugin-a --path ./plugin-b"),
+        ("Mix names and paths", "mng plugin remove mng-pair --path ./my-plugin"),
     ),
     see_also=(
         ("plugin add", "Install a plugin package"),
