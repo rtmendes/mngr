@@ -3,7 +3,9 @@ import pytest
 from imbue.imbue_common.ids import InvalidRandomIdError
 from imbue.minds.forwarding_server.templates import render_agent_servers_page
 from imbue.minds.forwarding_server.templates import render_auth_error_page
+from imbue.minds.forwarding_server.templates import render_create_form
 from imbue.minds.forwarding_server.templates import render_landing_page
+from imbue.minds.forwarding_server.templates import render_login_page
 from imbue.minds.forwarding_server.templates import render_login_redirect_page
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import ServerName
@@ -76,3 +78,21 @@ def test_render_agent_servers_page_has_back_link() -> None:
     html = render_agent_servers_page(agent_id=_AGENT_A, server_names=())
     assert 'href="/"' in html
     assert "Back to all minds" in html
+
+
+def test_render_create_form_has_default_values() -> None:
+    html = render_create_form()
+    assert "selene" in html
+    assert "simple_mind" in html
+    assert "agent_name" in html
+
+
+def test_render_create_form_prefills_values() -> None:
+    html = render_create_form(git_url="https://custom/repo", agent_name="my-bot")
+    assert "https://custom/repo" in html
+    assert "my-bot" in html
+
+
+def test_render_login_page_shows_prompt() -> None:
+    html = render_login_page()
+    assert "login URL" in html.lower() or "Login" in html

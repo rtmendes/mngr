@@ -1,3 +1,4 @@
+import queue as queue_mod
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from imbue.minds.forwarding_server.agent_creator import AgentCreator
 from imbue.minds.forwarding_server.agent_creator import DEFAULT_AGENT_TYPE
 from imbue.minds.forwarding_server.agent_creator import clone_git_repo
 from imbue.minds.forwarding_server.agent_creator import extract_repo_name
+from imbue.minds.forwarding_server.agent_creator import make_log_callback
 from imbue.minds.forwarding_server.agent_creator import resolve_agent_type
 from imbue.minds.primitives import GitUrl
 from imbue.minds.testing import init_and_commit_git_repo
@@ -109,3 +111,38 @@ def test_agent_creator_start_creation_returns_agent_id_and_tracks_status(tmp_pat
     assert info is not None
     assert info.agent_id == agent_id
     assert info.status == AgentCreationStatus.CLONING
+
+
+def test_agent_creator_start_creation_with_custom_name(tmp_path: Path) -> None:
+    """Verify start_creation accepts a custom agent name."""
+    creator = AgentCreator(
+        paths=MindPaths(data_dir=tmp_path / "minds"),
+    )
+    agent_id = creator.start_creation("file:///nonexistent-repo", agent_name="my-agent")
+    info = creator.get_creation_info(agent_id)
+    assert info is not None
+
+
+def test_agent_creator_get_log_queue_returns_none_for_unknown() -> None:
+    creator = AgentCreator(
+        paths=MindPaths(data_dir=Path("/tmp/test")),
+    )
+    assert creator.get_log_queue(AgentId()) is None
+
+
+def test_agent_creator_get_log_queue_returns_queue_for_tracked() -> None:
+    creator = AgentCreator(
+        paths=MindPaths(data_dir=Path("/tmp/test")),
+    )
+    agent_id = creator.start_creation("file:///nonexistent-repo")
+    q = creator.get_log_queue(agent_id)
+    assert q is not None
+
+
+def test_make_log_callback_puts_lines_into_queue() -> None:
+    log_queue: queue_mod.Queue[str] = queue_mod.Queue()
+    callback = make_log_callback(log_queue)
+    callback("hello\n", True)
+    callback("world\n", False)
+    assert log_queue.get_nowait() == "hello"
+    assert log_queue.get_nowait() == "world"

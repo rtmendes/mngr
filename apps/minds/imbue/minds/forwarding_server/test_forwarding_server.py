@@ -1022,8 +1022,33 @@ def test_create_form_submit_rejects_empty_git_url(tmp_path: Path) -> None:
     """POST /create with empty git_url returns 400."""
     client, _, _ = _create_test_server_with_agent_creator(tmp_path)
 
-    response = client.post("/create", data={"git_url": ""})
+    response = client.post("/create", data={"git_url": "", "agent_name": "test"})
     assert response.status_code == 400
+
+
+def test_create_form_submit_passes_agent_name(tmp_path: Path) -> None:
+    """POST /create passes agent_name to the creator."""
+    client, _, _ = _create_test_server_with_agent_creator(tmp_path)
+
+    response = client.post(
+        "/create",
+        data={"git_url": "https://github.com/test/repo", "agent_name": "my-agent"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+
+def test_create_agent_api_passes_agent_name(tmp_path: Path) -> None:
+    """POST /api/create-agent passes agent_name to the creator."""
+    client, _, _ = _create_test_server_with_agent_creator(tmp_path)
+
+    response = client.post(
+        "/api/create-agent",
+        json={"git_url": "https://github.com/test/repo", "agent_name": "my-agent"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "agent_id" in data
 
 
 def test_create_agent_api_returns_agent_id(tmp_path: Path) -> None:
@@ -1171,6 +1196,52 @@ def test_creation_status_api_rejects_unauthenticated(tmp_path: Path) -> None:
 
     response = client.get("/api/create-agent/{}/status".format(AgentId()))
     assert response.status_code == 403
+
+
+def test_creation_logs_sse_returns_501_without_agent_creator(tmp_path: Path) -> None:
+    """GET /api/create-agent/{id}/logs returns 501 when no agent_creator."""
+    backend_resolver = StaticBackendResolver(url_by_agent_and_server={})
+    client, auth_store = _create_test_forwarding_server(
+        tmp_path=tmp_path,
+        backend_resolver=backend_resolver,
+        http_client=None,
+    )
+    _authenticate_client(client=client, auth_store=auth_store)
+
+    response = client.get("/api/create-agent/{}/logs".format(AgentId()))
+    assert response.status_code == 501
+
+
+def test_creation_logs_sse_rejects_unauthenticated(tmp_path: Path) -> None:
+    """GET /api/create-agent/{id}/logs returns 403 without authentication."""
+    backend_resolver = StaticBackendResolver(url_by_agent_and_server={})
+    client, _ = _create_test_forwarding_server(
+        tmp_path=tmp_path,
+        backend_resolver=backend_resolver,
+        http_client=None,
+    )
+
+    response = client.get("/api/create-agent/{}/logs".format(AgentId()))
+    assert response.status_code == 403
+
+
+def test_creation_logs_sse_returns_404_for_unknown(tmp_path: Path) -> None:
+    """GET /api/create-agent/{id}/logs returns 404 for unknown agent."""
+    client, _, _ = _create_test_server_with_agent_creator(tmp_path)
+
+    response = client.get("/api/create-agent/{}/logs".format(AgentId()))
+    assert response.status_code == 404
+
+
+def test_creation_logs_sse_streams_events(tmp_path: Path) -> None:
+    """GET /api/create-agent/{id}/logs returns SSE stream for a tracked creation."""
+    client, _, agent_creator = _create_test_server_with_agent_creator(tmp_path)
+
+    agent_id = agent_creator.start_creation("https://github.com/test/repo")
+
+    with client.stream("GET", "/api/create-agent/{}/logs".format(agent_id)) as response:
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
 
 
 def test_creating_page_rejects_unauthenticated(tmp_path: Path) -> None:
