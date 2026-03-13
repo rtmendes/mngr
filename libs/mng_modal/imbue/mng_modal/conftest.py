@@ -1,12 +1,15 @@
+import os
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from typing import Generator
+from uuid import uuid4
 
 import modal
 import modal.exception
 import pluggy
 import pytest
+import toml
 from modal.environments import delete_environment
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
@@ -14,7 +17,16 @@ from imbue.mng.config.data_types import MngConfig
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import ConfigStructureError
 from imbue.mng.primitives import ProviderInstanceName
+from imbue.mng.primitives import UserId
+from imbue.mng.utils.testing import ModalSubprocessTestEnv
 from imbue.mng.utils.testing import TEST_ENV_PREFIX
+from imbue.mng.utils.testing import assert_home_is_temp_directory
+from imbue.mng.utils.testing import delete_modal_apps_in_environment
+from imbue.mng.utils.testing import delete_modal_environment
+from imbue.mng.utils.testing import delete_modal_volumes_in_environment
+from imbue.mng.utils.testing import generate_test_environment_name
+from imbue.mng.utils.testing import get_subprocess_test_env
+from imbue.mng.utils.testing import isolate_home
 from imbue.mng.utils.testing import make_mng_ctx
 from imbue.mng.utils.testing import register_modal_test_app
 from imbue.mng.utils.testing import register_modal_test_environment
@@ -181,3 +193,103 @@ def initial_snapshot_provider(
     yield provider
 
     _cleanup_modal_test_resources(app_name, volume_name, environment_name)
+
+
+# =============================================================================
+# Shared modal test fixtures
+#
+# These fixtures are importable by other packages (e.g., mng_claude) via
+# pytest_plugins = ["imbue.mng_modal.conftest"]. This avoids duplicating
+# modal test infrastructure across plugin packages.
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def setup_test_mng_env(
+    tmp_home_dir: Path,
+    temp_host_dir: Path,
+    mng_test_prefix: str,
+    mng_test_root_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+    _isolate_tmux_server: None,
+) -> Generator[None, None, None]:
+    """Set up environment variables for all tests, including Modal tokens.
+
+    This overrides mng's setup_test_mng_env to additionally load Modal
+    credentials from ~/.modal.toml before HOME is overridden.
+    """
+    modal_toml_path = Path(os.path.expanduser("~/.modal.toml"))
+    if modal_toml_path.exists():
+        for value in toml.load(modal_toml_path).values():
+            if value.get("active", ""):
+                monkeypatch.setenv("MODAL_TOKEN_ID", value.get("token_id", ""))
+                monkeypatch.setenv("MODAL_TOKEN_SECRET", value.get("token_secret", ""))
+                break
+
+    isolate_home(tmp_home_dir, monkeypatch)
+    monkeypatch.setenv("MNG_HOST_DIR", str(temp_host_dir))
+    monkeypatch.setenv("MNG_PREFIX", mng_test_prefix)
+    monkeypatch.setenv("MNG_ROOT_NAME", mng_test_root_name)
+
+    unison_dir = tmp_home_dir / ".unison"
+    unison_dir.mkdir(exist_ok=True)
+    monkeypatch.setenv("UNISON", str(unison_dir))
+
+    assert_home_is_temp_directory()
+
+    yield
+
+
+@pytest.fixture(scope="session")
+def modal_test_session_env_name() -> str:
+    """Generate a unique, timestamp-based environment name for this test session."""
+    return generate_test_environment_name()
+
+
+@pytest.fixture(scope="session")
+def modal_test_session_host_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Create a session-scoped host directory for Modal tests."""
+    host_dir = tmp_path_factory.mktemp("modal_session") / "mng"
+    host_dir.mkdir(parents=True, exist_ok=True)
+    return host_dir
+
+
+@pytest.fixture(scope="session")
+def modal_test_session_user_id() -> UserId:
+    """Generate a deterministic user ID for the test session."""
+    return UserId(uuid4().hex)
+
+
+@pytest.fixture(scope="session")
+def modal_test_session_cleanup(
+    modal_test_session_env_name: str,
+    modal_test_session_user_id: UserId,
+) -> Generator[None, None, None]:
+    """Session-scoped fixture that cleans up the Modal environment at session end."""
+    yield
+    prefix = f"{modal_test_session_env_name}-"
+    environment_name = f"{prefix}{modal_test_session_user_id}"
+    if len(environment_name) > 64:
+        environment_name = environment_name[:64]
+    delete_modal_apps_in_environment(environment_name)
+    delete_modal_volumes_in_environment(environment_name)
+    delete_modal_environment(environment_name)
+
+
+@pytest.fixture
+def modal_subprocess_env(
+    modal_test_session_env_name: str,
+    modal_test_session_host_dir: Path,
+    modal_test_session_cleanup: None,
+    modal_test_session_user_id: UserId,
+) -> Generator[ModalSubprocessTestEnv, None, None]:
+    """Create a subprocess test environment with session-scoped Modal environment."""
+    prefix = f"{modal_test_session_env_name}-"
+    host_dir = modal_test_session_host_dir
+    env = get_subprocess_test_env(
+        root_name="mng-acceptance-test",
+        prefix=prefix,
+        host_dir=host_dir,
+    )
+    env["MNG_USER_ID"] = modal_test_session_user_id
+    yield ModalSubprocessTestEnv(env=env, prefix=prefix, host_dir=host_dir)

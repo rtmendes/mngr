@@ -1868,10 +1868,14 @@ version = "0.1.0"
 source = { editable = "libs/mng_claude" }
 dependencies = [
     { name = "mng" },
+    { name = "mng-modal" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "mng", editable = "libs/mng" }]
+requires-dist = [
+    { name = "mng", editable = "libs/mng" },
+    { name = "mng-modal", editable = "libs/mng_modal" },
+]
 
 [[package]]
 name = "mng-claude-mind"
