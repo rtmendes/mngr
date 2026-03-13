@@ -198,7 +198,9 @@ class PiCodingAgent(BaseAgent):
         """
         config_dir = self.get_pi_config_dir()
 
-        host.execute_command(f"mkdir -p -m 0700 {shlex.quote(str(config_dir))}", timeout_seconds=5.0)
+        result = host.execute_command(f"mkdir -p -m 0700 {shlex.quote(str(config_dir))}", timeout_seconds=5.0)
+        if not result.success:
+            raise PluginMngError(f"Failed to create per-agent config dir {config_dir}: {result.stderr}")
 
         if host.is_local:
             self._setup_local_config_dir(host, config, config_dir)
@@ -217,27 +219,32 @@ class PiCodingAgent(BaseAgent):
         if config.sync_auth:
             auth_source = home_pi / "auth.json"
             if auth_source.exists():
-                host.execute_command(
+                result = host.execute_command(
                     f"ln -sf {shlex.quote(str(auth_source))} {shlex.quote(str(config_dir / 'auth.json'))}",
                     timeout_seconds=5.0,
                 )
+                if not result.success:
+                    logger.warning("Failed to symlink auth.json: {}", result.stderr)
 
         if config.sync_home_settings:
             settings_source = home_pi / "settings.json"
             if settings_source.exists():
-                host.execute_command(
+                result = host.execute_command(
                     f"ln -sf {shlex.quote(str(settings_source))} {shlex.quote(str(config_dir / 'settings.json'))}",
                     timeout_seconds=5.0,
                 )
+                if not result.success:
+                    logger.warning("Failed to symlink settings.json: {}", result.stderr)
 
-            # Symlink resource directories
             for dir_name in ("skills", "prompts", "extensions", "themes"):
                 source = home_pi / dir_name
                 if source.exists():
-                    host.execute_command(
+                    result = host.execute_command(
                         f"ln -sf {shlex.quote(str(source))} {shlex.quote(str(config_dir / dir_name))}",
                         timeout_seconds=5.0,
                     )
+                    if not result.success:
+                        logger.warning("Failed to symlink {}: {}", dir_name, result.stderr)
 
     def _setup_remote_config_dir(
         self,
