@@ -595,10 +595,13 @@ def test_parse_config_accepts_every_mng_config_field() -> None:
 
     # Build a raw dict with a key for every config-file-settable field.
     # Values must be valid enough for the parsing helpers to accept.
+    expected_fields = set(MngConfig.model_fields.keys()) - fields_not_from_config_files
+    missing_samples = expected_fields - set(_SAMPLE_CONFIG_VALUES.keys())
+    assert not missing_samples, (
+        f"New MngConfig fields need sample values in _SAMPLE_CONFIG_VALUES: {sorted(missing_samples)}"
+    )
     raw: dict[str, Any] = {}
-    for field_name in MngConfig.model_fields:
-        if field_name in fields_not_from_config_files:
-            continue
+    for field_name in expected_fields:
         raw[field_name] = _SAMPLE_CONFIG_VALUES[field_name]
 
     result = parse_config(dict(raw), disabled_plugins=frozenset())
