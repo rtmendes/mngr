@@ -88,6 +88,7 @@ def _create_test_forwarding_server(
         backend_resolver=backend_resolver,
         http_client=http_client,
         agent_creator=agent_creator,
+        backend_wait_timeout_seconds=0,
     )
     client = TestClient(app)
 
@@ -417,8 +418,7 @@ def test_agent_proxy_returns_502_for_unknown_backend(tmp_path: Path) -> None:
     client.cookies.set(f"sw_installed_{agent_id}_{DEFAULT_SERVER_NAME}", "1")
 
     response = client.get(f"/agents/{agent_id}/{DEFAULT_SERVER_NAME}/")
-    assert response.status_code == 200
-    assert "Starting up" in response.text
+    assert response.status_code == 502
 
 
 def test_login_redirects_if_already_authenticated(tmp_path: Path) -> None:
@@ -644,8 +644,8 @@ def test_mng_cli_resolver_multi_server_integration(tmp_path: Path) -> None:
     assert api_response.json() == {"source": "api"}
 
 
-def test_mng_cli_resolver_shows_waiting_page_when_backend_unavailable(tmp_path: Path) -> None:
-    """When backend is not yet available, the proxy shows a waiting page instead of 502."""
+def test_mng_cli_resolver_returns_502_after_wait_when_backend_unavailable(tmp_path: Path) -> None:
+    """When backend never becomes available, the proxy returns 502 after waiting."""
     agent_id = AgentId()
     data_dir = tmp_path / "minds_data"
 
@@ -660,8 +660,7 @@ def test_mng_cli_resolver_shows_waiting_page_when_backend_unavailable(tmp_path: 
     client.cookies.set(f"sw_installed_{agent_id}_web", "1")
 
     response = client.get(f"/agents/{agent_id}/web/")
-    assert response.status_code == 200
-    assert "Starting up" in response.text
+    assert response.status_code == 502
 
 
 def test_mng_cli_resolver_landing_page_redirects_single_discovered_agent(tmp_path: Path) -> None:
@@ -1174,23 +1173,14 @@ def test_creation_status_api_rejects_unauthenticated(tmp_path: Path) -> None:
     assert response.status_code == 403
 
 
-# -- Backend ready API tests --
+def test_creating_page_rejects_unauthenticated(tmp_path: Path) -> None:
+    """GET /creating/{id} returns 403 without authentication."""
+    backend_resolver = StaticBackendResolver(url_by_agent_and_server={})
+    client, _ = _create_test_forwarding_server(
+        tmp_path=tmp_path,
+        backend_resolver=backend_resolver,
+        http_client=None,
+    )
 
-
-def test_backend_ready_returns_true_when_backend_available(tmp_path: Path) -> None:
-    """GET /api/backend-ready/{id}/{server} returns ready=true when backend exists."""
-    client, auth_store, agent_id = _setup_test_server(tmp_path)
-    _authenticate_client(client=client, auth_store=auth_store)
-
-    response = client.get("/api/backend-ready/{}/{}/".format(agent_id, DEFAULT_SERVER_NAME))
-    assert response.status_code == 200
-    assert response.json() == {"ready": True}
-
-
-def test_backend_ready_returns_false_when_backend_unavailable(tmp_path: Path) -> None:
-    """GET /api/backend-ready/{id}/{server} returns ready=false when no backend."""
-    client, _, agent_id = _setup_test_server_without_backend(tmp_path)
-
-    response = client.get("/api/backend-ready/{}/{}/".format(agent_id, DEFAULT_SERVER_NAME))
-    assert response.status_code == 200
-    assert response.json() == {"ready": False}
+    response = client.get("/creating/{}".format(AgentId()))
+    assert response.status_code == 403
