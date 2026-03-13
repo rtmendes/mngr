@@ -248,7 +248,7 @@ def _handle_authenticate(
     signing_key = auth_store.get_signing_key()
     cookie_value = create_session_cookie(signing_key=signing_key)
 
-    response = Response(status_code=307, headers={"Location": "/create"})
+    response = Response(status_code=307, headers={"Location": "/"})
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=cookie_value,

@@ -174,7 +174,7 @@ def test_authenticate_with_valid_code_sets_cookie_and_redirects(tmp_path: Path) 
     assert SESSION_COOKIE_NAME in response.cookies
 
 
-def test_authenticate_redirects_to_create_page(tmp_path: Path) -> None:
+def test_authenticate_redirects_to_landing_page(tmp_path: Path) -> None:
     client, auth_store, _ = _setup_test_server(tmp_path)
     code = OneTimeCode("auth-code-{}".format(AgentId()))
     auth_store.add_one_time_code(code=code)
@@ -186,7 +186,7 @@ def test_authenticate_redirects_to_create_page(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 307
-    assert response.headers["location"] == "/create"
+    assert response.headers["location"] == "/"
 
 
 def test_authenticate_with_invalid_code_returns_403(tmp_path: Path) -> None:

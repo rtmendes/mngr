@@ -255,8 +255,8 @@ def render_create_form(git_url: str = "", agent_name: str = "") -> str:
 def render_creating_page(agent_id: AgentId, info: AgentCreationInfo) -> str:
     """Render the progress page shown while an agent is being created.
 
-    The page polls /api/create-agent/{agent_id}/status and auto-redirects
-    to the agent when creation completes.
+    The page streams logs from /api/create-agent/{agent_id}/logs via SSE
+    and auto-redirects to the agent when creation completes.
     """
     status_text_map = {
         "CLONING": "Cloning repository...",
