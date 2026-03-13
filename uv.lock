@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -23,6 +23,7 @@ members = [
     "mng-llm",
     "mng-mind",
     "mng-mind-chat",
+    "mng-modal",
     "mng-notifications",
     "mng-opencode",
     "mng-pair",
@@ -1821,9 +1822,7 @@ dependencies = [
     { name = "coolname" },
     { name = "cryptography" },
     { name = "docker" },
-    { name = "dockerfile-parse" },
     { name = "imbue-common" },
-    { name = "modal" },
     { name = "packaging" },
     { name = "pluggy" },
     { name = "psutil" },
@@ -1848,9 +1847,7 @@ requires-dist = [
     { name = "coolname", specifier = ">=3.0.0" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "docker", specifier = "==7.1.0" },
-    { name = "dockerfile-parse", specifier = ">=2.0.0" },
     { name = "imbue-common", editable = "libs/imbue_common" },
-    { name = "modal", specifier = "==1.3.1" },
     { name = "packaging", specifier = ">=21.0" },
     { name = "pluggy", specifier = ">=1.5.0" },
     { name = "psutil", specifier = ">=5.9" },
@@ -1872,10 +1869,14 @@ version = "0.1.0"
 source = { editable = "libs/mng_claude" }
 dependencies = [
     { name = "mng" },
+    { name = "mng-modal" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "mng", editable = "libs/mng" }]
+requires-dist = [
+    { name = "mng", editable = "libs/mng" },
+    { name = "mng-modal", editable = "libs/mng_modal" },
+]
 
 [[package]]
 name = "mng-claude-mind"
@@ -1988,6 +1989,23 @@ requires-dist = [
 ]
 
 [[package]]
+name = "mng-modal"
+version = "0.1.0"
+source = { editable = "libs/mng_modal" }
+dependencies = [
+    { name = "dockerfile-parse" },
+    { name = "mng" },
+    { name = "modal" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dockerfile-parse", specifier = ">=2.0.0" },
+    { name = "mng", editable = "libs/mng" },
+    { name = "modal", specifier = "==1.3.1" },
+]
+
+[[package]]
 name = "mng-notifications"
 version = "0.1.0"
 source = { editable = "libs/mng_notifications" }
@@ -2051,6 +2069,7 @@ dependencies = [
     { name = "click-option-group" },
     { name = "imbue-common" },
     { name = "mng" },
+    { name = "mng-modal" },
     { name = "modal" },
     { name = "python-dotenv" },
     { name = "tabulate" },
@@ -2061,6 +2080,7 @@ requires-dist = [
     { name = "click-option-group", specifier = ">=0.5.6" },
     { name = "imbue-common", editable = "libs/imbue_common" },
     { name = "mng", editable = "libs/mng" },
+    { name = "mng-modal", editable = "libs/mng_modal" },
     { name = "modal", specifier = ">=1.3.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "tabulate", specifier = ">=0.9.0" },
