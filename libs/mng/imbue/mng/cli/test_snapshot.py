@@ -1,12 +1,11 @@
 """Integration tests for the snapshot CLI command."""
 
-import time
-
 import pluggy
 import pytest
 from click.testing import CliRunner
 
 from imbue.mng.cli.snapshot import snapshot
+from imbue.mng.utils.testing import get_short_random_string
 
 # =============================================================================
 # Tests with real local agents
@@ -20,7 +19,7 @@ def test_snapshot_create_local_agent_rejects_unsupported_provider(
     plugin_manager: pluggy.PluginManager,
 ) -> None:
     """Test that snapshot create fails for a local agent (unsupported provider)."""
-    agent_name = f"test-snap-create-{int(time.time())}"
+    agent_name = f"test-snap-create-{get_short_random_string()}"
     create_test_agent(agent_name)
 
     result = cli_runner.invoke(
@@ -41,7 +40,7 @@ def test_snapshot_create_dry_run_jsonl_resolves_local_agent(
     plugin_manager: pluggy.PluginManager,
 ) -> None:
     """Test that --dry-run with --format jsonl outputs structured data on stdout."""
-    agent_name = f"test-snap-dryrun-jsonl-{int(time.time())}"
+    agent_name = f"test-snap-dryrun-jsonl-{get_short_random_string()}"
     create_test_agent(agent_name)
 
     result = cli_runner.invoke(
@@ -110,7 +109,7 @@ def test_snapshot_create_on_error_continue_reports_failure(
     plugin_manager: pluggy.PluginManager,
 ) -> None:
     """Test that --on-error continue reports the error and exits 1 (doesn't crash)."""
-    agent_name = f"test-snap-onerror-cont-{int(time.time())}"
+    agent_name = f"test-snap-onerror-cont-{get_short_random_string()}"
     create_test_agent(agent_name)
 
     result = cli_runner.invoke(
@@ -131,7 +130,7 @@ def test_snapshot_create_on_error_abort_reports_failure(
     plugin_manager: pluggy.PluginManager,
 ) -> None:
     """Test that --on-error abort also fails (with abort message)."""
-    agent_name = f"test-snap-onerror-abort-{int(time.time())}"
+    agent_name = f"test-snap-onerror-abort-{get_short_random_string()}"
     create_test_agent(agent_name)
 
     result = cli_runner.invoke(
