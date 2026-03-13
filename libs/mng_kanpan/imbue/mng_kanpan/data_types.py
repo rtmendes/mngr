@@ -111,6 +111,14 @@ class CustomColumnConfig(FrozenModel):
     field: str | None = Field(default=None, description="Field name within plugin data")
 
 
+class RefreshHook(FrozenModel):
+    """A hook command that runs during kanpan board refresh."""
+
+    name: str = Field(description="Human-readable name")
+    command: str = Field(description="Shell command to run per agent. Env vars provide agent context.")
+    enabled: bool = Field(default=True)
+
+
 class CustomCommand(FrozenModel):
     """A command definition for the kanpan board (builtin or user-defined)."""
 
@@ -153,6 +161,14 @@ class KanpanPluginConfig(PluginConfig):
         default=60.0,
         description="Minimum seconds before retrying after a failed full refresh",
     )
+    on_before_refresh: dict[str, RefreshHook] = Field(
+        default_factory=dict,
+        description="Hook commands to run before each full refresh, keyed by identifier",
+    )
+    on_after_refresh: dict[str, RefreshHook] = Field(
+        default_factory=dict,
+        description="Hook commands to run after each full refresh, keyed by identifier",
+    )
 
     def merge_with(self, override: "PluginConfig") -> "KanpanPluginConfig":
         """Merge this config with an override config."""
@@ -172,6 +188,8 @@ class KanpanPluginConfig(PluginConfig):
             if override.retry_cooldown_seconds is not None
             else self.retry_cooldown_seconds
         )
+        merged_on_before_refresh = {**self.on_before_refresh, **override.on_before_refresh}
+        merged_on_after_refresh = {**self.on_after_refresh, **override.on_after_refresh}
         return KanpanPluginConfig(
             enabled=merged_enabled,
             commands=merged_commands,
@@ -179,4 +197,6 @@ class KanpanPluginConfig(PluginConfig):
             column_order=merged_column_order,
             refresh_interval_seconds=merged_refresh_interval,
             retry_cooldown_seconds=merged_auto_cooldown,
+            on_before_refresh=merged_on_before_refresh,
+            on_after_refresh=merged_on_after_refresh,
         )

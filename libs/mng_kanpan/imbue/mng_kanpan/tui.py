@@ -39,6 +39,7 @@ from imbue.mng_kanpan.data_types import CustomColumnConfig
 from imbue.mng_kanpan.data_types import CustomCommand
 from imbue.mng_kanpan.data_types import KanpanPluginConfig
 from imbue.mng_kanpan.data_types import PrState
+from imbue.mng_kanpan.data_types import RefreshHook
 from imbue.mng_kanpan.fetcher import fetch_agent_snapshot
 from imbue.mng_kanpan.fetcher import fetch_board_snapshot
 from imbue.mng_kanpan.fetcher import toggle_agent_mute
@@ -208,6 +209,9 @@ class _KanpanState(MutableModel):
     column_defs: list["_ColumnDef"] = []  # populated from _BOARD_COLUMN_DEFS at startup
     # Palette attr names for custom column colors
     col_attr_names: tuple[str, ...] = ()
+    # Refresh hooks loaded from plugin config
+    on_before_refresh: list[RefreshHook] = []
+    on_after_refresh: list[RefreshHook] = []
     # CEL filter expressions passed from CLI
     include_filters: tuple[str, ...] = ()
     exclude_filters: tuple[str, ...] = ()
@@ -754,7 +758,13 @@ def _start_refresh(loop: MainLoop, state: _KanpanState) -> None:
     state.spinner_index = 0
     state.refresh_is_local_only = False
     state.refresh_future = state.executor.submit(
-        fetch_board_snapshot, state.mng_ctx, state.include_filters, state.exclude_filters
+        fetch_board_snapshot,
+        state.mng_ctx,
+        state.include_filters,
+        state.exclude_filters,
+        state.on_before_refresh or None,
+        state.on_after_refresh or None,
+        state.snapshot,
     )
     _schedule_spinner_tick(loop, state)
 
@@ -1321,6 +1331,25 @@ def _on_auto_refresh_alarm(loop: MainLoop, state: _KanpanState) -> None:
         _start_refresh(loop, state)
 
 
+def _load_refresh_hooks(hooks_raw: dict[str, Any]) -> list[RefreshHook]:
+    """Parse and filter enabled refresh hooks from a raw config dict.
+
+    Config loader uses model_construct() which bypasses validation,
+    so nested dicts may not be parsed into RefreshHook objects.
+    """
+    hooks: list[RefreshHook] = []
+    for value in hooks_raw.values():
+        if isinstance(value, RefreshHook):
+            hook = value
+        elif isinstance(value, dict):
+            hook = RefreshHook(**value)
+        else:
+            continue
+        if hook.enabled:
+            hooks.append(hook)
+    return hooks
+
+
 def _load_user_commands(mng_ctx: MngContext) -> dict[str, CustomCommand]:
     """Load user-defined commands from plugin config."""
     config = mng_ctx.get_plugin_config("kanpan", KanpanPluginConfig)
@@ -1426,6 +1455,9 @@ def run_kanpan(
     column_defs = _assemble_column_defs(_BOARD_COLUMN_DEFS, custom_col_defs, plugin_config.column_order)
     col_palette_entries, col_attr_names = _build_column_palette(user_columns)
 
+    on_before_refresh = _load_refresh_hooks(plugin_config.on_before_refresh)
+    on_after_refresh = _load_refresh_hooks(plugin_config.on_after_refresh)
+
     state = _KanpanState(
         mng_ctx=mng_ctx,
         frame=frame,
@@ -1433,6 +1465,8 @@ def run_kanpan(
         footer_left_attr=footer_left_attr,
         footer_right=footer_right,
         commands=commands,
+        on_before_refresh=on_before_refresh,
+        on_after_refresh=on_after_refresh,
         refresh_interval_seconds=plugin_config.refresh_interval_seconds,
         retry_cooldown_seconds=plugin_config.retry_cooldown_seconds,
         mark_attr_names=mark_attr_names,
