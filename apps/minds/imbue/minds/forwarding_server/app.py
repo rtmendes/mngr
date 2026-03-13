@@ -40,7 +40,6 @@ from imbue.minds.forwarding_server.ssh_tunnel import SSHTunnelManager
 from imbue.minds.forwarding_server.ssh_tunnel import parse_url_host_port
 from imbue.minds.forwarding_server.templates import render_agent_servers_page
 from imbue.minds.forwarding_server.templates import render_auth_error_page
-from imbue.minds.forwarding_server.templates import render_backend_waiting_page
 from imbue.minds.forwarding_server.templates import render_create_form
 from imbue.minds.forwarding_server.templates import render_creating_page
 from imbue.minds.forwarding_server.templates import render_landing_page
@@ -466,15 +465,22 @@ async def _handle_proxy_http(
 
     backend_url = backend_resolver.get_backend_url(parsed_id, parsed_server)
     if backend_url is None:
-        # Serve a waiting page that polls /api/backend-ready/{agent_id}/{server_name}
-        # until the backend is available, then redirects. This handles the case
-        # where the user is redirected to an agent that is still starting up.
-        html = render_backend_waiting_page(
-            agent_id=parsed_id,
-            server_name=parsed_server,
-            timeout_seconds=int(_BACKEND_WAIT_TIMEOUT_SECONDS),
-        )
-        return HTMLResponse(content=html)
+        # Wait server-side for the backend to become available (handles the
+        # case where the user is redirected to an agent still starting up).
+        wait_seconds: int = request.app.state.backend_wait_timeout_seconds
+        for _ in range(wait_seconds):
+            await asyncio.sleep(1)
+            backend_url = backend_resolver.get_backend_url(parsed_id, parsed_server)
+            if backend_url is not None:
+                break
+        if backend_url is None:
+            return Response(
+                status_code=502,
+                content="Backend unavailable for agent {}, server {}".format(agent_id, server_name),
+            )
+
+    assert backend_url is not None
+    resolved_backend_url = backend_url
 
     # Check if SW is installed via cookie (scoped per server)
     sw_cookie = request.cookies.get(f"sw_installed_{agent_id}_{server_name}")
@@ -488,7 +494,7 @@ async def _handle_proxy_http(
     # during SSH handshake which can take several seconds)
     try:
         tunnel_client = await asyncio.get_running_loop().run_in_executor(
-            None, _get_tunnel_http_client, request.app, parsed_id, backend_url, backend_resolver
+            None, _get_tunnel_http_client, request.app, parsed_id, resolved_backend_url, backend_resolver
         )
     except (SSHTunnelError, paramiko.SSHException, OSError) as e:
         logger.debug("SSH tunnel setup failed for {} server {}: {}", agent_id, server_name, e)
@@ -503,7 +509,7 @@ async def _handle_proxy_http(
     if is_likely_sse:
         return await _forward_http_request_streaming(
             request=request,
-            backend_url=backend_url,
+            backend_url=resolved_backend_url,
             path=path,
             agent_id=agent_id,
             server_name=server_name,
@@ -513,7 +519,7 @@ async def _handle_proxy_http(
     # Forward request to backend
     result = await _forward_http_request(
         request=request,
-        backend_url=backend_url,
+        backend_url=resolved_backend_url,
         path=path,
         agent_id=agent_id,
         server_name=server_name,
@@ -810,31 +816,6 @@ def _handle_creating_page(
     return HTMLResponse(content=html)
 
 
-def _handle_backend_ready(
-    agent_id: str,
-    server_name: str,
-    request: Request,
-    auth_store: AuthStoreDep,
-    backend_resolver: BackendResolverDep,
-) -> Response:
-    """Check whether a backend is available for the given agent and server.
-
-    Returns JSON with {"ready": true/false}. Used by the waiting page
-    to poll for backend availability without reloading the page.
-    """
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
-        return Response(status_code=403, content='{"error": "Not authenticated"}', media_type="application/json")
-
-    parsed_id = AgentId(agent_id)
-    parsed_server = ServerName(server_name)
-    backend_url = backend_resolver.get_backend_url(parsed_id, parsed_server)
-    ready = backend_url is not None
-    return Response(
-        content=json.dumps({"ready": ready}),
-        media_type="application/json",
-    )
-
-
 # -- App factory --
 
 
@@ -844,6 +825,7 @@ def create_forwarding_server(
     http_client: httpx.AsyncClient | None,
     tunnel_manager: SSHTunnelManager | None = None,
     agent_creator: AgentCreator | None = None,
+    backend_wait_timeout_seconds: int = int(_BACKEND_WAIT_TIMEOUT_SECONDS),
 ) -> FastAPI:
     """Create the forwarding server FastAPI application.
 
@@ -866,6 +848,7 @@ def create_forwarding_server(
     app.state.backend_resolver = backend_resolver
     app.state.tunnel_manager = tunnel_manager
     app.state.agent_creator = agent_creator
+    app.state.backend_wait_timeout_seconds = backend_wait_timeout_seconds
     if http_client is not None:
         app.state.http_client = http_client
 
@@ -880,9 +863,6 @@ def create_forwarding_server(
     app.post("/api/create-agent")(_handle_create_agent_api)
     app.get("/api/create-agent/{agent_id}/status")(_handle_creation_status_api)
     app.get("/creating/{agent_id}")(_handle_creating_page)
-
-    # Backend readiness check (used by the waiting page)
-    app.get("/api/backend-ready/{agent_id}/{server_name}")(_handle_backend_ready)
 
     # Agent default page: redirect to web server
     app.get("/agents/{agent_id}/")(_handle_agent_default_redirect)
