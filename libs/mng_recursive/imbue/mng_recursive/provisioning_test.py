@@ -101,8 +101,8 @@ def test_upload_deploy_files_with_path_source(tmp_path: Path) -> None:
     assert count == 1
     host.execute_command.assert_called()
     host.write_file.assert_called_once_with(
-        Path("/home/testuser/.mng/config.toml"),
-        source_file.read_bytes(),
+        path=Path("/home/testuser/.mng/config.toml"),
+        content=source_file.read_bytes(),
     )
 
 
@@ -117,8 +117,8 @@ def test_upload_deploy_files_with_string_source() -> None:
 
     assert count == 1
     host.write_text_file.assert_called_once_with(
-        Path("/home/testuser/.mng/config.toml"),
-        'key = "value"',
+        path=Path("/home/testuser/.mng/config.toml"),
+        content='key = "value"',
     )
 
 
@@ -518,7 +518,7 @@ def test_upload_deploy_files_raises_on_mkdir_failure() -> None:
     deploy_files: dict[Path, Path | str] = {
         Path("~/.mng/config.toml"): "content",
     }
-    with pytest.raises(MngError, match="Failed to create directory"):
+    with pytest.raises(MngError, match="Failed to create director"):
         _upload_deploy_files(host, deploy_files, "/home/testuser")
 
 

@@ -53,25 +53,27 @@ def _upload_deploy_files(
 
     Returns the number of files uploaded.
     """
+    # Batch all parent directory creation into a single mkdir -p call
+    remote_paths: list[str] = []
+    for dest_path in deploy_files:
+        resolved_path = _resolve_remote_path(dest_path, remote_home)
+        remote_paths.append(shlex.quote(str(resolved_path.parent)))
+    mkdir_result = host.execute_command(f"mkdir -p {' '.join(remote_paths)}")
+    if not mkdir_result.success:
+        raise MngError(f"Failed to create directories: {mkdir_result.stderr}")
+
     count = 0
     for dest_path, source in deploy_files.items():
         resolved_path = _resolve_remote_path(dest_path, remote_home)
 
-        # Ensure parent directory exists
-        parent_str = shlex.quote(str(resolved_path.parent))
-        mkdir_result = host.execute_command(f"mkdir -p {parent_str}")
-        if not mkdir_result.success:
-            raise MngError(f"Failed to create directory {resolved_path.parent}: {mkdir_result.stderr}")
-
-        # Read content and upload
         if isinstance(source, Path):
             if not source.exists():
                 logger.debug("Skipping non-existent deploy file: {}", source)
                 continue
             content = source.read_bytes()
-            host.write_file(resolved_path, content)
+            host.write_file(path=resolved_path, content=content)
         else:
-            host.write_text_file(resolved_path, source)
+            host.write_text_file(path=resolved_path, content=source)
 
         logger.trace("Uploaded deploy file: {} -> {}", dest_path, resolved_path)
         count += 1
