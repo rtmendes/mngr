@@ -92,6 +92,11 @@ _CREATE_FORM_TEMPLATE: Final[str] = (
   <h1>Create a Mind</h1>
   <form action="/create" method="post">
     <div class="form-group">
+      <label for="agent_name">Name</label>
+      <input type="text" id="agent_name" name="agent_name" value="{{ agent_name }}"
+             placeholder="selene" required>
+    </div>
+    <div class="form-group">
       <label for="git_url">Git repository URL</label>
       <input type="text" id="git_url" name="git_url" value="{{ git_url }}"
              placeholder="https://github.com/imbue-ai/simple_mind.git" required>
@@ -122,33 +127,46 @@ _CREATING_PAGE_TEMPLATE: Final[str] = (
       vertical-align: middle; margin-right: 8px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    #logs {
+      margin-top: 16px; padding: 12px; background: rgb(26, 26, 46); color: rgb(200, 210, 220);
+      font-family: monospace; font-size: 13px; border-radius: 6px;
+      max-height: 400px; overflow-y: auto; white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
   <h1>Creating your mind...</h1>
   <p class="status" id="status"><span class="spinner"></span> {{ status_text }}</p>
+  <div id="logs"></div>
   <script>
     const agentId = '{{ agent_id }}';
-    async function pollStatus() {
-      try {
-        const resp = await fetch('/api/create-agent/' + agentId + '/status');
-        const data = await resp.json();
-        const el = document.getElementById('status');
-        if (data.status === 'DONE') {
-          el.textContent = 'Done! Redirecting...';
-          window.location.href = data.redirect_url;
-          return;
-        } else if (data.status === 'FAILED') {
-          el.textContent = 'Failed: ' + data.error;
-          el.classList.add('error');
-          return;
-        } else if (data.status === 'CREATING') {
-          el.textContent = 'Creating agent...';
-        }
-      } catch (e) { /* keep polling */ }
-      setTimeout(pollStatus, 2000);
-    }
-    pollStatus();
+    const logsEl = document.getElementById('logs');
+    const statusEl = document.getElementById('status');
+    const source = new EventSource('/api/create-agent/' + agentId + '/logs');
+
+    source.onmessage = function(event) {
+      const data = JSON.parse(event.data);
+      if (data.log) {
+        logsEl.textContent += data.log + '\\n';
+        logsEl.scrollTop = logsEl.scrollHeight;
+      }
+    };
+
+    source.addEventListener('done', function(event) {
+      source.close();
+      const data = JSON.parse(event.data);
+      if (data.status === 'DONE' && data.redirect_url) {
+        statusEl.textContent = 'Done! Redirecting...';
+        window.location.href = data.redirect_url;
+      } else if (data.status === 'FAILED') {
+        statusEl.textContent = 'Failed: ' + (data.error || 'unknown error');
+        statusEl.classList.add('error');
+      }
+    });
+
+    source.onerror = function() {
+      source.close();
+    };
   </script>
 </body>
 </html>"""
@@ -217,16 +235,20 @@ def render_landing_page(
 _DEFAULT_GIT_URL: Final[str] = "https://github.com/imbue-ai/simple_mind.git"
 
 
+_DEFAULT_AGENT_NAME: Final[str] = "selene"
+
+
 @pure
-def render_create_form(git_url: str = "") -> str:
+def render_create_form(git_url: str = "", agent_name: str = "") -> str:
     """Render the agent creation form page.
 
     When git_url is provided, the form field is pre-filled with that value.
     Defaults to the simple_mind repository URL when empty.
     """
     effective_url = git_url if git_url else _DEFAULT_GIT_URL
+    effective_name = agent_name if agent_name else _DEFAULT_AGENT_NAME
     template = _JINJA_ENV.from_string(_CREATE_FORM_TEMPLATE)
-    return template.render(git_url=effective_url)
+    return template.render(git_url=effective_url, agent_name=effective_name)
 
 
 @pure

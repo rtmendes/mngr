@@ -4,12 +4,15 @@ Creates mng agents from git repositories. Handles cloning, agent type
 resolution, and mng create invocation.
 
 Agent creation runs in background threads so the server remains responsive.
-Callers can poll creation status via get_creation_info().
+Callers can poll creation status via get_creation_info() or stream logs
+via iter_log_lines().
 """
 
+import queue
 import shutil
 import threading
 import tomllib
+from collections.abc import Callable
 from enum import auto
 from pathlib import Path
 from typing import Final
@@ -34,9 +37,18 @@ from imbue.mng.primitives import AgentId
 from imbue.mng_claude_mind.settings import SETTINGS_FILENAME
 from imbue.mng_claude_mind.settings import load_settings_from_path
 
+OutputCallback = Callable[[str, bool], None]
+
 DEFAULT_AGENT_TYPE: Final[str] = "claude-mind"
 
 _DEFAULT_PASS_ENV: Final[tuple[str, ...]] = ("ANTHROPIC_API_KEY",)
+
+LOG_SENTINEL: Final[str] = "__DONE__"
+
+
+def make_log_callback(log_queue: queue.Queue[str]) -> OutputCallback:
+    """Create an output callback that puts lines into a queue."""
+    return lambda line, is_stdout: log_queue.put(line.rstrip("\n"))
 
 
 class AgentCreationStatus(UpperCaseStrEnum):
@@ -73,7 +85,11 @@ def extract_repo_name(git_url: str) -> str:
     return cleaned if cleaned else "mind"
 
 
-def clone_git_repo(git_url: GitUrl, clone_dir: Path) -> None:
+def clone_git_repo(
+    git_url: GitUrl,
+    clone_dir: Path,
+    on_output: OutputCallback | None = None,
+) -> None:
     """Clone a git repository into the specified directory.
 
     The clone_dir must not already exist -- git clone will create it.
@@ -85,6 +101,7 @@ def clone_git_repo(git_url: GitUrl, clone_dir: Path) -> None:
         result = cg.run_process_to_completion(
             command=["git", "clone", str(git_url), str(clone_dir)],
             is_checked_after=False,
+            on_output=on_output,
         )
     if result.returncode != 0:
         raise GitCloneError(
@@ -120,6 +137,7 @@ def run_mng_create(
     agent_id: AgentId,
     agent_type: str,
     pass_env: tuple[str, ...],
+    on_output: OutputCallback | None = None,
 ) -> None:
     """Create an mng agent via ``mng create``.
 
@@ -159,6 +177,7 @@ def run_mng_create(
             command=mng_command,
             cwd=mind_dir,
             is_checked_after=False,
+            on_output=on_output,
         )
 
     if result.returncode != 0:
@@ -189,20 +208,26 @@ class AgentCreator(MutableModel):
     _statuses: dict[str, AgentCreationStatus] = PrivateAttr(default_factory=dict)
     _redirect_urls: dict[str, str] = PrivateAttr(default_factory=dict)
     _errors: dict[str, str] = PrivateAttr(default_factory=dict)
+    _log_queues: dict[str, queue.Queue[str]] = PrivateAttr(default_factory=dict)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
-    def start_creation(self, git_url: str) -> AgentId:
+    def start_creation(self, git_url: str, agent_name: str = "") -> AgentId:
         """Start creating an agent from a git URL in a background thread.
 
-        Returns the agent ID immediately. Use get_creation_info() to poll status.
+        Returns the agent ID immediately. Use get_creation_info() to poll status,
+        or iter_log_lines() to stream creation logs.
         """
         agent_id = AgentId()
+        log_queue: queue.Queue[str] = queue.Queue()
         with self._lock:
             self._statuses[str(agent_id)] = AgentCreationStatus.CLONING
+            self._log_queues[str(agent_id)] = log_queue
+
+        effective_name = agent_name.strip() if agent_name.strip() else extract_repo_name(git_url)
 
         thread = threading.Thread(
             target=self._create_agent_background,
-            args=(agent_id, git_url),
+            args=(agent_id, git_url, effective_name, log_queue),
             daemon=True,
             name="agent-creator-{}".format(agent_id),
         )
@@ -222,29 +247,46 @@ class AgentCreator(MutableModel):
                 error=self._errors.get(str(agent_id)),
             )
 
-    def _create_agent_background(self, agent_id: AgentId, git_url: str) -> None:
+    def get_log_queue(self, agent_id: AgentId) -> queue.Queue[str] | None:
+        """Get the log queue for an agent creation, or None if not tracked."""
+        with self._lock:
+            return self._log_queues.get(str(agent_id))
+
+    def _create_agent_background(
+        self,
+        agent_id: AgentId,
+        git_url: str,
+        agent_name: str,
+        log_queue: queue.Queue[str],
+    ) -> None:
         """Background thread that clones a repo and creates an mng agent."""
         aid = str(agent_id)
         mind_dir = self.paths.mind_dir(agent_id)
+        emit_log = make_log_callback(log_queue)
         try:
             with log_span("Creating agent {} from {}", agent_id, git_url):
                 self.paths.data_dir.mkdir(parents=True, exist_ok=True)
 
-                clone_git_repo(GitUrl(git_url), mind_dir)
+                log_queue.put("[minds] Cloning {}...".format(git_url))
+                clone_git_repo(GitUrl(git_url), mind_dir, on_output=emit_log)
 
                 agent_type = resolve_agent_type(mind_dir)
-                agent_name = AgentName(extract_repo_name(git_url))
+                parsed_name = AgentName(agent_name)
 
                 with self._lock:
                     self._statuses[aid] = AgentCreationStatus.CREATING
 
+                log_queue.put("[minds] Creating agent '{}' (type: {})...".format(agent_name, agent_type))
                 run_mng_create(
                     mind_dir=mind_dir,
-                    agent_name=agent_name,
+                    agent_name=parsed_name,
                     agent_id=agent_id,
                     agent_type=agent_type,
                     pass_env=self.pass_env,
+                    on_output=emit_log,
                 )
+
+                log_queue.put("[minds] Agent created successfully.")
 
                 with self._lock:
                     self._statuses[aid] = AgentCreationStatus.DONE
@@ -252,8 +294,11 @@ class AgentCreator(MutableModel):
 
         except (GitCloneError, MngCommandError, ValueError, OSError) as e:
             logger.error("Failed to create agent {}: {}", agent_id, e)
+            log_queue.put("[minds] ERROR: {}".format(e))
             with self._lock:
                 self._statuses[aid] = AgentCreationStatus.FAILED
                 self._errors[aid] = str(e)
             if mind_dir.exists():
                 shutil.rmtree(mind_dir, ignore_errors=True)
+        finally:
+            log_queue.put(LOG_SENTINEL)

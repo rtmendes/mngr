@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import queue
 import socket as socket_module
 from collections.abc import AsyncGenerator
 from collections.abc import Mapping
@@ -26,6 +27,7 @@ from websockets import ClientConnection
 
 from imbue.minds.forwarding_server.agent_creator import AgentCreationStatus
 from imbue.minds.forwarding_server.agent_creator import AgentCreator
+from imbue.minds.forwarding_server.agent_creator import LOG_SENTINEL
 from imbue.minds.forwarding_server.auth import AuthStoreInterface
 from imbue.minds.forwarding_server.backend_resolver import BackendResolverInterface
 from imbue.minds.forwarding_server.cookie_manager import SESSION_COOKIE_NAME
@@ -52,6 +54,7 @@ from imbue.mng.primitives import AgentId
 _PROXY_TIMEOUT_SECONDS: Final[float] = 30.0
 
 _BACKEND_WAIT_TIMEOUT_SECONDS: Final[float] = 30.0
+_BACKEND_POLL_INTERVAL_SECONDS: Final[float] = 0.5
 
 
 def _split_backend_url(backend_url: str) -> tuple[str, str]:
@@ -245,7 +248,7 @@ def _handle_authenticate(
     signing_key = auth_store.get_signing_key()
     cookie_value = create_session_cookie(signing_key=signing_key)
 
-    response = Response(status_code=307, headers={"Location": "/"})
+    response = Response(status_code=307, headers={"Location": "/create"})
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=cookie_value,
@@ -468,8 +471,9 @@ async def _handle_proxy_http(
         # Wait server-side for the backend to become available (handles the
         # case where the user is redirected to an agent still starting up).
         wait_seconds: int = request.app.state.backend_wait_timeout_seconds
-        for _ in range(wait_seconds):
-            await asyncio.sleep(1)
+        iterations = int(wait_seconds / _BACKEND_POLL_INTERVAL_SECONDS)
+        for _ in range(iterations):
+            await asyncio.sleep(_BACKEND_POLL_INTERVAL_SECONDS)
             backend_url = backend_resolver.get_backend_url(parsed_id, parsed_server)
             if backend_url is not None:
                 break
@@ -705,11 +709,12 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
 
     form = await request.form()
     git_url = str(form.get("git_url", "")).strip()
+    agent_name = str(form.get("agent_name", "")).strip()
     if not git_url:
-        html = render_create_form(git_url="")
+        html = render_create_form(git_url="", agent_name=agent_name)
         return HTMLResponse(content=html, status_code=400)
 
-    agent_id = agent_creator.start_creation(git_url)
+    agent_id = agent_creator.start_creation(git_url, agent_name=agent_name)
     return Response(status_code=303, headers={"Location": "/creating/{}".format(agent_id)})
 
 
@@ -747,6 +752,7 @@ async def _handle_create_agent_api(request: Request, auth_store: AuthStoreDep) -
             media_type="application/json",
         )
     git_url = str(body.get("git_url", "")).strip()
+    agent_name = str(body.get("agent_name", "")).strip()
     if not git_url:
         return Response(
             status_code=400,
@@ -754,7 +760,7 @@ async def _handle_create_agent_api(request: Request, auth_store: AuthStoreDep) -
             media_type="application/json",
         )
 
-    agent_id = agent_creator.start_creation(git_url)
+    agent_id = agent_creator.start_creation(git_url, agent_name=agent_name)
     return Response(
         content=json.dumps({"agent_id": str(agent_id), "status": "CLONING"}),
         media_type="application/json",
@@ -816,6 +822,63 @@ def _handle_creating_page(
     return HTMLResponse(content=html)
 
 
+async def _stream_creation_logs(
+    log_queue: queue.Queue[str],
+    agent_creator: AgentCreator,
+    agent_id: AgentId,
+) -> AsyncGenerator[str, None]:
+    """Async generator that yields SSE events from a creation log queue."""
+    streaming = True
+    while streaming:
+        try:
+            line = await asyncio.get_running_loop().run_in_executor(None, log_queue.get, True, 1.0)
+        except (queue.Empty, TimeoutError, OSError):
+            yield ": keepalive\n\n"
+            continue
+
+        if line == LOG_SENTINEL:
+            streaming = False
+            info = agent_creator.get_creation_info(agent_id)
+            if info is not None:
+                result = {"status": str(info.status)}
+                if info.redirect_url is not None:
+                    result["redirect_url"] = info.redirect_url
+                if info.error is not None:
+                    result["error"] = info.error
+                yield "event: done\ndata: {}\n\n".format(json.dumps(result))
+        else:
+            yield "data: {}\n\n".format(json.dumps({"log": line}))
+
+
+async def _handle_creation_logs_sse(
+    agent_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """SSE endpoint that streams creation logs for an agent."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+
+    agent_creator: AgentCreator | None = request.app.state.agent_creator
+    if agent_creator is None:
+        return Response(status_code=501, content="Agent creation not configured")
+
+    parsed_id = AgentId(agent_id)
+    log_queue = agent_creator.get_log_queue(parsed_id)
+    if log_queue is None:
+        return Response(status_code=404, content="Unknown agent creation")
+
+    return StreamingResponse(
+        _stream_creation_logs(log_queue, agent_creator, parsed_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 # -- App factory --
 
 
@@ -862,6 +925,7 @@ def create_forwarding_server(
     app.post("/create")(_handle_create_form_submit)
     app.post("/api/create-agent")(_handle_create_agent_api)
     app.get("/api/create-agent/{agent_id}/status")(_handle_creation_status_api)
+    app.get("/api/create-agent/{agent_id}/logs")(_handle_creation_logs_sse)
     app.get("/creating/{agent_id}")(_handle_creating_page)
 
     # Agent default page: redirect to web server
