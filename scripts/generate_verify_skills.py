@@ -52,33 +52,6 @@ class CategorySection:
 # ---------------------------------------------------------------------------
 
 
-def format_guide_section(guide) -> str:
-    """Format a single IssueIdentificationGuide into a markdown section."""
-    lines: list[str] = []
-
-    lines.append(f"## {guide.issue_code.value}")
-    lines.append("")
-
-    lines.append(guide.guide)
-    lines.append("")
-
-    if guide.examples:
-        lines.append("**Examples:**")
-        for example in guide.examples:
-            lines.append(f"- {example}")
-        lines.append("")
-
-    if guide.exceptions:
-        lines.append("**Exceptions:**")
-        for exception in guide.exceptions:
-            lines.append(f"- {exception}")
-        lines.append("")
-
-    lines.append("---")
-    lines.append("")
-    return "\n".join(lines)
-
-
 def format_category_section(section: CategorySection) -> str:
     """Format a CategorySection into a markdown section."""
     lines: list[str] = []
@@ -104,6 +77,12 @@ def format_category_section(section: CategorySection) -> str:
     lines.append("---")
     lines.append("")
     return "\n".join(lines)
+
+
+def format_guide_section(guide) -> str:
+    """Format a vet IssueIdentificationGuide by converting to CategorySection."""
+    section = _vet_guide_to_section(guide)
+    return format_category_section(section)
 
 
 BRANCH_PREAMBLE = textwrap.dedent("""\
@@ -265,7 +244,7 @@ def load_vet(vet_repo: Path) -> dict:
 def check_or_write(targets: dict[str, tuple[Path, str]], *, check: bool) -> bool:
     """Check or write a set of targets. Returns True if all OK."""
     ok = True
-    for label, (path, content) in targets.items():
+    for _, (path, content) in targets.items():
         rel = path.relative_to(REPO_ROOT)
         if check:
             if not path.exists():
