@@ -1628,7 +1628,7 @@ def get_files_for_deploy(
     api_key = user_claude_json_data.get("primaryApiKey", os.environ.get("ANTHROPIC_API_KEY", ""))
     if api_key:
         approved_keys = claude_json_data.setdefault("customApiKeyResponses", {})
-        approved_keys["approved"] = [api_key[-20:]]
+        approved_keys["approved"] = approved_keys.get("approved", []) + [api_key[-20:]]
         approved_keys["rejected"] = []
     files[Path("~/.claude.json")] = json.dumps(claude_json_data, indent=2) + "\n"
 
