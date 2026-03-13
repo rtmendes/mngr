@@ -438,11 +438,11 @@ def _follow_event_file_via_host(
 
     # Retry loop: if the file doesn't exist yet, wait and try again.
     # This handles the race where we start following before the file is created.
-    _RETRY_DELAY_SECONDS = 2.0
+    retry_delay_seconds = 2.0
+    max_retries = 60
     has_logged = False
-    attempt = 0
-    while attempt < float("inf"):
-        attempt += 1
+
+    for attempt in range(max_retries):
         process = popen_interactive_subprocess(
             cmd,
             stdout=subprocess.PIPE,
@@ -466,12 +466,11 @@ def _follow_event_file_via_host(
             stderr_thread.join(timeout=5)
             if process.returncode != 0:
                 stderr_output = b"".join(stderr_chunks).decode("utf-8", errors="replace")
-                if "No such file or directory" in stderr_output:
+                if "No such file or directory" in stderr_output and attempt < max_retries - 1:
                     if not has_logged:
-                        logger.info("Event file not found yet, retrying in {}s", _RETRY_DELAY_SECONDS)
+                        logger.info("Event file not found yet, retrying in {}s", retry_delay_seconds)
                         has_logged = True
-                    # FIXME: replace this with tenacity retry logic
-                    threading.Event().wait(timeout=_RETRY_DELAY_SECONDS)
+                    threading.Event().wait(timeout=retry_delay_seconds)
                     continue
                 raise MngError(
                     f"Failed to follow event file (exit code {process.returncode}): {stderr_output.strip()}"

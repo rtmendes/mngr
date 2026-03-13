@@ -5,7 +5,7 @@ resolution, and mng create invocation.
 
 Agent creation runs in background threads so the server remains responsive.
 Callers can poll creation status via get_creation_info() or stream logs
-via iter_log_lines().
+via get_log_queue().
 """
 
 import queue
