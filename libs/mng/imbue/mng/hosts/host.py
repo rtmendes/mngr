@@ -289,7 +289,7 @@ class Host(BaseHost, OnlineHostInterface):
         """
         with self._notify_on_connection_error():
             try:
-                return self._get_file_with_socket_retry(remote_filename, filename_or_io, remote_temp_filename)
+                return self._get_file_with_transient_retry(remote_filename, filename_or_io, remote_temp_filename)
             except OSError as e:
                 if "Socket is closed" in str(e):
                     raise HostConnectionError("Connection was closed while reading file") from e
@@ -298,7 +298,7 @@ class Host(BaseHost, OnlineHostInterface):
                 raise HostConnectionError("Could not read file due to connection error") from e
 
     @_retry_on_transient_ssh_error
-    def _get_file_with_socket_retry(
+    def _get_file_with_transient_retry(
         self,
         remote_filename: str,
         filename_or_io: str | IO[bytes],
@@ -380,7 +380,7 @@ class Host(BaseHost, OnlineHostInterface):
         """
         with self._notify_on_connection_error():
             try:
-                return self._put_file_with_socket_retry(filename_or_io, remote_filename, remote_temp_filename)
+                return self._put_file_with_transient_retry(filename_or_io, remote_filename, remote_temp_filename)
             except OSError as e:
                 if "Socket is closed" in str(e):
                     raise HostConnectionError("Connection was closed while writing file") from e
@@ -389,7 +389,7 @@ class Host(BaseHost, OnlineHostInterface):
                 raise HostConnectionError("Could not write file due to connection error") from e
 
     @_retry_on_transient_ssh_error
-    def _put_file_with_socket_retry(
+    def _put_file_with_transient_retry(
         self,
         filename_or_io: str | IO[str] | IO[bytes],
         remote_filename: str,

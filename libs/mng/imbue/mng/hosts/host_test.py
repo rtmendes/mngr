@@ -1245,13 +1245,13 @@ def test_get_file_wraps_ssh_exception_in_host_connection_error(
 ) -> None:
     """SSHException should be wrapped in HostConnectionError.
 
-    Overrides _get_file_with_socket_retry to raise SSHException directly
+    Overrides _get_file_with_transient_retry to raise SSHException directly
     (bypassing the retry decorator) so this test stays fast while still
     exercising _get_file's wrapping logic.
     """
 
     class _HostWithImmediateSSHFailure(Host):
-        def _get_file_with_socket_retry(
+        def _get_file_with_transient_retry(
             self,
             remote_filename: str,
             filename_or_io: str | IO[bytes],
@@ -1327,6 +1327,26 @@ def test_get_file_retries_on_eof_error_and_returns_result(
 
     host = _create_host_with_custom_sftp(local_provider, _EOFErrorThenSucceedSFTP)
     result = host._get_file("/remote/file.txt", io.BytesIO())
+
+    assert result is True
+    assert call_count == 2
+
+
+def test_put_file_retries_on_eof_error_and_returns_result(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """A transient EOFError on put_file should be retried with disconnect/reconnect."""
+    call_count = 0
+
+    class _EOFErrorThenSucceedSFTP(_BaseFakeSFTP):
+        def putfo(self, fl: IO[bytes], remote_path: str) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise EOFError()
+
+    host = _create_host_with_custom_sftp(local_provider, _EOFErrorThenSucceedSFTP)
+    result = host._put_file(io.BytesIO(b"content"), "/remote/file.txt")
 
     assert result is True
     assert call_count == 2
