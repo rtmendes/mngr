@@ -236,45 +236,6 @@ def _should_skip_for_catchup(line_json: dict[str, Any], delivery_state: _Deliver
     return False
 
 
-# -- Message formatting --
-
-
-def _format_time_since_last(seconds: float) -> str:
-    """Format a duration as a human-readable string."""
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    elif seconds < 3600:
-        return f"{seconds / 60:.1f}m"
-    else:
-        return f"{seconds / 3600:.1f}h"
-
-
-def _format_delivery_message(
-    event_lines: list[str],
-    time_since_last_message_seconds: float | None,
-    rate_warning: str | None,
-) -> str:
-    """Format a delivery envelope with event lines and metadata."""
-    parts: list[str] = []
-
-    # Header
-    count = len(event_lines)
-    parts.append(f"[Event watcher] {count} new event(s)")
-
-    if time_since_last_message_seconds is not None:
-        parts.append(f"  Time since last message: {_format_time_since_last(time_since_last_message_seconds)}")
-
-    if rate_warning:
-        parts.append(f"  WARNING: {rate_warning}")
-
-    parts.append("")
-
-    for line in event_lines:
-        parts.append(line)
-
-    return "\n".join(parts)
-
-
 # -- Message sending --
 
 
@@ -609,17 +570,6 @@ def _filter_catchup_events(
     return deliverable_lines, last_parsed, is_catching_up
 
 
-def _compute_rate_warning(
-    rate_tracker: _SendRateTracker,
-    threshold: int,
-) -> str | None:
-    """Return a rate warning string if the send rate exceeds the threshold."""
-    current_rate = rate_tracker.messages_per_minute()
-    if current_rate >= threshold:
-        return f"High event rate: {current_rate:.0f} messages/min (threshold: {threshold}/min)"
-    return None
-
-
 def _write_events_file(event_lines: list[str], directory: str = "/tmp") -> str | None:
     """Write event lines to a temporary JSONL file.
 
@@ -645,15 +595,14 @@ def _deliver_batch(
     rate_tracker: _SendRateTracker,
     event_buffer: list[str],
     buffer_lock: threading.Lock,
-    time_since_last: float | None,
-    rate_warning: str | None,
 ) -> bool:
     """Write events to a file and send the file path to the agent. Returns True on success.
 
     Events are written to /tmp/<uuid>.events as JSONL, then the agent
     receives a message pointing to that file.
 
-    On failure, puts events back in the buffer for later retry.
+    On failure, puts events back in the buffer for later retry and
+    cleans up the orphaned events file.
     The caller is responsible for backoff and notification logic.
     """
     logger.info("Sending {} event(s) to '{}'", len(deliverable_lines), agent_id)
@@ -677,6 +626,10 @@ def _deliver_batch(
         return True
 
     logger.warning("Failed to deliver {} event(s), will retry", len(deliverable_lines))
+    try:
+        Path(events_file_path).unlink(missing_ok=True)
+    except OSError:
+        pass
     with buffer_lock:
         event_buffer[0:0] = deliverable_lines
     return False
@@ -792,13 +745,6 @@ def _run_delivery_loop(
                 event_buffer[0:0] = deliverable_lines
             continue
 
-        # Compute delivery metadata
-        time_since_last: float | None = None
-        if delivery_state.last_delivery_monotonic > 0:
-            time_since_last = time.monotonic() - delivery_state.last_delivery_monotonic
-
-        rate_warning = _compute_rate_warning(rate_tracker, settings.high_rate_warning_threshold)
-
         # Send the batch (single attempt, no retries inside)
         success = _deliver_batch(
             deliverable_lines=deliverable_lines,
@@ -809,8 +755,6 @@ def _run_delivery_loop(
             rate_tracker=rate_tracker,
             event_buffer=event_buffer,
             buffer_lock=buffer_lock,
-            time_since_last=time_since_last,
-            rate_warning=rate_warning,
         )
 
         if success:

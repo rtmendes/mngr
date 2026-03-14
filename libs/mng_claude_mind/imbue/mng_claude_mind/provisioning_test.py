@@ -13,9 +13,12 @@ from imbue.mng_claude_mind.conftest import StubCommandResult
 from imbue.mng_claude_mind.conftest import StubHost
 from imbue.mng_claude_mind.conftest import create_mind_conversations_table_in_test_db
 from imbue.mng_claude_mind.conftest import write_conversation_to_db
+from imbue.mng_claude_mind.provisioning import _STOP_HOOK_COMMAND
 from imbue.mng_claude_mind.provisioning import build_memory_sync_hooks_config
+from imbue.mng_claude_mind.provisioning import build_stop_hook_config
 from imbue.mng_claude_mind.provisioning import create_mind_symlinks
 from imbue.mng_claude_mind.provisioning import provision_claude_settings
+from imbue.mng_claude_mind.provisioning import run_link_skills_script
 from imbue.mng_claude_mind.provisioning import setup_memory_directory
 from imbue.mng_llm.data_types import ProvisioningSettings
 from imbue.mng_llm.provisioning import MIND_CONVERSATIONS_TABLE_SQL
@@ -146,6 +149,54 @@ def test_build_memory_sync_hooks_config_post_syncs_project_to_role_dir() -> None
     role_dir_pos = post_cmd.index("/home/user/.minds/agent/thinking/memory")
     project_pos = post_cmd.index("$HOME/.claude/projects/")
     assert project_pos < role_dir_pos, "PostToolUse should sync project -> role_dir (project first in rsync args)"
+
+
+# -- build_stop_hook_config tests --
+
+
+def test_build_stop_hook_config_has_stop_key() -> None:
+    config = build_stop_hook_config()
+    assert "hooks" in config
+    assert "Stop" in config["hooks"]
+
+
+def test_build_stop_hook_config_uses_stop_hook_command() -> None:
+    config = build_stop_hook_config()
+    hook_command = config["hooks"]["Stop"][0]["hooks"][0]["command"]
+    assert hook_command == _STOP_HOOK_COMMAND
+
+
+def test_build_stop_hook_config_checks_events_and_handled_ids() -> None:
+    config = build_stop_hook_config()
+    hook_command = config["hooks"]["Stop"][0]["hooks"][0]["command"]
+    assert "/tmp/*.events" in hook_command
+    assert "handled_event_ids" in hook_command
+    assert "exit 2" in hook_command
+
+
+# -- run_link_skills_script tests --
+
+
+def test_run_link_skills_script_skips_when_script_missing() -> None:
+    host = StubHost(command_results={"test -f": StubCommandResult(success=False)})
+    run_link_skills_script(cast(Any, host), Path("/test/work"), "thinking", _DEFAULT_PROVISIONING)
+
+    assert not any("chmod" in c for c in host.executed_commands)
+
+
+def test_run_link_skills_script_runs_when_script_exists() -> None:
+    host = StubHost()
+    run_link_skills_script(cast(Any, host), Path("/test/work"), "thinking", _DEFAULT_PROVISIONING)
+
+    assert any("chmod +x" in c for c in host.executed_commands)
+    assert any("link_skills.sh" in c and "thinking" in c for c in host.executed_commands)
+
+
+def test_run_link_skills_script_passes_role_as_argument() -> None:
+    host = StubHost()
+    run_link_skills_script(cast(Any, host), Path("/test/work"), "custom-role", _DEFAULT_PROVISIONING)
+
+    assert any("custom-role" in c for c in host.executed_commands)
 
 
 # -- Provisioning function tests (using _StubHost) --

@@ -27,11 +27,8 @@ from imbue.mng_mind.event_watcher import _EventWatcherSettings
 from imbue.mng_mind.event_watcher import _SendRateTracker
 from imbue.mng_mind.event_watcher import _TokenBucket
 from imbue.mng_mind.event_watcher import _compute_backoff_seconds
-from imbue.mng_mind.event_watcher import _compute_rate_warning
 from imbue.mng_mind.event_watcher import _deliver_batch
 from imbue.mng_mind.event_watcher import _filter_catchup_events
-from imbue.mng_mind.event_watcher import _format_delivery_message
-from imbue.mng_mind.event_watcher import _format_time_since_last
 from imbue.mng_mind.event_watcher import _get_system_notifications_conversation_id
 from imbue.mng_mind.event_watcher import _load_delivery_state
 from imbue.mng_mind.event_watcher import _load_watcher_settings
@@ -154,6 +151,15 @@ def test_save_delivery_state_creates_parent_directories(tmp_path: Path) -> None:
     assert state_file.exists()
 
 
+def test_save_delivery_state_handles_write_error(tmp_path: Path) -> None:
+    """_save_delivery_state logs error but does not raise on write failure."""
+    # Use /dev/null as parent (not writable as a directory)
+    state_file = Path("/dev/null/state.json")
+    state = _DeliveryState(last_event_id="evt-1", last_timestamp="2026-01-01T00:00:00Z")
+    # Should not raise
+    _save_delivery_state(state_file, state)
+
+
 # -- _TokenBucket tests (using injected clock for determinism) --
 
 
@@ -190,6 +196,13 @@ def test_token_bucket_time_until_token_when_available() -> None:
     clock = _FakeClock()
     bucket = _TokenBucket(burst_size=3, rate_per_second=1.0, time_source=clock)
     assert bucket.time_until_token() == 0.0
+
+
+def test_token_bucket_time_until_token_infinite_when_zero_rate() -> None:
+    clock = _FakeClock()
+    bucket = _TokenBucket(burst_size=1, rate_per_second=0.0, time_source=clock)
+    bucket.consume()
+    assert bucket.time_until_token() == float("inf")
 
 
 def test_token_bucket_does_not_exceed_burst_size() -> None:
@@ -301,81 +314,6 @@ def test_filter_catchup_events_skips_malformed_lines() -> None:
     assert last_parsed["event_id"] == "evt-1"
 
 
-# -- _compute_rate_warning tests --
-
-
-def test_compute_rate_warning_returns_none_below_threshold() -> None:
-    tracker = _SendRateTracker()
-    assert _compute_rate_warning(tracker, threshold=10) is None
-
-
-def test_compute_rate_warning_returns_warning_above_threshold() -> None:
-    tracker = _SendRateTracker()
-    for _ in range(12):
-        tracker.record_send()
-    warning = _compute_rate_warning(tracker, threshold=10)
-    assert warning is not None
-    assert "High event rate" in warning
-    assert "12" in warning
-
-
-# -- _format_time_since_last tests --
-
-
-@pytest.mark.parametrize(
-    ("seconds", "expected"),
-    [
-        (30.0, "30s"),
-        (120.0, "2.0m"),
-        (7200.0, "2.0h"),
-    ],
-)
-def test_format_time_since_last(seconds: float, expected: str) -> None:
-    assert _format_time_since_last(seconds) == expected
-
-
-# -- _format_delivery_message tests --
-
-
-def test_format_delivery_message_basic() -> None:
-    result = _format_delivery_message(
-        event_lines=['{"event": 1}', '{"event": 2}'],
-        time_since_last_message_seconds=None,
-        rate_warning=None,
-    )
-    assert "[Event watcher] 2 new event(s)" in result
-    assert '{"event": 1}' in result
-    assert '{"event": 2}' in result
-
-
-def test_format_delivery_message_with_time_since_last() -> None:
-    result = _format_delivery_message(
-        event_lines=['{"event": 1}'],
-        time_since_last_message_seconds=45.0,
-        rate_warning=None,
-    )
-    assert "Time since last message: 45s" in result
-
-
-def test_format_delivery_message_with_time_since_last_minutes() -> None:
-    result = _format_delivery_message(
-        event_lines=['{"event": 1}'],
-        time_since_last_message_seconds=180.0,
-        rate_warning=None,
-    )
-    assert "Time since last message: 3.0m" in result
-
-
-def test_format_delivery_message_with_rate_warning() -> None:
-    result = _format_delivery_message(
-        event_lines=['{"event": 1}'],
-        time_since_last_message_seconds=None,
-        rate_warning="High event rate: 15 messages/min (threshold: 8/min)",
-    )
-    assert "WARNING:" in result
-    assert "High event rate" in result
-
-
 # -- _send_message tests --
 
 
@@ -463,8 +401,6 @@ def test_deliver_batch_updates_state_on_success(
         rate_tracker=rate_tracker,
         event_buffer=event_buffer,
         buffer_lock=buffer_lock,
-        time_since_last=10.0,
-        rate_warning=None,
     )
 
     assert success is True
@@ -511,8 +447,6 @@ def test_deliver_batch_puts_events_back_on_failure(
         rate_tracker=rate_tracker,
         event_buffer=event_buffer,
         buffer_lock=buffer_lock,
-        time_since_last=None,
-        rate_warning=None,
     )
 
     assert success is False
@@ -528,6 +462,13 @@ def test_deliver_batch_puts_events_back_on_failure(
 
     # Verify state file was NOT created
     assert not state_file.exists()
+
+    # Verify the orphaned events file was cleaned up
+    cmd = mock_subprocess_failure.calls[0][0]
+    message_arg = cmd[cmd.index("-m") + 1]
+    assert "Please process all events in /tmp/" in message_arg
+    events_file = Path(message_arg.replace("Please process all events in ", ""))
+    assert not events_file.exists(), "Orphaned events file should be cleaned up on delivery failure"
 
 
 # -- _write_notification_event tests --
