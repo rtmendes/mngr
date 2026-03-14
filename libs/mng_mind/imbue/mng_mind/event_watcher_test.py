@@ -354,7 +354,7 @@ def test_write_events_file_creates_file_with_jsonl_content(tmp_path: Path) -> No
     file_path = _write_events_file(event_lines, directory=tmp_path)
     assert file_path is not None
     assert str(file_path).startswith(str(tmp_path))
-    assert str(file_path).endswith(".events")
+    assert str(file_path).endswith(".jsonl")
 
     content = file_path.read_text()
     lines = content.strip().split("\n")
@@ -380,6 +380,8 @@ def test_deliver_batch_updates_state_on_success(
     rate_tracker = _SendRateTracker()
     event_buffer: list[str] = []
     buffer_lock = threading.Lock()
+    event_batches_dir = tmp_path / "mind" / "event_batches"
+    event_batches_dir.mkdir(parents=True)
 
     event_line = json.dumps({"event_id": "evt-42", "timestamp": "2026-03-01T12:00:00Z"})
     last_parsed = json.loads(event_line)
@@ -393,6 +395,7 @@ def test_deliver_batch_updates_state_on_success(
         rate_tracker=rate_tracker,
         event_buffer=event_buffer,
         buffer_lock=buffer_lock,
+        event_batches_dir=event_batches_dir,
     )
 
     assert success is True
@@ -412,10 +415,10 @@ def test_deliver_batch_updates_state_on_success(
     # Verify mng message was called with a file path reference
     assert len(mock_subprocess_success.calls) == 1
     cmd = mock_subprocess_success.calls[0][0]
-    # The message should reference a /tmp/*.events file
     message_arg = cmd[cmd.index("-m") + 1]
-    assert "Please process all events in /tmp/" in message_arg
-    assert message_arg.endswith(".events")
+    assert "Please process all events in " in message_arg
+    assert str(event_batches_dir) in message_arg
+    assert message_arg.endswith(".jsonl")
 
 
 def test_deliver_batch_puts_events_back_on_failure(
@@ -427,6 +430,8 @@ def test_deliver_batch_puts_events_back_on_failure(
     rate_tracker = _SendRateTracker()
     event_buffer: list[str] = []
     buffer_lock = threading.Lock()
+    event_batches_dir = tmp_path / "mind" / "event_batches"
+    event_batches_dir.mkdir(parents=True)
 
     event_lines = ['{"event_id": "evt-1"}', '{"event_id": "evt-2"}']
 
@@ -439,6 +444,7 @@ def test_deliver_batch_puts_events_back_on_failure(
         rate_tracker=rate_tracker,
         event_buffer=event_buffer,
         buffer_lock=buffer_lock,
+        event_batches_dir=event_batches_dir,
     )
 
     assert success is False
@@ -458,7 +464,7 @@ def test_deliver_batch_puts_events_back_on_failure(
     # Verify the orphaned events file was cleaned up
     cmd = mock_subprocess_failure.calls[0][0]
     message_arg = cmd[cmd.index("-m") + 1]
-    assert "Please process all events in /tmp/" in message_arg
+    assert "Please process all events in " in message_arg
     events_file = Path(message_arg.replace("Please process all events in ", ""))
     assert not events_file.exists(), "Orphaned events file should be cleaned up on delivery failure"
 

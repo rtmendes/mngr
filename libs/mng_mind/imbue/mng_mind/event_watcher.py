@@ -4,16 +4,17 @@
 Streams events from ``mng events --follow --filter`` and delivers them
 to the primary agent via ``mng message`` with debouncing and rate limiting.
 
-Events are batched and written to temporary files (``/tmp/<uuid>.events``),
-and the agent receives a message pointing to that file rather than the
-events themselves.
+Events are batched and written to JSONL files under
+``$AGENT_STATE_DIR/mind/event_batches/<uuid>.jsonl``, and the agent
+receives a message pointing to that file rather than the events
+themselves.
 
 The watcher delegates all event discovery, deduplication, and filtering
 to the ``mng events`` command (run as a subprocess). This script handles:
 
 - At-least-once delivery with minimal duplicates on restart
 - Token-bucket rate limiting (burst + sustained rate)
-- File-based event delivery (events written to /tmp/<uuid>.events)
+- File-based event delivery (events written to event_batches/)
 - Subprocess lifecycle (restart on exit)
 
 Usage: mng mind-event-watcher
@@ -565,12 +566,12 @@ def _filter_catchup_events(
     return deliverable_lines, last_parsed, is_catching_up
 
 
-def _write_events_file(event_lines: list[str], directory: Path = Path("/tmp")) -> Path | None:
-    """Write event lines to a temporary JSONL file.
+def _write_events_file(event_lines: list[str], directory: Path) -> Path | None:
+    """Write event lines to a JSONL file in the given directory.
 
     Returns the file path on success, or None on failure.
     """
-    file_path = directory / f"{uuid4().hex}.events"
+    file_path = directory / f"{uuid4().hex}.jsonl"
     try:
         with open(file_path, "w") as f:
             for line in event_lines:
@@ -590,11 +591,12 @@ def _deliver_batch(
     rate_tracker: _SendRateTracker,
     event_buffer: list[str],
     buffer_lock: threading.Lock,
+    event_batches_dir: Path,
 ) -> bool:
     """Write events to a file and send the file path to the agent. Returns True on success.
 
-    Events are written to /tmp/<uuid>.events as JSONL, then the agent
-    receives a message pointing to that file.
+    Events are written to ``event_batches_dir/<uuid>.jsonl``, then the
+    agent receives a message pointing to that file.
 
     On failure, puts events back in the buffer for later retry and
     cleans up the orphaned events file.
@@ -602,7 +604,7 @@ def _deliver_batch(
     """
     logger.info("Sending {} event(s) to '{}'", len(deliverable_lines), agent_id)
 
-    events_file_path = _write_events_file(deliverable_lines)
+    events_file_path = _write_events_file(deliverable_lines, event_batches_dir)
     if events_file_path is None:
         logger.warning("Failed to write events file, will retry")
         with buffer_lock:
@@ -641,6 +643,7 @@ def _run_delivery_loop(
     event_buffer: list[str],
     buffer_lock: threading.Lock,
     stop_event: threading.Event,
+    event_batches_dir: Path,
 ) -> None:
     """Main delivery loop: drain buffer, rate-limit, format, and deliver to agent.
 
@@ -750,6 +753,7 @@ def _run_delivery_loop(
             rate_tracker=rate_tracker,
             event_buffer=event_buffer,
             buffer_lock=buffer_lock,
+            event_batches_dir=event_batches_dir,
         )
 
         if success:
@@ -805,6 +809,10 @@ def main() -> None:
     # Events directory for notification events
     events_dir = agent_state_dir / "events"
 
+    # Directory for event batch files
+    event_batches_dir = agent_state_dir / "mind" / "event_batches"
+    event_batches_dir.mkdir(parents=True, exist_ok=True)
+
     logger.info("Event watcher started")
     logger.info("  Agent ID: {}", agent_id)
     logger.info("  CEL filter: {}", settings.cel_filter)
@@ -812,6 +820,7 @@ def main() -> None:
     logger.info("  Max messages/min: {}", settings.max_messages_per_minute)
     logger.info("  Max delivery retries: {}", settings.max_delivery_retries)
     logger.info("  State file: {}", state_file)
+    logger.info("  Event batches dir: {}", event_batches_dir)
 
     stop_event = threading.Event()
     event_buffer: list[str] = []
@@ -821,7 +830,16 @@ def main() -> None:
     # Start the long-lived delivery thread
     delivery_thread = threading.Thread(
         target=_run_delivery_loop,
-        args=(settings, agent_id, state_file, events_dir, event_buffer, buffer_lock, stop_event),
+        args=(
+            settings,
+            agent_id,
+            state_file,
+            events_dir,
+            event_buffer,
+            buffer_lock,
+            stop_event,
+            event_batches_dir,
+        ),
         daemon=True,
     )
     delivery_thread.start()

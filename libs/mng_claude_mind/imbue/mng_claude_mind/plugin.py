@@ -40,7 +40,7 @@ from imbue.mng_llm.provisioning import install_llm_toolchain
 from imbue.mng_llm.provisioning import provision_llm_tools
 from imbue.mng_llm.provisioning import provision_supporting_services
 from imbue.mng_llm.provisioning import resolve_work_dir_abs
-from imbue.mng_mind.provisioning import provision_default_content
+from imbue.mng_mind.provisioning import provision_link_skills_script_file
 from imbue.mng_recursive.provisioning import provision_mng_for_agent
 
 # Supporting service tmux window names and commands.
@@ -182,7 +182,7 @@ class ClaudeMindAgent(ClaudeAgent):
         1. Per-agent mng installation (via mng_recursive, before super())
         2. Settings loading from minds.toml
         3. llm + plugin installation (via mng_llm)
-        4. Default content (GLOBAL.md, role prompts, shared + role skills) via mng_mind
+        4. link_skills.sh script (via mng_mind)
         5. Symlink shared skills into active role's skills directory
         6. Claude-specific settings.json injection
         7. Symlinks (CLAUDE.md -> GLOBAL.md, CLAUDE.local.md -> PROMPT.md, .claude/skills -> skills)
@@ -205,7 +205,7 @@ class ClaudeMindAgent(ClaudeAgent):
         if config.install_llm:
             install_llm_toolchain(host, provisioning)
 
-        provision_default_content(host, self.work_dir, provisioning)
+        provision_link_skills_script_file(host, self.work_dir, provisioning)
         run_link_skills_script(host, self.work_dir, active_role, provisioning)
         provision_claude_settings(host, self.work_dir, active_role, provisioning)
         create_mind_symlinks(host, self.work_dir, active_role, provisioning)

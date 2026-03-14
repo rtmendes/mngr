@@ -4,50 +4,29 @@ from pathlib import Path
 from typing import Any
 from typing import cast
 
-import pytest
-
 from imbue.mng_llm.data_types import ProvisioningSettings
 from imbue.mng_mind.conftest import StubCommandResult
 from imbue.mng_mind.conftest import StubHost
-from imbue.mng_mind.provisioning import provision_default_content
+from imbue.mng_mind.provisioning import provision_link_skills_script_file
 
 _DEFAULT_PROVISIONING = ProvisioningSettings()
 
 
-@pytest.mark.parametrize(
-    "expected_path",
-    [
-        "GLOBAL.md",
-        "link_skills.sh",
-        "skills/delegate-task/SKILL.md",
-        "thinking/PROMPT.md",
-        "thinking/skills/mark-events-handled/SKILL.md",
-        "talking/PROMPT.md",
-        "working/PROMPT.md",
-        "verifying/PROMPT.md",
-    ],
-    ids=[
-        "global_md",
-        "link_skills_script",
-        "shared_skills",
-        "thinking_prompt",
-        "thinking_skills",
-        "talking_prompt",
-        "working_prompt",
-        "verifying_prompt",
-    ],
-)
-def test_provision_default_content_writes_expected_files(expected_path: str) -> None:
-    """Verify that provision_default_content writes each expected default file."""
+def test_provision_link_skills_script_file_writes_when_missing() -> None:
+    """Verify that provision_link_skills_script_file writes link_skills.sh when it doesn't exist."""
     host = StubHost(command_results={"test -f": StubCommandResult(success=False)})
-    provision_default_content(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
+    provision_link_skills_script_file(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
 
     written_paths = [str(p) for p, _ in host.written_text_files]
-    assert any(expected_path in p for p in written_paths), f"Expected {expected_path} to be written"
+    assert any("link_skills.sh" in p for p in written_paths)
+    _, content = host.written_text_files[0]
+    assert "#!/usr/bin/env bash" in content
+    assert "ln -s" in content
 
 
-def test_provision_default_content_does_not_overwrite_existing() -> None:
+def test_provision_link_skills_script_file_does_not_overwrite_existing() -> None:
+    """Verify that provision_link_skills_script_file skips when file exists."""
     host = StubHost()
-    provision_default_content(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
+    provision_link_skills_script_file(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
 
     assert len(host.written_text_files) == 0

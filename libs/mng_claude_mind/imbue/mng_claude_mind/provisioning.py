@@ -224,27 +224,37 @@ _STOP_HOOK_SCRIPT: Final[str] = """\
 #!/usr/bin/env bash
 # Prevent Claude from stopping if there are unhandled events.
 #
-# Reads all event IDs from /tmp/*.events files, compares them against
-# /tmp/handled_event_ids, and exits with code 2 if any are unhandled
-# (which tells Claude Code to block the stop).
+# Reads all event IDs from $MNG_AGENT_STATE_DIR/mind/event_batches/*.jsonl,
+# compares them against handled event IDs extracted from
+# $MNG_AGENT_STATE_DIR/events/handled_events/events.jsonl (and .jsonl.1),
+# and exits with code 2 if any are unhandled (which tells Claude Code to
+# block the stop).
 
 set -euo pipefail
 
-if ! ls /tmp/*.events >/dev/null 2>&1; then
+batches_dir="$MNG_AGENT_STATE_DIR/mind/event_batches"
+handled_dir="$MNG_AGENT_STATE_DIR/events/handled_events"
+
+if ! ls "$batches_dir"/*.jsonl >/dev/null 2>&1; then
     exit 0
 fi
 
-all_ids=$(cat /tmp/*.events | jq -r '.event_id // empty' | sort -u)
+all_ids=$(cat "$batches_dir"/*.jsonl | jq -r '.event_id // empty' | sort -u)
 
-if [ -f /tmp/handled_event_ids ]; then
-    handled_ids=$(sort -u /tmp/handled_event_ids)
-else
-    handled_ids=""
-fi
+handled_ids=""
+for f in "$handled_dir/events.jsonl" "$handled_dir/events.jsonl.1"; do
+    if [ -f "$f" ]; then
+        handled_ids="$handled_ids
+$(tail -n 1000 "$f" | jq -r '.handled_event_id // empty')"
+    fi
+done
+handled_ids=$(echo "$handled_ids" | grep -v '^$' | sort -u)
 
 unhandled=$(comm -23 <(echo "$all_ids") <(echo "$handled_ids"))
 
 if [ -n "$unhandled" ]; then
+    echo "Unhandled events:" >&2
+    echo "$unhandled" >&2
     exit 2
 fi
 """
@@ -293,9 +303,8 @@ def build_stop_hook_config(script_path: Path) -> dict[str, Any]:
     """Build Claude hooks config for checking unhandled events on stop.
 
     Returns a hooks config dict with a Stop entry that runs the given
-    script. The script prevents Claude from stopping if there are event
-    IDs in /tmp/*.events files that have not been written to
-    /tmp/handled_event_ids.
+    script. The script prevents Claude from stopping if there are
+    unhandled event IDs in the event batch files.
 
     Exit code 2 from a Stop hook tells Claude Code to block the stop.
     """

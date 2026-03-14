@@ -35,7 +35,7 @@ from imbue.mng_llm.provisioning import provision_supporting_services
 from imbue.mng_llm.provisioning import resolve_work_dir_abs
 from imbue.mng_llm.resources import context_tool as context_tool_module
 from imbue.mng_llm.resources import extra_context_tool as extra_context_tool_module
-from imbue.mng_mind.provisioning import provision_default_content
+from imbue.mng_mind.provisioning import provision_link_skills_script_file
 from imbue.mng_recursive.watcher_common import MngNotInstalledError
 from imbue.mng_recursive.watcher_common import get_mng_command
 
@@ -125,7 +125,8 @@ def test_provision_stop_hook_script_writes_and_chmods() -> None:
     written_path, content = host.written_text_files[0]
     assert "on_stop_prevent_unhandled_events.sh" in str(written_path)
     assert "#!/usr/bin/env bash" in content
-    assert "handled_event_ids" in content
+    assert "handled_event_id" in content
+    assert "event_batches" in content
 
 
 # -- run_link_skills_script tests --
@@ -241,29 +242,19 @@ def test_create_mind_symlinks_creates_skills_symlink() -> None:
     assert any("thinking/skills" in c for c in host.executed_commands)
 
 
-def test_provision_default_content_writes_global_md() -> None:
+def test_provision_link_skills_script_file_writes_when_missing() -> None:
     host = StubHost(command_results={"test -f": StubCommandResult(success=False)})
-    provision_default_content(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
+    provision_link_skills_script_file(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
 
     written_paths = [str(p) for p, _ in host.written_text_files]
-    assert any("GLOBAL.md" in p for p in written_paths)
+    assert any("link_skills.sh" in p for p in written_paths)
 
 
-def test_provision_default_content_writes_thinking_prompt() -> None:
-    host = StubHost(command_results={"test -f": StubCommandResult(success=False)})
-    provision_default_content(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
+def test_provision_link_skills_script_file_skips_when_existing() -> None:
+    host = StubHost()
+    provision_link_skills_script_file(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
 
-    written_paths = [str(p) for p, _ in host.written_text_files]
-    assert any("thinking/PROMPT.md" in p for p in written_paths)
-
-
-def test_provision_default_content_writes_skills() -> None:
-    host = StubHost(command_results={"test -f": StubCommandResult(success=False)})
-    provision_default_content(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
-
-    written_paths = [str(p) for p, _ in host.written_text_files]
-    assert any("skills/delegate-task/SKILL.md" in p for p in written_paths)
-    assert any("thinking/skills/mark-events-handled/SKILL.md" in p for p in written_paths)
+    assert len(host.written_text_files) == 0
 
 
 def test_provision_supporting_services_creates_commands_and_ttyd_dirs() -> None:
@@ -1346,37 +1337,3 @@ def test_get_mng_command_raises_when_binary_missing(tmp_path: Path, monkeypatch:
 
     with pytest.raises(MngNotInstalledError, match="Per-agent mng binary not found"):
         get_mng_command()
-
-
-def test_provision_default_content_skips_existing_files() -> None:
-    """Verify provision_default_content does not overwrite existing files."""
-    # test -f returns success (file exists) by default in StubHost
-    host = StubHost()
-    provision_default_content(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
-
-    assert len(host.written_text_files) == 0
-
-
-def test_provision_default_content_creates_parent_directories() -> None:
-    """Verify provision_default_content creates parent directories for missing files."""
-    host = StubHost(
-        command_results={"test -f": StubCommandResult(success=False)},
-    )
-    provision_default_content(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
-
-    mkdir_cmds = [c for c in host.executed_commands if "mkdir -p" in c]
-    assert len(mkdir_cmds) > 0
-
-
-# -- talking/PROMPT.md tests --
-
-
-def test_provision_default_content_writes_talking_prompt() -> None:
-    """Verify provision_default_content writes talking/PROMPT.md when missing."""
-    host = StubHost(
-        command_results={"test -f": StubCommandResult(success=False)},
-    )
-    provision_default_content(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
-
-    written_paths = [str(path) for path, _ in host.written_text_files]
-    assert any("talking/PROMPT.md" in p for p in written_paths)

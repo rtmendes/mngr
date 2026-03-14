@@ -47,7 +47,7 @@ from imbue.mng_llm.provisioning import load_llm_resource
 from imbue.mng_llm.provisioning import provision_llm_tools
 from imbue.mng_llm.provisioning import provision_supporting_services
 from imbue.mng_llm.resources.conversation_watcher import _sync_messages
-from imbue.mng_mind.provisioning import provision_default_content
+from imbue.mng_mind.provisioning import provision_link_skills_script_file
 
 _DEFAULT_PROVISIONING = ProvisioningSettings()
 
@@ -157,50 +157,32 @@ def test_provisioning_writes_llm_tools_to_host(
 
 
 @pytest.mark.timeout(30)
-def test_provisioning_creates_default_content_when_missing(
+def test_provisioning_creates_link_skills_script_when_missing(
     temp_git_repo: Path,
     temp_host_dir: Path,
 ) -> None:
-    """Verify that provisioning writes default content files when they don't exist."""
+    """Verify that provisioning writes link_skills.sh when it doesn't exist."""
     host = StubHost(
         host_dir=temp_host_dir,
         command_results={"test -f": StubCommandResult(success=False)},
         execute_mkdir=True,
     )
 
-    written_paths: list[tuple[Path, str]] = []
-    original_write = host.write_text_file
+    provision_link_skills_script_file(cast(Any, host), temp_git_repo, _DEFAULT_PROVISIONING)
 
-    def tracking_write(path: Path, content: str) -> None:
-        written_paths.append((path, content))
-        original_write(path, content)
-
-    host.write_text_file = tracking_write  # type: ignore[assignment]
-
-    provision_default_content(cast(Any, host), temp_git_repo, _DEFAULT_PROVISIONING)
-
-    written_path_strings = [str(p) for p, _ in written_paths]
-
-    assert any("GLOBAL.md" in p for p in written_path_strings), "Expected GLOBAL.md to be written"
-    assert any("thinking/PROMPT.md" in p for p in written_path_strings), "Expected thinking/PROMPT.md to be written"
-    assert any("talking/PROMPT.md" in p for p in written_path_strings), "Expected talking/PROMPT.md to be written"
-    assert any("skills/delegate-task/SKILL.md" in p for p in written_path_strings), (
-        "Expected shared skills to be written"
-    )
-    assert any("thinking/skills/mark-events-handled/SKILL.md" in p for p in written_path_strings), (
-        "Expected thinking-specific skills to be written"
-    )
+    written_path_strings = [str(p) for p, _ in host.written_text_files]
+    assert any("link_skills.sh" in p for p in written_path_strings), "Expected link_skills.sh to be written"
 
 
 @pytest.mark.timeout(30)
-def test_provisioning_does_not_overwrite_existing_content(
+def test_provisioning_does_not_overwrite_existing_link_skills_script(
     temp_git_repo: Path,
     temp_host_dir: Path,
 ) -> None:
-    """Verify that provisioning does not overwrite files that already exist."""
+    """Verify that provisioning does not overwrite link_skills.sh if it already exists."""
     host = StubHost(host_dir=temp_host_dir)
 
-    provision_default_content(cast(Any, host), temp_git_repo, _DEFAULT_PROVISIONING)
+    provision_link_skills_script_file(cast(Any, host), temp_git_repo, _DEFAULT_PROVISIONING)
 
     assert len(host.written_text_files) == 0, "Should not overwrite existing files"
 
@@ -520,28 +502,40 @@ print(json.dumps({{
 
 
 def _write_stop_hook_script(tmp_path: Path) -> Path:
-    """Write the stop hook script to tmp_path, patching /tmp references to use tmp_path."""
+    """Write the stop hook script to tmp_path for testing.
+
+    Sets MNG_AGENT_STATE_DIR to tmp_path so the script reads from
+    tmp_path/mind/event_batches/ and tmp_path/events/handled_events/.
+    """
     from imbue.mng_claude_mind.provisioning import _STOP_HOOK_SCRIPT
 
-    patched = _STOP_HOOK_SCRIPT.replace("/tmp/", f"{tmp_path}/")
+    # Wrap the script to export MNG_AGENT_STATE_DIR, replacing the original shebang
+    body = _STOP_HOOK_SCRIPT.split("\n", 1)[1]
+    wrapped = f"#!/usr/bin/env bash\nexport MNG_AGENT_STATE_DIR={tmp_path}\n{body}"
     script_path = tmp_path / "on_stop_prevent_unhandled_events.sh"
-    script_path.write_text(patched)
+    script_path.write_text(wrapped)
     script_path.chmod(0o755)
     return script_path
 
 
 @pytest.mark.timeout(10)
 def test_stop_hook_script_exits_2_when_unhandled_events(tmp_path: Path) -> None:
-    """The stop hook script should exit 2 when events exist that are not in handled_event_ids."""
+    """The stop hook script should exit 2 when events exist that are not handled."""
     script = _write_stop_hook_script(tmp_path)
 
-    (tmp_path / "test.events").write_text(
+    batches_dir = tmp_path / "mind" / "event_batches"
+    batches_dir.mkdir(parents=True)
+    (batches_dir / "test.jsonl").write_text(
         '{"event_id":"evt-1","source":"messages"}\n{"event_id":"evt-2","source":"messages"}\n'
     )
-    (tmp_path / "handled_event_ids").write_text("evt-1\n")
+
+    handled_dir = tmp_path / "events" / "handled_events"
+    handled_dir.mkdir(parents=True)
+    (handled_dir / "events.jsonl").write_text('{"handled_event_id":"evt-1"}\n')
 
     result = subprocess.run([str(script)], capture_output=True, text=True, timeout=5)
     assert result.returncode == 2
+    assert "evt-2" in result.stderr
 
 
 @pytest.mark.timeout(10)
@@ -549,10 +543,15 @@ def test_stop_hook_script_exits_0_when_all_handled(tmp_path: Path) -> None:
     """The stop hook script should exit 0 when all events are handled."""
     script = _write_stop_hook_script(tmp_path)
 
-    (tmp_path / "test.events").write_text(
+    batches_dir = tmp_path / "mind" / "event_batches"
+    batches_dir.mkdir(parents=True)
+    (batches_dir / "test.jsonl").write_text(
         '{"event_id":"evt-1","source":"messages"}\n{"event_id":"evt-2","source":"messages"}\n'
     )
-    (tmp_path / "handled_event_ids").write_text("evt-1\nevt-2\n")
+
+    handled_dir = tmp_path / "events" / "handled_events"
+    handled_dir.mkdir(parents=True)
+    (handled_dir / "events.jsonl").write_text('{"handled_event_id":"evt-1"}\n{"handled_event_id":"evt-2"}\n')
 
     result = subprocess.run([str(script)], capture_output=True, text=True, timeout=5)
     assert result.returncode == 0
@@ -560,8 +559,32 @@ def test_stop_hook_script_exits_0_when_all_handled(tmp_path: Path) -> None:
 
 @pytest.mark.timeout(10)
 def test_stop_hook_script_exits_0_when_no_events(tmp_path: Path) -> None:
-    """The stop hook script should exit 0 when no .events files exist."""
+    """The stop hook script should exit 0 when no event batch files exist."""
     script = _write_stop_hook_script(tmp_path)
+
+    # Create the batches dir but leave it empty
+    (tmp_path / "mind" / "event_batches").mkdir(parents=True)
+
+    result = subprocess.run([str(script)], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0
+
+
+@pytest.mark.timeout(10)
+def test_stop_hook_script_reads_rotated_events_file(tmp_path: Path) -> None:
+    """The stop hook script should read handled events from events.jsonl.1 (rotated file)."""
+    script = _write_stop_hook_script(tmp_path)
+
+    batches_dir = tmp_path / "mind" / "event_batches"
+    batches_dir.mkdir(parents=True)
+    (batches_dir / "test.jsonl").write_text(
+        '{"event_id":"evt-1","source":"messages"}\n{"event_id":"evt-2","source":"messages"}\n'
+    )
+
+    handled_dir = tmp_path / "events" / "handled_events"
+    handled_dir.mkdir(parents=True)
+    # evt-1 in rotated file, evt-2 in current file
+    (handled_dir / "events.jsonl.1").write_text('{"handled_event_id":"evt-1"}\n')
+    (handled_dir / "events.jsonl").write_text('{"handled_event_id":"evt-2"}\n')
 
     result = subprocess.run([str(script)], capture_output=True, text=True, timeout=5)
     assert result.returncode == 0
@@ -571,13 +594,13 @@ def test_stop_hook_script_exits_0_when_no_events(tmp_path: Path) -> None:
 
 
 def _write_link_skills_script(tmp_path: Path) -> Path:
-    """Write the link_skills.sh script from defaults to tmp_path and make it executable."""
+    """Write the link_skills.sh script from resources to tmp_path and make it executable."""
     import importlib.resources
 
-    from imbue.mng_mind import defaults as defaults_package
+    from imbue.mng_mind import resources as resources_package
 
-    defaults_root = importlib.resources.files(defaults_package)
-    script_content = (defaults_root / "link_skills.sh").read_text()
+    resources_root = importlib.resources.files(resources_package)
+    script_content = (resources_root / "link_skills.sh").read_text()
     script_path = tmp_path / "link_skills.sh"
     script_path.write_text(script_content)
     script_path.chmod(0o755)

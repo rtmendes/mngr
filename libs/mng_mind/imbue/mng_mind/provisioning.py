@@ -1,16 +1,13 @@
-"""Mind-specific provisioning functions for uploading default content.
+"""Mind-specific provisioning functions.
 
-Provides provisioning for mind defaults (GLOBAL.md, role prompts, skills)
-by uploading the entire defaults/ directory tree to the host. Only files
-that do not already exist on the host are written, preserving any
-customizations the user has made.
+Provides provisioning for the link_skills.sh script, which symlinks
+shared top-level skills into role-specific skill directories.
 """
 
 from __future__ import annotations
 
 import importlib.resources
 import shlex
-from importlib.abc import Traversable
 from pathlib import Path
 
 from loguru import logger
@@ -19,16 +16,21 @@ from imbue.imbue_common.logging import log_span
 from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng_llm.data_types import ProvisioningSettings
 from imbue.mng_llm.provisioning import execute_with_timing
-from imbue.mng_mind import defaults as defaults_package
+from imbue.mng_mind import resources as resources_package
 
 
-def _write_default_if_missing(
+def provision_link_skills_script_file(
     host: OnlineHostInterface,
-    target_path: Path,
-    content: str,
+    work_dir: Path,
     settings: ProvisioningSettings,
 ) -> None:
-    """Write a default file to the host if the target doesn't already exist."""
+    """Write link_skills.sh to the work directory if it doesn't already exist.
+
+    This writes the script that symlinks shared top-level skills into
+    role-specific skill directories. Only writes if the file is missing
+    -- existing files are never overwritten.
+    """
+    target_path = work_dir / "link_skills.sh"
     check = execute_with_timing(
         host,
         f"test -f {shlex.quote(str(target_path))}",
@@ -37,8 +39,12 @@ def _write_default_if_missing(
         label="file check",
     )
     if check.success:
-        logger.debug("Default file already exists, skipping: {}", target_path)
+        logger.debug("link_skills.sh already exists, skipping: {}", target_path)
         return
+
+    resources_root = importlib.resources.files(resources_package)
+    script_resource = resources_root / "link_skills.sh"
+    content = script_resource.read_text()
 
     execute_with_timing(
         host,
@@ -48,53 +54,5 @@ def _write_default_if_missing(
         label="mkdir",
     )
 
-    with log_span("Writing default content: {}", target_path):
+    with log_span("Writing link_skills.sh: {}", target_path):
         host.write_text_file(target_path, content)
-
-
-def _iter_defaults(base: Traversable, prefix: str = "") -> list[tuple[str, str]]:
-    """Collect all default files from the traversable directory tree.
-
-    Returns a sorted list of (relative_path, content) pairs for all files
-    in the defaults tree. Skips Python infrastructure files (__init__.py,
-    __pycache__).
-    """
-    results: list[tuple[str, str]] = []
-    for item in base.iterdir():
-        if item.name.startswith("__"):
-            continue
-        relative = f"{prefix}{item.name}" if not prefix else f"{prefix}/{item.name}"
-        if item.is_file():
-            results.append((relative, item.read_text()))
-        elif item.is_dir():
-            results.extend(_iter_defaults(item, relative))
-    results.sort(key=lambda pair: pair[0])
-    return results
-
-
-def provision_default_content(
-    host: OnlineHostInterface,
-    work_dir: Path,
-    settings: ProvisioningSettings,
-) -> None:
-    """Write default content files to the work directory if they don't already exist.
-
-    Walks the entire defaults/ directory tree and uploads all files that
-    are missing on the host. This populates sensible defaults for:
-    - GLOBAL.md (shared project instructions for all agents)
-    - skills/<name>/SKILL.md (shared skills available to all roles)
-    - link_skills.sh (script to symlink shared skills into role directories)
-    - talking/PROMPT.md (talking agent prompt, used as llm system prompt)
-    - thinking/PROMPT.md (primary/inner monologue agent prompt)
-    - thinking/skills/<name>/SKILL.md (thinking-specific skills)
-    - working/PROMPT.md (working agent prompt)
-    - verifying/PROMPT.md (verifying agent prompt)
-
-    Only writes files that are missing -- existing files are never overwritten.
-    This allows fresh deployments to work out of the box while preserving
-    any customizations the user has already made.
-    """
-    defaults_root = importlib.resources.files(defaults_package)
-    for relative_path, content in _iter_defaults(defaults_root):
-        target_path = work_dir / relative_path
-        _write_default_if_missing(host, target_path, content, settings)
