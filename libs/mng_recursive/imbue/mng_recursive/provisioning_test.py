@@ -47,7 +47,12 @@ def _make_mock_mng_ctx(
     plugin_config: RecursivePluginConfig | None = None,
     concurrency_group: ConcurrencyGroup | None = None,
 ) -> MagicMock:
-    """Create a mock MngContext."""
+    """Create a mock MngContext.
+
+    If concurrency_group is provided, it will be used for the mock's
+    concurrency_group attribute. This is required for tests that exercise
+    code paths using ConcurrencyGroupExecutor (e.g. _upload_deploy_files).
+    """
     ctx = MagicMock()
     resolved_config = plugin_config if plugin_config is not None else RecursivePluginConfig()
     ctx.get_plugin_config.return_value = resolved_config
@@ -90,10 +95,9 @@ def test_resolve_remote_path_relative() -> None:
 # --- Upload tests ---
 
 
-def test_upload_deploy_files_with_path_source(tmp_path: Path, test_concurrency_group: ConcurrencyGroup) -> None:
+def test_upload_deploy_files_with_path_source(tmp_path: Path) -> None:
     """Files with Path sources should be read and uploaded."""
     host = _make_mock_host()
-    ctx = _make_mock_mng_ctx(concurrency_group=test_concurrency_group)
     source_file = tmp_path / "config.toml"
     source_file.write_text("key = 'value'")
 
@@ -101,7 +105,8 @@ def test_upload_deploy_files_with_path_source(tmp_path: Path, test_concurrency_g
         Path("~/.mng/config.toml"): source_file,
     }
 
-    with ctx.concurrency_group:
+    with ConcurrencyGroup(name="test") as cg:
+        ctx = _make_mock_mng_ctx(concurrency_group=cg)
         count = _upload_deploy_files(host, deploy_files, "/home/testuser", ctx)
 
     assert count == 1
@@ -112,15 +117,15 @@ def test_upload_deploy_files_with_path_source(tmp_path: Path, test_concurrency_g
     )
 
 
-def test_upload_deploy_files_with_string_source(test_concurrency_group: ConcurrencyGroup) -> None:
+def test_upload_deploy_files_with_string_source() -> None:
     """Files with string sources should be uploaded directly."""
     host = _make_mock_host()
-    ctx = _make_mock_mng_ctx(concurrency_group=test_concurrency_group)
     deploy_files: dict[Path, Path | str] = {
         Path("~/.mng/config.toml"): 'key = "value"',
     }
 
-    with ctx.concurrency_group:
+    with ConcurrencyGroup(name="test") as cg:
+        ctx = _make_mock_mng_ctx(concurrency_group=cg)
         count = _upload_deploy_files(host, deploy_files, "/home/testuser", ctx)
 
     assert count == 1
@@ -130,15 +135,15 @@ def test_upload_deploy_files_with_string_source(test_concurrency_group: Concurre
     )
 
 
-def test_upload_deploy_files_skips_missing_path(tmp_path: Path, test_concurrency_group: ConcurrencyGroup) -> None:
+def test_upload_deploy_files_skips_missing_path(tmp_path: Path) -> None:
     """Missing Path source files should be skipped."""
     host = _make_mock_host()
-    ctx = _make_mock_mng_ctx(concurrency_group=test_concurrency_group)
     deploy_files: dict[Path, Path | str] = {
         Path("~/.mng/config.toml"): tmp_path / "nonexistent.toml",
     }
 
-    with ctx.concurrency_group:
+    with ConcurrencyGroup(name="test") as cg:
+        ctx = _make_mock_mng_ctx(concurrency_group=cg)
         count = _upload_deploy_files(host, deploy_files, "/home/testuser", ctx)
 
     assert count == 0
@@ -146,15 +151,15 @@ def test_upload_deploy_files_skips_missing_path(tmp_path: Path, test_concurrency
     host.write_text_file.assert_not_called()
 
 
-def test_upload_deploy_files_creates_parent_dirs(test_concurrency_group: ConcurrencyGroup) -> None:
+def test_upload_deploy_files_creates_parent_dirs() -> None:
     """Parent directories should be created before uploading."""
     host = _make_mock_host()
-    ctx = _make_mock_mng_ctx(concurrency_group=test_concurrency_group)
     deploy_files: dict[Path, Path | str] = {
         Path("~/.mng/profiles/abc/settings.toml"): "content",
     }
 
-    with ctx.concurrency_group:
+    with ConcurrencyGroup(name="test") as cg:
+        ctx = _make_mock_mng_ctx(concurrency_group=cg)
         _upload_deploy_files(host, deploy_files, "/home/testuser", ctx)
 
     # Check that mkdir -p was called for the parent directory
@@ -530,7 +535,7 @@ def test_upload_deploy_files_raises_on_mkdir_failure() -> None:
     deploy_files: dict[Path, Path | str] = {
         Path("~/.mng/config.toml"): "content",
     }
-    with ConcurrencyGroup(name="test-upload-mkdir-fail") as cg:
+    with ConcurrencyGroup(name="test") as cg:
         ctx = _make_mock_mng_ctx(concurrency_group=cg)
         with pytest.raises(MngError, match="Failed to create director"):
             _upload_deploy_files(host, deploy_files, "/home/testuser", ctx)
