@@ -116,9 +116,7 @@ def test_load_settings_handles_corrupt_file(tmp_path: Path) -> None:
 def test_load_settings_reads_aggregation_settings(tmp_path: Path) -> None:
     write_minds_settings_toml(
         tmp_path,
-        "[watchers]\n"
-        "max_event_length = 10000\n"
-        "max_same_source_events_per_batch = 5\n",
+        "[watchers]\nmax_event_length = 10000\nmax_same_source_events_per_batch = 5\n",
     )
     settings = _load_watcher_settings(tmp_path)
     assert settings.max_event_length == 10000
@@ -1277,9 +1275,7 @@ def test_delivery_loop_stops_cleanly_on_stop_event(tmp_path: Path) -> None:
 def test_delivery_loop_aggregates_events_exceeding_batch_limit(tmp_path: Path) -> None:
     """Events from a source exceeding max_same_source_events_per_batch are aggregated."""
     state_file, events_dir, event_batches_dir, event_lists_dir = _setup_delivery_loop_dirs(tmp_path)
-    settings = _EventWatcherSettings(
-        burst_size=5, max_messages_per_minute=60, max_same_source_events_per_batch=2
-    )
+    settings = _EventWatcherSettings(burst_size=5, max_messages_per_minute=60, max_same_source_events_per_batch=2)
 
     event_buffer: list[str] = []
     buffer_lock = threading.Lock()
