@@ -17,6 +17,29 @@ class _DummyCommandClass:
     pass
 
 
+class _FakeTtydHost:
+    """Fake host for testing on_after_provisioning.
+
+    Tracks executed commands and written files. By default, all commands succeed.
+    Set ttyd_installed=False to simulate ttyd not being installed on the host.
+    """
+
+    def __init__(self, host_dir: Path, *, ttyd_installed: bool = True) -> None:
+        self.host_dir = host_dir
+        self._ttyd_installed = ttyd_installed
+        self.executed_cmds: list[str] = []
+        self.written_files: list[tuple[Path, bytes, str]] = []
+
+    def execute_command(self, cmd: str, **kwargs: Any) -> SimpleNamespace:
+        self.executed_cmds.append(cmd)
+        if "command -v ttyd" in cmd and not self._ttyd_installed:
+            return SimpleNamespace(returncode=1, success=False, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, success=True, stdout="", stderr="")
+
+    def write_file(self, path: Path, content: bytes, mode: str = "0644") -> None:
+        self.written_files.append((path, content, mode))
+
+
 def test_adds_ttyd_command_to_create() -> None:
     """Verify that the plugin adds a ttyd command when creating agents."""
     params: dict[str, Any] = {"extra_window": ()}
@@ -140,26 +163,14 @@ def test_on_after_provisioning_writes_agent_script(tmp_path: Path) -> None:
     host_dir.mkdir()
     agent_id = "test-agent-123"
 
-    written_files: list[tuple[Path, bytes, str]] = []
-    executed_cmds: list[str] = []
-
-    class FakeHost:
-        def __init__(self) -> None:
-            self.host_dir = host_dir
-
-        def execute_command(self, cmd: str, **kwargs: Any) -> SimpleNamespace:
-            executed_cmds.append(cmd)
-            return SimpleNamespace(returncode=0)
-
-        def write_file(self, path: Path, content: bytes, mode: str = "0644") -> None:
-            written_files.append((path, content, mode))
+    host = _FakeTtydHost(host_dir)
 
     on_after_provisioning(
-        agent=cast(Any, SimpleNamespace(id=agent_id)), host=cast(Any, FakeHost()), mng_ctx=cast(Any, SimpleNamespace())
+        agent=cast(Any, SimpleNamespace(id=agent_id)), host=cast(Any, host), mng_ctx=cast(Any, SimpleNamespace())
     )
 
-    assert len(written_files) == 1
-    script_path, content, mode = written_files[0]
+    assert len(host.written_files) == 1
+    script_path, content, mode = host.written_files[0]
     assert script_path == host_dir / "agents" / agent_id / "commands" / "ttyd" / "agent.sh"
     assert mode == "0755"
     assert b"#!/bin/bash" in content
@@ -171,21 +182,38 @@ def test_on_after_provisioning_creates_ttyd_directory(tmp_path: Path) -> None:
     host_dir = tmp_path / "host"
     host_dir.mkdir()
 
-    executed_cmds: list[str] = []
-
-    class FakeHost:
-        def __init__(self) -> None:
-            self.host_dir = host_dir
-
-        def execute_command(self, cmd: str, **kwargs: Any) -> SimpleNamespace:
-            executed_cmds.append(cmd)
-            return SimpleNamespace(returncode=0)
-
-        def write_file(self, path: Path, content: bytes, mode: str = "0644") -> None:
-            pass
+    host = _FakeTtydHost(host_dir)
 
     on_after_provisioning(
-        agent=cast(Any, SimpleNamespace(id="a1")), host=cast(Any, FakeHost()), mng_ctx=cast(Any, SimpleNamespace())
+        agent=cast(Any, SimpleNamespace(id="a1")), host=cast(Any, host), mng_ctx=cast(Any, SimpleNamespace())
     )
 
-    assert any("mkdir -p" in cmd and "commands/ttyd" in cmd for cmd in executed_cmds)
+    assert any("mkdir -p" in cmd and "commands/ttyd" in cmd for cmd in host.executed_cmds)
+
+
+def test_on_after_provisioning_installs_ttyd_when_missing(tmp_path: Path) -> None:
+    """Verify that on_after_provisioning installs ttyd when it is not already present."""
+    host_dir = tmp_path / "host"
+    host_dir.mkdir()
+
+    host = _FakeTtydHost(host_dir, ttyd_installed=False)
+
+    on_after_provisioning(
+        agent=cast(Any, SimpleNamespace(id="a1")), host=cast(Any, host), mng_ctx=cast(Any, SimpleNamespace())
+    )
+
+    assert any("apt-get" in cmd and "ttyd" in cmd for cmd in host.executed_cmds)
+
+
+def test_on_after_provisioning_skips_install_when_ttyd_present(tmp_path: Path) -> None:
+    """Verify that on_after_provisioning skips ttyd install when it is already present."""
+    host_dir = tmp_path / "host"
+    host_dir.mkdir()
+
+    host = _FakeTtydHost(host_dir, ttyd_installed=True)
+
+    on_after_provisioning(
+        agent=cast(Any, SimpleNamespace(id="a1")), host=cast(Any, host), mng_ctx=cast(Any, SimpleNamespace())
+    )
+
+    assert not any("apt-get" in cmd and "ttyd" in cmd for cmd in host.executed_cmds)

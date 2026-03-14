@@ -47,12 +47,7 @@ def _make_mock_mng_ctx(
     plugin_config: RecursivePluginConfig | None = None,
     concurrency_group: ConcurrencyGroup | None = None,
 ) -> MagicMock:
-    """Create a mock MngContext.
-
-    When concurrency_group is provided, uses a real ConcurrencyGroup instead
-    of a MagicMock to avoid deadlocks in tests that exercise
-    ConcurrencyGroupExecutor (which requires a real parent group).
-    """
+    """Create a mock MngContext."""
     ctx = MagicMock()
     resolved_config = plugin_config if plugin_config is not None else RecursivePluginConfig()
     ctx.get_plugin_config.return_value = resolved_config
@@ -532,12 +527,13 @@ def test_upload_deploy_files_raises_on_mkdir_failure() -> None:
     """_upload_deploy_files should raise when mkdir -p fails."""
     host = _make_mock_host()
     host.execute_command.return_value = _make_command_result(False, stderr="permission denied")
-    ctx = _make_mock_mng_ctx()
     deploy_files: dict[Path, Path | str] = {
         Path("~/.mng/config.toml"): "content",
     }
-    with pytest.raises(MngError, match="Failed to create director"):
-        _upload_deploy_files(host, deploy_files, "/home/testuser", ctx)
+    with ConcurrencyGroup(name="test-upload-mkdir-fail") as cg:
+        ctx = _make_mock_mng_ctx(concurrency_group=cg)
+        with pytest.raises(MngError, match="Failed to create director"):
+            _upload_deploy_files(host, deploy_files, "/home/testuser", ctx)
 
 
 def test_install_package_mode_raises_when_force_reinstall_also_fails() -> None:

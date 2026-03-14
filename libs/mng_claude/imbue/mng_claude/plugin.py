@@ -246,8 +246,8 @@ def _build_claude_json_for_agent(
     Used for remote hosts and deploys where all dialogs must be suppressed
     to prevent them from intercepting automated tmux input. Uses the local
     file as a base when sync_local is True and the file exists, otherwise
-    uses generated defaults. Forces bypassPermissionsModeAccepted and
-    effortCalloutDismissed.
+    uses generated defaults. Forces bypassPermissionsModeAccepted,
+    effortCalloutDismissed, and hasAcknowledgedCostThreshold.
 
     Returns the dict so callers can do further modifications (e.g. keychain merge)
     before serializing.
@@ -261,6 +261,7 @@ def _build_claude_json_for_agent(
         data = _generate_claude_json(version, current_time=current_time)
     data["bypassPermissionsModeAccepted"] = True
     data["effortCalloutDismissed"] = True
+    data["hasAcknowledgedCostThreshold"] = True
     # Add trust for work_dir so Claude doesn't show the trust dialog
     # (which would intercept tmux send-keys input):
     projects = data.setdefault("projects", {})
@@ -689,13 +690,21 @@ class DialogIndicator(FrozenModel, ABC):
 
     @abstractmethod
     def get_match_string(self) -> str:
-        """Return the string to look for in the tmux pane content."""
+        """Return the primary string to look for in the tmux pane content."""
         ...
 
     @abstractmethod
     def get_description(self) -> str:
         """Return a human-readable description for error messages."""
         ...
+
+    def matches(self, content: str) -> bool:
+        """Check whether this dialog is present in the given pane content.
+
+        Default implementation checks for get_match_string() in the content.
+        Subclasses can override for more complex matching (e.g. multiple strings).
+        """
+        return self.get_match_string() in content
 
 
 class DialogDetectedError(SendMessageError):
@@ -748,6 +757,27 @@ class EffortCalloutIndicator(DialogIndicator):
 
     def get_description(self) -> str:
         return "effort callout"
+
+
+class CostThresholdDialogIndicator(DialogIndicator):
+    """Detects the Claude Code cost threshold dialog shown when API spending reaches a threshold.
+
+    This dialog blocks all input and must be acknowledged. It is detected by the
+    presence of both the spending guidance text and the claude code docs URL.
+    """
+
+    _MATCH_SPENDING_TEXT: str = "Learn more about how to monitor your spending:"
+    _MATCH_DOCS_URL: str = "https://code.claude.com/"
+
+    def get_match_string(self) -> str:
+        return self._MATCH_SPENDING_TEXT
+
+    def get_description(self) -> str:
+        return "cost threshold dialog"
+
+    def matches(self, content: str) -> bool:
+        """Check for both the spending text and the docs URL in the pane content."""
+        return self._MATCH_SPENDING_TEXT in content and self._MATCH_DOCS_URL in content
 
 
 class ClaudeAgent(BaseAgent):
@@ -820,13 +850,14 @@ class ClaudeAgent(BaseAgent):
         CustomApiKeyDialogIndicator(),
         ThemeSelectionIndicator(),
         EffortCalloutIndicator(),
+        CostThresholdDialogIndicator(),
     )
 
     def _preflight_send_message(self, tmux_target: str) -> None:
         """Check for blocking dialogs before sending a message.
 
         Checks the permissions_waiting file (set by the PermissionRequest hook)
-        and captures the tmux pane for other dialog indicators (trust, theme, effort).
+        and captures the tmux pane for known dialog indicators.
         Raises DialogDetectedError if any are found.
         """
         if self._check_file_exists(self._get_agent_dir() / "permissions_waiting"):
@@ -837,8 +868,7 @@ class ClaudeAgent(BaseAgent):
             return
 
         for indicator in self._DIALOG_INDICATORS:
-            match_string = indicator.get_match_string()
-            if match_string in content:
+            if indicator.matches(content):
                 raise DialogDetectedError(str(self.name), indicator.get_description())
 
     def wait_for_ready_signal(
@@ -1259,8 +1289,9 @@ class ClaudeAgent(BaseAgent):
 
         Starts from the user's global ~/.claude.json to preserve all existing
         dialog states (trust, effort callout, bypass permissions, onboarding).
-        Only adds per-agent identity: worktree source project config and
-        primaryApiKey. Falls back to generated defaults if no global config exists.
+        Adds per-agent identity (worktree source project config, primaryApiKey)
+        and forces hasAcknowledgedCostThreshold to suppress the cost threshold
+        dialog. Falls back to generated defaults if no global config exists.
 
         Trust for work_dir is added by extending from the source directory
         (for worktree/copy modes), by trust_working_directory config, or
@@ -1296,6 +1327,9 @@ class ClaudeAgent(BaseAgent):
         # trust_working_directory: auto-add trust for work_dir
         if config.trust_working_directory:
             projects.setdefault(str(self.work_dir.resolve()), {})["hasTrustDialogAccepted"] = True
+
+        # Always suppress the cost threshold dialog (it blocks all input)
+        data["hasAcknowledgedCostThreshold"] = True
 
         return data
 
@@ -1520,6 +1554,7 @@ def _generate_claude_json(version: str | None, current_time: datetime | None = N
         "officialMarketplaceAutoInstallAttempted": True,
         "officialMarketplaceAutoInstalled": True,
         "autoUpdatesProtectedForNative": True,
+        "hasAcknowledgedCostThreshold": True,
     }
 
 
