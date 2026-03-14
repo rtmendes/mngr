@@ -111,7 +111,7 @@ The `ClaudeMindAgent.provision()` method transforms the mind repo into a running
 1. Loads settings from `minds.toml`
 2. Validates role constraints (e.g., `talking/` cannot have `.claude/` or skills)
 3. Installs the `llm` toolchain (`llm`, `llm-anthropic`, `llm-live-chat`)
-4. Provisions default content (GLOBAL.md, role prompts, role configs) for any missing files
+4. Provisions the `link_skills.sh` script for symlinking shared skills into role directories
 5. Creates symlinks (`CLAUDE.md` -> `GLOBAL.md`, `<role>/CLAUDE.local.md` -> `<role>/PROMPT.md`)
 6. Configures hooks (readiness detection) and autoMemoryDirectory in `<role>/.claude/settings.local.json`
 7. Deploys supporting service scripts and chat utilities to the host

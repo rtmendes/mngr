@@ -88,7 +88,7 @@ class ClaudeMindAgent(ClaudeAgent):
 
     During provisioning:
     - Installs the llm toolchain (via mng_llm plugin)
-    - Provisions default content (via mng_mind plugin)
+    - Provisions the link_skills.sh script (via mng_mind plugin)
     - Provisions Claude-specific settings.json and skills symlink
     - Sets autoMemoryDirectory to point to per-role memory/
 

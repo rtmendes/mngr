@@ -4,10 +4,9 @@ Common code for mind-based agents in mng. This plugin provides the shared infras
 
 ## What this plugin provides
 
-- **Default content**: Prompts, skills, and configuration files for mind roles (thinking, talking, working, verifying)
 - **Event watcher**: Streams events and delivers them to the primary agent via `mng message` with debouncing and rate limiting
 - **Common data types**: Event types, watcher settings, and other shared types used across mind plugins
-- **Provisioning**: Functions for uploading default content to hosts
+- **Provisioning**: Functions for provisioning the `link_skills.sh` script (symlinks shared top-level skills into role directories)
 
 ## What this plugin does NOT provide
 

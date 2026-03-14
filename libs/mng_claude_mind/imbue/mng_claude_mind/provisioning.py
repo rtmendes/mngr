@@ -248,7 +248,7 @@ for f in "$handled_dir/events.jsonl" "$handled_dir/events.jsonl.1"; do
 $(tail -n 1000 "$f" | jq -r '.handled_event_id // empty')"
     fi
 done
-handled_ids=$(echo "$handled_ids" | grep -v '^$' | sort -u)
+handled_ids=$(echo "$handled_ids" | { grep -v '^$' || true; } | sort -u)
 
 unhandled=$(comm -23 <(echo "$all_ids") <(echo "$handled_ids"))
 

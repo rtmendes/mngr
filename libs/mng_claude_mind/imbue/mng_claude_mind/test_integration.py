@@ -590,6 +590,24 @@ def test_stop_hook_script_reads_rotated_events_file(tmp_path: Path) -> None:
     assert result.returncode == 0
 
 
+@pytest.mark.timeout(10)
+def test_stop_hook_script_exits_2_when_nothing_handled(tmp_path: Path) -> None:
+    """The stop hook script should exit 2 when events exist but nothing has been handled."""
+    script = _write_stop_hook_script(tmp_path)
+
+    batches_dir = tmp_path / "mind" / "event_batches"
+    batches_dir.mkdir(parents=True)
+    (batches_dir / "test.jsonl").write_text(
+        '{"event_id":"evt-1","source":"messages"}\n{"event_id":"evt-2","source":"messages"}\n'
+    )
+
+    # No handled_events directory or files at all
+    result = subprocess.run([str(script)], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 2
+    assert "evt-1" in result.stderr
+    assert "evt-2" in result.stderr
+
+
 # -- link_skills.sh integration tests --
 
 
