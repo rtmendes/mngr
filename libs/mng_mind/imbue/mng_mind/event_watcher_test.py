@@ -12,11 +12,11 @@ from typing import Any
 
 import pytest
 
+from imbue.mng_llm.conftest import create_mind_conversations_table_in_test_db
+from imbue.mng_llm.conftest import write_conversation_to_db
+from imbue.mng_llm.conftest import write_minds_settings_toml
 from imbue.mng_mind import event_watcher as event_watcher_module
 from imbue.mng_mind.conftest import EventWatcherSubprocessCapture
-from imbue.mng_mind.conftest import create_mind_conversations_table_in_test_db
-from imbue.mng_mind.conftest import write_conversation_to_db
-from imbue.mng_mind.conftest import write_minds_settings_toml
 from imbue.mng_mind.data_types import WatcherSettings
 from imbue.mng_mind.event_watcher import DEFAULT_CEL_FILTER
 from imbue.mng_mind.event_watcher import _CHAT_PAIR_TIMEOUT_SECONDS
