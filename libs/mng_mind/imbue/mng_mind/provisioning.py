@@ -82,9 +82,11 @@ def provision_default_content(
     Walks the entire defaults/ directory tree and uploads all files that
     are missing on the host. This populates sensible defaults for:
     - GLOBAL.md (shared project instructions for all agents)
+    - skills/<name>/SKILL.md (shared skills available to all roles)
+    - link_skills.sh (script to symlink shared skills into role directories)
     - talking/PROMPT.md (talking agent prompt, used as llm system prompt)
     - thinking/PROMPT.md (primary/inner monologue agent prompt)
-    - thinking/skills/<name>/SKILL.md (skills for the thinking agent)
+    - thinking/skills/<name>/SKILL.md (thinking-specific skills)
     - working/PROMPT.md (working agent prompt)
     - verifying/PROMPT.md (verifying agent prompt)
 

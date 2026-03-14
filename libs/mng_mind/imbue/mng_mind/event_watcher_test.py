@@ -40,6 +40,7 @@ from imbue.mng_mind.event_watcher import _send_chat_notification
 from imbue.mng_mind.event_watcher import _send_message
 from imbue.mng_mind.event_watcher import _separate_chat_events
 from imbue.mng_mind.event_watcher import _should_skip_for_catchup
+from imbue.mng_mind.event_watcher import _write_events_file
 from imbue.mng_mind.event_watcher import _write_notification_event
 
 # -- Controllable clock for deterministic TokenBucket tests --
@@ -409,6 +410,34 @@ def test_send_message_returns_false_on_os_error(monkeypatch: pytest.MonkeyPatch)
     assert _send_message("agent-00000000000000000000000000000001", "hello") is False
 
 
+# -- _write_events_file tests --
+
+
+def test_write_events_file_creates_file_with_jsonl_content() -> None:
+    event_lines = [
+        '{"event_id":"evt-1","timestamp":"2026-03-01T00:00:00Z"}',
+        '{"event_id":"evt-2","timestamp":"2026-03-01T00:01:00Z"}',
+    ]
+    file_path = _write_events_file(event_lines)
+    assert file_path is not None
+    assert file_path.startswith("/tmp/")
+    assert file_path.endswith(".events")
+
+    content = Path(file_path).read_text()
+    lines = content.strip().split("\n")
+    assert len(lines) == 2
+    assert json.loads(lines[0])["event_id"] == "evt-1"
+    assert json.loads(lines[1])["event_id"] == "evt-2"
+
+    # Clean up
+    Path(file_path).unlink()
+
+
+def test_write_events_file_returns_none_on_write_failure() -> None:
+    result = _write_events_file(['{"event_id":"evt-1"}'], directory="/nonexistent_dir_xyz")
+    assert result is None
+
+
 # -- _deliver_batch tests --
 
 
@@ -452,8 +481,13 @@ def test_deliver_batch_updates_state_on_success(
     # Verify rate tracker recorded the send
     assert rate_tracker.messages_per_minute() == 1.0
 
-    # Verify mng message was called
+    # Verify mng message was called with a file path reference
     assert len(mock_subprocess_success.calls) == 1
+    cmd = mock_subprocess_success.calls[0][0]
+    # The message should reference a /tmp/*.events file
+    message_arg = cmd[cmd.index("-m") + 1]
+    assert "Please process all events in /tmp/" in message_arg
+    assert message_arg.endswith(".events")
 
 
 def test_deliver_batch_puts_events_back_on_failure(

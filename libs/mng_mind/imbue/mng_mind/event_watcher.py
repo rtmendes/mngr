@@ -4,12 +4,16 @@
 Streams events from ``mng events --follow --filter`` and delivers them
 to the primary agent via ``mng message`` with debouncing and rate limiting.
 
+Events are batched and written to temporary files (``/tmp/<uuid>.events``),
+and the agent receives a message pointing to that file rather than the
+events themselves.
+
 The watcher delegates all event discovery, deduplication, and filtering
 to the ``mng events`` command (run as a subprocess). This script handles:
 
 - At-least-once delivery with minimal duplicates on restart
 - Token-bucket rate limiting (burst + sustained rate)
-- Delivery envelope formatting (time since last message, rate warnings)
+- File-based event delivery (events written to /tmp/<uuid>.events)
 - Subprocess lifecycle (restart on exit)
 
 Usage: mng mind-event-watcher
@@ -616,6 +620,22 @@ def _compute_rate_warning(
     return None
 
 
+def _write_events_file(event_lines: list[str], directory: str = "/tmp") -> str | None:
+    """Write event lines to a temporary JSONL file.
+
+    Returns the file path on success, or None on failure.
+    """
+    file_path = f"{directory}/{uuid4().hex}.events"
+    try:
+        with open(file_path, "w") as f:
+            for line in event_lines:
+                f.write(line + "\n")
+        return file_path
+    except OSError as exc:
+        logger.error("Failed to write events file {}: {}", file_path, exc)
+        return None
+
+
 def _deliver_batch(
     deliverable_lines: list[str],
     last_parsed: dict[str, Any],
@@ -628,13 +648,24 @@ def _deliver_batch(
     time_since_last: float | None,
     rate_warning: str | None,
 ) -> bool:
-    """Format, send, and persist a batch of events. Returns True on success.
+    """Write events to a file and send the file path to the agent. Returns True on success.
+
+    Events are written to /tmp/<uuid>.events as JSONL, then the agent
+    receives a message pointing to that file.
 
     On failure, puts events back in the buffer for later retry.
     The caller is responsible for backoff and notification logic.
     """
-    message = _format_delivery_message(deliverable_lines, time_since_last, rate_warning)
     logger.info("Sending {} event(s) to '{}'", len(deliverable_lines), agent_id)
+
+    events_file_path = _write_events_file(deliverable_lines)
+    if events_file_path is None:
+        logger.warning("Failed to write events file, will retry")
+        with buffer_lock:
+            event_buffer[0:0] = deliverable_lines
+        return False
+
+    message = f"Please process all events in {events_file_path}"
 
     if _send_message(agent_id, message):
         rate_tracker.record_send()
@@ -642,7 +673,7 @@ def _deliver_batch(
         delivery_state.last_timestamp = last_parsed.get("timestamp", "")
         delivery_state.last_delivery_monotonic = time.monotonic()
         _save_delivery_state(state_file, delivery_state)
-        logger.info("Delivered {} event(s), state updated", len(deliverable_lines))
+        logger.info("Delivered {} event(s) via {}, state updated", len(deliverable_lines), events_file_path)
         return True
 
     logger.warning("Failed to deliver {} event(s), will retry", len(deliverable_lines))

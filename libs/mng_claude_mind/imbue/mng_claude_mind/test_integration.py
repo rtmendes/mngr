@@ -185,8 +185,11 @@ def test_provisioning_creates_default_content_when_missing(
     assert any("GLOBAL.md" in p for p in written_path_strings), "Expected GLOBAL.md to be written"
     assert any("thinking/PROMPT.md" in p for p in written_path_strings), "Expected thinking/PROMPT.md to be written"
     assert any("talking/PROMPT.md" in p for p in written_path_strings), "Expected talking/PROMPT.md to be written"
-    assert any("thinking/skills/send-message-to-user/SKILL.md" in p for p in written_path_strings), (
-        "Expected skills to be written"
+    assert any("skills/delegate-task/SKILL.md" in p for p in written_path_strings), (
+        "Expected shared skills to be written"
+    )
+    assert any("thinking/skills/mark-events-handled/SKILL.md" in p for p in written_path_strings), (
+        "Expected thinking-specific skills to be written"
     )
 
 

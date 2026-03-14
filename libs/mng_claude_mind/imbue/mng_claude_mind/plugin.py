@@ -22,8 +22,10 @@ from imbue.mng_claude.claude_config import merge_hooks_config
 from imbue.mng_claude.plugin import ClaudeAgent
 from imbue.mng_claude.plugin import ClaudeAgentConfig
 from imbue.mng_claude_mind.provisioning import build_memory_sync_hooks_config
+from imbue.mng_claude_mind.provisioning import build_stop_hook_config
 from imbue.mng_claude_mind.provisioning import create_mind_symlinks
 from imbue.mng_claude_mind.provisioning import provision_claude_settings
+from imbue.mng_claude_mind.provisioning import run_link_skills_script
 from imbue.mng_claude_mind.provisioning import setup_memory_directory
 from imbue.mng_claude_mind.settings import load_settings_from_host
 from imbue.mng_llm.plugin import set_llm_model_env_var
@@ -120,7 +122,7 @@ class ClaudeMindAgent(ClaudeAgent):
         active_role: str,
         role_dir_abs: str,
     ) -> None:
-        """Write all hooks (readiness + memory sync) to the active role's settings.local.json."""
+        """Write all hooks (readiness + memory sync + stop) to the active role's settings.local.json."""
         settings_path = self.work_dir / active_role / ".claude" / "settings.local.json"
 
         existing_settings: dict[str, Any] = {}
@@ -137,6 +139,11 @@ class ClaudeMindAgent(ClaudeAgent):
 
         memory_config = build_memory_sync_hooks_config(role_dir_abs)
         merged = merge_hooks_config(existing_settings, memory_config)
+        if merged is not None:
+            existing_settings = merged
+
+        stop_config = build_stop_hook_config()
+        merged = merge_hooks_config(existing_settings, stop_config)
         if merged is not None:
             existing_settings = merged
 
@@ -186,13 +193,14 @@ class ClaudeMindAgent(ClaudeAgent):
         1. Per-agent mng installation (via mng_recursive, before super())
         2. Settings loading from minds.toml
         3. llm + plugin installation (via mng_llm)
-        4. Default content (GLOBAL.md, role prompts, skills) via mng_mind
-        5. Claude-specific settings.json injection
-        6. Symlinks (CLAUDE.md -> GLOBAL.md, CLAUDE.local.md -> PROMPT.md, .claude/skills -> skills)
-        7. All hooks (readiness + memory sync) written to <role>/.claude/settings.local.json
-        8. Supporting service scripts and chat utilities (via mng_llm)
-        9. LLM tool scripts for conversation context (via mng_llm)
-        10. Per-role memory directory setup
+        4. Default content (GLOBAL.md, role prompts, shared + role skills) via mng_mind
+        5. Symlink shared skills into active role's skills directory
+        6. Claude-specific settings.json injection
+        7. Symlinks (CLAUDE.md -> GLOBAL.md, CLAUDE.local.md -> PROMPT.md, .claude/skills -> skills)
+        8. All hooks (readiness + memory sync + stop) written to <role>/.claude/settings.local.json
+        9. Supporting service scripts and chat utilities (via mng_llm)
+        10. LLM tool scripts for conversation context (via mng_llm)
+        11. Per-role memory directory setup
         """
 
         provision_mng_for_agent(agent=self, host=host, mng_ctx=mng_ctx)
@@ -209,6 +217,7 @@ class ClaudeMindAgent(ClaudeAgent):
             install_llm_toolchain(host, provisioning)
 
         provision_default_content(host, self.work_dir, provisioning)
+        run_link_skills_script(host, self.work_dir, active_role, provisioning)
         provision_claude_settings(host, self.work_dir, active_role, provisioning)
         create_mind_symlinks(host, self.work_dir, active_role, provisioning)
 

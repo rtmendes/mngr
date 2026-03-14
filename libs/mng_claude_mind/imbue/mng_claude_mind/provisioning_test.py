@@ -252,12 +252,13 @@ def test_provision_default_content_writes_thinking_prompt() -> None:
     assert any("thinking/PROMPT.md" in p for p in written_paths)
 
 
-def test_provision_default_content_writes_skills_to_thinking() -> None:
+def test_provision_default_content_writes_skills() -> None:
     host = StubHost(command_results={"test -f": StubCommandResult(success=False)})
     provision_default_content(cast(Any, host), Path("/test/work"), _DEFAULT_PROVISIONING)
 
     written_paths = [str(p) for p, _ in host.written_text_files]
-    assert any("thinking/skills/send-message-to-user/SKILL.md" in p for p in written_paths)
+    assert any("skills/delegate-task/SKILL.md" in p for p in written_paths)
+    assert any("thinking/skills/mark-events-handled/SKILL.md" in p for p in written_paths)
 
 
 def test_provision_supporting_services_creates_commands_and_ttyd_dirs() -> None:

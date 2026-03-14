@@ -1,7 +1,8 @@
 """Claude-specific provisioning functions for the claude-mind agent type.
 
 Provides Claude Code-specific provisioning: settings.json injection,
-.claude/skills symlink, memory directory setup, and hook configuration.
+.claude/skills symlink, memory directory setup, hook configuration,
+skill symlinking, and stop hook for unhandled event checking.
 
 Generic mind provisioning (default content, prompts, skills) is provided
 by the mng_mind plugin.
@@ -199,6 +200,96 @@ def setup_memory_directory(
         )
         if not result.success:
             raise RuntimeError(f"Failed to sync memory directory: {result.stderr}")
+
+
+def run_link_skills_script(
+    host: OnlineHostInterface,
+    work_dir: Path,
+    active_role: str,
+    settings: ProvisioningSettings,
+) -> None:
+    """Make link_skills.sh executable and run it for the active role.
+
+    The script symlinks each top-level skill into the role's skills
+    directory. If a skill already exists in the role folder, the script
+    emits a warning and skips it.
+    """
+    script_path = work_dir / "link_skills.sh"
+    check = execute_with_timing(
+        host,
+        f"test -f {shlex.quote(str(script_path))}",
+        hard_timeout=settings.fs_hard_timeout_seconds,
+        warn_threshold=settings.fs_warn_threshold_seconds,
+        label="link_skills check",
+    )
+    if not check.success:
+        logger.debug("link_skills.sh not found at {}, skipping", script_path)
+        return
+
+    with log_span("Running link_skills.sh for role '{}'", active_role):
+        chmod_result = execute_with_timing(
+            host,
+            f"chmod +x {shlex.quote(str(script_path))}",
+            hard_timeout=settings.fs_hard_timeout_seconds,
+            warn_threshold=settings.fs_warn_threshold_seconds,
+            label="chmod link_skills",
+        )
+        if not chmod_result.success:
+            logger.warning("Failed to chmod link_skills.sh: {}", chmod_result.stderr)
+            return
+
+        result = execute_with_timing(
+            host,
+            f"{shlex.quote(str(script_path))} {shlex.quote(active_role)}",
+            hard_timeout=settings.fs_hard_timeout_seconds,
+            warn_threshold=settings.fs_warn_threshold_seconds,
+            label="run link_skills",
+        )
+        if not result.success:
+            logger.warning("link_skills.sh failed: {}", result.stderr)
+        elif result.stdout:
+            logger.info("link_skills.sh output: {}", result.stdout.strip())
+
+
+# Shell command for the Stop hook that checks for unhandled events.
+# Reads all event IDs from /tmp/*.events files, compares them against
+# /tmp/handled_event_ids, and exits with code 2 if any are unhandled
+# (which blocks Claude from stopping).
+_STOP_HOOK_COMMAND: Final[str] = (
+    "if ls /tmp/*.events >/dev/null 2>&1; then "
+    "cat /tmp/*.events | jq -r '.event_id // empty' | sort -u > /tmp/_mng_check_all.tmp; "
+    "sort -u /tmp/handled_event_ids > /tmp/_mng_check_done.tmp 2>/dev/null "
+    "|| touch /tmp/_mng_check_done.tmp; "
+    "_miss=$(comm -23 /tmp/_mng_check_all.tmp /tmp/_mng_check_done.tmp); "
+    "rm -f /tmp/_mng_check_all.tmp /tmp/_mng_check_done.tmp; "
+    'if [ -n "$_miss" ]; then exit 2; fi; '
+    "fi"
+)
+
+
+def build_stop_hook_config() -> dict[str, Any]:
+    """Build Claude hooks config for checking unhandled events on stop.
+
+    Returns a hooks config dict with a Stop entry that prevents Claude
+    from stopping if there are event IDs in /tmp/*.events files that
+    have not been written to /tmp/handled_event_ids.
+
+    Exit code 2 from a Stop hook tells Claude Code to block the stop.
+    """
+    return {
+        "hooks": {
+            "Stop": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": _STOP_HOOK_COMMAND,
+                        }
+                    ],
+                }
+            ],
+        }
+    }
 
 
 def build_memory_sync_hooks_config(role_dir_abs: str) -> dict[str, Any]:
