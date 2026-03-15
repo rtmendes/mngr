@@ -140,8 +140,8 @@ def deployed_snapshot_function() -> Generator[tuple[str, str], None, None]:
     register_modal_test_volume(volume_name)
 
     try:
-        modal_iface = DirectModalInterface()
-        url = deploy_function("snapshot_and_shutdown", app_name, None, modal_iface)
+        modal_interface = DirectModalInterface()
+        url = deploy_function("snapshot_and_shutdown", app_name, None, modal_interface)
         # Warm up the function to avoid cold start timeouts in tests
         _warmup_function(url)
         yield (app_name, url)

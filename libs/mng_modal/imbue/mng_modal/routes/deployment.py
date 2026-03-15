@@ -12,7 +12,7 @@ def deploy_function(
     function: str,
     app_name: str,
     environment_name: str | None,
-    modal_iface: ModalInterface,
+    modal_interface: ModalInterface,
 ) -> str:
     """Deploy a Function to Modal with the given app name and return the URL.
 
@@ -22,7 +22,7 @@ def deploy_function(
 
     with log_span("Deploying {} function for app: {}", function, app_name):
         try:
-            modal_iface.deploy(
+            modal_interface.deploy(
                 script_path,
                 app_name=app_name,
                 environment_name=environment_name,
@@ -31,7 +31,7 @@ def deploy_function(
             raise MngError(f"Failed to deploy {function} function: {e}") from e
 
     # get the URL out of the resulting Function object
-    func = modal_iface.function_from_name(
+    func = modal_interface.function_from_name(
         name=function,
         app_name=app_name,
         environment_name=environment_name,

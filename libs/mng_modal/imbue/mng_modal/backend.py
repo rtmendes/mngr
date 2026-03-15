@@ -48,7 +48,7 @@ STATE_VOLUME_SUFFIX: Final[str] = "-state"
 MODAL_NAME_MAX_LENGTH: Final[int] = 64
 
 
-def _create_environment(environment_name: str, modal_iface: ModalInterface) -> None:
+def _create_environment(environment_name: str, modal_interface: ModalInterface) -> None:
     """Create a Modal environment.
 
     Modal environments must be created before they can be used to scope resources
@@ -66,14 +66,14 @@ def _create_environment(environment_name: str, modal_iface: ModalInterface) -> N
 
     with log_span("Creating Modal environment: {}", environment_name):
         try:
-            modal_iface.environment_create(environment_name)
+            modal_interface.environment_create(environment_name)
             logger.info("Created Modal environment: {}", environment_name)
         except ModalProxyError as e:
             logger.warning("Failed to create Modal environment: {}", e)
 
 
 def _lookup_persistent_app_with_env_retry(
-    app_name: str, environment_name: str, modal_iface: ModalInterface
+    app_name: str, environment_name: str, modal_interface: ModalInterface
 ) -> AppInterface:
     """Look up or create a persistent Modal app, retrying if the environment is not found.
 
@@ -82,11 +82,11 @@ def _lookup_persistent_app_with_env_retry(
     environment.
     """
     try:
-        return modal_iface.app_lookup(app_name, create_if_missing=True, environment_name=environment_name)
+        return modal_interface.app_lookup(app_name, create_if_missing=True, environment_name=environment_name)
     except ModalProxyNotFoundError:
         # Create the environment before retrying
-        _create_environment(environment_name, modal_iface)
-        return _lookup_persistent_app_with_retry(app_name, environment_name, modal_iface)
+        _create_environment(environment_name, modal_interface)
+        return _lookup_persistent_app_with_retry(app_name, environment_name, modal_interface)
 
 
 @retry(
@@ -96,15 +96,15 @@ def _lookup_persistent_app_with_env_retry(
     reraise=True,
 )
 def _lookup_persistent_app_with_retry(
-    app_name: str, environment_name: str, modal_iface: ModalInterface
+    app_name: str, environment_name: str, modal_interface: ModalInterface
 ) -> AppInterface:
     """Look up or create a persistent Modal app with tenacity retry."""
     with log_span("Retrying Modal app lookup: {} (env: {})", app_name, environment_name):
-        return modal_iface.app_lookup(app_name, create_if_missing=True, environment_name=environment_name)
+        return modal_interface.app_lookup(app_name, create_if_missing=True, environment_name=environment_name)
 
 
 def _enter_ephemeral_app_context_with_env_retry(
-    app: AppInterface, environment_name: str, modal_iface: ModalInterface
+    app: AppInterface, environment_name: str, modal_interface: ModalInterface
 ) -> Any:
     """Enter an ephemeral Modal app's run context, retrying if the environment is not found.
 
@@ -120,7 +120,7 @@ def _enter_ephemeral_app_context_with_env_retry(
         return gen
     except ModalProxyNotFoundError:
         # Create the environment before retrying
-        _create_environment(environment_name, modal_iface)
+        _create_environment(environment_name, modal_interface)
         return _enter_ephemeral_app_context_with_retry(app, environment_name)
 
 
@@ -213,11 +213,11 @@ class ModalProviderBackend(ProviderBackendInterface):
         app_name: str,
         environment_name: str,
         is_persistent: bool,
-        modal_iface: ModalInterface,
+        modal_interface: ModalInterface,
     ) -> tuple[AppInterface, ModalAppContextHandle]:
         """Get or create a Modal app with output capture.
 
-        Creates an ephemeral app with modal_iface.app_create(name) and enters its run()
+        Creates an ephemeral app with modal_interface.app_create(name) and enters its run()
         context via the generator interface. The app is cached in the class-level registry
         by name, so multiple calls with the same app_name will return the same app.
 
@@ -245,17 +245,17 @@ class ModalProviderBackend(ProviderBackendInterface):
 
             if is_persistent:
                 with log_span("Looking up persistent Modal app: {}", app_name):
-                    app = _lookup_persistent_app_with_env_retry(app_name, environment_name, modal_iface)
+                    app = _lookup_persistent_app_with_env_retry(app_name, environment_name, modal_interface)
                 run_context = None
             else:
                 # Create the Modal app
                 with log_span("Creating Modal app object: {}", app_name):
-                    app = modal_iface.app_create(app_name)
+                    app = modal_interface.app_create(app_name)
 
                 # Enter the app.run() context via generator so we can return the app
                 # while keeping the context active until close() is called
                 with log_span("Entering Modal app.run() context (env: {})", environment_name):
-                    run_context = _enter_ephemeral_app_context_with_env_retry(app, environment_name, modal_iface)
+                    run_context = _enter_ephemeral_app_context_with_env_retry(app, environment_name, modal_interface)
 
             # Set app metadata on the loguru writer for structured logging
             if loguru_writer is not None:
@@ -279,7 +279,7 @@ class ModalProviderBackend(ProviderBackendInterface):
         return app, context_handle
 
     @classmethod
-    def get_volume_for_app(cls, app_name: str, modal_iface: ModalInterface) -> VolumeInterface:
+    def get_volume_for_app(cls, app_name: str, modal_interface: ModalInterface) -> VolumeInterface:
         """Get or create the state volume for an app.
 
         The volume is used to persist host records (including snapshots) across
@@ -306,7 +306,7 @@ class ModalProviderBackend(ProviderBackendInterface):
         with log_span(
             "Ensuring state volume: {} (env: {})", context_handle.volume_name, context_handle.environment_name
         ):
-            volume = modal_iface.volume_from_name(
+            volume = modal_interface.volume_from_name(
                 context_handle.volume_name,
                 create_if_missing=True,
                 environment_name=context_handle.environment_name,
@@ -411,7 +411,7 @@ Supported build arguments for the modal provider:
         # Create the ModalInterface based on the configured mode
         match config.mode:
             case ModalMode.DIRECT:
-                modal_iface: ModalInterface = DirectModalInterface()
+                modal_interface: ModalInterface = DirectModalInterface()
             case _:
                 raise MngError(f"Unsupported modal mode: {config.mode}")
 
@@ -444,16 +444,16 @@ Supported build arguments for the modal provider:
         # Create the ModalProviderApp that manages the Modal app and its resources
         try:
             app, context_handle = ModalProviderBackend._get_or_create_app(
-                app_name, environment_name, config.is_persistent, modal_iface
+                app_name, environment_name, config.is_persistent, modal_interface
             )
-            volume = ModalProviderBackend.get_volume_for_app(app_name, modal_iface)
+            volume = ModalProviderBackend.get_volume_for_app(app_name, modal_interface)
 
             modal_app = ModalProviderApp(
                 app_name=app_name,
                 environment_name=environment_name,
                 app=app,
                 volume=volume,
-                modal_interface=modal_iface,
+                modal_interface=modal_interface,
                 close_callback=lambda: ModalProviderBackend.close_app(app_name),
                 get_output_callback=lambda: context_handle.output_buffer.getvalue(),
             )

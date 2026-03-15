@@ -150,13 +150,13 @@ def _parse_volume_spec(spec: str) -> tuple[str, str]:
 def _build_modal_volumes(
     volume_specs: tuple[tuple[str, str], ...],
     environment_name: str,
-    modal_iface: ModalInterface,
+    modal_interface: ModalInterface,
 ) -> dict[str, VolumeInterface]:
     """Build a dict of mount_path -> VolumeInterface for sandbox creation."""
     volumes: dict[str, VolumeInterface] = {}
     for volume_name, mount_path in volume_specs:
         with log_span("Ensuring volume: {} at {}", volume_name, mount_path):
-            volumes[mount_path] = modal_iface.volume_from_name(
+            volumes[mount_path] = modal_interface.volume_from_name(
                 volume_name,
                 create_if_missing=True,
                 environment_name=environment_name,
@@ -590,7 +590,7 @@ class ModalProviderInstance(BaseProviderInstance):
         return self.modal_app.environment_name
 
     @property
-    def _modal_iface(self) -> ModalInterface:
+    def _modal_interface(self) -> ModalInterface:
         """Get the Modal interface from the modal_app manager."""
         return self.modal_app.modal_interface
 
@@ -646,7 +646,7 @@ class ModalProviderInstance(BaseProviderInstance):
     def _build_host_volume(self, host_id: HostId) -> VolumeInterface:
         """Get or create the persistent host volume for a sandbox."""
         volume_name = self._get_host_volume_name(host_id)
-        return self._modal_iface.volume_from_name(
+        return self._modal_interface.volume_from_name(
             volume_name,
             create_if_missing=True,
             environment_name=self.environment_name,
@@ -669,7 +669,7 @@ class ModalProviderInstance(BaseProviderInstance):
         host_id = host.id if isinstance(host, HostInterface) else host
         volume_name = self._get_host_volume_name(host_id)
         try:
-            vol_iface = self._modal_iface.volume_from_name(
+            vol_iface = self._modal_interface.volume_from_name(
                 volume_name, create_if_missing=False, environment_name=self.environment_name
             )
             # Probe the volume to verify it exists (from_name returns lazy references)
@@ -1001,9 +1001,9 @@ class ModalProviderInstance(BaseProviderInstance):
         SSH and tmux setup is handled at runtime in _start_sshd_in_sandbox to
         allow warning if these tools are not pre-installed in the base image.
         """
-        modal_iface = self._modal_iface
+        modal_interface = self._modal_interface
         # Build modal secrets from environment variables
-        modal_secrets = _build_modal_secrets_from_env(secrets, modal_iface)
+        modal_secrets = _build_modal_secrets_from_env(secrets, modal_interface)
 
         if dockerfile is not None:
             dockerfile_contents = dockerfile.read_text()
@@ -1013,15 +1013,15 @@ class ModalProviderInstance(BaseProviderInstance):
             effective_context_dir = context_dir if context_dir is not None else dockerfile.parent
             image = _build_image_from_dockerfile_contents(
                 dockerfile_contents,
-                modal_iface=modal_iface,
+                modal_interface=modal_interface,
                 context_dir=effective_context_dir,
                 is_each_layer_cached=True,
                 secrets=modal_secrets,
             )
         elif base_image:
-            image = modal_iface.image_from_registry(base_image)
+            image = modal_interface.image_from_registry(base_image)
         else:
-            image = modal_iface.image_debian_slim().apt_install(*(pkg.package for pkg in REQUIRED_HOST_PACKAGES))
+            image = modal_interface.image_debian_slim().apt_install(*(pkg.package for pkg in REQUIRED_HOST_PACKAGES))
 
         return image
 
@@ -1225,7 +1225,7 @@ class ModalProviderInstance(BaseProviderInstance):
             # it's a little sad that we're constantly re-deploying this, but it's a bit too easy to make mistakes otherwise
             #  (eg, we might end up with outdated code at that endpoint, which would be hard to debug)
             snapshot_url = deploy_function(
-                "snapshot_and_shutdown", self.app_name, self.environment_name, self._modal_iface
+                "snapshot_and_shutdown", self.app_name, self.environment_name, self._modal_interface
             )
             self._create_shutdown_script(host, sandbox, host_id, snapshot_url)
 
@@ -1481,7 +1481,13 @@ log "=== Shutdown script completed ==="
         Otherwise, returns False.
         """
         app = self._get_modal_app()
-        for sandbox in self._modal_iface.sandbox_list(app_id=app.get_app_id()):
+        # FOLLOWUP: Unfortunately, Modal's tag-based filtering via Sandbox.list(tags={...}) has a
+        # bug on their side. We are waiting on Modal to respond before we can use it. Once fixed,
+        # this should be:
+        #     for sandbox in self._modal_interface.sandbox_list(app_id=app.get_app_id(), tags={TAG_HOST_ID: str(host_id)}):
+        #         return sandbox
+        #     return None
+        for sandbox in self._modal_interface.sandbox_list(app_id=app.get_app_id()):
             if sandbox.get_tags().get(TAG_HOST_ID) == str(host_id):
                 return sandbox
         return None
@@ -1531,7 +1537,9 @@ log "=== Shutdown script completed ==="
     def _lookup_sandbox_by_name_once(self, name: HostName) -> SandboxInterface | None:
         """Perform a single lookup of a sandbox by host_name tag."""
         app = self._get_modal_app()
-        for sandbox in self._modal_iface.sandbox_list(app_id=app.get_app_id()):
+        # FOLLOWUP: Same Modal tag-filtering bug as _lookup_sandbox_by_host_id_once.
+        # Once fixed, this should use tags={TAG_HOST_NAME: str(name)} in sandbox_list.
+        for sandbox in self._modal_interface.sandbox_list(app_id=app.get_app_id()):
             if sandbox.get_tags().get(TAG_HOST_NAME) == str(name):
                 return sandbox
         return None
@@ -1569,7 +1577,7 @@ log "=== Shutdown script completed ==="
         """
         app = self._get_modal_app()
         sandboxes: list[SandboxInterface] = []
-        for sandbox in self._modal_iface.sandbox_list(app_id=app.get_app_id()):
+        for sandbox in self._modal_interface.sandbox_list(app_id=app.get_app_id()):
             tags = sandbox.get_tags()
             if TAG_HOST_ID in tags:
                 sandboxes.append(sandbox)
@@ -1736,7 +1744,7 @@ log "=== Shutdown script completed ==="
             if snapshot is not None:
                 # Use the snapshot image instead of building
                 with log_span("Loading Modal image from snapshot {}", str(snapshot)):
-                    modal_image = self._modal_iface.image_from_id(str(snapshot))
+                    modal_image = self._modal_interface.image_from_id(str(snapshot))
             else:
                 # Build the Modal image
                 with log_span("Building Modal image..."):
@@ -1754,7 +1762,7 @@ log "=== Shutdown script completed ==="
             modal_timeout = config.timeout + self.config.shutdown_buffer_seconds
 
             # Build volume mounts from build args
-            sandbox_volumes = _build_modal_volumes(config.volumes, self.environment_name, self._modal_iface)
+            sandbox_volumes = _build_modal_volumes(config.volumes, self.environment_name, self._modal_interface)
 
             # Add the persistent host volume so all host_dir data is preserved (if enabled)
             if self.config.is_host_volume_created:
@@ -1771,7 +1779,7 @@ log "=== Shutdown script completed ==="
             ):
                 # Memory is in GB but Modal expects MB
                 memory_mb = int(config.memory * 1024)
-                sandbox = self._modal_iface.sandbox_create(
+                sandbox = self._modal_interface.sandbox_create(
                     image=modal_image,
                     app=app,
                     # note: we do NOT pass the environment_name here because that is deprecated (it is inferred from the app)
@@ -2015,7 +2023,7 @@ log "=== Shutdown script completed ==="
 
         # Create the image reference from the snapshot (the id IS the Modal image ID)
         with log_span("Creating sandbox from snapshot image", image_id=modal_image_id):
-            modal_image = self._modal_iface.image_from_id(modal_image_id)
+            modal_image = self._modal_interface.image_from_id(modal_image_id)
 
             # Get or create the Modal app
             app = self._get_modal_app()
@@ -2027,13 +2035,13 @@ log "=== Shutdown script completed ==="
             memory_mb = int(config.memory * 1024)
 
             # Build volume mounts from the stored config
-            sandbox_volumes = _build_modal_volumes(config.volumes, self.environment_name, self._modal_iface)
+            sandbox_volumes = _build_modal_volumes(config.volumes, self.environment_name, self._modal_interface)
 
             # Re-attach the persistent host volume (if enabled)
             if self.config.is_host_volume_created:
                 sandbox_volumes[HOST_VOLUME_MOUNT_PATH] = self._build_host_volume(host_id)
 
-            new_sandbox = self._modal_iface.sandbox_create(
+            new_sandbox = self._modal_interface.sandbox_create(
                 image=modal_image,
                 app=app,
                 # note: we do NOT pass the environment_name here because that is deprecated (it is inferred from the app)
@@ -2090,7 +2098,7 @@ log "=== Shutdown script completed ==="
         """Delete the persistent host volume, logging but not raising on failure."""
         host_volume_name = self._get_host_volume_name(host_id)
         try:
-            self._modal_iface.volume_delete(host_volume_name, environment_name=self.environment_name)
+            self._modal_interface.volume_delete(host_volume_name, environment_name=self.environment_name)
             logger.debug("Deleted host volume: {}", host_volume_name)
         except ModalProxyNotFoundError:
             logger.trace("Host volume {} already deleted", host_volume_name)
@@ -2302,7 +2310,7 @@ log "=== Shutdown script completed ==="
         with log_span("Listing running sandbox host IDs for app={}", self.app_name):
             app = self._get_modal_app()
             with log_span("Listing sandboxes from Modal API (app_id={})", app.get_app_id()):
-                sandboxes = self._modal_iface.sandbox_list(app_id=app.get_app_id())
+                sandboxes = self._modal_interface.sandbox_list(app_id=app.get_app_id())
             logger.debug("Found {} sandbox(es) for app={}", len(sandboxes), self.app_name)
 
             if not sandboxes:
@@ -2860,7 +2868,7 @@ log "=== Shutdown script completed ==="
         """
         prefix = self._host_volume_prefix
         results: list[VolumeInfo] = []
-        for vol_iface in self._modal_iface.volume_list(environment_name=self.environment_name):
+        for vol_iface in self._modal_interface.volume_list(environment_name=self.environment_name):
             vol_name = vol_iface.get_name()
             if vol_name is not None and vol_name.startswith(prefix):
                 host_hex = vol_name[len(prefix) :]
@@ -2886,11 +2894,11 @@ log "=== Shutdown script completed ==="
         Finds the Modal volume whose derived VolumeId matches, then deletes
         it by its Modal name.
         """
-        for vol_iface in self._modal_iface.volume_list(environment_name=self.environment_name):
+        for vol_iface in self._modal_interface.volume_list(environment_name=self.environment_name):
             vol_name = vol_iface.get_name()
             if vol_name is not None and self._volume_id_for_name(vol_name) == volume_id:
                 try:
-                    self._modal_iface.volume_delete(vol_name, environment_name=self.environment_name)
+                    self._modal_interface.volume_delete(vol_name, environment_name=self.environment_name)
                     logger.debug("Deleted Modal volume: {}", vol_name)
                 except ModalProxyNotFoundError:
                     pass
@@ -3096,7 +3104,7 @@ log "=== Shutdown script completed ==="
 
 def _build_modal_secrets_from_env(
     env_var_names: Sequence[str],
-    modal_iface: ModalInterface,
+    modal_interface: ModalInterface,
 ) -> list[SecretInterface]:
     """Build Modal secrets from environment variable names.
 
@@ -3126,7 +3134,7 @@ def _build_modal_secrets_from_env(
         )
 
     with log_span("Creating Modal secrets from environment variables", count=len(secret_dict)):
-        return [modal_iface.secret_from_dict(secret_dict)]
+        return [modal_interface.secret_from_dict(secret_dict)]
 
 
 @pure
@@ -3170,7 +3178,7 @@ def _substitute_dockerfile_build_args(dockerfile_contents: str, build_args: Sequ
 def _build_image_from_dockerfile_contents(
     dockerfile_contents: str,
     *,
-    modal_iface: ModalInterface,
+    modal_interface: ModalInterface,
     # build context directory for COPY/ADD instructions
     context_dir: Path | None = None,
     # starting image; if not provided, uses FROM instruction in the dockerfile
@@ -3206,7 +3214,7 @@ def _build_image_from_dockerfile_contents(
         if initial_image is None:
             assert last_from_index is not None, "Dockerfile must have a FROM instruction"
             instructions = dfp.structure[last_from_index + 1 :]
-            modal_image = modal_iface.image_from_registry(dfp.baseimage)
+            modal_image = modal_interface.image_from_registry(dfp.baseimage)
         else:
             assert last_from_index is None, "If initial_image is provided, Dockerfile cannot have a FROM instruction"
             instructions = list(dfp.structure)
