@@ -1,15 +1,14 @@
 import json
-from pathlib import Path
 
 import pluggy
 from click.testing import CliRunner
 
+from imbue.mng.cli.conftest import create_agent_with_events_dir
 from imbue.mng.cli.transcript import TranscriptCliOptions
 from imbue.mng.cli.transcript import _format_event_human
 from imbue.mng.cli.transcript import _get_event_role
 from imbue.mng.cli.transcript import _parse_transcript_events
 from imbue.mng.cli.transcript import transcript
-from imbue.mng.primitives import AgentId
 
 
 def _make_transcript_opts(
@@ -269,36 +268,18 @@ def test_transcript_cli_rejects_head_and_tail_together(
 # =============================================================================
 
 
-def _create_agent_with_common_transcript(
-    per_host_dir: Path,
-    agent_name: str,
-    transcript_source: str = "claude/common_transcript",
-) -> tuple[AgentId, Path]:
-    """Create a minimal agent directory with a common_transcript event source."""
-    agent_id = AgentId.generate()
-    agent_dir = per_host_dir / "agents" / str(agent_id)
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    data = {
-        "id": str(agent_id),
-        "name": agent_name,
-        "type": "claude",
-        "command": "sleep 1",
-        "work_dir": "/tmp/test",
-        "create_time": "2026-01-01T00:00:00+00:00",
-    }
-    (agent_dir / "data.json").write_text(json.dumps(data))
-    events_dir = agent_dir / "events" / transcript_source
-    events_dir.mkdir(parents=True, exist_ok=True)
-    return agent_id, events_dir
-
-
 def test_transcript_cli_reads_and_displays_human_format(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
     local_provider,
     temp_mng_ctx,
 ) -> None:
-    _, events_dir = _create_agent_with_common_transcript(local_provider.host_dir, "transcript-human-test")
+    _, events_dir = create_agent_with_events_dir(
+        local_provider.host_dir,
+        events_source="claude/common_transcript",
+        agent_type="claude",
+        agent_name="transcript-human-test",
+    )
     events = [
         {
             "timestamp": "2026-01-01T00:00:00Z",
@@ -339,7 +320,12 @@ def test_transcript_cli_reads_jsonl_format(
     local_provider,
     temp_mng_ctx,
 ) -> None:
-    _, events_dir = _create_agent_with_common_transcript(local_provider.host_dir, "transcript-jsonl-test")
+    _, events_dir = create_agent_with_events_dir(
+        local_provider.host_dir,
+        events_source="claude/common_transcript",
+        agent_type="claude",
+        agent_name="transcript-jsonl-test",
+    )
     events = [
         {
             "timestamp": "2026-01-01T00:00:00Z",
@@ -369,7 +355,12 @@ def test_transcript_cli_reads_json_format(
     local_provider,
     temp_mng_ctx,
 ) -> None:
-    _, events_dir = _create_agent_with_common_transcript(local_provider.host_dir, "transcript-json-test")
+    _, events_dir = create_agent_with_events_dir(
+        local_provider.host_dir,
+        events_source="claude/common_transcript",
+        agent_type="claude",
+        agent_name="transcript-json-test",
+    )
     events = [
         {
             "timestamp": "2026-01-01T00:00:00Z",
@@ -409,7 +400,12 @@ def test_transcript_cli_filters_by_role(
     local_provider,
     temp_mng_ctx,
 ) -> None:
-    _, events_dir = _create_agent_with_common_transcript(local_provider.host_dir, "transcript-role-test")
+    _, events_dir = create_agent_with_events_dir(
+        local_provider.host_dir,
+        events_source="claude/common_transcript",
+        agent_type="claude",
+        agent_name="transcript-role-test",
+    )
     events = [
         {
             "timestamp": "2026-01-01T00:00:00Z",
@@ -459,7 +455,12 @@ def test_transcript_cli_filters_by_multiple_roles(
     local_provider,
     temp_mng_ctx,
 ) -> None:
-    _, events_dir = _create_agent_with_common_transcript(local_provider.host_dir, "transcript-multirole-test")
+    _, events_dir = create_agent_with_events_dir(
+        local_provider.host_dir,
+        events_source="claude/common_transcript",
+        agent_type="claude",
+        agent_name="transcript-multirole-test",
+    )
     events = [
         {
             "timestamp": "2026-01-01T00:00:00Z",
@@ -507,7 +508,12 @@ def test_transcript_cli_applies_tail(
     local_provider,
     temp_mng_ctx,
 ) -> None:
-    _, events_dir = _create_agent_with_common_transcript(local_provider.host_dir, "transcript-tail-test")
+    _, events_dir = create_agent_with_events_dir(
+        local_provider.host_dir,
+        events_source="claude/common_transcript",
+        agent_type="claude",
+        agent_name="transcript-tail-test",
+    )
     events = [
         {
             "timestamp": "2026-01-01T00:00:00Z",
@@ -539,7 +545,12 @@ def test_transcript_cli_applies_head(
     local_provider,
     temp_mng_ctx,
 ) -> None:
-    _, events_dir = _create_agent_with_common_transcript(local_provider.host_dir, "transcript-head-test")
+    _, events_dir = create_agent_with_events_dir(
+        local_provider.host_dir,
+        events_source="claude/common_transcript",
+        agent_type="claude",
+        agent_name="transcript-head-test",
+    )
     events = [
         {
             "timestamp": "2026-01-01T00:00:00Z",
@@ -572,18 +583,7 @@ def test_transcript_cli_no_transcript_gives_error(
     temp_mng_ctx,
 ) -> None:
     """An agent with no common_transcript source should give a clear error."""
-    agent_id = AgentId.generate()
-    agent_dir = local_provider.host_dir / "agents" / str(agent_id)
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    data = {
-        "id": str(agent_id),
-        "name": "no-transcript-agent",
-        "type": "generic",
-        "command": "sleep 1",
-        "work_dir": "/tmp/test",
-        "create_time": "2026-01-01T00:00:00+00:00",
-    }
-    (agent_dir / "data.json").write_text(json.dumps(data))
+    create_agent_with_events_dir(local_provider.host_dir, agent_name="no-transcript-agent")
 
     result = cli_runner.invoke(
         transcript,

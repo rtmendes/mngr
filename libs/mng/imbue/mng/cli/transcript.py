@@ -5,6 +5,7 @@ from typing import assert_never
 
 import click
 from click_option_group import optgroup
+from loguru import logger
 
 from imbue.mng.api.events import EventsTarget
 from imbue.mng.api.events import discover_event_sources
@@ -72,7 +73,8 @@ def _parse_transcript_events(
             continue
         try:
             event = json.loads(stripped)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.trace("Skipped malformed JSON line in transcript: {}", e)
             continue
         if roles and _get_event_role(event) not in roles:
             continue
@@ -91,14 +93,15 @@ def _get_event_role(event: dict[str, Any]) -> str | None:
     role = event.get("role")
     if role is not None:
         return str(role)
-    event_type = event.get("type", "")
-    if event_type == "user_message":
-        return "user"
-    if event_type == "assistant_message":
-        return "assistant"
-    if event_type == "tool_result":
-        return "tool"
-    return None
+    match event.get("type", ""):
+        case "user_message":
+            return "user"
+        case "assistant_message":
+            return "assistant"
+        case "tool_result":
+            return "tool"
+        case _:
+            return None
 
 
 def _format_event_human(event: dict[str, Any]) -> str:
