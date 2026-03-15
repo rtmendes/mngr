@@ -1,8 +1,6 @@
-"""Data types for the ModalInterface abstraction.
-
-These types are used as parameters and return values in ModalInterface methods,
-providing a Modal-SDK-independent representation of the concepts needed by mng_modal.
-"""
+# Data types for the ModalInterface abstraction.
+# These types are used as parameters and return values in ModalInterface methods,
+# providing a Modal-SDK-independent representation of the concepts needed by mng_modal.
 
 from enum import auto
 from pathlib import Path
