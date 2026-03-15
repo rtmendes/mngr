@@ -67,11 +67,13 @@ DEFAULT_CEL_FILTER: Final[str] = (
     ' && source != "mng/agents"'
     # and either:
     " && ("
-    # are normal events (eg, not logs):
-    '!source.startsWith("logs/") || '
-    # or they are logs, but they're ERROR or WARNING level (to catch important log messages without overwhelming the stream):
-    '(source.startsWith("logs/") && (level == "ERROR" || level == "WARNING"))'
+    #      are normal events (eg, not logs):
+    '    !source.startsWith("logs/") || '
+    #     or they are logs, but they're ERROR or WARNING level (to catch important log messages without overwhelming the stream):
+    '    (source.startsWith("logs/") && (level == "ERROR" || level == "WARNING"))'
     ")"
+    # also remove any mng/agent_state events for non-mind agents:
+    """ && !(source == 'mng/agents' && type == 'agent_state' && agent.labels.mind != "true")"""
 )
 
 
