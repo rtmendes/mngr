@@ -62,7 +62,9 @@ DEFAULT_CEL_FILTER: Final[str] = (
     # not from delivery_failures (which is about the delivery of messages to the core thinking loop, so it would never see these anyway)
     'source != "delivery_failures"'
     # and they're not about servers coming online (that's just startup noise from mng)
-    ' && source != "servers"'
+    ' && source != "handled_events"'
+    # and they're not the raw agent state messages
+    ' && source != "mng/agents"'
     # and either:
     " && ("
     # are normal events (eg, not logs):
