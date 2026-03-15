@@ -1,4 +1,8 @@
 # Direct implementation of ModalInterface that wraps the real Modal Python SDK.
+#
+# All modal.exception.* errors are translated to ModalProxy* errors at the
+# boundary so that callers never need to import the modal package.
+# Volume operations include retry logic for transient modal errors.
 
 import io
 import os
@@ -11,16 +15,27 @@ from typing import Sequence
 
 import modal
 import modal.exception
+from grpclib.exceptions import ProtocolError
+from grpclib.exceptions import StreamTerminatedError
 from modal.stream_type import StreamType as ModalStreamType
 from modal.volume import FileEntryType as ModalFileEntryType
 from pydantic import ConfigDict
 from pydantic import Field
+from tenacity import retry
+from tenacity import retry_if_exception_type
+from tenacity import stop_after_attempt
+from tenacity import wait_exponential
 
 from imbue.modal_proxy.data_types import FileEntry
 from imbue.modal_proxy.data_types import FileEntryType
 from imbue.modal_proxy.data_types import StreamType
 from imbue.modal_proxy.data_types import TunnelInfo
+from imbue.modal_proxy.errors import ModalProxyAuthError
 from imbue.modal_proxy.errors import ModalProxyError
+from imbue.modal_proxy.errors import ModalProxyInternalError
+from imbue.modal_proxy.errors import ModalProxyInvalidError
+from imbue.modal_proxy.errors import ModalProxyNotFoundError
+from imbue.modal_proxy.errors import ModalProxyRemoteError
 from imbue.modal_proxy.errors import ModalProxyTypeError
 from imbue.modal_proxy.interface import AppInterface
 from imbue.modal_proxy.interface import ExecOutput
@@ -31,6 +46,30 @@ from imbue.modal_proxy.interface import ModalInterface
 from imbue.modal_proxy.interface import SandboxInterface
 from imbue.modal_proxy.interface import SecretInterface
 from imbue.modal_proxy.interface import VolumeInterface
+
+# ---------------------------------------------------------------------------
+# Exception translation
+# ---------------------------------------------------------------------------
+
+
+def _translate_modal_error(e: modal.exception.Error) -> ModalProxyError:
+    """Convert a modal exception to the corresponding ModalProxy exception."""
+    if isinstance(e, modal.exception.AuthError):
+        return ModalProxyAuthError(str(e))
+    if isinstance(e, modal.exception.NotFoundError):
+        return ModalProxyNotFoundError(str(e))
+    if isinstance(e, modal.exception.InvalidError):
+        return ModalProxyInvalidError(str(e))
+    if isinstance(e, modal.exception.InternalError):
+        return ModalProxyInternalError(str(e))
+    if isinstance(e, modal.exception.RemoteError):
+        return ModalProxyRemoteError(str(e))
+    return ModalProxyError(str(e))
+
+
+# ---------------------------------------------------------------------------
+# Conversion helpers
+# ---------------------------------------------------------------------------
 
 
 def _to_modal_stream_type(st: StreamType) -> ModalStreamType:
@@ -56,7 +95,7 @@ def _to_file_entry_type(modal_type: ModalFileEntryType) -> FileEntryType:
 
 
 # ---------------------------------------------------------------------------
-# Unwrap helpers -- extract the underlying modal object from our wrappers.
+# Unwrap helpers
 # ---------------------------------------------------------------------------
 
 
@@ -86,6 +125,15 @@ def _unwrap_secret(iface: SecretInterface) -> modal.Secret:
     if not isinstance(iface, DirectSecret):
         raise ModalProxyTypeError(f"Expected DirectSecret, got {type(iface).__name__}")
     return iface.secret
+
+
+# ---------------------------------------------------------------------------
+# Retry parameters for volume operations
+# ---------------------------------------------------------------------------
+
+_VOLUME_RETRY = retry_if_exception_type((modal.exception.InternalError, StreamTerminatedError, ProtocolError))
+_VOLUME_STOP = stop_after_attempt(3)
+_VOLUME_WAIT = wait_exponential(multiplier=1, min=1, max=3)
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +216,7 @@ class DirectImage(ImageInterface):
 
 
 class DirectVolume(VolumeInterface):
-    """Wraps a modal.Volume."""
+    """Wraps a modal.Volume with retry logic for transient errors."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -178,6 +226,7 @@ class DirectVolume(VolumeInterface):
     def get_name(self) -> str | None:
         return self.volume_name
 
+    @retry(retry=_VOLUME_RETRY, stop=_VOLUME_STOP, wait=_VOLUME_WAIT, reraise=True)
     def listdir(self, path: str) -> list[FileEntry]:
         entries = self.volume.listdir(path)
         return [
@@ -190,12 +239,15 @@ class DirectVolume(VolumeInterface):
             for e in entries
         ]
 
+    @retry(retry=_VOLUME_RETRY, stop=_VOLUME_STOP, wait=_VOLUME_WAIT, reraise=True)
     def read_file(self, path: str) -> bytes:
         return b"".join(self.volume.read_file(path))
 
+    @retry(retry=_VOLUME_RETRY, stop=_VOLUME_STOP, wait=_VOLUME_WAIT, reraise=True)
     def remove_file(self, path: str, *, recursive: bool = False) -> None:
         self.volume.remove_file(path, recursive=recursive)
 
+    @retry(retry=_VOLUME_RETRY, stop=_VOLUME_STOP, wait=_VOLUME_WAIT, reraise=True)
     def write_files(self, file_contents_by_path: Mapping[str, bytes]) -> None:
         with self.volume.batch_upload(force=True) as batch:
             for path, file_data in file_contents_by_path.items():
@@ -312,7 +364,10 @@ class DirectModalInterface(ModalInterface):
         create_if_missing: bool = True,
         environment_name: str,
     ) -> AppInterface:
-        app = modal.App.lookup(name, create_if_missing=create_if_missing, environment_name=environment_name)
+        try:
+            app = modal.App.lookup(name, create_if_missing=create_if_missing, environment_name=environment_name)
+        except modal.exception.Error as e:
+            raise _translate_modal_error(e) from e
         return DirectApp.model_construct(app=app)
 
     # =====================================================================
@@ -350,18 +405,21 @@ class DirectModalInterface(ModalInterface):
         if volumes is not None:
             modal_volumes = {path: _unwrap_volume(vol) for path, vol in volumes.items()}
 
-        sandbox = modal.Sandbox.create(
-            image=_unwrap_image(image),
-            app=_unwrap_app(app),
-            timeout=timeout,
-            cpu=cpu,
-            memory=memory,
-            unencrypted_ports=list(unencrypted_ports),
-            gpu=gpu,
-            region=region,
-            cidr_allowlist=list(cidr_allowlist) if cidr_allowlist is not None else None,
-            volumes=modal_volumes,
-        )
+        try:
+            sandbox = modal.Sandbox.create(
+                image=_unwrap_image(image),
+                app=_unwrap_app(app),
+                timeout=timeout,
+                cpu=cpu,
+                memory=memory,
+                unencrypted_ports=list(unencrypted_ports),
+                gpu=gpu,
+                region=region,
+                cidr_allowlist=list(cidr_allowlist) if cidr_allowlist is not None else None,
+                volumes=modal_volumes,
+            )
+        except modal.exception.Error as e:
+            raise _translate_modal_error(e) from e
         return DirectSandbox.model_construct(sandbox=sandbox)
 
     def sandbox_list(self, *, app_id: str) -> list[SandboxInterface]:
@@ -382,19 +440,22 @@ class DirectModalInterface(ModalInterface):
         environment_name: str,
         version: int | None = None,
     ) -> VolumeInterface:
-        if version is not None:
-            vol = modal.Volume.from_name(
-                name,
-                create_if_missing=create_if_missing,
-                environment_name=environment_name,
-                version=version,
-            )
-        else:
-            vol = modal.Volume.from_name(
-                name,
-                create_if_missing=create_if_missing,
-                environment_name=environment_name,
-            )
+        try:
+            if version is not None:
+                vol = modal.Volume.from_name(
+                    name,
+                    create_if_missing=create_if_missing,
+                    environment_name=environment_name,
+                    version=version,
+                )
+            else:
+                vol = modal.Volume.from_name(
+                    name,
+                    create_if_missing=create_if_missing,
+                    environment_name=environment_name,
+                )
+        except modal.exception.Error as e:
+            raise _translate_modal_error(e) from e
         return DirectVolume.model_construct(volume=vol, volume_name=name)
 
     def volume_list(self, *, environment_name: str) -> list[VolumeInterface]:
@@ -404,7 +465,10 @@ class DirectModalInterface(ModalInterface):
         ]
 
     def volume_delete(self, name: str, *, environment_name: str) -> None:
-        modal.Volume.objects.delete(name, environment_name=environment_name)
+        try:
+            modal.Volume.objects.delete(name, environment_name=environment_name)
+        except modal.exception.Error as e:
+            raise _translate_modal_error(e) from e
 
     # =====================================================================
     # Secret
