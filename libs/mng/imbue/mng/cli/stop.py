@@ -1,4 +1,6 @@
 from collections.abc import Sequence
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 from typing import assert_never
 
@@ -6,6 +8,7 @@ import click
 from click_option_group import optgroup
 
 from imbue.mng.api.discovery_events import emit_discovery_events_for_host
+from imbue.mng.api.find import AgentMatch
 from imbue.mng.api.find import find_agents_by_identifiers_or_state
 from imbue.mng.api.find import group_agents_by_host
 from imbue.mng.api.providers import get_provider_instance
@@ -19,6 +22,7 @@ from imbue.mng.cli.output_helpers import emit_final_json
 from imbue.mng.cli.output_helpers import emit_format_template_lines
 from imbue.mng.cli.output_helpers import write_human_line
 from imbue.mng.config.data_types import CommonCliOptions
+from imbue.mng.config.data_types import MngContext
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.errors import HostOfflineError
 from imbue.mng.errors import UserInputError
@@ -36,6 +40,7 @@ class StopCliOptions(CommonCliOptions):
     agent_list: tuple[str, ...]
     stop_all: bool
     dry_run: bool
+    archive: bool
     sessions: tuple[str, ...]
     # Planned features (not yet implemented)
     include: tuple[str, ...]
@@ -44,6 +49,39 @@ class StopCliOptions(CommonCliOptions):
     snapshot_mode: str | None
     graceful: bool
     graceful_timeout: str | None
+
+
+def _archive_agents(
+    stopped_matches: list[AgentMatch],
+    output_opts: OutputOptions,
+    mng_ctx: MngContext,
+) -> None:
+    """Set the 'archived_at' label on stopped agents.
+
+    Called after agents have been stopped. The host is still online at this
+    point, so we can access the agent's data.json to set labels.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    agents_by_host = group_agents_by_host(stopped_matches)
+
+    for host_key, agent_list in agents_by_host.items():
+        host_id_str, _ = host_key.split(":", 1)
+        provider_name = agent_list[0].provider_name
+        provider = get_provider_instance(provider_name, mng_ctx)
+        host = provider.get_host(HostId(host_id_str))
+
+        if not isinstance(host, OnlineHostInterface):
+            continue
+
+        for agent_match in agent_list:
+            for agent in host.get_agents():
+                if agent.id == agent_match.agent_id:
+                    current_labels = agent.get_labels()
+                    current_labels["archived_at"] = now
+                    agent.set_labels(current_labels)
+                    if output_opts.output_format == OutputFormat.HUMAN:
+                        write_human_line("Archived agent: {}", agent_match.agent_name)
+                    break
 
 
 def _output(message: str, output_opts: OutputOptions) -> None:
@@ -111,6 +149,11 @@ def _output_result(stopped_agents: Sequence[str], output_opts: OutputOptions) ->
     help="Read agent and host names/IDs from stdin, one per line [future]",
 )
 @optgroup.group("Behavior")
+@optgroup.option(
+    "--archive",
+    is_flag=True,
+    help="Set an 'archived_at' label on each stopped agent (marks it as archived)",
+)
 @optgroup.option(
     "--dry-run",
     is_flag=True,
@@ -200,6 +243,7 @@ def stop(ctx: click.Context, **kwargs: Any) -> None:
 
     # Stop each agent
     stopped_agents: list[str] = []
+    stopped_matches: list[AgentMatch] = []
 
     # Group agents by host to stop them together
     agents_by_host = group_agents_by_host(agents_to_stop)
@@ -221,6 +265,7 @@ def stop(ctx: click.Context, **kwargs: Any) -> None:
 
                 for m in agent_list:
                     stopped_agents.append(str(m.agent_name))
+                    stopped_matches.append(m)
                     _output(f"Stopped agent: {m.agent_name}", output_opts)
 
                 # Emit discovery events for stopped agents and host
@@ -230,6 +275,10 @@ def stop(ctx: click.Context, **kwargs: Any) -> None:
             case _ as unreachable:
                 assert_never(unreachable)
 
+    # Archive stopped agents if requested
+    if opts.archive and stopped_matches:
+        _archive_agents(stopped_matches, output_opts, mng_ctx)
+
     # Output final result
     _output_result(stopped_agents, output_opts)
 
@@ -238,12 +287,17 @@ def stop(ctx: click.Context, **kwargs: Any) -> None:
 CommandHelpMetadata(
     key="stop",
     one_line_description="Stop running agent(s)",
-    synopsis="mng [stop|s] [AGENTS...] [--agent <AGENT>] [--all] [--session <SESSION>] [--dry-run] [--snapshot-mode <MODE>] [--graceful/--no-graceful]",
+    synopsis="mng [stop|s] [AGENTS...] [--agent <AGENT>] [--all] [--session <SESSION>] [--archive] [--dry-run] [--snapshot-mode <MODE>] [--graceful/--no-graceful]",
     description="""For remote hosts, this stops the agent's tmux session. The host remains
 running unless idle detection stops it automatically.
 
 For local agents, this stops the agent's tmux session. The local host
 itself cannot be stopped (if you want that, shut down your computer).
+
+Use --archive to also set an 'archived_at' label on each stopped agent.
+This marks the agent as archived without destroying it, allowing it to
+be filtered out of listings while preserving its state. The 'mng archive'
+command is a shorthand for 'mng stop --archive'.
 
 Supports custom format templates via --format. Available fields: name.""",
     aliases=("s",),
@@ -251,6 +305,7 @@ Supports custom format templates via --format. Available fields: name.""",
         ("Stop an agent by name", "mng stop my-agent"),
         ("Stop multiple agents", "mng stop agent1 agent2"),
         ("Stop all running agents", "mng stop --all"),
+        ("Stop and archive an agent", "mng stop my-agent --archive"),
         ("Stop by tmux session name", "mng stop --session mng-my-agent"),
         ("Preview what would be stopped", "mng stop --all --dry-run"),
         ("Custom format template output", "mng stop --all --format '{name}'"),
@@ -259,6 +314,7 @@ Supports custom format templates via --format. Available fields: name.""",
         ("start", "Start stopped agents"),
         ("connect", "Connect to an agent"),
         ("list", "List existing agents"),
+        ("archive", "Stop and archive agents (shorthand for stop --archive)"),
     ),
 ).register()
 
