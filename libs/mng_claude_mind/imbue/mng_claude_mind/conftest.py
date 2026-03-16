@@ -142,6 +142,20 @@ def temp_git_repo(tmp_path: Path) -> Path:
     return repo_dir
 
 
+def parse_chat_output(stdout: str) -> dict[str, str]:
+    """Parse key=value pairs from chat.sh output.
+
+    Returns a dict mapping keys to values. Lines that are not in
+    key=value format are ignored.
+    """
+    result: dict[str, str] = {}
+    for line in stdout.strip().splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            result[key.strip()] = value.strip()
+    return result
+
+
 def assert_conversation_exists_in_db(db_path: Path, conversation_id: str) -> None:
     """Assert that a conversation record exists in the mind_conversations table."""
     import sqlite3
