@@ -22,12 +22,12 @@ from tabulate import tabulate
 
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.pure import pure
+from imbue.mng.agents.agent_registry import list_registered_agent_types
 from imbue.mng.api.discovery_events import find_latest_full_snapshot_offset
 from imbue.mng.api.discovery_events import get_discovery_events_path
 from imbue.mng.api.list import ErrorInfo
 from imbue.mng.api.list import agent_details_to_cel_context
 from imbue.mng.api.list import list_agents as api_list_agents
-from imbue.mng.cli.common_opts import CommonCliOptions
 from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.help_formatter import CommandHelpMetadata
@@ -37,6 +37,7 @@ from imbue.mng.cli.output_helpers import emit_final_json
 from imbue.mng.cli.output_helpers import render_format_template
 from imbue.mng.cli.output_helpers import write_human_line
 from imbue.mng.config.completion_writer import write_cli_completions_cache
+from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.errors import MngError
@@ -69,7 +70,7 @@ _HEADER_LABELS: Final[dict[str, str]] = {
     "host.name": "HOST",
     "host.provider_name": "PROVIDER",
     "host.state": "HOST STATE",
-    "host.tags": "TAGS",
+    "host.tags": "HOST LABELS",
     "labels": "LABELS",
     "host.ssh.host": "SSH HOST",
     "idle_timeout_seconds": "IDLE TIMEOUT",
@@ -124,7 +125,7 @@ class ListCliOptions(CommonCliOptions):
     provider: tuple[str, ...]
     project: tuple[str, ...]
     label: tuple[str, ...]
-    tag: tuple[str, ...]
+    host_label: tuple[str, ...]
     stdin: bool
     fields: str | None
     sort: str
@@ -182,9 +183,9 @@ class ListCliOptions(CommonCliOptions):
     help="Show only agents with this label (format: KEY=VALUE, repeatable) [experimental]",
 )
 @optgroup.option(
-    "--tag",
+    "--host-label",
     multiple=True,
-    help="Show only agents on hosts with this tag (format: KEY=VALUE, repeatable)",
+    help="Show only agents on hosts with this host label (format: KEY=VALUE, repeatable)",
 )
 @optgroup.option(
     "--stdin",
@@ -235,9 +236,6 @@ def list_command(ctx: click.Context, **kwargs) -> None:
         logger.error("Aborted: {}", e.message)
         ctx.exit(1)
 
-    if ctx.parent is not None and isinstance(ctx.parent.command, click.Group):
-        write_cli_completions_cache(ctx.parent.command)
-
 
 def _list_impl(ctx: click.Context, **kwargs) -> None:
     """Implementation of list command (extracted for exception handling)."""
@@ -247,6 +245,23 @@ def _list_impl(ctx: click.Context, **kwargs) -> None:
         command_class=ListCliOptions,
         is_format_template_supported=True,
     )
+
+    # Write the tab completion cache in the background so it doesn't block
+    # the list output. The cache includes both static CLI structure and
+    # dynamic values from the runtime context (agent types, templates, etc.).
+    if ctx.parent is not None and isinstance(ctx.parent.command, click.Group):
+        cli_group = ctx.parent.command
+        registered_agent_types = list_registered_agent_types()
+        mng_ctx.concurrency_group.start_new_thread(
+            target=write_cli_completions_cache,
+            kwargs={
+                "cli_group": cli_group,
+                "mng_ctx": mng_ctx,
+                "registered_agent_types": registered_agent_types,
+            },
+            name="completion-cache-writer",
+            is_checked=False,
+        )
 
     # Format template is now resolved by the common option parsing infrastructure
     # (via --format with a template string, e.g. --format '{name}\t{state}')
@@ -302,16 +317,18 @@ def _list_impl(ctx: click.Context, **kwargs) -> None:
             label_parts.append(f'labels.{key} == "{value}"')
         include_filters.append(" || ".join(label_parts))
 
-    # --tag K=V: alias for --include 'host.tags.K == "V"'
+    # --host-label K=V: alias for --include 'host.tags.K == "V"'
     # Multiple values are OR'd together
-    if opts.tag:
-        tag_parts = []
-        for tag_spec in opts.tag:
-            if "=" not in tag_spec:
-                raise click.BadParameter(f"Tag must be in KEY=VALUE format, got: {tag_spec}", param_hint="--tag")
-            key, value = tag_spec.split("=", 1)
-            tag_parts.append(f'host.tags.{key} == "{value}"')
-        include_filters.append(" || ".join(tag_parts))
+    if opts.host_label:
+        host_label_parts = []
+        for label_spec in opts.host_label:
+            if "=" not in label_spec:
+                raise click.BadParameter(
+                    f"Host label must be in KEY=VALUE format, got: {label_spec}", param_hint="--host-label"
+                )
+            key, value = label_spec.split("=", 1)
+            host_label_parts.append(f'host.tags.{key} == "{value}"')
+        include_filters.append(" || ".join(host_label_parts))
 
     # Build list of exclude filters
     exclude_filters = list(opts.exclude)
@@ -342,7 +359,7 @@ def _list_impl(ctx: click.Context, **kwargs) -> None:
             raise click.UsageError(
                 "--stream emits unfiltered snapshots and cannot be combined with "
                 "--include, --exclude, --running, --stopped, --local, --remote, "
-                "--provider, --project, --label, --tag, or --limit"
+                "--provider, --project, --label, --host-label, or --limit"
             )
         if opts.watch:
             raise click.UsageError("--stream and --watch cannot be used together")
@@ -1085,7 +1102,7 @@ Supports filtering, sorting, and multiple output formats.""",
         ("List agents on Docker hosts", "mng list --provider docker"),
         ("List agents for a project", "mng list --project mng"),
         ("List agents with a specific label", "mng list --label env=prod"),
-        ("List agents with a specific host tag", "mng list --tag env=prod"),
+        ("List agents with a specific host label", "mng list --host-label env=prod"),
         ("List agents as JSON", "mng list --format json"),
         ("Filter with CEL expression", "mng list --include 'name.contains(\"prod\")'"),
         ("Sort by name descending", "mng list --sort 'name desc'"),
@@ -1156,7 +1173,7 @@ All agent fields from the "Available Fields" section can be used in filter expre
 - `host.provider_name` - Host provider (local, docker, modal, etc.) (in CEL filters, use `host.provider`)
 - `host.state` - Current host state (RUNNING, STOPPED, BUILDING, etc.)
 - `host.image` - Host image (Docker image name, Modal image ID, etc.)
-- `host.tags` - Metadata tags for the host
+- `host.tags` - Host labels (metadata key-value pairs)
 - `host.ssh_activity_time` - Timestamp of the last SSH connection to the host
 - `host.boot_time` - When the host was last started
 - `host.uptime_seconds` - How long the host has been running

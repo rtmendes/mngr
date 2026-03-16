@@ -181,6 +181,15 @@ def resolve_agent_reference(
         return matching_agents[0]
 
 
+class ResolvedSource(FrozenModel):
+    """Full resolution result from resolve_source_detailed, including agent info when available."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    location: HostLocation = Field(description="The resolved host and path")
+    agent_id: AgentId | None = Field(default=None, description="The resolved source agent ID, if any")
+
+
 @log_call
 def resolve_source_location(
     source: str | None,
@@ -191,8 +200,8 @@ def resolve_source_location(
     mng_ctx: MngContext,
     *,
     is_start_desired: bool = True,
-) -> HostLocation:
-    """Parse and resolve source location to a concrete host and path.
+) -> ResolvedSource:
+    """Parse and resolve source location to a concrete host, path, and optional agent ID.
 
     source format: [AGENT | AGENT.HOST[.PROVIDER] | AGENT.HOST[.PROVIDER]:PATH | HOST[.PROVIDER]:PATH | PATH]
 
@@ -253,9 +262,9 @@ def resolve_source_location(
         agent_work_dir_if_available=agent_work_dir,
     )
 
-    return HostLocation(
-        host=online_host,
-        path=resolved_path,
+    return ResolvedSource(
+        location=HostLocation(host=online_host, path=resolved_path),
+        agent_id=resolved_agent.agent_id if resolved_agent is not None else None,
     )
 
 
@@ -422,6 +431,7 @@ class AgentMatch(FrozenModel):
     agent_id: AgentId = Field(description="Unique identifier for the matched agent")
     agent_name: AgentName = Field(description="Human-readable name of the matched agent")
     host_id: HostId = Field(description="Unique identifier for the host the agent runs on")
+    host_name: HostName = Field(description="Human-readable name of the host the agent runs on")
     provider_name: ProviderInstanceName = Field(description="Name of the provider instance that owns the host")
 
 
@@ -470,6 +480,7 @@ def find_agents_by_identifiers_or_state(
                         agent_id=agent_ref.agent_id,
                         agent_name=agent_ref.agent_name,
                         host_id=host_ref.host_id,
+                        host_name=host_ref.host_name,
                         provider_name=host_ref.provider_name,
                     )
                 )
