@@ -60,6 +60,7 @@ def run_command(
     except subprocess.TimeoutExpired:
         timed_out = True
         os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
 
     stdout_thread.join()
     stderr_thread.join()
