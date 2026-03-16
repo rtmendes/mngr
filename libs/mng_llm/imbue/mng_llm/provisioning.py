@@ -432,6 +432,7 @@ def create_first_daily_conversation(
     agent_state_dir: Path,
     settings: ProvisioningSettings,
     chat_model: str,
+    welcome_message: str,
 ) -> None:
     """Create a daily conversation tagged with today's date."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -442,7 +443,7 @@ def create_first_daily_conversation(
         settings,
         model=chat_model,
         prompt="",
-        response="Hi, I'm Selene! How can I help?",
+        response=welcome_message,
         label="daily",
         llm_user_path=llm_data_dir,
     )

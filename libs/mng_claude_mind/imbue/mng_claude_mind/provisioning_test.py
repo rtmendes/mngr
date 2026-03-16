@@ -18,6 +18,7 @@ from imbue.mng_claude_mind.provisioning import run_link_skills_script
 from imbue.mng_claude_mind.provisioning import setup_memory_directory
 from imbue.mng_llm.conftest import create_mind_conversations_table_in_test_db
 from imbue.mng_llm.conftest import write_conversation_to_db
+from imbue.mng_llm.data_types import DEFAULT_WELCOME_MESSAGE
 from imbue.mng_llm.data_types import ProvisioningSettings
 from imbue.mng_llm.provisioning import MIND_CONVERSATIONS_TABLE_SQL
 from imbue.mng_llm.provisioning import _LLM_TOOL_FILES
@@ -412,7 +413,9 @@ def test_create_internal_conversation_skips_event_on_inject_failure(
 def test_create_daily_conversation_runs_inject_and_records_tagged_event() -> None:
     host = StubHost(command_results={"llm inject": _FAKE_INJECT_RESULT})
     agent_state_dir = Path("/tmp/mng-test/agents/agent-123")
-    create_first_daily_conversation(cast(Any, host), agent_state_dir, _DEFAULT_PROVISIONING, "claude-opus-4.6")
+    create_first_daily_conversation(
+        cast(Any, host), agent_state_dir, _DEFAULT_PROVISIONING, "claude-opus-4.6", DEFAULT_WELCOME_MESSAGE
+    )
 
     # Should run llm inject with the greeting and LLM_USER_PATH
     inject_commands = [c for c in host.executed_commands if "llm inject" in c]
@@ -428,12 +431,29 @@ def test_create_daily_conversation_runs_inject_and_records_tagged_event() -> Non
     assert "fake-conv-id-123" in db_commands[0]
 
 
+def test_create_daily_conversation_uses_custom_welcome_message() -> None:
+    host = StubHost(command_results={"llm inject": _FAKE_INJECT_RESULT})
+    agent_state_dir = Path("/tmp/mng-test/agents/agent-123")
+    custom_message = "Welcome! How can I help you today?"
+    create_first_daily_conversation(
+        cast(Any, host), agent_state_dir, _DEFAULT_PROVISIONING, "claude-opus-4.6", custom_message
+    )
+
+    inject_commands = [c for c in host.executed_commands if "llm inject" in c]
+    assert len(inject_commands) == 1
+    assert custom_message in inject_commands[0]
+    # Verify the default message is NOT present
+    assert "Selene" not in inject_commands[0]
+
+
 def test_create_daily_conversation_skips_event_on_inject_failure() -> None:
     host = StubHost(
         command_results={"llm inject": StubCommandResult(success=False, stderr="llm not found")},
     )
     agent_state_dir = Path("/tmp/mng-test/agents/agent-123")
-    create_first_daily_conversation(cast(Any, host), agent_state_dir, _DEFAULT_PROVISIONING, "claude-opus-4.6")
+    create_first_daily_conversation(
+        cast(Any, host), agent_state_dir, _DEFAULT_PROVISIONING, "claude-opus-4.6", DEFAULT_WELCOME_MESSAGE
+    )
 
     # Should NOT have written a DB record
     db_commands = [c for c in host.executed_commands if "sqlite3" in c and "mind_conversations" in c]

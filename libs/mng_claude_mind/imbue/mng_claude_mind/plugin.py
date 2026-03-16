@@ -256,8 +256,7 @@ class ClaudeMindAgent(ClaudeAgent):
         create_system_notifications_conversation(host, agent_state_dir, provisioning)
         create_slack_notifications_conversation(host, agent_state_dir, provisioning)
         chat_model = settings.chat.model or "claude-opus-4.6"
-        # FIXME: we need to pass in the initial welcome message (it should be configured in settings, not hardcoded inside of this function call)
-        create_first_daily_conversation(host, agent_state_dir, provisioning, chat_model)
+        create_first_daily_conversation(host, agent_state_dir, provisioning, chat_model, settings.chat.welcome_message)
 
         setup_memory_directory(host, self.work_dir, active_role, provisioning)
 
