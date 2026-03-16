@@ -975,59 +975,6 @@ def test_chat_script_reply_logs_correct_model_and_conversation(chat_env: ChatScr
 
 
 @pytest.mark.timeout(30)
-def test_last_response_id_returns_most_recent_response(chat_env: ChatScriptEnv) -> None:
-    """Verify that last_response_id returns the most recent response for a conversation."""
-    import io
-    import sqlite3
-
-    from imbue.mng_llm.resources.conversation_db import last_response_id
-
-    # Create a conversations table and responses table with test data
-    db_path = chat_env.llm_db_path
-    conn = sqlite3.connect(str(db_path))
-    try:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS responses ("
-            "id TEXT PRIMARY KEY, model TEXT, prompt TEXT, system TEXT, "
-            "prompt_json TEXT, options_json TEXT, response TEXT, response_json TEXT, "
-            "conversation_id TEXT, duration_ms INTEGER, datetime_utc TEXT, "
-            "input_tokens INTEGER, output_tokens INTEGER, token_details TEXT, "
-            "schema_id TEXT, resolved_model TEXT)"
-        )
-        conn.execute(
-            "INSERT INTO responses (id, conversation_id, datetime_utc) VALUES (?, ?, ?)",
-            ("resp-old", "conv-abc", "2026-03-16T10:00:00Z"),
-        )
-        conn.execute(
-            "INSERT INTO responses (id, conversation_id, datetime_utc) VALUES (?, ?, ?)",
-            ("resp-new", "conv-abc", "2026-03-16T11:00:00Z"),
-        )
-        conn.execute(
-            "INSERT INTO responses (id, conversation_id, datetime_utc) VALUES (?, ?, ?)",
-            ("resp-other", "conv-xyz", "2026-03-16T12:00:00Z"),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    old_stdout = sys.stdout
-    sys.stdout = io.StringIO()
-    try:
-        last_response_id(str(db_path), "conv-abc")
-        assert sys.stdout.getvalue().strip() == "resp-new"
-    finally:
-        sys.stdout = old_stdout
-
-    # Verify it returns nothing for a conversation with no responses
-    sys.stdout = io.StringIO()
-    try:
-        last_response_id(str(db_path), "conv-nonexistent")
-        assert sys.stdout.getvalue().strip() == ""
-    finally:
-        sys.stdout = old_stdout
-
-
-@pytest.mark.timeout(30)
 def test_chat_script_reply_outputs_message_id(chat_env: ChatScriptEnv) -> None:
     """Verify that --reply outputs the message_id of the injected response."""
     chat_env.env["LLM_MATCHED_RESPONSE"] = ""

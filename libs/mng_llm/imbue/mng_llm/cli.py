@@ -15,6 +15,8 @@ from collections.abc import Sequence
 
 import click
 
+from imbue.mng_llm.resources.conversation_db import last_response_id as _last_response_id
+
 
 @click.command("llmconversations", hidden=True)
 def llmconversations() -> None:
@@ -107,9 +109,7 @@ def poll_new(db_path: str, after_rowid: str) -> None:
 @click.argument("conversation_id")
 def last_response_id_cmd(db_path: str, conversation_id: str) -> None:
     """Get the most recent response ID for a conversation."""
-    from imbue.mng_llm.resources.conversation_db import last_response_id
-
-    last_response_id(db_path, conversation_id)
+    _last_response_id(db_path, conversation_id)
 
 
 def get_all_commands() -> Sequence[click.Command]:
