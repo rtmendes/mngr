@@ -60,7 +60,7 @@ class ExtraContextSettings(FrozenModel):
     )
 
 
-DEFAULT_WELCOME_MESSAGE: Final[NonEmptyStr] = NonEmptyStr("Hi, I'm Selene! How can I help?")
+DEFAULT_WELCOME_MESSAGE: Final[NonEmptyStr] = NonEmptyStr("Hi! How can I help?")
 
 
 class ChatSettings(FrozenModel):
