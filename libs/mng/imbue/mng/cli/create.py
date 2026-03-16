@@ -4,6 +4,7 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from typing import Final
 from typing import assert_never
 
@@ -32,6 +33,8 @@ from imbue.mng.api.find import ensure_host_started
 from imbue.mng.api.find import get_host_from_list_by_id
 from imbue.mng.api.find import resolve_source_location
 from imbue.mng.api.providers import get_provider_instance
+from imbue.mng.cli.agent_addr import AgentAddress
+from imbue.mng.cli.agent_addr import parse_agent_address
 from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.env_utils import resolve_env_vars
@@ -46,6 +49,7 @@ from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.errors import AgentNotFoundError
 from imbue.mng.errors import UserInputError
 from imbue.mng.hosts.host import HostLocation
+from imbue.mng.hosts.host import get_agent_state_dir_path
 from imbue.mng.interfaces.agent import AgentInterface
 from imbue.mng.interfaces.data_types import HostLifecycleOptions
 from imbue.mng.interfaces.host import AgentDataOptions
@@ -109,6 +113,18 @@ class _CachedAgentHostLoader(MutableModel):
 
 
 @pure
+def _is_new_host_implied(address: AgentAddress) -> bool:
+    """True when the address implies creating a new host (NAME@.PROVIDER form)."""
+    return address.provider_name is not None and address.host_name is None
+
+
+@pure
+def _is_creating_new_host(address: AgentAddress, new_host_flag: bool) -> bool:
+    """Whether this address combined with the --new-host flag means creating a new host."""
+    return new_host_flag or _is_new_host_implied(address)
+
+
+@pure
 def _make_name_style_choices() -> list[str]:
     """Get lowercase name style choices."""
     return [s.value.lower() for s in AgentNameStyle]
@@ -161,37 +177,6 @@ class _CreateCommand(click.Command):
         result = super().parse_args(ctx, args)
         ctx.params["agent_args"] = ctx.params.get("agent_args", ()) + after_dash
         return result
-
-
-class AgentAddress(FrozenModel):
-    """Parsed agent address from [NAME][@[HOST][.PROVIDER]] format.
-
-    Used to specify an agent and optionally its target host and provider in a single
-    positional argument. Examples:
-      - "foo" -> agent named "foo", local host
-      - "foo@myhost" -> agent "foo" on existing host "myhost"
-      - "foo@myhost.modal" -> agent "foo" on existing host "myhost" (on modal provider)
-      - "foo@.modal" -> agent "foo" on a new host with auto-generated name on modal
-      - "@myhost.modal" -> auto-named agent on existing host "myhost" (on modal provider)
-    """
-
-    agent_name: AgentName | None = None
-    host_name: HostName | None = None
-    provider_name: ProviderInstanceName | None = None
-
-    @property
-    def is_new_host_implied(self) -> bool:
-        """True when the address implies creating a new host (NAME@.PROVIDER form)."""
-        return self.provider_name is not None and self.host_name is None
-
-    @property
-    def has_host_component(self) -> bool:
-        """True when any host or provider info was specified in the address."""
-        return self.host_name is not None or self.provider_name is not None
-
-    def is_creating_new_host(self, new_host_flag: bool) -> bool:
-        """Whether this address combined with the --new-host flag means creating a new host."""
-        return new_host_flag or self.is_new_host_implied
 
 
 @click.command(cls=_CreateCommand)
@@ -440,7 +425,7 @@ def create(ctx: click.Context, **kwargs) -> None:
     # Both accept agent addresses; they are equivalent but mutually exclusive.
     if opts.positional_name and opts.name:
         raise UserInputError("Cannot specify both a positional agent address and --name. Use one or the other.")
-    address = _parse_agent_address(opts.positional_name or opts.name or "")
+    address = parse_agent_address(opts.positional_name or opts.name or "")
 
     # Merge --provider flag into the address (alternative to .PROVIDER in the address).
     if opts.provider:
@@ -461,8 +446,14 @@ def create(ctx: click.Context, **kwargs) -> None:
             to_update(mng_ctx.field_ref().is_auto_approve, True),
         )
 
+    # Collect plugin-registered CLI params so they can be merged into plugin_data.
+    # Filter None (unset single options) and empty tuples (unset multiple options).
+    plugin_cli_params: dict[str, Any] = {
+        k: v for k, v in ctx.meta.get("plugin_cli_params", {}).items() if v is not None and v != ()
+    }
+
     # Setup (validation, editor session, source resolution, etc.)
-    setup = _setup_create(mng_ctx, output_opts, opts, logging_config, address)
+    setup = _setup_create(mng_ctx, output_opts, opts, logging_config, address, plugin_cli_params)
 
     # Create agent
     create_result, connection_opts = _create_agent(mng_ctx, output_opts, opts, setup)
@@ -482,8 +473,12 @@ class _CreateSetup(FrozenModel):
     editor_session: EditorSession | None = Field(default=None, description="Editor session for --edit-message")
     agent_and_host_loader: _CachedAgentHostLoader = Field(description="Lazy loader for agents grouped by host")
     source_location: HostLocation = Field(description="Resolved source location")
+    source_agent_id: AgentId | None = Field(default=None, description="Resolved source agent ID (when --from-agent)")
     project_name: str = Field(description="Project name for agent labels")
     host_lifecycle: HostLifecycleOptions = Field(description="Host lifecycle options")
+    plugin_cli_params: dict[str, Any] = Field(
+        default_factory=dict, description="Plugin-registered CLI params to merge into plugin_data"
+    )
 
 
 def _setup_create(
@@ -492,6 +487,7 @@ def _setup_create(
     opts: CreateCliOptions,
     logging_config: LoggingConfig,
     address: AgentAddress,
+    plugin_cli_params: dict[str, Any] | None = None,
 ) -> _CreateSetup:
     """Validate options, resolve messages, start editor session, resolve source location."""
     # Validate that both --message and --message-file are not provided
@@ -528,7 +524,9 @@ def _setup_create(
     agent_and_host_loader = _CachedAgentHostLoader(mng_ctx=mng_ctx)
 
     # figure out where the source data is coming from
-    source_location = _resolve_source_location(opts, agent_and_host_loader, mng_ctx, is_start_desired=opts.start_host)
+    source_location, source_agent_id = _resolve_source_location(
+        opts, agent_and_host_loader, mng_ctx, is_start_desired=opts.start_host
+    )
 
     # figure out the project label, in case we need that
     project_name = _parse_project_name(source_location, opts, address, mng_ctx)
@@ -542,8 +540,10 @@ def _setup_create(
         editor_session=editor_session,
         agent_and_host_loader=agent_and_host_loader,
         source_location=source_location,
+        source_agent_id=source_agent_id,
         project_name=project_name,
         host_lifecycle=host_lifecycle,
+        plugin_cli_params=plugin_cli_params or {},
     )
 
 
@@ -565,14 +565,27 @@ def _create_agent(
         lifecycle=setup.host_lifecycle,
     )
 
+    # Compute source agent state dir from the resolved agent ID
+    source_agent_state_dir: Path | None = None
+    if setup.source_agent_id is not None:
+        source_agent_state_dir = get_agent_state_dir_path(setup.source_location.host.host_dir, setup.source_agent_id)
+
     # Parse agent options
     agent_opts, has_explicit_base = _parse_agent_opts(
         opts=opts,
         address=address,
         initial_message=setup.initial_message,
         source_location=setup.source_location,
+        source_agent_state_dir=source_agent_state_dir,
         mng_ctx=mng_ctx,
     )
+
+    # Merge plugin-registered CLI params into plugin_data so plugin hooks can access them
+    if setup.plugin_cli_params:
+        merged = {**agent_opts.plugin_data, **setup.plugin_cli_params}
+        agent_opts = agent_opts.model_copy_update(
+            to_update(agent_opts.field_ref().plugin_data, merged),
+        )
 
     # parse the connection options
     connection_opts = ConnectionOptions(
@@ -771,7 +784,7 @@ def _parse_project_name(
     # the local working directory. If they differ, the user must specify --project explicitly
     # to avoid silently tagging the agent with the wrong project.
     is_external_source = opts.source_agent is not None or opts.source_host is not None
-    is_creating_new_host = address.is_creating_new_host(opts.new_host)
+    is_creating_new_host = _is_creating_new_host(address, opts.new_host)
     if is_external_source and is_creating_new_host:
         local_git_root = find_git_worktree_root(None, mng_ctx.concurrency_group)
         local_path = local_git_root if local_git_root is not None else Path(os.getcwd())
@@ -859,7 +872,12 @@ def _resolve_source_location(
     mng_ctx: MngContext,
     *,
     is_start_desired: bool,
-) -> HostLocation:
+) -> tuple[HostLocation, AgentId | None]:
+    """Resolve the source location and optionally the source agent ID.
+
+    Returns (source_location, source_agent_id) where source_agent_id is set
+    when the source was resolved from an agent (--from-agent / --source-agent).
+    """
     # figure out the agent source data
     if opts.source is None and opts.source_agent is None and opts.source_host is None:
         # easy, source location is on current host
@@ -870,47 +888,44 @@ def _resolve_source_location(
         provider = get_provider_instance(LOCAL_PROVIDER_NAME, mng_ctx)
         host = provider.get_host(HostName("localhost"))
         online_host, _ = ensure_host_started(host, is_start_desired=is_start_desired, provider=provider)
-        source_location = HostLocation(
-            host=online_host,
-            path=Path(source_path),
-        )
-    else:
-        # Parse the source first to check if it's just a local path.
-        # When --source is a plain filesystem path (no agent or host component),
-        # we can resolve it locally without loading all providers. Loading all
-        # providers is expensive and can fail if a provider's external service
-        # (e.g. Docker daemon, Modal credentials) is unavailable.
-        parsed = _parse_source_string(opts.source) if opts.source else None
-        has_agent_or_host = (
-            (parsed is not None and (parsed.agent_name is not None or parsed.host_name is not None))
-            or opts.source_agent is not None
-            or opts.source_host is not None
-        )
-        if not has_agent_or_host:
-            # Just a local path -- use the fast local-provider path
-            if parsed is not None and parsed.path is not None:
-                source_path = str(parsed.path)
-            elif opts.source_path is not None:
-                source_path = opts.source_path
-            else:
-                source_path = os.getcwd()
-            provider = get_provider_instance(LOCAL_PROVIDER_NAME, mng_ctx)
-            host = provider.get_host(HostName("localhost"))
-            online_host, _ = ensure_host_started(host, is_start_desired=is_start_desired, provider=provider)
-            source_location = HostLocation(host=online_host, path=Path(source_path))
+        return HostLocation(host=online_host, path=Path(source_path)), None
+
+    # Parse the source first to check if it's just a local path.
+    # When --source is a plain filesystem path (no agent or host component),
+    # we can resolve it locally without loading all providers. Loading all
+    # providers is expensive and can fail if a provider's external service
+    # (e.g. Docker daemon, Modal credentials) is unavailable.
+    parsed = _parse_source_string(opts.source) if opts.source else None
+    has_agent_or_host = (
+        (parsed is not None and (parsed.agent_name is not None or parsed.host_name is not None))
+        or opts.source_agent is not None
+        or opts.source_host is not None
+    )
+    if not has_agent_or_host:
+        # Just a local path -- use the fast local-provider path
+        if parsed is not None and parsed.path is not None:
+            source_path = str(parsed.path)
+        elif opts.source_path is not None:
+            source_path = opts.source_path
         else:
-            # Need full resolution across providers
-            agents_by_host = agent_and_host_loader()
-            source_location = resolve_source_location(
-                opts.source,
-                opts.source_agent,
-                opts.source_host,
-                opts.source_path,
-                agents_by_host,
-                mng_ctx,
-                is_start_desired=is_start_desired,
-            )
-    return source_location
+            source_path = os.getcwd()
+        provider = get_provider_instance(LOCAL_PROVIDER_NAME, mng_ctx)
+        host = provider.get_host(HostName("localhost"))
+        online_host, _ = ensure_host_started(host, is_start_desired=is_start_desired, provider=provider)
+        return HostLocation(host=online_host, path=Path(source_path)), None
+
+    # Need full resolution across providers
+    agents_by_host = agent_and_host_loader()
+    resolved = resolve_source_location(
+        opts.source,
+        opts.source_agent,
+        opts.source_host,
+        opts.source_path,
+        agents_by_host,
+        mng_ctx,
+        is_start_desired=is_start_desired,
+    )
+    return resolved.location, resolved.agent_id
 
 
 def _resolve_target_host(
@@ -992,6 +1007,7 @@ def _parse_agent_opts(
     initial_message: str | None,
     source_location: HostLocation,
     mng_ctx: MngContext,
+    source_agent_state_dir: Path | None = None,
 ) -> tuple[CreateAgentOptions, bool]:
     # Get agent name from address (which incorporates both positional and --name),
     # otherwise auto-generate
@@ -1019,7 +1035,7 @@ def _parse_agent_opts(
         # No explicit flag, apply defaults based on context
         # When creating a new remote host, always use COPY
         # since WORKTREE only works when source and target are on the same host
-        is_creating_new_host = address.is_creating_new_host(opts.new_host)
+        is_creating_new_host = _is_creating_new_host(address, opts.new_host)
         is_creating_remote_host = (
             is_creating_new_host
             and address.provider_name is not None
@@ -1137,6 +1153,8 @@ def _parse_agent_opts(
         # Automatically use the "generic" agent type when --command is provided
         resolved_agent_type = "generic"
 
+    is_clone = opts.source_agent is not None
+
     agent_opts = CreateAgentOptions(
         agent_id=AgentId(opts.id) if opts.id else None,
         agent_type=AgentTypeName(resolved_agent_type) if resolved_agent_type else None,
@@ -1153,6 +1171,7 @@ def _parse_agent_opts(
         permissions=permissions,
         label_options=label_options,
         provisioning=provisioning,
+        source_agent_state_dir=source_agent_state_dir if is_clone else None,
     )
     return agent_opts, has_explicit_base
 
@@ -1188,7 +1207,7 @@ def _parse_target_host(
         # No host specified in address, use local host
         return None
 
-    is_new_host = address.is_creating_new_host(opts.new_host)
+    is_new_host = _is_creating_new_host(address, opts.new_host)
 
     if is_new_host:
         # Creating a new host - provider is required
@@ -1237,7 +1256,7 @@ def _parse_target_host(
     # Targeting an existing host
     if address.host_name is None:
         # This shouldn't happen: has_host_component is True but host_name is None
-        # means only provider_name is set, which is_new_host_implied catches above
+        # means only provider_name is set, which _is_new_host_implied catches above
         raise UserInputError("Cannot target an existing host without a host name.")
 
     agents_by_host = agent_and_host_loader()
@@ -1308,55 +1327,6 @@ def _parse_branch_flag(branch: str, agent_name: AgentName) -> tuple[str | None, 
 
     resolved_new = new.replace("*", str(agent_name))
     return (base or None, resolved_new, bool(base))
-
-
-@pure
-def _parse_agent_address(address_str: str) -> AgentAddress:
-    """Parse an agent address string into its components.
-
-    Format: [AGENT_NAME][@[HOST_NAME][.PROVIDER_NAME]]
-
-    The host part (after @) may contain at most one dot separating the host name
-    from the provider name. Additional dots are not allowed.
-
-    Examples:
-      - "" -> everything None (auto-generate name, local host)
-      - "foo" -> agent_name="foo"
-      - "foo@myhost" -> agent_name="foo", host_name="myhost"
-      - "foo@myhost.modal" -> agent_name="foo", host_name="myhost", provider_name="modal"
-      - "foo@.modal" -> agent_name="foo", provider_name="modal" (implies new host)
-      - "@myhost.modal" -> host_name="myhost", provider_name="modal" (auto-generate name)
-    """
-    if not address_str:
-        return AgentAddress()
-
-    if "@" not in address_str:
-        # Simple agent name with no host component
-        return AgentAddress(agent_name=AgentName(address_str))
-
-    agent_part, host_part = address_str.split("@", 1)
-    agent_name = AgentName(agent_part) if agent_part else None
-
-    if not host_part:
-        # "foo@" -> just agent name, no host component
-        return AgentAddress(agent_name=agent_name)
-
-    dot_count = host_part.count(".")
-    if dot_count > 1:
-        raise UserInputError(
-            f"Invalid agent address: host part '{host_part}' contains more than one dot. "
-            "Expected format: [NAME][@[HOST][.PROVIDER]]"
-        )
-
-    if dot_count == 1:
-        host_str, provider_str = host_part.split(".", 1)
-        host_name = HostName(host_str) if host_str else None
-        provider_name = ProviderInstanceName(provider_str) if provider_str else None
-    else:
-        host_name = HostName(host_part)
-        provider_name = None
-
-    return AgentAddress(agent_name=agent_name, host_name=host_name, provider_name=provider_name)
 
 
 class ParsedSourceString(FrozenModel):
