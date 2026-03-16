@@ -7,7 +7,7 @@ from loguru import logger
 
 from imbue.mng.api.message import MessageResult
 from imbue.mng.api.message import send_message_to_agents
-from imbue.mng.cli.common_opts import CommonCliOptions
+from imbue.mng.cli.agent_addr import parse_identifier_as_address
 from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.help_formatter import CommandHelpMetadata
@@ -16,6 +16,7 @@ from imbue.mng.cli.output_helpers import AbortError
 from imbue.mng.cli.output_helpers import emit_event
 from imbue.mng.cli.output_helpers import emit_final_json
 from imbue.mng.cli.output_helpers import write_human_line
+from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.errors import UserInputError
 from imbue.mng.primitives import ErrorBehavior
@@ -142,13 +143,15 @@ def _message_impl(ctx: click.Context, **kwargs) -> None:
 
     error_behavior = ErrorBehavior(opts.on_error.upper())
 
-    # Build include filters from agent identifiers
+    # Build include filters from agent identifiers, parsing addresses
     include_filters = list(opts.include)
     if agent_identifiers:
-        # Create a CEL filter that matches any of the provided identifiers
+        # Create a CEL filter that matches any of the provided identifiers.
+        # Parse agent addresses to extract the name/ID part for matching.
         ref_filters = []
         for ref in agent_identifiers:
-            ref_filter = f'(name == "{ref}" || id == "{ref}")'
+            plain_id, _ = parse_identifier_as_address(ref)
+            ref_filter = f'(name == "{plain_id}" || id == "{plain_id}")'
             ref_filters.append(ref_filter)
         combined_filter = " || ".join(ref_filters)
         include_filters.append(combined_filter)
