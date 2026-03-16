@@ -28,7 +28,7 @@ def test_create_help_succeeds(mng: MngRunFn) -> None:
     result = mng("create --help")
     expect(result).to_succeed()
     expect(result.stdout).to_contain("--no-connect")
-    expect(result.stdout).to_contain("--agent-cmd")
+    expect(result.stdout).to_contain("--command")
 
 
 @pytest.mark.release

@@ -132,12 +132,12 @@ CreateAgentFn = Callable[..., str]
 def _do_create_agent(mng: MngRunFn, name_prefix: str, extra_args: str = "") -> str:
     """Create an mng agent with standard e2e flags and return its name.
 
-    Uses --no-connect --await-ready --no-ensure-clean and a dummy sleep command
+    Uses --no-connect --no-ensure-clean and a dummy sleep command
     so the agent stays alive without triggering the tmux attach code path.
     """
     agent_name = f"{name_prefix}-{get_short_random_string()}"
     result = mng(
-        f"create {agent_name} --no-connect --await-ready --agent-cmd 'sleep 99999' --no-ensure-clean {extra_args}",
+        f"create {agent_name} --no-connect --await-ready --command 'sleep 99999' --no-ensure-clean {extra_args}",
     )
     expect(result).to_succeed()
     return agent_name
