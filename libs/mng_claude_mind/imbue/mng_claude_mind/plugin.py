@@ -38,6 +38,7 @@ from imbue.mng_llm.provisioning import create_first_daily_conversation
 from imbue.mng_llm.provisioning import create_mind_conversations_table
 from imbue.mng_llm.provisioning import create_slack_notifications_conversation
 from imbue.mng_llm.provisioning import create_system_notifications_conversation
+from imbue.mng_llm.provisioning import create_work_log_conversation
 from imbue.mng_llm.provisioning import install_llm_toolchain
 from imbue.mng_llm.provisioning import provision_llm_tools
 from imbue.mng_llm.provisioning import provision_supporting_services
@@ -257,6 +258,7 @@ class ClaudeMindAgent(ClaudeAgent):
         create_slack_notifications_conversation(host, agent_state_dir, provisioning)
         chat_model = settings.chat.model or "claude-opus-4.6"
         create_first_daily_conversation(host, agent_state_dir, provisioning, chat_model, settings.chat.welcome_message)
+        create_work_log_conversation(host, agent_state_dir, provisioning, chat_model)
 
         setup_memory_directory(host, self.work_dir, active_role, provisioning)
 
