@@ -865,6 +865,35 @@ def _find_conversation_id_after_rowid(after_rowid: int) -> str | None:
         return None
 
 
+def _build_llm_prompt_cmd(conversation_id: str, message: str, model_id: str) -> list[str]:
+    """Build the ``llm prompt`` command for sending a chat message."""
+    cmd = ["stdbuf", "-oL", "llm", "prompt", "-m", model_id]
+    if conversation_id != "NEW":
+        cmd.extend(["--cid", conversation_id])
+    template_path = _build_template()
+    if template_path:
+        cmd.extend(["-t", template_path])
+    cmd.append(message)
+    return cmd
+
+
+def _build_llm_env() -> dict[str, str]:
+    """Build the environment dict for running ``llm prompt``."""
+    env = dict(os.environ)
+    if _LLM_USER_PATH:
+        env["LLM_USER_PATH"] = _LLM_USER_PATH
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
+
+def _finalize_new_conversation(rowid_before: int) -> str | None:
+    """Discover and register a newly created conversation. Returns the real cid or None."""
+    real_cid = _find_conversation_id_after_rowid(rowid_before)
+    if real_cid:
+        _register_conversation(real_cid)
+    return real_cid
+
+
 def _handle_chat_send(conversation_id: str, message: str, wfile: Any) -> None:
     """Send a message to the LLM and stream the response via SSE.
 
@@ -875,29 +904,9 @@ def _handle_chat_send(conversation_id: str, message: str, wfile: Any) -> None:
 
     is_new_conversation = conversation_id == "NEW"
     model_id = _get_default_chat_model()
-
-    # Snapshot the max response rowid before running llm so we can find
-    # exactly which conversation was created by this request (race-safe).
     rowid_before = _get_max_response_rowid() if is_new_conversation else 0
-
-    cmd = ["stdbuf", "-oL", "llm", "prompt", "-m", model_id]
-
-    # Pass --cid to continue an existing conversation. For new conversations
-    # (cid=NEW), omit --cid so llm creates a new one; we discover its real ID
-    # after the prompt completes.
-    if not is_new_conversation:
-        cmd.extend(["--cid", conversation_id])
-
-    template_path = _build_template()
-    if template_path:
-        cmd.extend(["-t", template_path])
-
-    cmd.append(message)
-
-    env = dict(os.environ)
-    if _LLM_USER_PATH:
-        env["LLM_USER_PATH"] = _LLM_USER_PATH
-    env["PYTHONUNBUFFERED"] = "1"
+    cmd = _build_llm_prompt_cmd(conversation_id, message, model_id)
+    env = _build_llm_env()
 
     _log(f"[chat-stream] starting llm prompt: cid={conversation_id} model={model_id}")
     _log(f"[chat-stream] cmd={cmd}")
@@ -958,15 +967,11 @@ def _handle_chat_send(conversation_id: str, message: str, wfile: Any) -> None:
         except OSError as e:
             _log(f"[chat-stream] SSE remainder write failed: {e}")
 
-    # For new conversations, discover the real conversation_id that llm created
-    # and register it in mind_conversations so it appears in the list and
-    # persists across reloads.
     if is_new_conversation and result.returncode == 0:
-        real_cid = _find_conversation_id_after_rowid(rowid_before)
+        real_cid = _finalize_new_conversation(rowid_before)
         if real_cid:
             _log(f"[chat-stream] new conversation created by llm: {real_cid}")
             conversation_id = real_cid
-            _register_conversation(real_cid)
         else:
             _log("[chat-stream] WARNING: llm prompt succeeded but no new response found in database")
 
@@ -1174,9 +1179,30 @@ class _WsOutputCallback:
 
     def __call__(self, line: str, is_stdout: bool) -> None:
         if not is_stdout:
+            _log(f"[ws-stream] stderr: {line.rstrip()}")
             return
         self.lines.append(line)
         _ws_send_json(self.wfile, self.ws_lock, {"type": "chunk", "chunk": line})
+
+
+def _ws_mark_response_as_sent(cid: str, sent_ids: set[str]) -> None:
+    """Add the latest response ID for this conversation to the sent set."""
+    if not LLM_DB_PATH or not LLM_DB_PATH.is_file():
+        return
+    try:
+        conn = sqlite3.connect(f"file:{LLM_DB_PATH}?mode=ro", uri=True)
+        try:
+            row = conn.execute(
+                "SELECT id FROM responses WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1",
+                (cid,),
+            ).fetchone()
+            if row:
+                sent_ids.add(f"{row[0]}-user")
+                sent_ids.add(f"{row[0]}-assistant")
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        _log(f"[ws-send] failed to look up response ID for sent tracking: {e}")
 
 
 def _ws_handle_send(
@@ -1195,7 +1221,6 @@ def _ws_handle_send(
     Updates ``current_cid``, ``last_polled_rowid``, and ``sent_ids``
     to keep the polling thread in sync.
     """
-
     cid = msg.get("conversation_id", current_cid[0])
     message = msg.get("message", "")
     if not cid or not message:
@@ -1205,19 +1230,8 @@ def _ws_handle_send(
     is_new = cid == "NEW"
     model_id = _get_default_chat_model()
     rowid_before = _get_max_response_rowid() if is_new else 0
-
-    cmd = ["stdbuf", "-oL", "llm", "prompt", "-m", model_id]
-    if not is_new:
-        cmd.extend(["--cid", cid])
-    template_path = _build_template()
-    if template_path:
-        cmd.extend(["-t", template_path])
-    cmd.append(message)
-
-    env = dict(os.environ)
-    if _LLM_USER_PATH:
-        env["LLM_USER_PATH"] = _LLM_USER_PATH
-    env["PYTHONUNBUFFERED"] = "1"
+    cmd = _build_llm_prompt_cmd(cid, message, model_id)
+    env = _build_llm_env()
 
     _log(f"[ws-send] starting: cid={cid} model={model_id}")
     collected_lines: list[str] = []
@@ -1238,6 +1252,10 @@ def _ws_handle_send(
         _ws_send_json(wfile, ws_lock, {"type": "error", "error": f"command not found: {e}"})
         return
     finally:
+        # Update sent_ids and rowid BEFORE clearing is_streaming to prevent
+        # the polling thread from re-sending the response we just streamed.
+        _ws_mark_response_as_sent(cid, sent_ids)
+        last_polled_rowid[0] = _get_max_response_rowid()
         is_streaming[0] = False
 
     if result.returncode != 0:
@@ -1249,7 +1267,6 @@ def _ws_handle_send(
                 "error": f"LLM failed (exit {result.returncode}): {result.stderr[:200]}",
             },
         )
-        last_polled_rowid[0] = _get_max_response_rowid()
         return
 
     full_cb = "".join(collected_lines)
@@ -1258,30 +1275,12 @@ def _ws_handle_send(
         _ws_send_json(wfile, ws_lock, {"type": "chunk", "chunk": full_result[len(full_cb) :]})
 
     if is_new:
-        real_cid = _find_conversation_id_after_rowid(rowid_before)
+        real_cid = _finalize_new_conversation(rowid_before)
         if real_cid:
             cid = real_cid
-            _register_conversation(real_cid)
             current_cid[0] = real_cid
             _log(f"[ws-send] new conversation: {real_cid}")
 
-    if LLM_DB_PATH and LLM_DB_PATH.is_file():
-        try:
-            conn = sqlite3.connect(f"file:{LLM_DB_PATH}?mode=ro", uri=True)
-            try:
-                row = conn.execute(
-                    "SELECT id FROM responses WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1",
-                    (cid,),
-                ).fetchone()
-                if row:
-                    sent_ids.add(f"{row[0]}-user")
-                    sent_ids.add(f"{row[0]}-assistant")
-            finally:
-                conn.close()
-        except sqlite3.Error:
-            pass
-
-    last_polled_rowid[0] = _get_max_response_rowid()
     _ws_send_json(wfile, ws_lock, {"type": "done", "conversation_id": cid, "full_text": full_result})
 
 
@@ -1522,8 +1521,10 @@ function connectWebSocket() {{
   ws = new WebSocket(url);
 
   ws.onmessage = function(event) {{
-    var msg = JSON.parse(event.data);
+    var msg;
+    try {{ msg = JSON.parse(event.data); }} catch(e) {{ console.error("Bad WebSocket message:", e); return; }}
     if (msg.type === "history") {{
+      document.getElementById("messages").innerHTML = "";
       if (msg.messages) {{
         for (var i = 0; i < msg.messages.length; i++) {{
           appendMessage(msg.messages[i].role, msg.messages[i].content);

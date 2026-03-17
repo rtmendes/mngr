@@ -3,13 +3,8 @@
 Tests the pure/near-pure functions by loading the resource module via exec().
 """
 
-import base64
-import hashlib
-import io
 import json
 import sqlite3
-import struct
-import threading
 import types
 from pathlib import Path
 from typing import Any
@@ -825,135 +820,9 @@ def test_read_conversations_handles_malformed_message_events(web_server_module: 
     assert len(result) == 1
 
 
-# -- WebSocket protocol tests --
-
-
-def test_ws_accept_key_deterministic(web_server_module: Any) -> None:
-    key = "dGhlIHNhbXBsZSBub25jZQ=="
-    magic = b"258EAFA5-E914-47DA-95CA-5AB5A40E64BE"
-    expected = base64.b64encode(hashlib.sha1(key.encode() + magic).digest()).decode()  # noqa: S324
-    result = web_server_module._ws_accept_key(key)
-    assert result == expected
-
-
-def test_ws_accept_key_different_keys_produce_different_results(web_server_module: Any) -> None:
-    r1 = web_server_module._ws_accept_key("key-a-82741")
-    r2 = web_server_module._ws_accept_key("key-b-82741")
-    assert r1 != r2
-
-
-def test_ws_encode_frame_small_payload(web_server_module: Any) -> None:
-    frame = web_server_module._ws_encode_frame(b"hello", 0x1)
-    # FIN + text opcode
-    assert frame[0] == 0x81
-    assert frame[1] == 5
-    assert frame[2:] == b"hello"
-
-
-def test_ws_encode_frame_medium_payload(web_server_module: Any) -> None:
-    payload = b"x" * 200
-    frame = web_server_module._ws_encode_frame(payload, 0x1)
-    assert frame[0] == 0x81
-    # Extended 16-bit length
-    assert frame[1] == 126
-    length = struct.unpack(">H", frame[2:4])[0]
-    assert length == 200
-    assert frame[4:] == payload
-
-
-def test_ws_encode_frame_large_payload(web_server_module: Any) -> None:
-    payload = b"x" * 70000
-    frame = web_server_module._ws_encode_frame(payload, 0x1)
-    assert frame[0] == 0x81
-    # Extended 64-bit length
-    assert frame[1] == 127
-    length = struct.unpack(">Q", frame[2:10])[0]
-    assert length == 70000
-    assert frame[10:] == payload
-
-
-def test_ws_encode_frame_close_opcode(web_server_module: Any) -> None:
-    frame = web_server_module._ws_encode_frame(b"", 0x8)
-    # FIN + close opcode
-    assert frame[0] == 0x88
-    assert frame[1] == 0
-
-
-def test_ws_read_frame_unmasked_text(web_server_module: Any) -> None:
-    # Build an unmasked text frame for "hello"
-    frame = bytes([0x81, 0x05]) + b"hello"
-    rfile = io.BytesIO(frame)
-    result = web_server_module._ws_read_frame(rfile)
-    assert result is not None
-    opcode, payload = result
-    assert opcode == 0x1
-    assert payload == b"hello"
-
-
-def test_ws_read_frame_masked_text(web_server_module: Any) -> None:
-    # Build a masked text frame for "hello"
-    mask = b"\x37\xfa\x21\x3d"
-    raw = b"hello"
-    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(raw))
-    frame = bytes([0x81, 0x85]) + mask + masked
-    rfile = io.BytesIO(frame)
-    result = web_server_module._ws_read_frame(rfile)
-    assert result is not None
-    opcode, payload = result
-    assert opcode == 0x1
-    assert payload == b"hello"
-
-
-def test_ws_read_frame_close(web_server_module: Any) -> None:
-    frame = bytes([0x88, 0x00])
-    rfile = io.BytesIO(frame)
-    result = web_server_module._ws_read_frame(rfile)
-    assert result is not None
-    opcode, _ = result
-    assert opcode == 0x8
-
-
-def test_ws_read_frame_returns_none_on_empty(web_server_module: Any) -> None:
-    rfile = io.BytesIO(b"")
-    result = web_server_module._ws_read_frame(rfile)
-    assert result is None
-
-
-def test_ws_read_frame_returns_none_on_truncated_header(web_server_module: Any) -> None:
-    rfile = io.BytesIO(b"\x81")
-    result = web_server_module._ws_read_frame(rfile)
-    assert result is None
-
-
-def test_ws_send_json_writes_valid_frame(web_server_module: Any) -> None:
-    wfile = io.BytesIO()
-    lock = threading.Lock()
-    result = web_server_module._ws_send_json(wfile, lock, {"type": "test", "value": 42})
-    assert result is True
-    frame_data = wfile.getvalue()
-    # FIN + text opcode
-    assert frame_data[0] == 0x81
-    payload_len = frame_data[1]
-    payload = frame_data[2 : 2 + payload_len]
-    parsed = json.loads(payload.decode())
-    assert parsed["type"] == "test"
-    assert parsed["value"] == 42
-
-
-def test_ws_send_json_returns_false_on_write_error(web_server_module: Any) -> None:
-    class FailingWriter:
-        def write(self, data: bytes) -> None:
-            raise OSError("broken pipe")
-
-        def flush(self) -> None:
-            pass
-
-    lock = threading.Lock()
-    result = web_server_module._ws_send_json(FailingWriter(), lock, {"type": "test"})
-    assert result is False
-
-
-# -- _poll_db_for_new_messages tests --
+# -- _poll_db_for_new_messages tests (env-var dependent, via dynamic module) --
+# WebSocket protocol pure-function tests are in web_server_direct_test.py
+# to ensure coverage tracking (exec-loaded modules are invisible to pytest-cov).
 
 
 def _create_responses_table(db_path: Path) -> None:
@@ -1108,68 +977,3 @@ def test_render_web_chat_page_no_longer_uses_sse_fetch(web_server_module: Any) -
     page = web_server_module._render_web_chat_page("TestAgent", "conv-ws-82741")
     assert "api/chat/send" not in page
     assert "text/event-stream" not in page
-
-
-# -- _WsOutputCallback tests --
-
-
-def test_ws_output_callback_collects_stdout_lines(web_server_module: Any) -> None:
-    wfile = io.BytesIO()
-    lock = threading.Lock()
-    lines: list[str] = []
-    callback = web_server_module._WsOutputCallback(wfile, lock, lines)
-    callback("Hello world\n", is_stdout=True)
-    assert len(lines) == 1
-    assert lines[0] == "Hello world\n"
-    frame_data = wfile.getvalue()
-    assert len(frame_data) > 0
-
-
-def test_ws_output_callback_ignores_stderr(web_server_module: Any) -> None:
-    wfile = io.BytesIO()
-    lock = threading.Lock()
-    lines: list[str] = []
-    callback = web_server_module._WsOutputCallback(wfile, lock, lines)
-    callback("error message", is_stdout=False)
-    assert len(lines) == 0
-    assert wfile.getvalue() == b""
-
-
-# -- _ws_poll_loop tests --
-
-
-def test_ws_poll_loop_stops_on_event(web_server_module: Any) -> None:
-    stop = threading.Event()
-    stop.set()
-    web_server_module._ws_poll_loop(
-        io.BytesIO(),
-        threading.Lock(),
-        stop,
-        [False],
-        [0],
-        ["conv-82741"],
-        set(),
-    )
-
-
-# -- WebSocket frame round-trip tests --
-
-
-def test_ws_encode_and_read_frame_round_trip(web_server_module: Any) -> None:
-    payload = json.dumps({"type": "test", "data": "hello"}).encode()
-    frame = web_server_module._ws_encode_frame(payload, 0x1)
-    rfile = io.BytesIO(frame)
-    result = web_server_module._ws_read_frame(rfile)
-    assert result is not None
-    opcode, decoded = result
-    assert opcode == 0x1
-    assert decoded == payload
-
-
-def test_ws_read_frame_medium_unmasked(web_server_module: Any) -> None:
-    payload = b"x" * 200
-    frame = web_server_module._ws_encode_frame(payload, 0x1)
-    rfile = io.BytesIO(frame)
-    result = web_server_module._ws_read_frame(rfile)
-    assert result is not None
-    assert result[1] == payload
