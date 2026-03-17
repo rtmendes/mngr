@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from imbue.minds.errors import VendorError
+from imbue.minds.errors import ParentTrackingError
 from imbue.minds.forwarding_server.parent_tracking import MIND_BRANCH_PREFIX
 from imbue.minds.forwarding_server.parent_tracking import PARENT_FILE_NAME
 from imbue.minds.forwarding_server.parent_tracking import ParentInfo
@@ -15,6 +15,7 @@ from imbue.minds.forwarding_server.parent_tracking import read_parent_info
 from imbue.minds.forwarding_server.parent_tracking import setup_mind_branch_and_parent
 from imbue.minds.forwarding_server.parent_tracking import write_parent_info
 from imbue.minds.forwarding_server.vendor_mng import run_git
+from imbue.minds.primitives import AgentName
 from imbue.minds.primitives import GitBranch
 from imbue.minds.primitives import GitCommitHash
 from imbue.minds.primitives import GitUrl
@@ -38,7 +39,7 @@ def test_get_current_commit_hash_returns_full_hash(tmp_path: Path) -> None:
 
 def test_checkout_mind_branch_creates_new_branch(tmp_path: Path) -> None:
     repo = make_git_repo(tmp_path)
-    checkout_mind_branch(repo, "selene")
+    checkout_mind_branch(repo, AgentName("selene"))
     branch = get_current_branch(repo)
     assert branch == "{}selene".format(MIND_BRANCH_PREFIX)
 
@@ -57,7 +58,7 @@ def test_write_and_read_parent_info_roundtrips(tmp_path: Path) -> None:
 
 def test_read_parent_info_raises_when_file_missing(tmp_path: Path) -> None:
     repo = make_git_repo(tmp_path)
-    with pytest.raises(VendorError, match="Failed to read parent.url"):
+    with pytest.raises(ParentTrackingError, match="Failed to read parent.url"):
         read_parent_info(repo)
 
 
@@ -84,7 +85,7 @@ def test_setup_mind_branch_and_parent_full_flow(tmp_path: Path) -> None:
 
     run_git(["clone", str(source), str(clone_dir)], cwd=tmp_path, error_message="clone failed")
 
-    setup_mind_branch_and_parent(clone_dir, "selene", str(source))
+    setup_mind_branch_and_parent(clone_dir, AgentName("selene"), GitUrl(str(source)))
 
     # Verify branch
     branch = get_current_branch(clone_dir)
@@ -107,7 +108,7 @@ def test_fetch_and_merge_parent_merges_changes(tmp_path: Path) -> None:
 
     run_git(["clone", str(source), str(clone_dir)], cwd=tmp_path, error_message="clone failed")
 
-    setup_mind_branch_and_parent(clone_dir, "selene", str(source))
+    setup_mind_branch_and_parent(clone_dir, AgentName("selene"), GitUrl(str(source)))
 
     # Make a change in the source repo
     (source / "new_file.txt").write_text("new content")
@@ -133,7 +134,7 @@ def test_fetch_and_merge_parent_noop_when_up_to_date(tmp_path: Path) -> None:
     clone_dir = tmp_path / "clone"
 
     run_git(["clone", str(source), str(clone_dir)], cwd=tmp_path, error_message="clone failed")
-    setup_mind_branch_and_parent(clone_dir, "selene", str(source))
+    setup_mind_branch_and_parent(clone_dir, AgentName("selene"), GitUrl(str(source)))
 
     parent_info = read_parent_info(clone_dir)
     new_hash = fetch_and_merge_parent(clone_dir, parent_info)

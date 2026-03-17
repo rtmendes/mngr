@@ -276,7 +276,7 @@ class AgentCreator(MutableModel):
                 clone_git_repo(GitUrl(git_url), mind_dir, on_output=emit_log)
 
                 log_queue.put("[minds] Setting up branch and parent tracking...")
-                setup_mind_branch_and_parent(mind_dir, agent_name, git_url, on_output=emit_log)
+                setup_mind_branch_and_parent(mind_dir, AgentName(agent_name), GitUrl(git_url), on_output=emit_log)
 
                 settings = load_creation_settings(mind_dir)
 

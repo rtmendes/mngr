@@ -30,8 +30,20 @@ class MngCommandError(MindError):
     ...
 
 
-class VendorError(MindError):
+class GitOperationError(MindError):
+    """Raised when a git operation fails during mind management."""
+
+    ...
+
+
+class VendorError(GitOperationError):
     """Raised when vendoring a repo into a mind fails."""
+
+    ...
+
+
+class ParentTrackingError(GitOperationError):
+    """Raised when a parent tracking git operation fails."""
 
     ...
 

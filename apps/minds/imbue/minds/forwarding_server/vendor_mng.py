@@ -20,6 +20,7 @@ from loguru import logger
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.primitives import NonEmptyStr
 from imbue.minds.errors import DirtyRepoError
+from imbue.minds.errors import GitOperationError
 from imbue.minds.errors import VendorError
 from imbue.mng_claude_mind.data_types import VendorRepoConfig
 
@@ -274,10 +275,13 @@ def run_git(
     cwd: Path,
     on_output: Callable[[str, bool], None] | None = None,
     error_message: str = "git command failed",
+    error_class: type[GitOperationError] = VendorError,
 ) -> str:
     """Run a git command and return stdout.
 
-    Raises VendorError if the command exits with a non-zero status.
+    Raises the specified error class (default: VendorError) if the command
+    exits with a non-zero status. Callers can pass a different error class
+    for semantically appropriate error types.
     """
     cg = ConcurrencyGroup(name="vendor-git")
     with cg:
@@ -288,7 +292,7 @@ def run_git(
             on_output=on_output,
         )
     if result.returncode != 0:
-        raise VendorError(
+        raise error_class(
             "{} (exit code {}):\n{}".format(
                 error_message,
                 result.returncode,

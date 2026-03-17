@@ -72,7 +72,15 @@ def find_mind_agent(agent_name: str) -> MindAgentRecord:
     if not agents:
         raise MindError("No mind found with name '{}'".format(agent_name))
 
-    raw = agents[0]
+    return parse_mind_agent_record(agents[0], agent_name)
+
+
+def parse_mind_agent_record(raw: dict[str, object], agent_name: str) -> MindAgentRecord:
+    """Parse a raw agent dict from ``mng list`` JSON into a MindAgentRecord.
+
+    Validates that the required ``id`` and ``work_dir`` fields are present.
+    Raises MindError if either field is missing.
+    """
     raw_id = raw.get("id")
     raw_work_dir = raw.get("work_dir")
     if raw_id is None or raw_work_dir is None:

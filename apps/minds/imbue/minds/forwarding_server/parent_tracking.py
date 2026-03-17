@@ -23,8 +23,10 @@ from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.minds.errors import ParentTrackingError
 from imbue.minds.forwarding_server.vendor_mng import ensure_git_identity
 from imbue.minds.forwarding_server.vendor_mng import run_git
+from imbue.minds.primitives import AgentName
 from imbue.minds.primitives import GitBranch
 from imbue.minds.primitives import GitCommitHash
 from imbue.minds.primitives import GitUrl
@@ -32,6 +34,8 @@ from imbue.minds.primitives import GitUrl
 PARENT_FILE_NAME: Final[str] = ".parent"
 
 MIND_BRANCH_PREFIX: Final[str] = "minds/"
+
+_ERR = ParentTrackingError
 
 
 class ParentInfo(FrozenModel):
@@ -56,6 +60,7 @@ def get_current_branch(repo_dir: Path) -> GitBranch:
             ["rev-parse", "--abbrev-ref", "HEAD"],
             cwd=repo_dir,
             error_message="Failed to get current branch of {}".format(repo_dir),
+            error_class=_ERR,
         ).strip()
     )
 
@@ -67,18 +72,19 @@ def get_current_commit_hash(repo_dir: Path) -> GitCommitHash:
             ["rev-parse", "HEAD"],
             cwd=repo_dir,
             error_message="Failed to get current commit hash of {}".format(repo_dir),
+            error_class=_ERR,
         ).strip()
     )
 
 
 def checkout_mind_branch(
     repo_dir: Path,
-    mind_name: str,
+    mind_name: AgentName,
     on_output: Callable[[str, bool], None] | None = None,
 ) -> None:
     """Create and switch to a new branch named ``minds/<mind_name>``.
 
-    Raises VendorError if the branch already exists or the checkout fails.
+    Raises ParentTrackingError if the branch already exists or the checkout fails.
     """
     branch_name = "{}{}".format(MIND_BRANCH_PREFIX, mind_name)
     logger.debug("Checking out new branch: {}", branch_name)
@@ -87,6 +93,7 @@ def checkout_mind_branch(
         cwd=repo_dir,
         on_output=on_output,
         error_message="Failed to create branch {}".format(branch_name),
+        error_class=_ERR,
     )
 
 
@@ -114,25 +121,28 @@ def write_parent_info(
         cwd=repo_dir,
         on_output=on_output,
         error_message="Failed to write parent.url to {}".format(parent_file),
+        error_class=_ERR,
     )
     run_git(
         ["config", "--file", parent_file, "parent.branch", str(parent_info.branch)],
         cwd=repo_dir,
         on_output=on_output,
         error_message="Failed to write parent.branch to {}".format(parent_file),
+        error_class=_ERR,
     )
     run_git(
         ["config", "--file", parent_file, "parent.hash", str(parent_info.hash)],
         cwd=repo_dir,
         on_output=on_output,
         error_message="Failed to write parent.hash to {}".format(parent_file),
+        error_class=_ERR,
     )
 
 
 def read_parent_info(repo_dir: Path) -> ParentInfo:
     """Read parent lineage information from the ``.parent`` file.
 
-    Raises VendorError if the file does not exist or cannot be read.
+    Raises ParentTrackingError if the file does not exist or cannot be read.
     """
     parent_file = str(repo_dir / PARENT_FILE_NAME)
 
@@ -140,16 +150,19 @@ def read_parent_info(repo_dir: Path) -> ParentInfo:
         ["config", "--file", parent_file, "parent.url"],
         cwd=repo_dir,
         error_message="Failed to read parent.url from {}".format(parent_file),
+        error_class=_ERR,
     ).strip()
     branch = run_git(
         ["config", "--file", parent_file, "parent.branch"],
         cwd=repo_dir,
         error_message="Failed to read parent.branch from {}".format(parent_file),
+        error_class=_ERR,
     ).strip()
     hash_value = run_git(
         ["config", "--file", parent_file, "parent.hash"],
         cwd=repo_dir,
         error_message="Failed to read parent.hash from {}".format(parent_file),
+        error_class=_ERR,
     ).strip()
 
     return ParentInfo(url=GitUrl(url), branch=GitBranch(branch), hash=GitCommitHash(hash_value))
@@ -171,6 +184,7 @@ def commit_parent_file(
         cwd=repo_dir,
         on_output=on_output,
         error_message="Failed to stage {}".format(PARENT_FILE_NAME),
+        error_class=_ERR,
     )
 
     # Check if there are staged changes before committing
@@ -178,6 +192,7 @@ def commit_parent_file(
         ["diff", "--cached", "--name-only"],
         cwd=repo_dir,
         error_message="Failed to check staged changes",
+        error_class=_ERR,
     ).strip()
 
     if not diff_output:
@@ -189,13 +204,14 @@ def commit_parent_file(
         cwd=repo_dir,
         on_output=on_output,
         error_message="Failed to commit {}".format(PARENT_FILE_NAME),
+        error_class=_ERR,
     )
 
 
 def setup_mind_branch_and_parent(
     repo_dir: Path,
-    mind_name: str,
-    git_url: str,
+    mind_name: AgentName,
+    git_url: GitUrl,
     on_output: Callable[[str, bool], None] | None = None,
 ) -> None:
     """Set up a mind's branch and parent tracking after cloning.
@@ -213,7 +229,7 @@ def setup_mind_branch_and_parent(
 
     checkout_mind_branch(repo_dir, mind_name, on_output)
 
-    parent_info = ParentInfo(url=GitUrl(git_url), branch=parent_branch, hash=parent_hash)
+    parent_info = ParentInfo(url=git_url, branch=parent_branch, hash=parent_hash)
     write_parent_info(repo_dir, parent_info, on_output)
     commit_parent_file(repo_dir, on_output)
 
@@ -231,7 +247,7 @@ def fetch_and_merge_parent(
 
     Returns the new parent commit hash (the fetched HEAD).
 
-    Raises VendorError if the fetch or merge fails (e.g. due to conflicts).
+    Raises ParentTrackingError if the fetch or merge fails (e.g. due to conflicts).
     """
     ensure_git_identity(repo_dir)
 
@@ -241,6 +257,7 @@ def fetch_and_merge_parent(
         cwd=repo_dir,
         on_output=on_output,
         error_message="Failed to fetch from {} branch {}".format(parent_info.url, parent_info.branch),
+        error_class=_ERR,
     )
 
     new_hash = GitCommitHash(
@@ -248,6 +265,7 @@ def fetch_and_merge_parent(
             ["rev-parse", "FETCH_HEAD"],
             cwd=repo_dir,
             error_message="Failed to resolve FETCH_HEAD",
+            error_class=_ERR,
         ).strip()
     )
 
@@ -257,6 +275,7 @@ def fetch_and_merge_parent(
         cwd=repo_dir,
         on_output=on_output,
         error_message="Failed to merge parent changes (there may be conflicts to resolve manually)",
+        error_class=_ERR,
     )
 
     updated_info = ParentInfo(url=parent_info.url, branch=parent_info.branch, hash=new_hash)
