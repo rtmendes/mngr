@@ -4,15 +4,17 @@
 Serves a web interface where all views (conversations, terminal) are displayed
 in iframes below a persistent navigation header:
 - Main page: shows the web chat for the most recent conversation (or conversation list if none)
-- Chat page: web-based chat with SSE streaming for real-time responses
+- Chat page: web-based chat with WebSocket streaming for real-time responses
 - Text Chat page: embeds a specific conversation's ttyd in an iframe (legacy terminal chat)
 - Conversations page: lists all conversations with links to open them
 - Terminal page: embeds the primary agent terminal in an iframe
 - All Agents page: lists agents on this host with their states
 
-The web chat uses SSE (Server-Sent Events) for streaming LLM responses and
-receives messages via POST requests from the frontend (plain JavaScript).
-It uses the llm library for calling LLMs and storing results.
+The web chat uses WebSocket for bidirectional real-time communication:
+- Sends user messages to the LLM and streams responses back as chunk events
+- Polls the llm database for new messages (e.g. from ``llm inject`` via the
+  thinking agent) and pushes them to the client as new_message events
+It also retains a legacy SSE POST endpoint for backward compatibility.
 
 The text chat (legacy) uses companion ttyd processes for terminal-based chat.
 
@@ -24,12 +26,14 @@ Environment:
     LLM_USER_PATH        - LLM data directory (contains logs.db)
 """
 
+import base64
 import hashlib
 import html
 import json
 import os
 import signal
 import sqlite3
+import struct
 import subprocess
 import sys
 import threading
@@ -45,6 +49,7 @@ from typing import Final
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mng_recursive.watcher_common import MngNotInstalledError
 from imbue.mng_recursive.watcher_common import get_mng_command
 
@@ -71,6 +76,8 @@ AGENT_WORK_DIR: Final[str] = os.environ.get("MNG_AGENT_WORK_DIR", "")
 
 WEB_SERVER_NAME: Final[str] = "web"
 AGENT_LIST_POLL_INTERVAL_SECONDS: Final[int] = 30
+_WS_MAGIC: Final[bytes] = b"258EAFA5-E914-47DA-95CA-5AB5A40E64BE"
+_WS_POLL_INTERVAL_SECONDS: Final[int] = 2
 
 # -- Global state (protected by locks) --
 
@@ -90,6 +97,82 @@ def _html_escape(text: str) -> str:
 def _log(message: str) -> None:
     sys.stderr.write(f"[web-server] {message}\n")
     sys.stderr.flush()
+
+
+# -- WebSocket protocol --
+
+
+def _ws_accept_key(key: str) -> str:
+    """Compute the Sec-WebSocket-Accept header value per RFC 6455 section 4.2.2."""
+    digest = hashlib.sha1(key.encode() + _WS_MAGIC).digest()  # noqa: S324
+    return base64.b64encode(digest).decode()
+
+
+def _ws_encode_frame(payload: bytes, opcode: int = 0x1) -> bytes:
+    """Encode a WebSocket frame (server-to-client, unmasked)."""
+    frame = bytearray()
+    frame.append(0x80 | opcode)  # FIN bit + opcode
+    length = len(payload)
+    if length < 126:
+        frame.append(length)
+    elif length < 65536:
+        frame.append(126)
+        frame.extend(struct.pack(">H", length))
+    else:
+        frame.append(127)
+        frame.extend(struct.pack(">Q", length))
+    frame.extend(payload)
+    return bytes(frame)
+
+
+def _ws_read_frame(rfile: Any) -> tuple[int, bytes] | None:
+    """Read a WebSocket frame. Returns (opcode, payload) or None on error/EOF."""
+    try:
+        header = rfile.read(2)
+    except OSError:
+        return None
+    if not header or len(header) < 2:
+        return None
+    opcode = header[0] & 0x0F
+    is_masked = bool(header[1] & 0x80)
+    length = header[1] & 0x7F
+    try:
+        if length == 126:
+            raw = rfile.read(2)
+            if not raw or len(raw) < 2:
+                return None
+            length = struct.unpack(">H", raw)[0]
+        elif length == 127:
+            raw = rfile.read(8)
+            if not raw or len(raw) < 8:
+                return None
+            length = struct.unpack(">Q", raw)[0]
+        mask = b""
+        if is_masked:
+            mask = rfile.read(4)
+            if not mask or len(mask) < 4:
+                return None
+        data = rfile.read(length) if length > 0 else b""
+        if len(data) < length:
+            return None
+        if is_masked:
+            data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+    except OSError:
+        return None
+    return (opcode, data)
+
+
+def _ws_send_json(wfile: Any, lock: threading.Lock, data: dict[str, Any]) -> bool:
+    """Send a JSON message over a WebSocket (thread-safe). Returns False on failure."""
+    payload = json.dumps(data).encode()
+    frame = _ws_encode_frame(payload, 0x1)
+    try:
+        with lock:
+            wfile.write(frame)
+            wfile.flush()
+        return True
+    except OSError:
+        return False
 
 
 # -- Server registration --
@@ -662,7 +745,6 @@ def _create_greeting_conversation() -> str | None:
 
     Returns the conversation ID on success, or None on failure.
     """
-    from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 
     model_id = _get_default_chat_model()
     cmd = ["llm", "inject", "-m", model_id, "--prompt", "", _NEW_CONVERSATION_GREETING]
@@ -790,7 +872,6 @@ def _handle_chat_send(conversation_id: str, message: str, wfile: Any) -> None:
     sends each stdout line as an SSE "chunk" event. Line-buffered: chunks are
     sent per-line as the LLM produces newlines in its output.
     """
-    from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 
     is_new_conversation = conversation_id == "NEW"
     model_id = _get_default_chat_model()
@@ -897,6 +978,311 @@ def _handle_chat_send(conversation_id: str, message: str, wfile: Any) -> None:
         _log("[chat-stream] done event sent successfully")
     except OSError as e:
         _log(f"[chat-stream] SSE done write failed: {e}")
+
+
+# -- WebSocket DB polling --
+
+
+def _poll_db_for_new_messages(
+    conversation_id: str,
+    after_rowid: int,
+    sent_response_ids: set[str],
+) -> tuple[list[dict[str, Any]], int]:
+    """Poll the llm database for new messages in a conversation.
+
+    Returns a tuple of (new_messages, max_rowid_seen). Messages whose
+    response ID is in ``sent_response_ids`` are skipped to avoid
+    duplicates with messages already streamed to the client.
+    """
+    if not LLM_DB_PATH or not LLM_DB_PATH.is_file():
+        return [], after_rowid
+    max_rowid = after_rowid
+    new_messages: list[dict[str, Any]] = []
+    try:
+        conn = sqlite3.connect(f"file:{LLM_DB_PATH}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT rowid, id, prompt, response, datetime_utc FROM responses "
+                "WHERE conversation_id = ? AND rowid > ? ORDER BY rowid ASC",
+                (conversation_id, after_rowid),
+            ).fetchall()
+            for rowid, response_id, prompt, response, _ts in rows:
+                max_rowid = max(max_rowid, rowid)
+                if prompt and response == "":
+                    continue
+                if prompt and prompt != "...":
+                    user_eid = f"{response_id}-user"
+                    if user_eid not in sent_response_ids:
+                        new_messages.append(
+                            {
+                                "type": "new_message",
+                                "role": "user",
+                                "content": prompt,
+                                "conversation_id": conversation_id,
+                                "response_id": user_eid,
+                            }
+                        )
+                if response and response.strip():
+                    asst_eid = f"{response_id}-assistant"
+                    if asst_eid not in sent_response_ids:
+                        new_messages.append(
+                            {
+                                "type": "new_message",
+                                "role": "assistant",
+                                "content": response,
+                                "conversation_id": conversation_id,
+                                "response_id": asst_eid,
+                            }
+                        )
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        _log(f"[ws-poll] DB query error: {e}")
+    return new_messages, max_rowid
+
+
+# -- WebSocket handler --
+
+
+def _ws_poll_loop(
+    wfile: Any,
+    ws_lock: threading.Lock,
+    stop_event: threading.Event,
+    is_streaming: list[bool],
+    last_polled_rowid: list[int],
+    current_cid: list[str],
+    sent_ids: set[str],
+) -> None:
+    """Background thread: poll the DB for new messages and push via WebSocket."""
+    while not stop_event.is_set():
+        stop_event.wait(_WS_POLL_INTERVAL_SECONDS)
+        if stop_event.is_set():
+            break
+        if is_streaming[0]:
+            continue
+        cid = current_cid[0]
+        if not cid or cid == "NEW":
+            continue
+        new_msgs, new_max = _poll_db_for_new_messages(cid, last_polled_rowid[0], sent_ids)
+        for msg in new_msgs:
+            rid = msg.get("response_id", "")
+            if rid:
+                sent_ids.add(rid)
+            if not _ws_send_json(wfile, ws_lock, msg):
+                stop_event.set()
+                return
+        if new_max > last_polled_rowid[0]:
+            last_polled_rowid[0] = new_max
+
+
+def _handle_websocket(handler: BaseHTTPRequestHandler, conversation_id: str) -> None:
+    """Handle a WebSocket connection for real-time chat with DB polling.
+
+    Performs the WebSocket upgrade handshake, then enters a loop that:
+    - Receives messages from the client (type=send)
+    - Streams LLM responses back as chunk/done/error events
+    - Polls the database for new messages (e.g. from ``llm inject``) and
+      pushes them to the client as new_message events
+    """
+    key = handler.headers.get("Sec-WebSocket-Key", "")
+    if not key:
+        handler.send_error(400, "Missing Sec-WebSocket-Key")
+        return
+    accept = _ws_accept_key(key)
+    handler.send_response(101, "Switching Protocols")
+    handler.send_header("Upgrade", "websocket")
+    handler.send_header("Connection", "Upgrade")
+    handler.send_header("Sec-WebSocket-Accept", accept)
+    handler.end_headers()
+    handler.close_connection = True
+
+    wfile = handler.wfile
+    rfile = handler.rfile
+    ws_lock = threading.Lock()
+
+    stop_event = threading.Event()
+    is_streaming = [False]
+    last_polled_rowid = [_get_max_response_rowid()]
+    current_cid = [conversation_id]
+    sent_ids: set[str] = set()
+
+    # Send initial history
+    if current_cid[0] and current_cid[0] != "NEW":
+        messages = _read_message_history(current_cid[0])
+        _ws_send_json(wfile, ws_lock, {"type": "history", "messages": messages, "conversation_id": current_cid[0]})
+        last_polled_rowid[0] = _get_max_response_rowid()
+
+    poller_thread = threading.Thread(
+        target=_ws_poll_loop,
+        args=(wfile, ws_lock, stop_event, is_streaming, last_polled_rowid, current_cid, sent_ids),
+        daemon=True,
+    )
+    poller_thread.start()
+
+    try:
+        while not stop_event.is_set():
+            frame = _ws_read_frame(rfile)
+            if frame is None:
+                break
+            opcode, payload = frame
+            if opcode == 0x8:
+                try:
+                    with ws_lock:
+                        wfile.write(_ws_encode_frame(b"", 0x8))
+                        wfile.flush()
+                except OSError:
+                    pass
+                break
+            if opcode == 0x9:
+                try:
+                    with ws_lock:
+                        wfile.write(_ws_encode_frame(payload, 0xA))
+                        wfile.flush()
+                except OSError:
+                    break
+            if opcode != 0x1:
+                continue
+            try:
+                msg = json.loads(payload.decode())
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                _log(f"[ws] malformed message: {e}")
+                continue
+            if msg.get("type") != "send":
+                continue
+            _ws_handle_send(
+                msg,
+                wfile,
+                ws_lock,
+                stop_event,
+                current_cid,
+                is_streaming,
+                last_polled_rowid,
+                sent_ids,
+            )
+    finally:
+        stop_event.set()
+        _log("[ws] connection closed")
+
+
+class _WsOutputCallback:
+    """Callable that streams stdout lines as WebSocket chunk events and collects them."""
+
+    def __init__(self, wfile: Any, ws_lock: threading.Lock, lines: list[str]) -> None:
+        self.wfile = wfile
+        self.ws_lock = ws_lock
+        self.lines = lines
+
+    def __call__(self, line: str, is_stdout: bool) -> None:
+        if not is_stdout:
+            return
+        self.lines.append(line)
+        _ws_send_json(self.wfile, self.ws_lock, {"type": "chunk", "chunk": line})
+
+
+def _ws_handle_send(
+    msg: dict[str, Any],
+    wfile: Any,
+    ws_lock: threading.Lock,
+    stop_event: threading.Event,
+    current_cid: list[str],
+    is_streaming: list[bool],
+    last_polled_rowid: list[int],
+    sent_ids: set[str],
+) -> None:
+    """Process a 'send' message from the WebSocket client.
+
+    Runs ``llm prompt`` and streams the response back via the WebSocket.
+    Updates ``current_cid``, ``last_polled_rowid``, and ``sent_ids``
+    to keep the polling thread in sync.
+    """
+
+    cid = msg.get("conversation_id", current_cid[0])
+    message = msg.get("message", "")
+    if not cid or not message:
+        _ws_send_json(wfile, ws_lock, {"type": "error", "error": "Missing conversation_id or message"})
+        return
+
+    is_new = cid == "NEW"
+    model_id = _get_default_chat_model()
+    rowid_before = _get_max_response_rowid() if is_new else 0
+
+    cmd = ["stdbuf", "-oL", "llm", "prompt", "-m", model_id]
+    if not is_new:
+        cmd.extend(["--cid", cid])
+    template_path = _build_template()
+    if template_path:
+        cmd.extend(["-t", template_path])
+    cmd.append(message)
+
+    env = dict(os.environ)
+    if _LLM_USER_PATH:
+        env["LLM_USER_PATH"] = _LLM_USER_PATH
+    env["PYTHONUNBUFFERED"] = "1"
+
+    _log(f"[ws-send] starting: cid={cid} model={model_id}")
+    collected_lines: list[str] = []
+    callback = _WsOutputCallback(wfile, ws_lock, collected_lines)
+
+    is_streaming[0] = True
+    try:
+        with ConcurrencyGroup(name="ws-chat-send") as cg:
+            result = cg.run_process_to_completion(
+                cmd,
+                timeout=300.0,
+                is_checked_after=False,
+                on_output=callback,
+                env=env,
+            )
+    except FileNotFoundError as e:
+        _log(f"[ws-send] command not found: {e}")
+        _ws_send_json(wfile, ws_lock, {"type": "error", "error": f"command not found: {e}"})
+        return
+    finally:
+        is_streaming[0] = False
+
+    if result.returncode != 0:
+        _ws_send_json(
+            wfile,
+            ws_lock,
+            {
+                "type": "error",
+                "error": f"LLM failed (exit {result.returncode}): {result.stderr[:200]}",
+            },
+        )
+        last_polled_rowid[0] = _get_max_response_rowid()
+        return
+
+    full_cb = "".join(collected_lines)
+    full_result = result.stdout
+    if len(full_result) > len(full_cb):
+        _ws_send_json(wfile, ws_lock, {"type": "chunk", "chunk": full_result[len(full_cb) :]})
+
+    if is_new:
+        real_cid = _find_conversation_id_after_rowid(rowid_before)
+        if real_cid:
+            cid = real_cid
+            _register_conversation(real_cid)
+            current_cid[0] = real_cid
+            _log(f"[ws-send] new conversation: {real_cid}")
+
+    if LLM_DB_PATH and LLM_DB_PATH.is_file():
+        try:
+            conn = sqlite3.connect(f"file:{LLM_DB_PATH}?mode=ro", uri=True)
+            try:
+                row = conn.execute(
+                    "SELECT id FROM responses WHERE conversation_id = ? ORDER BY rowid DESC LIMIT 1",
+                    (cid,),
+                ).fetchone()
+                if row:
+                    sent_ids.add(f"{row[0]}-user")
+                    sent_ids.add(f"{row[0]}-assistant")
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            pass
+
+    last_polled_rowid[0] = _get_max_response_rowid()
+    _ws_send_json(wfile, ws_lock, {"type": "done", "conversation_id": cid, "full_text": full_result})
 
 
 # -- Web chat page rendering --
@@ -1017,12 +1403,15 @@ def _render_web_chat_page(agent_name: str, conversation_id: str) -> str:
 <script>
 var conversationId = {js_safe_cid};
 var isStreaming = false;
+var ws = null;
+var currentBubble = null;
+var fullText = "";
+var shouldReconnect = true;
 
 // -- Conversation picker --
 function toggleConvMenu() {{
   document.getElementById("conv-picker-menu").classList.toggle("open");
 }}
-// Close menu when clicking outside
 document.addEventListener("click", function(e) {{
   var picker = document.querySelector(".conv-picker");
   if (picker && !picker.contains(e.target)) {{
@@ -1053,7 +1442,6 @@ function loadConversations() {{
     if (!foundCurrent && conversationId === "NEW") {{
       label.textContent = "New conversation";
     }}
-    // "New conversation" option at the bottom
     var newBtn = document.createElement("button");
     newBtn.className = "conv-picker-item new-conv";
     newBtn.textContent = "+ New conversation";
@@ -1075,7 +1463,6 @@ function escapeHtml(text) {{
 }}
 
 function renderMarkdown(text) {{
-  // Split into lines, group consecutive "> " lines into blockquotes
   var lines = text.split("\\n");
   var parts = [];
   var quoteLines = [];
@@ -1098,11 +1485,8 @@ function renderMarkdown(text) {{
 }}
 
 function inlineMarkdown(html) {{
-  // Links: [text](url)
   html = html.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  // Bold: **text**
   html = html.replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>");
-  // Italic: *text*
   html = html.replace(/\\*([^*]+)\\*/g, "<em>$1</em>");
   return html;
 }}
@@ -1120,29 +1504,84 @@ function appendMessage(role, content) {{
   return bubble;
 }}
 
-function loadHistory() {{
-  fetch("api/chat/history?cid=" + encodeURIComponent(conversationId))
-    .then(function(r) {{ return r.json(); }})
-    .then(function(data) {{
-      if (data.messages) {{
-        for (var i = 0; i < data.messages.length; i++) {{
-          appendMessage(data.messages[i].role, data.messages[i].content);
+function finishStreaming() {{
+  isStreaming = false;
+  currentBubble = null;
+  fullText = "";
+  var ind = document.getElementById("streaming-indicator");
+  if (ind) ind.remove();
+}}
+
+// -- WebSocket connection --
+function connectWebSocket() {{
+  var protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  var pathParts = location.pathname.split("/");
+  pathParts.pop();
+  var basePath = pathParts.join("/") + "/";
+  var url = protocol + "//" + location.host + basePath + "ws?cid=" + encodeURIComponent(conversationId);
+  ws = new WebSocket(url);
+
+  ws.onmessage = function(event) {{
+    var msg = JSON.parse(event.data);
+    if (msg.type === "history") {{
+      if (msg.messages) {{
+        for (var i = 0; i < msg.messages.length; i++) {{
+          appendMessage(msg.messages[i].role, msg.messages[i].content);
         }}
       }}
-    }})
-    .catch(function(e) {{ console.error("Failed to load history:", e); }});
+    }} else if (msg.type === "chunk") {{
+      if (!currentBubble) {{
+        currentBubble = appendMessage("assistant", "");
+        var ind = document.getElementById("streaming-indicator");
+        if (ind) document.getElementById("messages").appendChild(ind);
+      }}
+      fullText += msg.chunk;
+      currentBubble.innerHTML = renderMarkdown(fullText);
+      scrollToBottom();
+    }} else if (msg.type === "done") {{
+      if (msg.conversation_id && msg.conversation_id !== conversationId) {{
+        conversationId = msg.conversation_id;
+        history.replaceState(null, "", "chat?cid=" + encodeURIComponent(conversationId));
+        loadConversations();
+      }}
+      finishStreaming();
+    }} else if (msg.type === "error") {{
+      if (!currentBubble) {{
+        currentBubble = appendMessage("assistant", "");
+      }}
+      currentBubble.innerHTML = escapeHtml("Error: " + (msg.error || "Unknown error"));
+      currentBubble.style.color = "#c00";
+      finishStreaming();
+    }} else if (msg.type === "new_message") {{
+      appendMessage(msg.role, msg.content);
+    }}
+  }};
+
+  ws.onclose = function() {{
+    ws = null;
+    if (shouldReconnect) {{
+      setTimeout(connectWebSocket, 3000);
+    }}
+  }};
+
+  ws.onerror = function(e) {{
+    console.error("WebSocket error:", e);
+  }};
 }}
 
 function sendMessage() {{
   var input = document.getElementById("chat-input");
   var message = input.value.trim();
   if (!message || isStreaming) return;
+  if (!ws || ws.readyState !== 1) return;
 
   appendMessage("user", message);
   input.value = "";
   input.style.height = "auto";
 
   isStreaming = true;
+  currentBubble = null;
+  fullText = "";
   var indicator = document.createElement("div");
   indicator.id = "streaming-indicator";
   indicator.className = "streaming-indicator";
@@ -1150,80 +1589,11 @@ function sendMessage() {{
   document.getElementById("messages").appendChild(indicator);
   scrollToBottom();
 
-  var currentBubble = null;
-  var fullText = "";
-
-  fetch("api/chat/send", {{
-    method: "POST",
-    headers: {{"Content-Type": "application/json"}},
-    body: JSON.stringify({{conversation_id: conversationId, message: message}})
-  }}).then(function(response) {{
-    var reader = response.body.getReader();
-    var decoder = new TextDecoder();
-    var buffer = "";
-
-    function processChunk(result) {{
-      if (result.done) {{
-        finishStreaming();
-        return;
-      }}
-      buffer += decoder.decode(result.value, {{stream: true}});
-      var lines = buffer.split("\\n");
-      buffer = lines.pop();
-
-      for (var i = 0; i < lines.length; i++) {{
-        var line = lines[i];
-        if (line.startsWith("event: ")) {{
-          var eventType = line.substring(7).trim();
-          // next line should be data:
-          i++;
-          if (i < lines.length && lines[i].startsWith("data: ")) {{
-            var dataStr = lines[i].substring(6);
-            try {{
-              var data = JSON.parse(dataStr);
-              if (eventType === "chunk") {{
-                if (!currentBubble) {{
-                  currentBubble = appendMessage("assistant", "");
-                  // Re-append indicator so it stays below the streaming bubble
-                  var ind = document.getElementById("streaming-indicator");
-                  if (ind) document.getElementById("messages").appendChild(ind);
-                }}
-                fullText += data.chunk;
-                currentBubble.innerHTML = renderMarkdown(fullText);
-                scrollToBottom();
-              }} else if (eventType === "done") {{
-                if (data.conversation_id && data.conversation_id !== conversationId) {{
-                  conversationId = data.conversation_id;
-                  history.replaceState(null, "", "chat?cid=" + encodeURIComponent(conversationId));
-                }}
-              }} else if (eventType === "error") {{
-                if (!currentBubble) {{
-                  currentBubble = appendMessage("assistant", "");
-                }}
-                currentBubble.innerHTML = escapeHtml("Error: " + (data.error || "Unknown error"));
-                currentBubble.style.color = "#c00";
-              }}
-            }} catch(e) {{
-              console.error("Failed to parse SSE data:", e);
-            }}
-          }}
-        }}
-      }}
-      return reader.read().then(processChunk);
-    }}
-
-    return reader.read().then(processChunk);
-  }}).catch(function(e) {{
-    console.error("Send failed:", e);
-    appendMessage("assistant", "Error: Failed to send message");
-    finishStreaming();
-  }});
-
-  function finishStreaming() {{
-    isStreaming = false;
-    var ind = document.getElementById("streaming-indicator");
-    if (ind) ind.remove();
-  }}
+  ws.send(JSON.stringify({{
+    type: "send",
+    conversation_id: conversationId,
+    message: message
+  }}));
 }}
 
 // Auto-resize textarea
@@ -1233,7 +1603,6 @@ textarea.addEventListener("input", function() {{
   this.style.height = Math.min(this.scrollHeight, 120) + "px";
 }});
 
-// Send on Enter (Shift+Enter for newline)
 textarea.addEventListener("keydown", function(e) {{
   if (e.key === "Enter" && !e.shiftKey) {{
     e.preventDefault();
@@ -1241,10 +1610,9 @@ textarea.addEventListener("keydown", function(e) {{
   }}
 }});
 
-// Load history on page load
-if (conversationId && conversationId !== "NEW") {{
-  loadHistory();
-}}
+window.addEventListener("beforeunload", function() {{ shouldReconnect = false; }});
+
+connectWebSocket();
 </script>
 </body>
 </html>"""
@@ -1318,6 +1686,12 @@ class _WebServerHandler(BaseHTTPRequestHandler):
         elif path == "/api/conversations":
             conversations = _read_conversations()
             self._send_json({"conversations": conversations})
+        elif path == "/ws":
+            conversation_id = (query.get("cid") or [""])[0]
+            if self.headers.get("Upgrade", "").lower() == "websocket":
+                _handle_websocket(self, conversation_id)
+            else:
+                self.send_error(400, "WebSocket upgrade required")
         else:
             self.send_error(404)
 

@@ -3,7 +3,13 @@
 Tests the pure/near-pure functions by loading the resource module via exec().
 """
 
+import base64
+import hashlib
+import io
 import json
+import sqlite3
+import struct
+import threading
 import types
 from pathlib import Path
 from typing import Any
@@ -817,3 +823,353 @@ def test_read_conversations_handles_malformed_message_events(web_server_module: 
 
     result = web_server_module._read_conversations()
     assert len(result) == 1
+
+
+# -- WebSocket protocol tests --
+
+
+def test_ws_accept_key_deterministic(web_server_module: Any) -> None:
+    key = "dGhlIHNhbXBsZSBub25jZQ=="
+    magic = b"258EAFA5-E914-47DA-95CA-5AB5A40E64BE"
+    expected = base64.b64encode(hashlib.sha1(key.encode() + magic).digest()).decode()  # noqa: S324
+    result = web_server_module._ws_accept_key(key)
+    assert result == expected
+
+
+def test_ws_accept_key_different_keys_produce_different_results(web_server_module: Any) -> None:
+    r1 = web_server_module._ws_accept_key("key-a-82741")
+    r2 = web_server_module._ws_accept_key("key-b-82741")
+    assert r1 != r2
+
+
+def test_ws_encode_frame_small_payload(web_server_module: Any) -> None:
+    frame = web_server_module._ws_encode_frame(b"hello", 0x1)
+    # FIN + text opcode
+    assert frame[0] == 0x81
+    assert frame[1] == 5
+    assert frame[2:] == b"hello"
+
+
+def test_ws_encode_frame_medium_payload(web_server_module: Any) -> None:
+    payload = b"x" * 200
+    frame = web_server_module._ws_encode_frame(payload, 0x1)
+    assert frame[0] == 0x81
+    # Extended 16-bit length
+    assert frame[1] == 126
+    length = struct.unpack(">H", frame[2:4])[0]
+    assert length == 200
+    assert frame[4:] == payload
+
+
+def test_ws_encode_frame_large_payload(web_server_module: Any) -> None:
+    payload = b"x" * 70000
+    frame = web_server_module._ws_encode_frame(payload, 0x1)
+    assert frame[0] == 0x81
+    # Extended 64-bit length
+    assert frame[1] == 127
+    length = struct.unpack(">Q", frame[2:10])[0]
+    assert length == 70000
+    assert frame[10:] == payload
+
+
+def test_ws_encode_frame_close_opcode(web_server_module: Any) -> None:
+    frame = web_server_module._ws_encode_frame(b"", 0x8)
+    # FIN + close opcode
+    assert frame[0] == 0x88
+    assert frame[1] == 0
+
+
+def test_ws_read_frame_unmasked_text(web_server_module: Any) -> None:
+    # Build an unmasked text frame for "hello"
+    frame = bytes([0x81, 0x05]) + b"hello"
+    rfile = io.BytesIO(frame)
+    result = web_server_module._ws_read_frame(rfile)
+    assert result is not None
+    opcode, payload = result
+    assert opcode == 0x1
+    assert payload == b"hello"
+
+
+def test_ws_read_frame_masked_text(web_server_module: Any) -> None:
+    # Build a masked text frame for "hello"
+    mask = b"\x37\xfa\x21\x3d"
+    raw = b"hello"
+    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(raw))
+    frame = bytes([0x81, 0x85]) + mask + masked
+    rfile = io.BytesIO(frame)
+    result = web_server_module._ws_read_frame(rfile)
+    assert result is not None
+    opcode, payload = result
+    assert opcode == 0x1
+    assert payload == b"hello"
+
+
+def test_ws_read_frame_close(web_server_module: Any) -> None:
+    frame = bytes([0x88, 0x00])
+    rfile = io.BytesIO(frame)
+    result = web_server_module._ws_read_frame(rfile)
+    assert result is not None
+    opcode, _ = result
+    assert opcode == 0x8
+
+
+def test_ws_read_frame_returns_none_on_empty(web_server_module: Any) -> None:
+    rfile = io.BytesIO(b"")
+    result = web_server_module._ws_read_frame(rfile)
+    assert result is None
+
+
+def test_ws_read_frame_returns_none_on_truncated_header(web_server_module: Any) -> None:
+    rfile = io.BytesIO(b"\x81")
+    result = web_server_module._ws_read_frame(rfile)
+    assert result is None
+
+
+def test_ws_send_json_writes_valid_frame(web_server_module: Any) -> None:
+    wfile = io.BytesIO()
+    lock = threading.Lock()
+    result = web_server_module._ws_send_json(wfile, lock, {"type": "test", "value": 42})
+    assert result is True
+    frame_data = wfile.getvalue()
+    # FIN + text opcode
+    assert frame_data[0] == 0x81
+    payload_len = frame_data[1]
+    payload = frame_data[2 : 2 + payload_len]
+    parsed = json.loads(payload.decode())
+    assert parsed["type"] == "test"
+    assert parsed["value"] == 42
+
+
+def test_ws_send_json_returns_false_on_write_error(web_server_module: Any) -> None:
+    class FailingWriter:
+        def write(self, data: bytes) -> None:
+            raise OSError("broken pipe")
+
+        def flush(self) -> None:
+            pass
+
+    lock = threading.Lock()
+    result = web_server_module._ws_send_json(FailingWriter(), lock, {"type": "test"})
+    assert result is False
+
+
+# -- _poll_db_for_new_messages tests --
+
+
+def _create_responses_table(db_path: Path) -> None:
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS responses ("
+        "id TEXT PRIMARY KEY, prompt TEXT, response TEXT, "
+        "model TEXT, datetime_utc TEXT, conversation_id TEXT)"
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_poll_db_returns_empty_when_no_db(web_server_module: Any) -> None:
+    web_server_module.LLM_DB_PATH = Path("/nonexistent/path/logs.db")
+    msgs, rowid = web_server_module._poll_db_for_new_messages("conv-82741", 0, set())
+    assert msgs == []
+    assert rowid == 0
+
+
+def test_poll_db_returns_empty_when_no_new_rows(web_server_module: Any) -> None:
+    db_path = web_server_module.LLM_DB_PATH
+    _create_responses_table(db_path)
+    msgs, rowid = web_server_module._poll_db_for_new_messages("conv-82741", 0, set())
+    assert msgs == []
+    assert rowid == 0
+
+
+def test_poll_db_finds_injected_assistant_message(web_server_module: Any) -> None:
+    db_path = web_server_module.LLM_DB_PATH
+    _create_responses_table(db_path)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO responses VALUES (?, ?, ?, ?, ?, ?)",
+        ("r-inject-82741", "...", "Hello from thinking agent", "model", "2026-01-01T00:00:00Z", "conv-inject-82741"),
+    )
+    conn.commit()
+    conn.close()
+
+    msgs, rowid = web_server_module._poll_db_for_new_messages("conv-inject-82741", 0, set())
+    assert len(msgs) == 1
+    assert msgs[0]["type"] == "new_message"
+    assert msgs[0]["role"] == "assistant"
+    assert msgs[0]["content"] == "Hello from thinking agent"
+    assert rowid >= 1
+
+
+def test_poll_db_skips_sent_response_ids(web_server_module: Any) -> None:
+    db_path = web_server_module.LLM_DB_PATH
+    _create_responses_table(db_path)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO responses VALUES (?, ?, ?, ?, ?, ?)",
+        ("r-sent-82741", "...", "Already sent", "model", "2026-01-01T00:00:00Z", "conv-sent-82741"),
+    )
+    conn.commit()
+    conn.close()
+
+    sent = {"r-sent-82741-assistant"}
+    msgs, _ = web_server_module._poll_db_for_new_messages("conv-sent-82741", 0, sent)
+    assert len(msgs) == 0
+
+
+def test_poll_db_skips_preliminary_rows(web_server_module: Any) -> None:
+    db_path = web_server_module.LLM_DB_PATH
+    _create_responses_table(db_path)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO responses VALUES (?, ?, ?, ?, ?, ?)",
+        ("r-prelim-82741", "user prompt", "", "model", "2026-01-01T00:00:00Z", "conv-prelim-82741"),
+    )
+    conn.commit()
+    conn.close()
+
+    msgs, _ = web_server_module._poll_db_for_new_messages("conv-prelim-82741", 0, set())
+    assert len(msgs) == 0
+
+
+def test_poll_db_includes_user_and_assistant_messages(web_server_module: Any) -> None:
+    db_path = web_server_module.LLM_DB_PATH
+    _create_responses_table(db_path)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO responses VALUES (?, ?, ?, ?, ?, ?)",
+        ("r-both-82741", "user question", "assistant answer", "model", "2026-01-01T00:00:00Z", "conv-both-82741"),
+    )
+    conn.commit()
+    conn.close()
+
+    msgs, _ = web_server_module._poll_db_for_new_messages("conv-both-82741", 0, set())
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"] == "user question"
+    assert msgs[1]["role"] == "assistant"
+    assert msgs[1]["content"] == "assistant answer"
+
+
+def test_poll_db_only_returns_messages_after_rowid(web_server_module: Any) -> None:
+    db_path = web_server_module.LLM_DB_PATH
+    _create_responses_table(db_path)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO responses VALUES (?, ?, ?, ?, ?, ?)",
+        ("r-old-82741", "...", "Old message", "model", "2026-01-01T00:00:00Z", "conv-rowid-82741"),
+    )
+    conn.commit()
+    # Get rowid of inserted row
+    max_rowid = conn.execute("SELECT MAX(rowid) FROM responses").fetchone()[0]
+    conn.execute(
+        "INSERT INTO responses VALUES (?, ?, ?, ?, ?, ?)",
+        ("r-new-82741", "...", "New message", "model", "2026-01-02T00:00:00Z", "conv-rowid-82741"),
+    )
+    conn.commit()
+    conn.close()
+
+    msgs, _ = web_server_module._poll_db_for_new_messages("conv-rowid-82741", max_rowid, set())
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == "New message"
+
+
+def test_poll_db_filters_by_conversation_id(web_server_module: Any) -> None:
+    db_path = web_server_module.LLM_DB_PATH
+    _create_responses_table(db_path)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO responses VALUES (?, ?, ?, ?, ?, ?)",
+        ("r-other-82741", "...", "Other conversation", "model", "2026-01-01T00:00:00Z", "conv-other-82741"),
+    )
+    conn.execute(
+        "INSERT INTO responses VALUES (?, ?, ?, ?, ?, ?)",
+        ("r-mine-82741", "...", "My conversation", "model", "2026-01-01T00:00:00Z", "conv-mine-82741"),
+    )
+    conn.commit()
+    conn.close()
+
+    msgs, _ = web_server_module._poll_db_for_new_messages("conv-mine-82741", 0, set())
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == "My conversation"
+
+
+# -- Web chat page WebSocket tests --
+
+
+def test_render_web_chat_page_contains_websocket_code(web_server_module: Any) -> None:
+    page = web_server_module._render_web_chat_page("TestAgent", "conv-ws-82741")
+    assert "WebSocket" in page
+    assert "connectWebSocket" in page
+    assert "ws.send" in page
+
+
+def test_render_web_chat_page_no_longer_uses_sse_fetch(web_server_module: Any) -> None:
+    page = web_server_module._render_web_chat_page("TestAgent", "conv-ws-82741")
+    assert "api/chat/send" not in page
+    assert "text/event-stream" not in page
+
+
+# -- _WsOutputCallback tests --
+
+
+def test_ws_output_callback_collects_stdout_lines(web_server_module: Any) -> None:
+    wfile = io.BytesIO()
+    lock = threading.Lock()
+    lines: list[str] = []
+    callback = web_server_module._WsOutputCallback(wfile, lock, lines)
+    callback("Hello world\n", is_stdout=True)
+    assert len(lines) == 1
+    assert lines[0] == "Hello world\n"
+    frame_data = wfile.getvalue()
+    assert len(frame_data) > 0
+
+
+def test_ws_output_callback_ignores_stderr(web_server_module: Any) -> None:
+    wfile = io.BytesIO()
+    lock = threading.Lock()
+    lines: list[str] = []
+    callback = web_server_module._WsOutputCallback(wfile, lock, lines)
+    callback("error message", is_stdout=False)
+    assert len(lines) == 0
+    assert wfile.getvalue() == b""
+
+
+# -- _ws_poll_loop tests --
+
+
+def test_ws_poll_loop_stops_on_event(web_server_module: Any) -> None:
+    stop = threading.Event()
+    stop.set()
+    web_server_module._ws_poll_loop(
+        io.BytesIO(),
+        threading.Lock(),
+        stop,
+        [False],
+        [0],
+        ["conv-82741"],
+        set(),
+    )
+
+
+# -- WebSocket frame round-trip tests --
+
+
+def test_ws_encode_and_read_frame_round_trip(web_server_module: Any) -> None:
+    payload = json.dumps({"type": "test", "data": "hello"}).encode()
+    frame = web_server_module._ws_encode_frame(payload, 0x1)
+    rfile = io.BytesIO(frame)
+    result = web_server_module._ws_read_frame(rfile)
+    assert result is not None
+    opcode, decoded = result
+    assert opcode == 0x1
+    assert decoded == payload
+
+
+def test_ws_read_frame_medium_unmasked(web_server_module: Any) -> None:
+    payload = b"x" * 200
+    frame = web_server_module._ws_encode_frame(payload, 0x1)
+    rfile = io.BytesIO(frame)
+    result = web_server_module._ws_read_frame(rfile)
+    assert result is not None
+    assert result[1] == payload
