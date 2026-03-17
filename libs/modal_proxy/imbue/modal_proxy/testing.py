@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Mapping
 from typing import Sequence
 
+from loguru import logger
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import PrivateAttr
@@ -489,8 +490,8 @@ class TestingModalInterface(ModalInterface):
                     func_name = stripped[4 : stripped.index("(")]
                     key = f"{app_name}/{func_name}"
                     self._functions[key] = TestingFunction(url=f"https://testing.modal.run/{app_name}/{func_name}")
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as e:
+            logger.trace("Failed to scan script for function names: {}", e)
 
     # =====================================================================
     # Testing helpers
