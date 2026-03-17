@@ -15,14 +15,13 @@ from imbue.mng.cli.common_opts import CommonCliOptions
 from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.env_utils import resolve_env_vars
+from imbue.mng.cli.env_utils import resolve_labels
 from imbue.mng.cli.help_formatter import CommandHelpMetadata
 from imbue.mng.cli.help_formatter import add_pager_help_option
 from imbue.mng.cli.output_helpers import emit_event
 from imbue.mng.cli.output_helpers import write_human_line
 from imbue.mng.config.data_types import OutputOptions
-from imbue.mng.errors import UserInputError
 from imbue.mng.interfaces.host import AgentEnvironmentOptions
-from imbue.mng.interfaces.host import AgentLabelOptions
 from imbue.mng.primitives import AgentTypeName
 from imbue.mng.primitives import ErrorBehavior
 from imbue.mng.primitives import HostName
@@ -81,17 +80,6 @@ class _TmrCommand(click.Command):
         result = super().parse_args(ctx, args)
         ctx.params["testing_flags"] = after_dash
         return result
-
-
-def _parse_label_options(label_strings: tuple[str, ...]) -> AgentLabelOptions:
-    """Parse KEY=VALUE label strings into AgentLabelOptions."""
-    labels_dict: dict[str, str] = {}
-    for label_string in label_strings:
-        if "=" not in label_string:
-            raise UserInputError(f"Label must be in KEY=VALUE format, got: {label_string}")
-        key, value = label_string.split("=", 1)
-        labels_dict[key.strip()] = value.strip()
-    return AgentLabelOptions(labels=labels_dict)
 
 
 def _emit_test_count(count: int, output_opts: OutputOptions) -> None:
@@ -207,7 +195,7 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
     env_options = AgentEnvironmentOptions(env_vars=env_vars)
 
     # Parse labels
-    label_options = _parse_label_options(opts.label)
+    label_options = resolve_labels(opts.label)
 
     # testing_flags come from _TmrCommand's parse_args (args after --)
     testing_flags = opts.testing_flags
