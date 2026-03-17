@@ -5,8 +5,10 @@ volumes, tags, snapshots, discovery, lifecycle) without requiring real
 Modal credentials or SSH connections.
 """
 
+import contextlib
 from datetime import datetime
 from datetime import timezone
+from io import StringIO
 from pathlib import Path
 from typing import Generator
 
@@ -24,11 +26,19 @@ from imbue.mng.interfaces.data_types import VolumeFileType
 from imbue.mng.primitives import AgentId
 from imbue.mng.primitives import HostId
 from imbue.mng.primitives import HostName
+from imbue.mng.primitives import ProviderBackendName
 from imbue.mng.primitives import ProviderInstanceName
 from imbue.mng.primitives import SnapshotId
 from imbue.mng.primitives import SnapshotName
+from imbue.mng.primitives import VolumeId
+from imbue.mng_modal.backend import ModalAppContextHandle
 from imbue.mng_modal.backend import ModalProviderBackend
 from imbue.mng_modal.backend import STATE_VOLUME_SUFFIX
+from imbue.mng_modal.backend import _create_environment
+from imbue.mng_modal.backend import _enter_ephemeral_app_context_with_env_retry
+from imbue.mng_modal.backend import _exit_modal_app_context
+from imbue.mng_modal.backend import _lookup_persistent_app_with_env_retry
+from imbue.mng_modal.backend import register_provider_backend
 from imbue.mng_modal.config import ModalMode
 from imbue.mng_modal.config import ModalProviderConfig
 from imbue.mng_modal.errors import NoSnapshotsModalMngError
@@ -40,8 +50,14 @@ from imbue.mng_modal.instance import SandboxConfig
 from imbue.mng_modal.instance import TAG_HOST_ID
 from imbue.mng_modal.instance import TAG_HOST_NAME
 from imbue.mng_modal.instance import TAG_USER_PREFIX
+from imbue.mng_modal.instance import _build_image_from_dockerfile_contents
+from imbue.mng_modal.instance import _build_modal_secrets_from_env
+from imbue.mng_modal.instance import _build_modal_volumes
 from imbue.mng_modal.instance import _parse_optional_float
 from imbue.mng_modal.instance import _parse_optional_int
+from imbue.mng_modal.instance import _parse_volume_spec
+from imbue.mng_modal.instance import _substitute_dockerfile_build_args
+from imbue.mng_modal.routes.deployment import deploy_function
 from imbue.mng_modal.volume import _proxy_file_entry_type_to_volume_file_type
 from imbue.modal_proxy.data_types import FileEntryType as ProxyFileEntryType
 from imbue.modal_proxy.testing import TestingModalInterface
@@ -2009,3 +2025,558 @@ def test_parse_build_args_unknown_arg_raises(
 ) -> None:
     with pytest.raises(MngError, match="Unknown build arguments"):
         testing_provider._parse_build_args(["--unknown-arg=value"])
+
+
+# ---------------------------------------------------------------------------
+# Backend Module-Level Function Tests
+# ---------------------------------------------------------------------------
+
+
+def test_create_environment(tmp_path: Path) -> None:
+    modal = _make_testing_modal_interface(tmp_path)
+    _create_environment("test-env", modal)
+    assert "test-env" in modal._environments
+
+
+def test_create_environment_rejects_bad_mng_prefix(tmp_path: Path) -> None:
+    modal = _make_testing_modal_interface(tmp_path)
+    with pytest.raises(MngError, match="Refusing to create"):
+        _create_environment("mng_bad-name", modal)
+
+
+def test_create_environment_allows_mng_test_prefix(tmp_path: Path) -> None:
+    modal = _make_testing_modal_interface(tmp_path)
+    _create_environment("mng_test-good-name", modal)
+    assert "mng_test-good-name" in modal._environments
+
+
+def test_lookup_persistent_app_with_env_retry(tmp_path: Path) -> None:
+    modal = _make_testing_modal_interface(tmp_path)
+    modal.environment_create("env1")
+    app = _lookup_persistent_app_with_env_retry("my-app", "env1", modal)
+    assert app.get_name() == "my-app"
+
+
+def test_enter_ephemeral_app_context_with_env_retry(tmp_path: Path) -> None:
+    modal = _make_testing_modal_interface(tmp_path)
+    modal.environment_create("env1")
+    app = modal.app_create("eph-app")
+    gen = _enter_ephemeral_app_context_with_env_retry(app, "env1", modal)
+    assert gen is not None
+
+
+def test_exit_modal_app_context_with_ephemeral(tmp_path: Path) -> None:
+    modal = _make_testing_modal_interface(tmp_path)
+    modal.environment_create("env1")
+    app = modal.app_create("exit-test")
+    gen = app.run(environment_name="env1")
+    next(gen)
+
+    output_buffer = StringIO()
+    output_buffer.write("some modal output")
+
+    handle = ModalAppContextHandle(
+        run_context=gen,
+        app_name="exit-test",
+        environment_name="env1",
+        output_capture_context=contextlib.nullcontext((output_buffer, None)),
+        output_buffer=output_buffer,
+        loguru_writer=None,
+        volume_name="exit-test-state",
+    )
+    _exit_modal_app_context(handle)
+
+
+def test_exit_modal_app_context_persistent(tmp_path: Path) -> None:
+    output_buffer = StringIO()
+    handle = ModalAppContextHandle(
+        run_context=None,
+        app_name="persistent-exit",
+        environment_name="env1",
+        output_capture_context=contextlib.nullcontext((output_buffer, None)),
+        output_buffer=output_buffer,
+        loguru_writer=None,
+        volume_name="persistent-exit-state",
+    )
+    _exit_modal_app_context(handle)
+
+
+def test_reset_app_registry(tmp_path: Path) -> None:
+    modal = _make_testing_modal_interface(tmp_path)
+    ModalProviderBackend._get_or_create_app("reset-a", "env1", False, modal)
+    ModalProviderBackend._get_or_create_app("reset-b", "env1", False, modal)
+    assert len(ModalProviderBackend._app_registry) >= 2
+
+    ModalProviderBackend.reset_app_registry()
+    assert "reset-a" not in ModalProviderBackend._app_registry
+    assert "reset-b" not in ModalProviderBackend._app_registry
+
+
+def test_backend_get_description() -> None:
+    assert "Modal" in ModalProviderBackend.get_description()
+
+
+def test_backend_get_build_args_help() -> None:
+    help_text = ModalProviderBackend.get_build_args_help()
+    assert "--file" in help_text
+    assert "--gpu" in help_text
+    assert "--cpu" in help_text
+
+
+def test_backend_get_start_args_help() -> None:
+    help_text = ModalProviderBackend.get_start_args_help()
+    assert "No start arguments" in help_text
+
+
+# ---------------------------------------------------------------------------
+# Deploy Function Tests
+# ---------------------------------------------------------------------------
+
+
+def test_deploy_function(
+    testing_provider: ModalProviderInstance,
+) -> None:
+    url = deploy_function(
+        "snapshot_and_shutdown",
+        testing_provider.app_name,
+        testing_provider.environment_name,
+        testing_provider._modal_interface,
+    )
+    assert "snapshot_and_shutdown" in url
+
+
+# ---------------------------------------------------------------------------
+# Volume Listing and Deletion Tests
+# ---------------------------------------------------------------------------
+
+
+def test_list_volumes(
+    testing_provider: ModalProviderInstance,
+) -> None:
+    host_id1 = HostId.generate()
+    host_id2 = HostId.generate()
+    testing_provider._build_host_volume(host_id1)
+    testing_provider._build_host_volume(host_id2)
+
+    volumes = testing_provider.list_volumes()
+    assert len(volumes) >= 2
+
+
+def test_delete_volume(
+    testing_provider: ModalProviderInstance,
+) -> None:
+    host_id = HostId.generate()
+    testing_provider._build_host_volume(host_id)
+
+    vol_name = testing_provider._get_host_volume_name(host_id)
+    volumes = testing_provider.list_volumes()
+    matching = [v for v in volumes if v.name == vol_name]
+    assert len(matching) == 1
+
+    testing_provider.delete_volume(matching[0].volume_id)
+
+    volumes_after = testing_provider.list_volumes()
+    matching_after = [v for v in volumes_after if v.name == vol_name]
+    assert len(matching_after) == 0
+
+
+def test_delete_volume_not_found_raises(
+    testing_provider: ModalProviderInstance,
+) -> None:
+    with pytest.raises(MngError, match="not found"):
+        testing_provider.delete_volume(VolumeId.generate())
+
+
+# ---------------------------------------------------------------------------
+# get_connector Tests
+# ---------------------------------------------------------------------------
+
+
+def test_get_connector_not_found_raises(
+    testing_provider: ModalProviderInstance,
+) -> None:
+    with pytest.raises(HostNotFoundError):
+        testing_provider.get_connector(HostId.generate())
+
+
+def test_get_connector_failed_host_raises(
+    testing_provider: ModalProviderInstance,
+) -> None:
+    host_id = HostId.generate()
+    record = _make_host_record(
+        host_id=host_id,
+        host_name="failed-conn",
+        failure_reason="Build failed",
+        ssh_host=None,
+        ssh_port=None,
+        ssh_host_public_key=None,
+    )
+    testing_provider._write_host_record(record)
+
+    with pytest.raises(MngError, match="no SSH info"):
+        testing_provider.get_connector(host_id)
+
+
+# ---------------------------------------------------------------------------
+# _build_modal_volumes Tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_modal_volumes(
+    testing_provider: ModalProviderInstance,
+) -> None:
+    volume_specs = (("my-vol", "/mnt/data"), ("other-vol", "/mnt/other"))
+    volumes = _build_modal_volumes(
+        volume_specs,
+        testing_provider.environment_name,
+        testing_provider._modal_interface,
+    )
+    assert "/mnt/data" in volumes
+    assert "/mnt/other" in volumes
+
+
+# ---------------------------------------------------------------------------
+# _build_modal_secrets_from_env Tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_modal_secrets_from_env_empty() -> None:
+    modal = TestingModalInterface(root_dir=Path("/tmp"))
+    result = _build_modal_secrets_from_env([], modal)
+    assert result == []
+
+
+def test_build_modal_secrets_from_env_missing_var() -> None:
+    modal = TestingModalInterface(root_dir=Path("/tmp"))
+    with pytest.raises(MngError, match="not set"):
+        _build_modal_secrets_from_env(["DEFINITELY_NOT_SET_VAR_12345"], modal)
+
+
+# ---------------------------------------------------------------------------
+# _substitute_dockerfile_build_args Tests
+# ---------------------------------------------------------------------------
+
+
+def test_substitute_dockerfile_build_args() -> None:
+    dockerfile = 'FROM debian\nARG VERSION="1.0"\nRUN echo $VERSION\n'
+    result = _substitute_dockerfile_build_args(dockerfile, ["VERSION=2.0"])
+    assert 'ARG VERSION="2.0"' in result
+
+
+def test_substitute_dockerfile_build_args_not_found() -> None:
+    dockerfile = "FROM debian\nRUN echo hello\n"
+    with pytest.raises(MngError, match="not found as an ARG"):
+        _substitute_dockerfile_build_args(dockerfile, ["MISSING_ARG=value"])
+
+
+def test_substitute_dockerfile_build_args_bad_format() -> None:
+    with pytest.raises(MngError, match="KEY=VALUE"):
+        _substitute_dockerfile_build_args("FROM debian", ["bad_format"])
+
+
+# ---------------------------------------------------------------------------
+# _build_image_from_dockerfile_contents Tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_image_from_dockerfile_contents(
+    testing_provider: ModalProviderInstance,
+) -> None:
+    dockerfile_contents = "FROM debian:bookworm-slim\nRUN echo hello\nRUN echo world\n"
+    image = _build_image_from_dockerfile_contents(
+        dockerfile_contents,
+        modal_interface=testing_provider._modal_interface,
+        is_each_layer_cached=True,
+    )
+    assert image.get_object_id() is not None
+
+
+def test_build_image_from_dockerfile_no_layer_caching(
+    testing_provider: ModalProviderInstance,
+) -> None:
+    dockerfile_contents = "FROM debian:bookworm-slim\nRUN echo hello\n"
+    image = _build_image_from_dockerfile_contents(
+        dockerfile_contents,
+        modal_interface=testing_provider._modal_interface,
+        is_each_layer_cached=False,
+    )
+    assert image.get_object_id() is not None
+
+
+# ---------------------------------------------------------------------------
+# SandboxConfig Tests
+# ---------------------------------------------------------------------------
+
+
+def test_sandbox_config_effective_cidr_allowlist_default() -> None:
+    config = SandboxConfig()
+    assert config.effective_cidr_allowlist is None
+
+
+def test_sandbox_config_effective_cidr_allowlist_offline() -> None:
+    config = SandboxConfig(offline=True)
+    assert config.effective_cidr_allowlist == []
+
+
+def test_sandbox_config_effective_cidr_allowlist_explicit() -> None:
+    config = SandboxConfig(cidr_allowlist=("10.0.0.0/8", "192.168.0.0/16"))
+    assert config.effective_cidr_allowlist == ["10.0.0.0/8", "192.168.0.0/16"]
+
+
+# ---------------------------------------------------------------------------
+# _parse_volume_spec Tests
+# ---------------------------------------------------------------------------
+
+
+def test_parse_volume_spec_valid() -> None:
+    name, path = _parse_volume_spec("my-vol:/mnt/data")
+    assert name == "my-vol"
+    assert path == "/mnt/data"
+
+
+def test_parse_volume_spec_invalid() -> None:
+    with pytest.raises(MngError, match="Invalid volume spec"):
+        _parse_volume_spec("no-colon-here")
+
+
+def test_parse_volume_spec_empty_parts() -> None:
+    with pytest.raises(MngError, match="Invalid volume spec"):
+        _parse_volume_spec(":/mnt/data")
+
+
+# ---------------------------------------------------------------------------
+# Agent Listing Edge Cases
+# ---------------------------------------------------------------------------
+
+
+def test_list_persisted_agent_data_skips_invalid_json(
+    testing_provider: ModalProviderInstance,
+) -> None:
+    host_id = HostId.generate()
+    volume = testing_provider.get_state_volume()
+    host_dir = f"/hosts/{host_id}"
+    volume.write_files(
+        {
+            f"{host_dir}/agent-aaaa1111bbbb2222cccc3333dddd4444.json": b"not valid json{{{",
+        }
+    )
+
+    agents = testing_provider.list_persisted_agent_data_for_host(host_id)
+    assert agents == []
+
+
+# ---------------------------------------------------------------------------
+# discover_hosts with Running Sandbox Tests
+# ---------------------------------------------------------------------------
+
+
+def test_discover_hosts_running_sandbox_without_host_record(
+    testing_provider: ModalProviderInstance,
+    testing_modal: TestingModalInterface,
+) -> None:
+    """A running sandbox without a host record (eventual consistency) shows up in discovery.
+    The sandbox has tags, but no host record on the volume yet. It should NOT appear
+    since _create_host_from_sandbox will fail without SSH."""
+    host_id = HostId.generate()
+    _make_sandbox_with_tags(testing_modal, host_id, "orphan-sandbox")
+
+    cg = testing_provider.mng_ctx.concurrency_group
+    discovered = testing_provider.discover_hosts(cg)
+    # The sandbox exists but has no host record, and _create_host_from_sandbox
+    # will return None (no SSH info on volume). So it won't appear.
+    host_ids = {d.host_id for d in discovered}
+    assert host_id not in host_ids
+
+
+def test_discover_hosts_running_sandbox_with_host_record(
+    testing_provider: ModalProviderInstance,
+    testing_modal: TestingModalInterface,
+) -> None:
+    """A running sandbox WITH a host record should show up in discovery.
+    Even though SSH fails, the host record fallback works."""
+    host_id = HostId.generate()
+    snapshots = [
+        SnapshotRecord(id="snap-1", name="s1", created_at=datetime.now(timezone.utc).isoformat()),
+    ]
+    record = _make_host_record(host_id=host_id, host_name="running-with-record", snapshots=snapshots)
+    testing_provider._write_host_record(record)
+    _make_sandbox_with_tags(testing_modal, host_id, "running-with-record")
+
+    cg = testing_provider.mng_ctx.concurrency_group
+    discovered = testing_provider.discover_hosts(cg)
+    # The sandbox exists AND there's a host record with snapshots.
+    # _create_host_from_sandbox will fail (no SSH), but the host record fallback
+    # should work, showing the host as stopped.
+    host_ids = {d.host_id for d in discovered}
+    assert host_id in host_ids
+
+
+# ---------------------------------------------------------------------------
+# discover_hosts_and_agents Running Sandbox Tests
+# ---------------------------------------------------------------------------
+
+
+def test_discover_hosts_and_agents_running_sandbox(
+    testing_provider: ModalProviderInstance,
+    testing_modal: TestingModalInterface,
+) -> None:
+    """discover_hosts_and_agents with a running sandbox shows the host as running."""
+    host_id = HostId.generate()
+    record = _make_host_record(host_id=host_id, host_name="running-agents")
+    testing_provider._write_host_record(record)
+    _make_sandbox_with_tags(testing_modal, host_id, "running-agents")
+
+    agent_id = str(AgentId.generate())
+    testing_provider.persist_agent_data(
+        host_id,
+        {
+            "id": agent_id,
+            "name": "my-agent",
+            "type": "claude",
+            "command": "claude",
+        },
+    )
+
+    cg = testing_provider.mng_ctx.concurrency_group
+    result = testing_provider.discover_hosts_and_agents(cg)
+    assert len(result) >= 1
+    host_refs = {h.host_id: h for h in result}
+    assert host_id in host_refs
+
+
+# ---------------------------------------------------------------------------
+# Backend Environment Retry Tests
+# ---------------------------------------------------------------------------
+
+
+def test_get_or_create_app_caches_volume(tmp_path: Path) -> None:
+    modal = _make_testing_modal_interface(tmp_path)
+    ModalProviderBackend._get_or_create_app("vol-cache-test", "env1", False, modal)
+
+    # Get volume twice -- should return the same object
+    vol1 = ModalProviderBackend.get_volume_for_app("vol-cache-test", modal)
+    vol2 = ModalProviderBackend.get_volume_for_app("vol-cache-test", modal)
+    assert vol1 is vol2
+
+    ModalProviderBackend.close_app("vol-cache-test")
+
+
+def test_close_nonexistent_app() -> None:
+    # Should not raise
+    ModalProviderBackend.close_app("this-app-does-not-exist")
+
+
+# ---------------------------------------------------------------------------
+# Backend get_name / get_config_class Tests
+# ---------------------------------------------------------------------------
+
+
+def test_backend_get_name() -> None:
+    assert ModalProviderBackend.get_name() == ProviderBackendName("modal")
+
+
+def test_backend_get_config_class() -> None:
+    assert ModalProviderBackend.get_config_class() is ModalProviderConfig
+
+
+# ---------------------------------------------------------------------------
+# get_host_resources with host record Tests
+# ---------------------------------------------------------------------------
+
+
+def test_get_host_resources_fractional_cpu(testing_provider: ModalProviderInstance) -> None:
+    host_id = HostId.generate()
+    config = SandboxConfig(cpu=0.25, memory=0.5)
+    record = _make_host_record(host_id=host_id, config=config)
+    testing_provider._write_host_record(record)
+
+    offline = testing_provider.to_offline_host(host_id)
+    resources = testing_provider.get_host_resources(offline)
+    # Fractional CPU should be rounded up to 1
+    assert resources.cpu.count == 1
+    assert resources.memory_gb == 0.5
+
+
+# ---------------------------------------------------------------------------
+# Backend register_provider_backend Hook Test
+# ---------------------------------------------------------------------------
+
+
+def test_register_provider_backend_hook() -> None:
+    backend_cls, config_cls = register_provider_backend()
+    assert backend_cls is ModalProviderBackend
+    assert config_cls is ModalProviderConfig
+
+
+# ---------------------------------------------------------------------------
+# HostRecord Model Test
+# ---------------------------------------------------------------------------
+
+
+def test_host_record_roundtrip() -> None:
+    host_id = HostId.generate()
+    now = datetime.now(timezone.utc)
+    certified_data = CertifiedHostData(
+        host_id=str(host_id),
+        host_name="roundtrip-test",
+        created_at=now,
+        updated_at=now,
+    )
+    record = HostRecord(
+        certified_host_data=certified_data,
+        ssh_host="10.0.0.1",
+        ssh_port=2222,
+        ssh_host_public_key="ssh-ed25519 AAAA",
+        config=SandboxConfig(cpu=2.0, memory=4.0, gpu="a100"),
+    )
+
+    json_str = record.model_dump_json(indent=2)
+    loaded = HostRecord.model_validate_json(json_str)
+
+    assert loaded.ssh_host == "10.0.0.1"
+    assert loaded.ssh_port == 2222
+    assert loaded.config is not None
+    assert loaded.config.gpu == "a100"
+
+
+# ---------------------------------------------------------------------------
+# ModalProviderApp Integration Test
+# ---------------------------------------------------------------------------
+
+
+def test_modal_provider_app_full_lifecycle(
+    temp_mng_ctx: MngContext,
+    tmp_path: Path,
+) -> None:
+    modal = _make_testing_modal_interface(tmp_path)
+    provider = _make_testing_provider(temp_mng_ctx, modal)
+
+    # Write a host record
+    host_id = HostId.generate()
+    record = _make_host_record(host_id=host_id, host_name="lifecycle-test")
+    provider._write_host_record(record)
+
+    # Read it back
+    loaded = provider._read_host_record(host_id)
+    assert loaded is not None
+
+    # Add agent data
+    agent_id = str(AgentId.generate())
+    provider.persist_agent_data(
+        host_id,
+        {
+            "id": agent_id,
+            "name": "lc-agent",
+            "type": "claude",
+            "command": "claude",
+        },
+    )
+
+    # Discover
+    cg = provider.mng_ctx.concurrency_group
+    discovered = provider.discover_hosts(cg, include_destroyed=True)
+    assert len(discovered) == 1
+
+    # Clean up
+    provider.destroy_host(host_id)
+    modal.cleanup()

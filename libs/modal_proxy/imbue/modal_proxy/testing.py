@@ -106,7 +106,7 @@ class TestingImage(ImageInterface):
         secrets: Sequence[SecretInterface] = (),
     ) -> "ImageInterface":
         # No-op -- return a new image with a fresh ID to simulate layer caching
-        return TestingImage(image_id=f"img-{uuid.uuid4().hex[:12]}")
+        return TestingImage(image_id=f"img-{uuid.uuid4().hex}")
 
 
 class TestingVolume(VolumeInterface):
@@ -334,7 +334,7 @@ class TestingModalInterface(ModalInterface):
     # =====================================================================
 
     def app_create(self, name: str) -> AppInterface:
-        app_id = f"ap-{uuid.uuid4().hex[:12]}"
+        app_id = f"ap-{uuid.uuid4().hex}"
         app = TestingApp(app_id=app_id, app_name=name)
         self._apps[name] = app
         return app
@@ -356,7 +356,7 @@ class TestingModalInterface(ModalInterface):
         if key in self._apps:
             return self._apps[key]
         if create_if_missing:
-            app_id = f"ap-{uuid.uuid4().hex[:12]}"
+            app_id = f"ap-{uuid.uuid4().hex}"
             app = TestingApp(app_id=app_id, app_name=name)
             self._apps[key] = app
             return app
@@ -367,10 +367,10 @@ class TestingModalInterface(ModalInterface):
     # =====================================================================
 
     def image_debian_slim(self) -> ImageInterface:
-        return TestingImage(image_id=f"img-debian-{uuid.uuid4().hex[:8]}")
+        return TestingImage(image_id=f"img-debian-{uuid.uuid4().hex}")
 
     def image_from_registry(self, name: str) -> ImageInterface:
-        return TestingImage(image_id=f"img-reg-{name.replace(':', '-').replace('/', '-')}-{uuid.uuid4().hex[:8]}")
+        return TestingImage(image_id=f"img-reg-{name.replace(':', '-').replace('/', '-')}-{uuid.uuid4().hex}")
 
     def image_from_id(self, image_id: str) -> ImageInterface:
         return TestingImage(image_id=image_id)
@@ -393,7 +393,7 @@ class TestingModalInterface(ModalInterface):
         cidr_allowlist: Sequence[str] | None = None,
         volumes: Mapping[str, VolumeInterface] | None = None,
     ) -> SandboxInterface:
-        sandbox_id = f"sb-{uuid.uuid4().hex[:12]}"
+        sandbox_id = f"sb-{uuid.uuid4().hex}"
         sandbox = TestingSandbox(sandbox_id=sandbox_id)
         self._sandboxes.append(sandbox)
         return sandbox

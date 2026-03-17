@@ -5,6 +5,7 @@ import pytest
 from imbue.modal_proxy.data_types import FileEntryType
 from imbue.modal_proxy.errors import ModalProxyError
 from imbue.modal_proxy.errors import ModalProxyNotFoundError
+from imbue.modal_proxy.interface import SecretInterface
 from imbue.modal_proxy.testing import TestingImage
 from imbue.modal_proxy.testing import TestingModalInterface
 
@@ -267,7 +268,7 @@ def test_sandbox_list(modal: TestingModalInterface) -> None:
     image = modal.image_debian_slim()
     app = modal.app_create("test-app")
     sb1 = modal.sandbox_create(image=image, app=app, timeout=300, cpu=1.0, memory=1024)
-    sb2 = modal.sandbox_create(image=image, app=app, timeout=300, cpu=1.0, memory=1024)
+    modal.sandbox_create(image=image, app=app, timeout=300, cpu=1.0, memory=1024)
     sandboxes = modal.sandbox_list(app_id=app.get_app_id())
     assert len(sandboxes) == 2
     sb1.terminate()
@@ -335,7 +336,3 @@ def test_cleanup(modal: TestingModalInterface) -> None:
     assert modal.get_sandbox_count() == 2
     modal.cleanup()
     assert modal.get_sandbox_count() == 0
-
-
-# Avoid unused import -- needed for type annotation in test_secret_from_dict
-from imbue.modal_proxy.interface import SecretInterface as SecretInterface  # noqa: E402
