@@ -8,7 +8,6 @@ The ``mind update <agent-name>`` command:
 4. Starts the mind back up (via ``mng start``)
 """
 
-import json
 from pathlib import Path
 
 import click
@@ -18,6 +17,7 @@ from pydantic import Field
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.minds.config.data_types import MNG_BINARY
+from imbue.minds.config.data_types import parse_agents_from_mng_output
 from imbue.minds.errors import MindError
 from imbue.minds.errors import MngCommandError
 from imbue.minds.forwarding_server.agent_creator import load_creation_settings
@@ -83,24 +83,6 @@ def find_mind_agent(agent_name: str) -> MindAgentRecord:
         )
 
     return MindAgentRecord(agent_id=AgentId(str(raw_id)), work_dir=Path(str(raw_work_dir)))
-
-
-def parse_agents_from_mng_output(stdout: str) -> list[dict[str, object]]:
-    """Parse agent records from ``mng list --format json`` output.
-
-    Handles the case where stdout may contain non-JSON lines
-    (e.g. SSH error tracebacks) mixed with the JSON output.
-    """
-    for line in stdout.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("{"):
-            try:
-                data = json.loads(stripped)
-                return list(data.get("agents", []))
-            except json.JSONDecodeError:
-                logger.trace("Failed to parse JSON from mng list output line: {}", stripped[:200])
-                continue
-    return []
 
 
 def _run_mng_command(verb: str, agent_id: AgentId) -> None:

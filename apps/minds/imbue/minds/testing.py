@@ -6,7 +6,7 @@ from typing import Final
 from loguru import logger
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
-from imbue.minds.cli.update import parse_agents_from_mng_output
+from imbue.minds.config.data_types import parse_agents_from_mng_output
 
 _GIT_TEST_ENV_KEYS: Final[dict[str, str]] = {
     "GIT_AUTHOR_NAME": "test",
