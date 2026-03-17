@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import pdb
 from typing import Any
 from typing import Final
 
@@ -267,8 +266,7 @@ class ClaudeMindAgent(ClaudeAgent):
         data = super()._build_per_agent_claude_json(options, config)
         # FOLLOWUP: we can remove this eventually (once the agents are started inside VMs, it will be set properly anyway)
         data["bypassPermissionsModeAccepted"] = True
-
-        pdb.set_trace()
+        # approve the API key so that the agent doesnt get blocked
         user_claude_json_data = _build_claude_json_for_agent(True, Path("."), None)
         api_key = user_claude_json_data.get("primaryApiKey", os.environ.get("ANTHROPIC_API_KEY", ""))
         if api_key:
