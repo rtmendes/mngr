@@ -1,18 +1,16 @@
 [project]
-name = "mng-modal"
+name = "modal-proxy"
 version = "0.1.0"
-description = "Modal provider backend plugin for mng"
+description = "Abstraction layer over Modal SDK for mng: supports direct, testing, and remote modes"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "concurrency-group",
+    "imbue-common",
     "mng==0.1.7",
     "modal==1.3.1",
-    "modal-proxy",
-    "dockerfile-parse>=2.0.0",
+    "resource-guards",
 ]
-
-[project.entry-points.mng]
-modal = "imbue.mng_modal.backend"
 
 [build-system]
 requires = ["hatchling"]
@@ -22,8 +20,10 @@ build-backend = "hatchling.build"
 packages = ["imbue"]
 
 [tool.uv.sources]
+concurrency-group = { workspace = true }
+imbue-common = { workspace = true }
 mng = { workspace = true }
-modal-proxy = { workspace = true }
+resource-guards = { workspace = true }
 
 [tool.pytest.ini_options]
 timeout_func_only = true
@@ -32,7 +32,7 @@ testpaths = ["."]
 addopts = [
   "-n 4",
   "--dist=worksteal",
-  "--cov=imbue.mng_modal",
+  "--cov=imbue.modal_proxy",
   "--cov-report=term-missing",
   "--cov-report=html",
   "--cov-report=xml",
@@ -54,7 +54,6 @@ omit = [
   "test_*.py",
   "*/tests/*",
   "*/conftest.py",
-  "*/utils/testing.py",
 ]
 
 [tool.coverage.report]
@@ -63,7 +62,6 @@ omit = [
   "test_*.py",
   "*/tests/*",
   "*/conftest.py",
-  "*/utils/testing.py",
 ]
 
 [tool.inline-snapshot]
