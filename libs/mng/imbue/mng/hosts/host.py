@@ -84,22 +84,6 @@ from imbue.mng.utils.git_utils import get_git_remote_url
 from imbue.mng.utils.polling import wait_for
 
 
-def _format_command_error_details(stderr: str, stdout: str, returncode: int | None) -> str:
-    """Format command failure details into a diagnostic string.
-
-    Includes both stdout and stderr (git and other tools sometimes write errors
-    to stdout), plus the exit code to aid debugging.
-    """
-    parts: list[str] = []
-    if stderr and stderr.strip():
-        parts.append(stderr.strip())
-    if stdout and stdout.strip():
-        parts.append(f"stdout: {stdout.strip()}")
-    if returncode is not None:
-        parts.append(f"exit code {returncode}")
-    return "; ".join(parts) if parts else f"process failed with exit code {returncode}"
-
-
 def _try_acquire_flock(lock_file: io.TextIOWrapper) -> bool:
     """Try to acquire an exclusive flock without blocking. Returns True if acquired."""
     try:
@@ -1325,8 +1309,7 @@ class Host(BaseHost, OnlineHostInterface):
                             env={**os.environ, **env},
                         )
                     except ProcessError as e:
-                        details = _format_command_error_details(e.stderr, e.stdout, e.returncode)
-                        raise MngError(f"Failed to clone from remote source: {details}") from e
+                        raise MngError(f"Failed to clone from remote source: {e}") from e
                     return
         else:
             user, hostname, port, key_path = target_ssh_info
@@ -1353,16 +1336,15 @@ class Host(BaseHost, OnlineHostInterface):
                         env={**os.environ, **env},
                     )
                 except ProcessError as e:
-                    details = _format_command_error_details(e.stderr, e.stdout, e.returncode)
-                    raise MngError(f"Failed to push git repo: {details}") from e
+                    raise MngError(f"Failed to push git repo: {e}") from e
                 logger.trace("Ran git push --mirror from local source to target: {}", " ".join(command_args))
             else:
                 env_prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
                 push_cmd = f"{env_prefix} git push --no-verify --mirror {shlex.quote(git_url)}"
                 result = source_host.execute_command(push_cmd, cwd=source_path)
                 if not result.success:
-                    details = _format_command_error_details(result.stderr, result.stdout, None)
-                    raise MngError(f"Failed to push git repo from remote source: {details}")
+                    output = (result.stderr + "\n" + result.stdout).strip()
+                    raise MngError(f"Failed to push git repo from remote source: {output}")
 
     def _warn_if_submodules_detected(
         self,
