@@ -51,8 +51,8 @@ Examples:
     parser.add_argument(
         "--channels",
         nargs="+",
-        default=["general"],
-        help="Channels to export (e.g. 'general' or 'general:2024-01-01' for per-channel oldest date)",
+        default=None,
+        help="Channels to export (default: all member channels). E.g. 'general' or 'general:2024-01-01'",
     )
     parser.add_argument(
         "--since",
@@ -97,7 +97,7 @@ Examples:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    channel_configs = tuple(_parse_channel_spec(spec) for spec in args.channels)
+    channel_configs = tuple(_parse_channel_spec(spec) for spec in args.channels) if args.channels else None
     default_oldest = _parse_iso_datetime_as_utc(args.since)
     cache_ttl_seconds = int(os.environ.get("SLACK_EXPORTER_CACHE_TTL_SECONDS", "600"))
 

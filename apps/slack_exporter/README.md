@@ -13,10 +13,10 @@ Export Slack channel messages, channel metadata, and user info to JSONL files us
 ## Usage
 
 ```bash
-# Export #general (default) starting from 2024-01-01
+# Export all member channels starting from 2024-01-01
 slack-exporter
 
-# Export specific channels
+# Export specific channels only
 slack-exporter --channels general random engineering
 
 # Export with per-channel start dates

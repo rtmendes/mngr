@@ -42,9 +42,9 @@ class ChannelConfig(FrozenModel):
 class ExporterSettings(FrozenModel):
     """Top-level settings for the slack exporter."""
 
-    channels: tuple[ChannelConfig, ...] = Field(
-        default=(ChannelConfig(name=SlackChannelName("general")),),
-        description="Channels to export",
+    channels: tuple[ChannelConfig, ...] | None = Field(
+        default=None,
+        description="Channels to export. When None, all channels from the fetched channel list are exported.",
     )
     default_oldest: datetime = Field(
         description="Default earliest date to fetch messages from",

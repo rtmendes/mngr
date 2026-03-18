@@ -300,7 +300,15 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     # Export messages, replies, reactions, and relevant threads per channel
     latest_reply_by_thread = _build_latest_reply_by_thread(known_reply_keys)
     channel_export_metadata = load_channel_export_metadata(settings.output_dir)
-    for channel_config in settings.channels:
+
+    # Determine which channels to export messages from
+    if settings.channels is not None:
+        channels_to_export = settings.channels
+    else:
+        channels_to_export = tuple(ChannelConfig(name=event.channel_name) for event in fresh_channels)
+        logger.info("Exporting all %d channels", len(channels_to_export))
+
+    for channel_config in channels_to_export:
         channel_id = resolve_channel_id(channel_config.name, fresh_channels, channel_id_by_name)
         _export_single_channel(
             channel_config=channel_config,
