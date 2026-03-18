@@ -30,7 +30,7 @@ def make_channel_event(
 ) -> ChannelEvent:
     return ChannelEvent(
         timestamp=FIXED_TIMESTAMP,
-        type=EventType("channel_created"),
+        type=EventType("channel"),
         event_id=FIXED_EVENT_ID,
         source=EventSource("slack"),
         channel_id=SlackChannelId(channel_id),
@@ -46,7 +46,7 @@ def make_message_event(
 ) -> MessageEvent:
     return MessageEvent(
         timestamp=FIXED_TIMESTAMP,
-        type=EventType("message_created"),
+        type=EventType("message"),
         event_id=FIXED_EVENT_ID,
         source=EventSource("slack"),
         channel_id=SlackChannelId(channel_id),
@@ -61,7 +61,7 @@ def make_user_event(
 ) -> UserEvent:
     return UserEvent(
         timestamp=FIXED_TIMESTAMP,
-        type=EventType("user_created"),
+        type=EventType("user"),
         event_id=FIXED_EVENT_ID,
         source=EventSource("slack"),
         user_id=SlackUserId(user_id),
@@ -77,7 +77,7 @@ def make_reply_event(
 ) -> ReplyEvent:
     return ReplyEvent(
         timestamp=FIXED_TIMESTAMP,
-        type=EventType("reply_created"),
+        type=EventType("reply"),
         event_id=FIXED_EVENT_ID,
         source=EventSource("slack"),
         channel_id=SlackChannelId(channel_id),
@@ -95,7 +95,7 @@ def make_self_identity_event(
 ) -> SelfIdentityEvent:
     return SelfIdentityEvent(
         timestamp=FIXED_TIMESTAMP,
-        type=EventType("self_identity_created"),
+        type=EventType("self_identity"),
         event_id=FIXED_EVENT_ID,
         source=EventSource("slack"),
         user_id=SlackUserId(user_id),
@@ -111,7 +111,7 @@ def make_unread_marker_event(
 ) -> UnreadMarkerEvent:
     return UnreadMarkerEvent(
         timestamp=FIXED_TIMESTAMP,
-        type=EventType("unread_marker_created"),
+        type=EventType("unread_marker"),
         event_id=FIXED_EVENT_ID,
         source=EventSource("slack"),
         channel_id=SlackChannelId(channel_id),
@@ -130,7 +130,7 @@ def make_reaction_event(
 ) -> ReactionEvent:
     return ReactionEvent(
         timestamp=FIXED_TIMESTAMP,
-        type=EventType("reaction_created"),
+        type=EventType("reaction"),
         event_id=FIXED_EVENT_ID,
         source=EventSource("slack"),
         channel_id=SlackChannelId(channel_id),
@@ -149,7 +149,7 @@ def make_relevant_thread_event(
 ) -> RelevantThreadEvent:
     return RelevantThreadEvent(
         timestamp=FIXED_TIMESTAMP,
-        type=EventType("relevant_thread_created"),
+        type=EventType("relevant_thread"),
         event_id=FIXED_EVENT_ID,
         source=EventSource("slack"),
         channel_id=SlackChannelId(channel_id),

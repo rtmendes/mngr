@@ -132,7 +132,7 @@ def _extract_reaction_from_raw(
         return None
     return ReactionEvent(
         timestamp=make_iso_timestamp(),
-        type=EventType("reaction_created"),
+        type=EventType("reaction"),
         event_id=make_event_id(),
         source=_SLACK_SOURCE,
         channel_id=channel_id,
@@ -194,7 +194,7 @@ def _detect_relevant_threads(
             results.append(
                 RelevantThreadEvent(
                     timestamp=make_iso_timestamp(),
-                    type=EventType("relevant_thread_created"),
+                    type=EventType("relevant_thread"),
                     event_id=make_event_id(),
                     source=_SLACK_SOURCE,
                     channel_id=channel_id,
@@ -564,7 +564,7 @@ def _fetch_all_replies_for_thread(
     return [
         ReplyEvent(
             timestamp=make_iso_timestamp(),
-            type=EventType("reply_created"),
+            type=EventType("reply"),
             event_id=make_event_id(),
             source=_SLACK_SOURCE,
             channel_id=channel_id,
@@ -595,7 +595,7 @@ def _fetch_recent_messages_for_reactions(
     return [
         MessageEvent(
             timestamp=make_iso_timestamp(),
-            type=EventType("message_created"),
+            type=EventType("message"),
             event_id=make_event_id(),
             source=_SLACK_SOURCE,
             channel_id=channel_id,
@@ -638,7 +638,7 @@ def _fetch_all_messages_for_channel(
     return [
         MessageEvent(
             timestamp=make_iso_timestamp(),
-            type=EventType("message_created"),
+            type=EventType("message"),
             event_id=make_event_id(),
             source=_SLACK_SOURCE,
             channel_id=channel_id,
