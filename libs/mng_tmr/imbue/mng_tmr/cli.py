@@ -261,7 +261,7 @@ def _emit_summary(results: list[TestMapReduceResult], output_opts: OutputOptions
     "--output-html",
     default=None,
     type=click.Path(),
-    help="Path for the HTML report [default: tmr-report-<timestamp>.html]",
+    help="Path for the HTML report [default: tmr_reports/tmr-report-<timestamp>.html]",
 )
 @click.option(
     "--source",
@@ -321,18 +321,18 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
     )
     _emit_agents_launched(len(agent_infos), output_opts)
 
-    # Step 4: Compute html_path before polling
+    # Step 5: Compute html_path before polling
     if opts.output_html is not None:
         html_path = Path(opts.output_html)
     else:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         html_path = Path("tmr_reports") / f"tmr-report-{timestamp}.html"
 
-    # Step 5: Write initial report (all PENDING)
+    # Step 6: Write initial report (all PENDING)
     initial_results = build_current_results(agent_infos, {}, set(), agent_hosts)
     generate_html_report(initial_results, html_path)
 
-    # Step 6: Poll until all agents are done (or timeout), updating report continuously
+    # Step 7: Poll until all agents are done (or timeout), updating report continuously
     deadline = time.monotonic() + opts.timeout
     final_details, timed_out_ids = poll_until_all_done(
         agents=agent_infos,
@@ -343,7 +343,7 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
         report_path=html_path,
     )
 
-    # Step 7: Gather final results (read result.json, pull branches for fixes)
+    # Step 8: Gather final results (read result.json, pull branches for fixes)
     # Only pass base_commit for remote providers -- local worktree branches already exist
     is_remote_provider = ProviderInstanceName(opts.provider).lower() != LOCAL_PROVIDER_NAME
     results = gather_results(
@@ -356,10 +356,10 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
         base_commit=base_commit if is_remote_provider else None,
     )
 
-    # Step 8: Write report with final results
+    # Step 9: Write report with final results
     generate_html_report(results, html_path)
 
-    # Step 9: Build integrator config (defaults to local provider) and integrate
+    # Step 10: Build integrator config (defaults to local provider) and integrate
     integrator_config = TmrLaunchConfig(
         source_dir=source_dir,
         source_host=source_host,
