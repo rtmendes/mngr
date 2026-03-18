@@ -84,20 +84,20 @@ from imbue.mng.utils.git_utils import get_git_remote_url
 from imbue.mng.utils.polling import wait_for
 
 
-def _format_process_error_details(e: ProcessError) -> str:
-    """Format a ProcessError into a detailed diagnostic string.
+def _format_command_error_details(stderr: str, stdout: str, returncode: int | None) -> str:
+    """Format command failure details into a diagnostic string.
 
     Includes both stdout and stderr (git and other tools sometimes write errors
     to stdout), plus the exit code to aid debugging.
     """
     parts: list[str] = []
-    if e.stderr and e.stderr.strip():
-        parts.append(e.stderr.strip())
-    if e.stdout and e.stdout.strip():
-        parts.append(f"stdout: {e.stdout.strip()}")
-    if e.returncode is not None:
-        parts.append(f"exit code {e.returncode}")
-    return "; ".join(parts) if parts else f"process failed with exit code {e.returncode}"
+    if stderr and stderr.strip():
+        parts.append(stderr.strip())
+    if stdout and stdout.strip():
+        parts.append(f"stdout: {stdout.strip()}")
+    if returncode is not None:
+        parts.append(f"exit code {returncode}")
+    return "; ".join(parts) if parts else f"process failed with exit code {returncode}"
 
 
 def _try_acquire_flock(lock_file: io.TextIOWrapper) -> bool:
@@ -1325,7 +1325,7 @@ class Host(BaseHost, OnlineHostInterface):
                             env={**os.environ, **env},
                         )
                     except ProcessError as e:
-                        details = _format_process_error_details(e)
+                        details = _format_command_error_details(e.stderr, e.stdout, e.returncode)
                         raise MngError(f"Failed to clone from remote source: {details}") from e
                     return
         else:
@@ -1353,7 +1353,7 @@ class Host(BaseHost, OnlineHostInterface):
                         env={**os.environ, **env},
                     )
                 except ProcessError as e:
-                    details = _format_process_error_details(e)
+                    details = _format_command_error_details(e.stderr, e.stdout, e.returncode)
                     raise MngError(f"Failed to push git repo: {details}") from e
                 logger.trace("Ran git push --mirror from local source to target: {}", " ".join(command_args))
             else:
@@ -1361,12 +1361,7 @@ class Host(BaseHost, OnlineHostInterface):
                 push_cmd = f"{env_prefix} git push --no-verify --mirror {shlex.quote(git_url)}"
                 result = source_host.execute_command(push_cmd, cwd=source_path)
                 if not result.success:
-                    parts: list[str] = []
-                    if result.stderr and result.stderr.strip():
-                        parts.append(result.stderr.strip())
-                    if result.stdout and result.stdout.strip():
-                        parts.append(f"stdout: {result.stdout.strip()}")
-                    details = "; ".join(parts) if parts else "unknown error"
+                    details = _format_command_error_details(result.stderr, result.stdout, None)
                     raise MngError(f"Failed to push git repo from remote source: {details}")
 
     def _warn_if_submodules_detected(
