@@ -263,8 +263,8 @@ def _create_tmr_agent(
     if message is not None:
         try:
             result.agent.send_message(message)
-        except SendMessageError as exc:
-            logger.warning("Send signal detection failed for '{}' (message likely delivered): {}", agent_name, exc)
+        except (SendMessageError, HostError, TimeoutError) as exc:
+            logger.warning("Send message failed for '{}' (message likely delivered): {}", agent_name, exc)
 
     return result
 
