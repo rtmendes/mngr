@@ -28,6 +28,12 @@ slack-exporter --since 2023-01-01
 # Custom output directory
 slack-exporter --output-dir my_slack_data
 
+# Force re-fetch of cached data (channels, users, identity, reactions)
+slack-exporter --refresh
+
+# Configure cache TTL via environment variable (default: 600 seconds / 10 minutes)
+SLACK_EXPORTER_CACHE_TTL_SECONDS=300 slack-exporter
+
 # Verbose logging
 slack-exporter -v
 ```
@@ -35,13 +41,15 @@ slack-exporter -v
 ## How it works
 
 1. Reads existing data from the output directory to understand what has already been exported
-2. Fetches the authenticated user's identity (via `auth.test`) and saves if new or changed
-3. Fetches the channel list from Slack (via `conversations.list`) and saves only new or changed channels
+2. Fetches the authenticated user's identity (via `auth.test`) and saves if new or changed -- cached for `SLACK_EXPORTER_CACHE_TTL_SECONDS` (default 10 minutes)
+3. Fetches the channel list from Slack (via `conversations.list`) and saves only new or changed channels -- cached for `SLACK_EXPORTER_CACHE_TTL_SECONDS`
 4. Extracts unread markers (`last_read` position) from channel data and saves when changed
-5. Fetches the user list from Slack (via `users.list`) and saves only new users
+5. Fetches the user list from Slack (via `users.list`) and saves only new users -- cached for `SLACK_EXPORTER_CACHE_TTL_SECONDS`
 6. For each configured channel, fetches new messages (via `conversations.history`) starting from either the configured oldest date or the most recent message already in the file
-7. For messages with threads (reply_count > 0), fetches replies (via `conversations.replies`) and saves only new ones
-8. Fetches all items the authenticated user has reacted to (via `reactions.list`) and saves new or changed items
+7. For messages with threads (reply_count > 0), uses the `latest_reply` field to skip threads with no new replies, then fetches replies (via `conversations.replies`) only for threads that have changed
+8. Fetches all items the authenticated user has reacted to (via `reactions.list`) and saves new or changed items -- cached for `SLACK_EXPORTER_CACHE_TTL_SECONDS`
+
+Use `--refresh` to bypass the cache and force re-fetching of all data.
 
 ## Output structure
 

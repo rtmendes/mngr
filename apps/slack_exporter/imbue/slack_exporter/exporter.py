@@ -2,6 +2,7 @@ import logging
 from collections.abc import Callable
 from collections.abc import Sequence
 from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 from typing import TypeVar
@@ -26,6 +27,7 @@ from imbue.slack_exporter.latchkey import fetch_paginated
 from imbue.slack_exporter.primitives import SlackChannelId
 from imbue.slack_exporter.primitives import SlackChannelName
 from imbue.slack_exporter.primitives import SlackMessageTimestamp
+from imbue.slack_exporter.store import DataType
 from imbue.slack_exporter.store import StreamType
 from imbue.slack_exporter.store import derive_reaction_item_key
 from imbue.slack_exporter.store import load_existing_channels
@@ -35,7 +37,9 @@ from imbue.slack_exporter.store import load_existing_reply_keys
 from imbue.slack_exporter.store import load_existing_self_identity
 from imbue.slack_exporter.store import load_existing_unread_markers
 from imbue.slack_exporter.store import load_existing_users
+from imbue.slack_exporter.store import load_fetch_metadata
 from imbue.slack_exporter.store import save_channel_events
+from imbue.slack_exporter.store import save_fetch_timestamp
 from imbue.slack_exporter.store import save_message_events
 from imbue.slack_exporter.store import save_reaction_events
 from imbue.slack_exporter.store import save_reply_events
@@ -82,6 +86,33 @@ def _diff_and_save(
         logger.info("Saved %d updated %s", len(updated_items), entity_name)
 
 
+def _is_cache_fresh(
+    fetch_metadata: dict[str, datetime],
+    data_type: str,
+    now: datetime,
+    settings: ExporterSettings,
+) -> bool:
+    """Check if cached data for a data type is still within the TTL."""
+    if settings.refresh:
+        return False
+    last_fetched = fetch_metadata.get(data_type)
+    if last_fetched is None:
+        return False
+    return (now - last_fetched).total_seconds() < settings.cache_ttl_seconds
+
+
+def _build_latest_reply_by_thread(
+    known_reply_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]],
+) -> dict[tuple[SlackChannelId, SlackMessageTimestamp], SlackMessageTimestamp]:
+    """Build a mapping from (channel_id, thread_ts) to the latest reply_ts we have stored."""
+    latest: dict[tuple[SlackChannelId, SlackMessageTimestamp], SlackMessageTimestamp] = {}
+    for channel_id, thread_ts, reply_ts in known_reply_keys:
+        key = (channel_id, thread_ts)
+        if key not in latest or reply_ts > latest[key]:
+            latest[key] = reply_ts
+    return latest
+
+
 def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     """Run the full export process: load state, resolve channels, fetch new messages, save."""
     existing_channel_by_id = load_existing_channels(settings.output_dir)
@@ -89,30 +120,56 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     existing_user_by_id = load_existing_users(settings.output_dir)
     known_reply_keys = load_existing_reply_keys(settings.output_dir)
 
-    # Export self identity
-    self_identity = fetch_self_identity(api_caller)
-    existing_self_identity = load_existing_self_identity(settings.output_dir)
-    _diff_and_save(
-        fresh_items=[self_identity],
-        existing_by_key={k: v for k, v in existing_self_identity.items()},
-        get_key=lambda e: e.user_id,
-        get_raw=lambda e: e.raw,
-        save_fn=save_self_identity_events,
-        output_dir=settings.output_dir,
-        entity_name="self identity",
-    )
+    fetch_metadata = load_fetch_metadata(settings.output_dir)
+    now = datetime.now(timezone.utc)
 
-    # Export channels
-    fresh_channels = fetch_channel_list(api_caller)
-    _diff_and_save(
-        fresh_items=fresh_channels,
-        existing_by_key={k: v for k, v in existing_channel_by_id.items()},
-        get_key=lambda ch: ch.channel_id,
-        get_raw=lambda ch: ch.raw,
-        save_fn=save_channel_events,
-        output_dir=settings.output_dir,
-        entity_name="channels",
-    )
+    # Export self identity
+    existing_self_identity = load_existing_self_identity(settings.output_dir)
+    if _is_cache_fresh(fetch_metadata, DataType.SELF_IDENTITY, now, settings) and existing_self_identity:
+        self_identity = next(iter(existing_self_identity.values()))
+        logger.info("Using cached self identity (user_id=%s)", self_identity.user_id)
+    else:
+        self_identity = fetch_self_identity(api_caller)
+        _diff_and_save(
+            fresh_items=[self_identity],
+            existing_by_key=dict(existing_self_identity),
+            get_key=lambda e: e.user_id,
+            get_raw=lambda e: e.raw,
+            save_fn=save_self_identity_events,
+            output_dir=settings.output_dir,
+            entity_name="self identity",
+        )
+        save_fetch_timestamp(settings.output_dir, DataType.SELF_IDENTITY, now)
+
+    # Export channels (and unread markers, which come from the same API call)
+    if _is_cache_fresh(fetch_metadata, DataType.CHANNELS, now, settings) and existing_channel_by_id:
+        fresh_channels = list(existing_channel_by_id.values())
+        logger.info("Using cached channel data (%d channels)", len(fresh_channels))
+    else:
+        fresh_channels = fetch_channel_list(api_caller)
+        _diff_and_save(
+            fresh_items=fresh_channels,
+            existing_by_key=dict(existing_channel_by_id),
+            get_key=lambda ch: ch.channel_id,
+            get_raw=lambda ch: ch.raw,
+            save_fn=save_channel_events,
+            output_dir=settings.output_dir,
+            entity_name="channels",
+        )
+
+        # Unread markers are extracted from channel data (no extra API call)
+        fresh_markers = extract_unread_markers(fresh_channels)
+        existing_markers = load_existing_unread_markers(settings.output_dir)
+        _diff_and_save(
+            fresh_items=fresh_markers,
+            existing_by_key=dict(existing_markers),
+            get_key=lambda m: m.channel_id,
+            get_raw=lambda m: m.raw,
+            save_fn=save_unread_marker_events,
+            output_dir=settings.output_dir,
+            entity_name="unread markers",
+        )
+        save_fetch_timestamp(settings.output_dir, DataType.CHANNELS, now)
 
     channel_id_by_name: dict[SlackChannelName, SlackChannelId] = {
         event.channel_name: event.channel_id for event in existing_channel_by_id.values()
@@ -120,32 +177,24 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     for event in fresh_channels:
         channel_id_by_name[event.channel_name] = event.channel_id
 
-    # Export unread markers (extracted from channel data, no extra API call)
-    fresh_markers = extract_unread_markers(fresh_channels)
-    existing_markers = load_existing_unread_markers(settings.output_dir)
-    _diff_and_save(
-        fresh_items=fresh_markers,
-        existing_by_key={k: v for k, v in existing_markers.items()},
-        get_key=lambda m: m.channel_id,
-        get_raw=lambda m: m.raw,
-        save_fn=save_unread_marker_events,
-        output_dir=settings.output_dir,
-        entity_name="unread markers",
-    )
-
     # Export users
-    fresh_users = fetch_user_list(api_caller)
-    _diff_and_save(
-        fresh_items=fresh_users,
-        existing_by_key={k: v for k, v in existing_user_by_id.items()},
-        get_key=lambda u: u.user_id,
-        get_raw=lambda u: u.raw,
-        save_fn=save_user_events,
-        output_dir=settings.output_dir,
-        entity_name="users",
-    )
+    if _is_cache_fresh(fetch_metadata, DataType.USERS, now, settings) and existing_user_by_id:
+        logger.info("Using cached user data (%d users)", len(existing_user_by_id))
+    else:
+        fresh_users = fetch_user_list(api_caller)
+        _diff_and_save(
+            fresh_items=fresh_users,
+            existing_by_key=dict(existing_user_by_id),
+            get_key=lambda u: u.user_id,
+            get_raw=lambda u: u.raw,
+            save_fn=save_user_events,
+            output_dir=settings.output_dir,
+            entity_name="users",
+        )
+        save_fetch_timestamp(settings.output_dir, DataType.USERS, now)
 
     # Export messages and replies per channel
+    latest_reply_by_thread = _build_latest_reply_by_thread(known_reply_keys)
     for channel_config in settings.channels:
         channel_id = resolve_channel_id(channel_config.name, fresh_channels, channel_id_by_name)
         _export_single_channel(
@@ -154,22 +203,27 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
             state_by_channel_id=state_by_channel_id,
             known_message_keys=known_message_keys,
             known_reply_keys=known_reply_keys,
+            latest_reply_by_thread=latest_reply_by_thread,
             settings=settings,
             api_caller=api_caller,
         )
 
     # Export reactions for the authenticated user
-    fresh_reactions = fetch_user_reactions(api_caller, self_identity.user_id)
-    existing_reactions = load_existing_reactions(settings.output_dir)
-    _diff_and_save(
-        fresh_items=fresh_reactions,
-        existing_by_key={k: v for k, v in existing_reactions.items()},
-        get_key=lambda r: derive_reaction_item_key(r.raw),
-        get_raw=lambda r: r.raw,
-        save_fn=save_reaction_events,
-        output_dir=settings.output_dir,
-        entity_name="reaction items",
-    )
+    if _is_cache_fresh(fetch_metadata, DataType.REACTIONS, now, settings):
+        logger.info("Using cached reaction data")
+    else:
+        fresh_reactions = fetch_user_reactions(api_caller, self_identity.user_id)
+        existing_reactions = load_existing_reactions(settings.output_dir)
+        _diff_and_save(
+            fresh_items=fresh_reactions,
+            existing_by_key=dict(existing_reactions),
+            get_key=lambda r: derive_reaction_item_key(r.raw),
+            get_raw=lambda r: r.raw,
+            save_fn=save_reaction_events,
+            output_dir=settings.output_dir,
+            entity_name="reaction items",
+        )
+        save_fetch_timestamp(settings.output_dir, DataType.REACTIONS, now)
 
 
 def _export_single_channel(
@@ -178,6 +232,7 @@ def _export_single_channel(
     state_by_channel_id: dict[SlackChannelId, ChannelExportState],
     known_message_keys: set[tuple[SlackChannelId, SlackMessageTimestamp]],
     known_reply_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]],
+    latest_reply_by_thread: dict[tuple[SlackChannelId, SlackMessageTimestamp], SlackMessageTimestamp],
     settings: ExporterSettings,
     api_caller: SlackApiCaller,
 ) -> None:
@@ -214,6 +269,7 @@ def _export_single_channel(
         channel_name=channel_config.name,
         all_message_events=all_fetched,
         known_reply_keys=known_reply_keys,
+        latest_reply_by_thread=latest_reply_by_thread,
         settings=settings,
         api_caller=api_caller,
     )
@@ -224,19 +280,35 @@ def _export_replies_for_channel(
     channel_name: SlackChannelName,
     all_message_events: list[MessageEvent],
     known_reply_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]],
+    latest_reply_by_thread: dict[tuple[SlackChannelId, SlackMessageTimestamp], SlackMessageTimestamp],
     settings: ExporterSettings,
     api_caller: SlackApiCaller,
 ) -> None:
-    """Fetch replies for all threaded messages in a channel."""
+    """Fetch replies for all threaded messages in a channel.
+
+    Uses the latest_reply field from the Slack API to skip threads whose replies
+    have not changed since the last export.
+    """
     thread_parents = [m for m in all_message_events if m.raw.get("reply_count", 0) > 0]
     if not thread_parents:
         return
 
     logger.info("  Found %d threads to check for replies", len(thread_parents))
     total_new_replies = 0
+    skipped_threads = 0
 
     for parent in thread_parents:
         thread_ts = parent.message_ts
+        thread_key = (channel_id, thread_ts)
+
+        # Skip threads whose latest_reply hasn't changed since last export
+        api_latest_reply = parent.raw.get("latest_reply")
+        if api_latest_reply:
+            stored_latest = latest_reply_by_thread.get(thread_key)
+            if stored_latest is not None and stored_latest >= SlackMessageTimestamp(api_latest_reply):
+                skipped_threads += 1
+                continue
+
         replies = _fetch_all_replies_for_thread(
             channel_id=channel_id,
             channel_name=channel_name,
@@ -256,7 +328,11 @@ def _export_replies_for_channel(
             total_new_replies += len(new_replies)
             for reply in new_replies:
                 known_reply_keys.add((channel_id, thread_ts, reply.reply_ts))
+                if thread_key not in latest_reply_by_thread or reply.reply_ts > latest_reply_by_thread[thread_key]:
+                    latest_reply_by_thread[thread_key] = reply.reply_ts
 
+    if skipped_threads > 0:
+        logger.info("  Skipped %d threads with unchanged replies", skipped_threads)
     if total_new_replies > 0:
         logger.info("  Saved %d new replies from channel %s", total_new_replies, channel_name)
 

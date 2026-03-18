@@ -1,4 +1,6 @@
 import json
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +16,9 @@ from imbue.slack_exporter.store import load_existing_reactions
 from imbue.slack_exporter.store import load_existing_self_identity
 from imbue.slack_exporter.store import load_existing_unread_markers
 from imbue.slack_exporter.store import load_existing_users
+from imbue.slack_exporter.store import load_fetch_metadata
 from imbue.slack_exporter.store import save_channel_events
+from imbue.slack_exporter.store import save_fetch_timestamp
 from imbue.slack_exporter.store import save_message_events
 from imbue.slack_exporter.store import save_reaction_events
 from imbue.slack_exporter.store import save_self_identity_events
@@ -235,3 +239,36 @@ def test_save_reaction_events_creates_directory_structure(temp_output_dir: Path)
     assert expected_path.exists()
     parsed = json.loads(expected_path.read_text().strip())
     assert parsed["source"] == "reactions"
+
+
+def test_load_fetch_metadata_returns_empty_when_missing(temp_output_dir: Path) -> None:
+    result = load_fetch_metadata(temp_output_dir)
+    assert result == {}
+
+
+def test_save_and_load_fetch_metadata(temp_output_dir: Path) -> None:
+    ts = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    save_fetch_timestamp(temp_output_dir, "channels", ts)
+
+    result = load_fetch_metadata(temp_output_dir)
+    assert "channels" in result
+    assert result["channels"] == ts
+
+
+def test_save_fetch_timestamp_preserves_existing_entries(temp_output_dir: Path) -> None:
+    ts1 = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    ts2 = datetime(2025, 1, 15, 12, 5, 0, tzinfo=timezone.utc)
+    save_fetch_timestamp(temp_output_dir, "channels", ts1)
+    save_fetch_timestamp(temp_output_dir, "users", ts2)
+
+    result = load_fetch_metadata(temp_output_dir)
+    assert len(result) == 2
+    assert result["channels"] == ts1
+    assert result["users"] == ts2
+
+
+def test_load_fetch_metadata_handles_malformed_json(temp_output_dir: Path) -> None:
+    temp_output_dir.mkdir(parents=True, exist_ok=True)
+    (temp_output_dir / ".fetch_metadata.json").write_text("not valid json")
+    result = load_fetch_metadata(temp_output_dir)
+    assert result == {}

@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import Sequence
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -217,3 +218,36 @@ def load_existing_reactions(output_dir: Path) -> dict[str, ReactionItemEvent]:
 
 def save_reaction_events(output_dir: Path, stream: StreamType, events: Sequence[ReactionItemEvent]) -> None:
     _append_events(_events_path(output_dir, DataType.REACTIONS, stream), events)
+
+
+def _fetch_metadata_path(output_dir: Path) -> Path:
+    return output_dir / ".fetch_metadata.json"
+
+
+def load_fetch_metadata(output_dir: Path) -> dict[str, datetime]:
+    """Load the per-data-type last-fetch timestamps."""
+    path = _fetch_metadata_path(output_dir)
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        logger.warning("Malformed fetch metadata at %s, treating as empty", path)
+        return {}
+    result: dict[str, datetime] = {}
+    for key, value in raw.items():
+        try:
+            result[key] = datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            logger.warning("Skipping invalid timestamp for %s in fetch metadata", key)
+    return result
+
+
+def save_fetch_timestamp(output_dir: Path, data_type: str, timestamp: datetime) -> None:
+    """Update the last-fetch timestamp for a specific data type."""
+    metadata = load_fetch_metadata(output_dir)
+    metadata[data_type] = timestamp
+    path = _fetch_metadata_path(output_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = {k: v.isoformat() for k, v in metadata.items()}
+    path.write_text(json.dumps(raw))
