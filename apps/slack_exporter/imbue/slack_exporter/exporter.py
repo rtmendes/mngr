@@ -54,10 +54,7 @@ from imbue.slack_exporter.store import save_user_events
 
 logger = logging.getLogger(__name__)
 
-_MESSAGE_SOURCE = EventSource("messages")
-_REACTION_SOURCE = EventSource("reactions")
-_RELEVANT_THREAD_SOURCE = EventSource("relevant_threads")
-_REPLY_SOURCE = EventSource("replies")
+_SLACK_SOURCE = EventSource("slack")
 
 _T = TypeVar("_T")
 
@@ -135,9 +132,9 @@ def _extract_reaction_from_raw(
         return None
     return ReactionEvent(
         timestamp=make_iso_timestamp(),
-        type=EventType("reaction_extracted"),
+        type=EventType("reaction_created"),
         event_id=make_event_id(),
-        source=_REACTION_SOURCE,
+        source=_SLACK_SOURCE,
         channel_id=channel_id,
         channel_name=channel_name,
         message_ts=message_ts,
@@ -197,9 +194,9 @@ def _detect_relevant_threads(
             results.append(
                 RelevantThreadEvent(
                     timestamp=make_iso_timestamp(),
-                    type=EventType("relevant_thread_detected"),
+                    type=EventType("relevant_thread_created"),
                     event_id=make_event_id(),
-                    source=_RELEVANT_THREAD_SOURCE,
+                    source=_SLACK_SOURCE,
                     channel_id=channel_id,
                     channel_name=channel_name,
                     thread_ts=thread_ts,
@@ -567,9 +564,9 @@ def _fetch_all_replies_for_thread(
     return [
         ReplyEvent(
             timestamp=make_iso_timestamp(),
-            type=EventType("reply_fetched"),
+            type=EventType("reply_created"),
             event_id=make_event_id(),
-            source=_REPLY_SOURCE,
+            source=_SLACK_SOURCE,
             channel_id=channel_id,
             channel_name=channel_name,
             thread_ts=thread_ts,
@@ -598,9 +595,9 @@ def _fetch_recent_messages_for_reactions(
     return [
         MessageEvent(
             timestamp=make_iso_timestamp(),
-            type=EventType("message_fetched"),
+            type=EventType("message_created"),
             event_id=make_event_id(),
-            source=_MESSAGE_SOURCE,
+            source=_SLACK_SOURCE,
             channel_id=channel_id,
             channel_name=channel_name,
             message_ts=SlackMessageTimestamp(raw["ts"]),
@@ -641,9 +638,9 @@ def _fetch_all_messages_for_channel(
     return [
         MessageEvent(
             timestamp=make_iso_timestamp(),
-            type=EventType("message_fetched"),
+            type=EventType("message_created"),
             event_id=make_event_id(),
-            source=_MESSAGE_SOURCE,
+            source=_SLACK_SOURCE,
             channel_id=channel_id,
             channel_name=channel_name,
             message_ts=SlackMessageTimestamp(raw["ts"]),

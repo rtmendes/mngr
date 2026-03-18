@@ -20,10 +20,7 @@ from imbue.slack_exporter.primitives import SlackUserName
 
 logger = logging.getLogger(__name__)
 
-_CHANNEL_SOURCE = EventSource("channels")
-_SELF_IDENTITY_SOURCE = EventSource("self_identity")
-_UNREAD_MARKER_SOURCE = EventSource("unread_markers")
-_USER_SOURCE = EventSource("users")
+_SLACK_SOURCE = EventSource("slack")
 
 
 def fetch_channel_list(api_caller: SlackApiCaller, members_only: bool = True) -> list[ChannelEvent]:
@@ -81,9 +78,9 @@ def resolve_channel_id(
 def _make_channel_event(channel_raw: dict[str, Any]) -> ChannelEvent:
     return ChannelEvent(
         timestamp=make_iso_timestamp(),
-        type=EventType("channel_fetched"),
+        type=EventType("channel_created"),
         event_id=make_event_id(),
-        source=_CHANNEL_SOURCE,
+        source=_SLACK_SOURCE,
         channel_id=SlackChannelId(channel_raw["id"]),
         channel_name=SlackChannelName(channel_raw["name"]),
         raw=channel_raw,
@@ -96,9 +93,9 @@ def fetch_self_identity(api_caller: SlackApiCaller) -> SelfIdentityEvent:
     logger.info("Fetched self identity: user_id=%s, user=%s", data["user_id"], data["user"])
     return SelfIdentityEvent(
         timestamp=make_iso_timestamp(),
-        type=EventType("self_identity_fetched"),
+        type=EventType("self_identity_created"),
         event_id=make_event_id(),
-        source=_SELF_IDENTITY_SOURCE,
+        source=_SLACK_SOURCE,
         user_id=SlackUserId(data["user_id"]),
         user_name=SlackUserName(data["user"]),
         raw=data,
@@ -119,9 +116,9 @@ def extract_unread_markers(channel_events: list[ChannelEvent]) -> list[UnreadMar
         markers.append(
             UnreadMarkerEvent(
                 timestamp=make_iso_timestamp(),
-                type=EventType("unread_marker_fetched"),
+                type=EventType("unread_marker_created"),
                 event_id=make_event_id(),
-                source=_UNREAD_MARKER_SOURCE,
+                source=_SLACK_SOURCE,
                 channel_id=event.channel_id,
                 channel_name=event.channel_name,
                 last_read_ts=SlackMessageTimestamp(last_read),
@@ -135,9 +132,9 @@ def extract_unread_markers(channel_events: list[ChannelEvent]) -> list[UnreadMar
 def _make_user_event(user_raw: dict[str, Any]) -> UserEvent:
     return UserEvent(
         timestamp=make_iso_timestamp(),
-        type=EventType("user_fetched"),
+        type=EventType("user_created"),
         event_id=make_event_id(),
-        source=_USER_SOURCE,
+        source=_SLACK_SOURCE,
         user_id=SlackUserId(user_raw["id"]),
         raw=user_raw,
     )

@@ -40,7 +40,7 @@ def test_fetch_all_messages_returns_event_envelope() -> None:
 
     assert len(messages) == 1
     assert messages[0].message_ts == SlackMessageTimestamp("1700000000.000001")
-    assert messages[0].source == "messages"
+    assert messages[0].source == "slack"
 
 
 def test_fetch_all_messages_handles_pagination() -> None:
@@ -118,7 +118,7 @@ def test_run_export_writes_to_created_streams(default_settings: ExporterSettings
     assert len(msg_lines) == 1
     msg = json.loads(msg_lines[0])
     assert msg["channel_id"] == "C123"
-    assert msg["source"] == "messages"
+    assert msg["source"] == "slack"
 
 
 def test_run_export_unchanged_channels_not_written(default_settings: ExporterSettings) -> None:
@@ -224,7 +224,7 @@ def test_run_export_fetches_replies_for_threaded_messages(default_settings: Expo
     assert len(reply_lines) == 2
     first_reply = json.loads(reply_lines[0])
     assert first_reply["thread_ts"] == "1700000000.000001"
-    assert first_reply["source"] == "replies"
+    assert first_reply["source"] == "slack"
 
 
 def test_run_export_fetches_paginated_replies(default_settings: ExporterSettings) -> None:
@@ -607,7 +607,7 @@ def test_run_export_extracts_reactions_from_messages(default_settings: ExporterS
     assert len(lines) == 1
     record = json.loads(lines[0])
     assert record["message_ts"] == "1700000000.000001"
-    assert record["source"] == "reactions"
+    assert record["source"] == "slack"
     assert record["raw"]["reactions"][0]["name"] == "thumbsup"
 
 

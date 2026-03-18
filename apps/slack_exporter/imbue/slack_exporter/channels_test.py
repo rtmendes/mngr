@@ -36,7 +36,7 @@ def test_fetch_channel_list_single_page() -> None:
     assert len(channels) == 2
     assert channels[0].channel_id == SlackChannelId("C123")
     assert channels[1].channel_id == SlackChannelId("C456")
-    assert channels[0].source == "channels"
+    assert channels[0].source == "slack"
     assert "event_id" in channels[0].model_dump()
 
 
@@ -126,7 +126,7 @@ def test_fetch_user_list_single_page() -> None:
 
     assert len(users) == 2
     assert users[0].user_id == SlackUserId("U001")
-    assert users[0].source == "users"
+    assert users[0].source == "slack"
 
 
 def test_fetch_user_list_multiple_pages() -> None:
@@ -182,7 +182,7 @@ def test_fetch_self_identity_returns_event() -> None:
 
     assert event.user_id == SlackUserId("U001")
     assert event.user_name == SlackUserName("alice")
-    assert event.source == "self_identity"
+    assert event.source == "slack"
     assert event.raw["team"] == "test"
 
 
@@ -197,7 +197,7 @@ def test_extract_unread_markers_from_channels_with_last_read() -> None:
     assert len(markers) == 2
     assert markers[0].channel_id == SlackChannelId("C123")
     assert markers[0].last_read_ts == SlackMessageTimestamp("1700000000.000001")
-    assert markers[0].source == "unread_markers"
+    assert markers[0].source == "slack"
     assert markers[1].last_read_ts == SlackMessageTimestamp("1700000000.000099")
 
 

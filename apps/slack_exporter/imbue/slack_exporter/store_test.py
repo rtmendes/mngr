@@ -106,7 +106,7 @@ def test_save_channel_events_creates_directory_structure(temp_output_dir: Path) 
     assert parsed["channel_id"] == "C123"
     assert "event_id" in parsed
     assert "timestamp" in parsed
-    assert parsed["source"] == "channels"
+    assert parsed["source"] == "slack"
 
 
 def test_save_message_events_creates_directory_structure(temp_output_dir: Path) -> None:
@@ -165,7 +165,7 @@ def test_save_self_identity_creates_directory_structure(temp_output_dir: Path) -
     assert expected_path.exists()
     parsed = json.loads(expected_path.read_text().strip())
     assert parsed["user_id"] == "U123"
-    assert parsed["source"] == "self_identity"
+    assert parsed["source"] == "slack"
 
 
 def test_load_existing_unread_markers_returns_empty_when_missing(temp_output_dir: Path) -> None:
@@ -198,7 +198,7 @@ def test_save_unread_marker_events_creates_directory_structure(temp_output_dir: 
     expected_path = temp_output_dir / "unread_markers" / "created" / "events.jsonl"
     assert expected_path.exists()
     parsed = json.loads(expected_path.read_text().strip())
-    assert parsed["source"] == "unread_markers"
+    assert parsed["source"] == "slack"
 
 
 def test_load_existing_reactions_returns_empty_when_missing(temp_output_dir: Path) -> None:
@@ -220,7 +220,7 @@ def test_save_reaction_events_creates_directory_structure(temp_output_dir: Path)
     expected_path = temp_output_dir / "reactions" / "created" / "events.jsonl"
     assert expected_path.exists()
     parsed = json.loads(expected_path.read_text().strip())
-    assert parsed["source"] == "reactions"
+    assert parsed["source"] == "slack"
 
 
 def test_load_existing_relevant_threads_returns_empty_when_missing(temp_output_dir: Path) -> None:
