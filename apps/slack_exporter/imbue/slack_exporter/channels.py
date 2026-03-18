@@ -4,7 +4,10 @@ from typing import Any
 from imbue.imbue_common.event_envelope import EventSource
 from imbue.imbue_common.event_envelope import EventType
 from imbue.slack_exporter.data_types import ChannelEvent
+from imbue.slack_exporter.data_types import ReactionItemEvent
+from imbue.slack_exporter.data_types import SelfIdentityEvent
 from imbue.slack_exporter.data_types import SlackApiCaller
+from imbue.slack_exporter.data_types import UnreadMarkerEvent
 from imbue.slack_exporter.data_types import UserEvent
 from imbue.slack_exporter.data_types import make_event_id
 from imbue.slack_exporter.data_types import make_iso_timestamp
@@ -12,11 +15,16 @@ from imbue.slack_exporter.errors import ChannelNotFoundError
 from imbue.slack_exporter.latchkey import fetch_paginated
 from imbue.slack_exporter.primitives import SlackChannelId
 from imbue.slack_exporter.primitives import SlackChannelName
+from imbue.slack_exporter.primitives import SlackMessageTimestamp
 from imbue.slack_exporter.primitives import SlackUserId
+from imbue.slack_exporter.primitives import SlackUserName
 
 logger = logging.getLogger(__name__)
 
 _CHANNEL_SOURCE = EventSource("channels")
+_REACTION_SOURCE = EventSource("reactions")
+_SELF_IDENTITY_SOURCE = EventSource("self_identity")
+_UNREAD_MARKER_SOURCE = EventSource("unread_markers")
 _USER_SOURCE = EventSource("users")
 
 
@@ -76,6 +84,70 @@ def _make_channel_event(channel_raw: dict[str, Any]) -> ChannelEvent:
         channel_name=SlackChannelName(channel_raw["name"]),
         raw=channel_raw,
     )
+
+
+def fetch_self_identity(api_caller: SlackApiCaller) -> SelfIdentityEvent:
+    """Fetch the authenticated user's identity via auth.test."""
+    data = api_caller("auth.test", None)
+    logger.info("Fetched self identity: user_id=%s, user=%s", data["user_id"], data["user"])
+    return SelfIdentityEvent(
+        timestamp=make_iso_timestamp(),
+        type=EventType("self_identity_fetched"),
+        event_id=make_event_id(),
+        source=_SELF_IDENTITY_SOURCE,
+        user_id=SlackUserId(data["user_id"]),
+        user_name=SlackUserName(data["user"]),
+        raw=data,
+    )
+
+
+def extract_unread_markers(channel_events: list[ChannelEvent]) -> list[UnreadMarkerEvent]:
+    """Extract unread markers from fetched channel events.
+
+    Only channels with a non-empty last_read field are included (i.e. channels the
+    authenticated user has joined).
+    """
+    markers: list[UnreadMarkerEvent] = []
+    for event in channel_events:
+        last_read = event.raw.get("last_read")
+        if not last_read:
+            continue
+        markers.append(
+            UnreadMarkerEvent(
+                timestamp=make_iso_timestamp(),
+                type=EventType("unread_marker_fetched"),
+                event_id=make_event_id(),
+                source=_UNREAD_MARKER_SOURCE,
+                channel_id=event.channel_id,
+                channel_name=event.channel_name,
+                last_read_ts=SlackMessageTimestamp(last_read),
+                raw={"channel_id": str(event.channel_id), "last_read": last_read},
+            )
+        )
+    logger.info("Extracted %d unread markers from channel data", len(markers))
+    return markers
+
+
+def fetch_user_reactions(api_caller: SlackApiCaller, user_id: SlackUserId) -> list[ReactionItemEvent]:
+    """Fetch all items the given user has reacted to via reactions.list."""
+    raw_items = fetch_paginated(
+        api_caller=api_caller,
+        method="reactions.list",
+        base_params={"user": user_id, "limit": "200"},
+        response_key="items",
+    )
+    logger.info("Fetched %d reaction items from Slack", len(raw_items))
+    return [
+        ReactionItemEvent(
+            timestamp=make_iso_timestamp(),
+            type=EventType("reaction_item_fetched"),
+            event_id=make_event_id(),
+            source=_REACTION_SOURCE,
+            user_id=user_id,
+            raw=raw,
+        )
+        for raw in raw_items
+    ]
 
 
 def _make_user_event(user_raw: dict[str, Any]) -> UserEvent:

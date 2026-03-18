@@ -9,7 +9,10 @@ from imbue.imbue_common.event_envelope import EventEnvelope
 from imbue.slack_exporter.data_types import ChannelEvent
 from imbue.slack_exporter.data_types import ChannelExportState
 from imbue.slack_exporter.data_types import MessageEvent
+from imbue.slack_exporter.data_types import ReactionItemEvent
 from imbue.slack_exporter.data_types import ReplyEvent
+from imbue.slack_exporter.data_types import SelfIdentityEvent
+from imbue.slack_exporter.data_types import UnreadMarkerEvent
 from imbue.slack_exporter.data_types import UserEvent
 from imbue.slack_exporter.primitives import SlackChannelId
 from imbue.slack_exporter.primitives import SlackMessageTimestamp
@@ -23,7 +26,10 @@ class DataType(StrEnum):
 
     CHANNELS = "channels"
     MESSAGES = "messages"
+    REACTIONS = "reactions"
     REPLIES = "replies"
+    SELF_IDENTITY = "self_identity"
+    UNREAD_MARKERS = "unread_markers"
     USERS = "users"
 
 
@@ -148,3 +154,66 @@ def load_existing_reply_keys(
             known_keys.add((event.channel_id, event.thread_ts, event.reply_ts))
     logger.info("Loaded %d known replies from store", len(known_keys))
     return known_keys
+
+
+def load_existing_self_identity(output_dir: Path) -> dict[str, SelfIdentityEvent]:
+    """Load existing self-identity events, keeping the latest per user_id."""
+    identity_by_id: dict[str, SelfIdentityEvent] = {}
+    for stream in StreamType:
+        for record in _load_jsonl_records(_events_path(output_dir, DataType.SELF_IDENTITY, stream)):
+            event = SelfIdentityEvent.model_validate(record)
+            identity_by_id[event.user_id] = event
+    logger.info("Loaded %d self-identity events from store", len(identity_by_id))
+    return identity_by_id
+
+
+def save_self_identity_events(output_dir: Path, stream: StreamType, events: Sequence[SelfIdentityEvent]) -> None:
+    _append_events(_events_path(output_dir, DataType.SELF_IDENTITY, stream), events)
+
+
+def load_existing_unread_markers(output_dir: Path) -> dict[str, UnreadMarkerEvent]:
+    """Load existing unread marker events, keeping the latest per channel_id."""
+    marker_by_channel: dict[str, UnreadMarkerEvent] = {}
+    for stream in StreamType:
+        for record in _load_jsonl_records(_events_path(output_dir, DataType.UNREAD_MARKERS, stream)):
+            event = UnreadMarkerEvent.model_validate(record)
+            marker_by_channel[event.channel_id] = event
+    logger.info("Loaded %d unread marker events from store", len(marker_by_channel))
+    return marker_by_channel
+
+
+def save_unread_marker_events(output_dir: Path, stream: StreamType, events: Sequence[UnreadMarkerEvent]) -> None:
+    _append_events(_events_path(output_dir, DataType.UNREAD_MARKERS, stream), events)
+
+
+def derive_reaction_item_key(raw: dict[str, Any]) -> str:
+    """Derive a unique key from a reactions.list item's raw data."""
+    item_type = raw.get("type", "")
+    if item_type == "message":
+        channel = raw.get("channel", "")
+        ts = raw.get("message", {}).get("ts", "")
+        return f"message:{channel}:{ts}"
+    elif item_type == "file":
+        file_id = raw.get("file", {}).get("id", "")
+        return f"file:{file_id}"
+    elif item_type == "file_comment":
+        comment_id = raw.get("comment", {}).get("id", "")
+        return f"file_comment:{comment_id}"
+    else:
+        return f"other:{json.dumps(raw, sort_keys=True)}"
+
+
+def load_existing_reactions(output_dir: Path) -> dict[str, ReactionItemEvent]:
+    """Load existing reaction item events, keeping the latest per derived key."""
+    reaction_by_key: dict[str, ReactionItemEvent] = {}
+    for stream in StreamType:
+        for record in _load_jsonl_records(_events_path(output_dir, DataType.REACTIONS, stream)):
+            event = ReactionItemEvent.model_validate(record)
+            key = derive_reaction_item_key(event.raw)
+            reaction_by_key[key] = event
+    logger.info("Loaded %d reaction item events from store", len(reaction_by_key))
+    return reaction_by_key
+
+
+def save_reaction_events(output_dir: Path, stream: StreamType, events: Sequence[ReactionItemEvent]) -> None:
+    _append_events(_events_path(output_dir, DataType.REACTIONS, stream), events)

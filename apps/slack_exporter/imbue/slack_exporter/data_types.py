@@ -15,6 +15,7 @@ from imbue.slack_exporter.primitives import SlackChannelId
 from imbue.slack_exporter.primitives import SlackChannelName
 from imbue.slack_exporter.primitives import SlackMessageTimestamp
 from imbue.slack_exporter.primitives import SlackUserId
+from imbue.slack_exporter.primitives import SlackUserName
 
 SlackApiCaller = Callable[[str, dict[str, str] | None], dict[str, Any]]
 
@@ -86,6 +87,30 @@ class ReplyEvent(EventEnvelope):
     thread_ts: SlackMessageTimestamp = Field(description="Parent message ts (thread root)")
     reply_ts: SlackMessageTimestamp = Field(description="This reply's ts")
     raw: dict[str, Any] = Field(description="Raw Slack API reply payload")
+
+
+class SelfIdentityEvent(EventEnvelope):
+    """An event envelope wrapping the result of auth.test for the authenticated user."""
+
+    user_id: SlackUserId = Field(description="Slack user ID of the authenticated user")
+    user_name: SlackUserName = Field(description="Slack user name of the authenticated user")
+    raw: dict[str, Any] = Field(description="Raw Slack API auth.test response")
+
+
+class UnreadMarkerEvent(EventEnvelope):
+    """An event envelope wrapping an unread marker (last_read position) for a conversation."""
+
+    channel_id: SlackChannelId = Field(description="Slack channel ID")
+    channel_name: SlackChannelName = Field(description="Channel name at time of fetch")
+    last_read_ts: SlackMessageTimestamp = Field(description="Timestamp up to which the user has read")
+    raw: dict[str, Any] = Field(description="Raw unread marker data")
+
+
+class ReactionItemEvent(EventEnvelope):
+    """An event envelope wrapping an item the authenticated user has reacted to."""
+
+    user_id: SlackUserId = Field(description="Slack user ID of the authenticated user")
+    raw: dict[str, Any] = Field(description="Raw Slack API reactions.list item payload")
 
 
 class ChannelExportState(FrozenModel):

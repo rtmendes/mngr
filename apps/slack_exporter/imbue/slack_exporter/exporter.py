@@ -8,8 +8,11 @@ from typing import TypeVar
 
 from imbue.imbue_common.event_envelope import EventSource
 from imbue.imbue_common.event_envelope import EventType
+from imbue.slack_exporter.channels import extract_unread_markers
 from imbue.slack_exporter.channels import fetch_channel_list
+from imbue.slack_exporter.channels import fetch_self_identity
 from imbue.slack_exporter.channels import fetch_user_list
+from imbue.slack_exporter.channels import fetch_user_reactions
 from imbue.slack_exporter.channels import resolve_channel_id
 from imbue.slack_exporter.data_types import ChannelConfig
 from imbue.slack_exporter.data_types import ChannelExportState
@@ -24,13 +27,20 @@ from imbue.slack_exporter.primitives import SlackChannelId
 from imbue.slack_exporter.primitives import SlackChannelName
 from imbue.slack_exporter.primitives import SlackMessageTimestamp
 from imbue.slack_exporter.store import StreamType
+from imbue.slack_exporter.store import derive_reaction_item_key
 from imbue.slack_exporter.store import load_existing_channels
 from imbue.slack_exporter.store import load_existing_message_state
+from imbue.slack_exporter.store import load_existing_reactions
 from imbue.slack_exporter.store import load_existing_reply_keys
+from imbue.slack_exporter.store import load_existing_self_identity
+from imbue.slack_exporter.store import load_existing_unread_markers
 from imbue.slack_exporter.store import load_existing_users
 from imbue.slack_exporter.store import save_channel_events
 from imbue.slack_exporter.store import save_message_events
+from imbue.slack_exporter.store import save_reaction_events
 from imbue.slack_exporter.store import save_reply_events
+from imbue.slack_exporter.store import save_self_identity_events
+from imbue.slack_exporter.store import save_unread_marker_events
 from imbue.slack_exporter.store import save_user_events
 
 logger = logging.getLogger(__name__)
@@ -79,6 +89,19 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     existing_user_by_id = load_existing_users(settings.output_dir)
     known_reply_keys = load_existing_reply_keys(settings.output_dir)
 
+    # Export self identity
+    self_identity = fetch_self_identity(api_caller)
+    existing_self_identity = load_existing_self_identity(settings.output_dir)
+    _diff_and_save(
+        fresh_items=[self_identity],
+        existing_by_key={k: v for k, v in existing_self_identity.items()},
+        get_key=lambda e: e.user_id,
+        get_raw=lambda e: e.raw,
+        save_fn=save_self_identity_events,
+        output_dir=settings.output_dir,
+        entity_name="self identity",
+    )
+
     # Export channels
     fresh_channels = fetch_channel_list(api_caller)
     _diff_and_save(
@@ -96,6 +119,19 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     }
     for event in fresh_channels:
         channel_id_by_name[event.channel_name] = event.channel_id
+
+    # Export unread markers (extracted from channel data, no extra API call)
+    fresh_markers = extract_unread_markers(fresh_channels)
+    existing_markers = load_existing_unread_markers(settings.output_dir)
+    _diff_and_save(
+        fresh_items=fresh_markers,
+        existing_by_key={k: v for k, v in existing_markers.items()},
+        get_key=lambda m: m.channel_id,
+        get_raw=lambda m: m.raw,
+        save_fn=save_unread_marker_events,
+        output_dir=settings.output_dir,
+        entity_name="unread markers",
+    )
 
     # Export users
     fresh_users = fetch_user_list(api_caller)
@@ -121,6 +157,19 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
             settings=settings,
             api_caller=api_caller,
         )
+
+    # Export reactions for the authenticated user
+    fresh_reactions = fetch_user_reactions(api_caller, self_identity.user_id)
+    existing_reactions = load_existing_reactions(settings.output_dir)
+    _diff_and_save(
+        fresh_items=fresh_reactions,
+        existing_by_key={k: v for k, v in existing_reactions.items()},
+        get_key=lambda r: derive_reaction_item_key(r.raw),
+        get_raw=lambda r: r.raw,
+        save_fn=save_reaction_events,
+        output_dir=settings.output_dir,
+        entity_name="reaction items",
+    )
 
 
 def _export_single_channel(
