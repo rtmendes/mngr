@@ -247,6 +247,12 @@ def _test_page(run_name: str, test_name: str) -> str | None:
     )
     parts = [nav]
 
+    # Tutorial block (the original script block this test covers)
+    tutorial_block_path = test_dir / "tutorial_block.txt"
+    if tutorial_block_path.exists():
+        parts.append("<h2>Tutorial Block</h2>")
+        parts.append(f'<pre class="transcript">{html.escape(tutorial_block_path.read_text())}</pre>')
+
     # Collect cast files first so we can link agent names in the transcript
     cast_files = sorted(test_dir.glob("*.cast"))
     cast_stems = [f.stem for f in cast_files]

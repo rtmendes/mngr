@@ -4,11 +4,17 @@
 Usage: python scripts/tutorial_matcher.py <script_file> <test_directory>
 
 The script file is a shell script split into "blocks" by empty lines. The test
-directory contains pytest functions that reference blocks via their docstrings.
-This script identifies blocks without tests and tests without blocks.
+directory contains pytest functions that reference blocks via write_tutorial_block()
+calls or docstrings. This script identifies blocks without tests and tests without
+blocks.
+
+Matching is purely text-based: no AST walking. A function is identified by a line
+starting with "def test_", and its body is all subsequent indented lines. The block
+text is extracted from either a write_tutorial_block(\"\"\"...\"\"\") call or a
+docstring, dedented, and compared against the script blocks.
 """
 
-import ast
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -36,46 +42,88 @@ def parse_script_blocks(script_path: Path) -> list[str]:
     return blocks
 
 
+def _parse_test_functions(source: str) -> list[tuple[str, str]]:
+    """Parse test functions from Python source using simple text heuristics.
+
+    Returns list of (signature, body) tuples where body is the full indented
+    text of the function body.
+    """
+    lines = source.splitlines()
+    functions: list[tuple[str, str]] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Look for "def test_..." at any indentation level
+        stripped = line.lstrip()
+        if not stripped.startswith("def test_"):
+            i += 1
+            continue
+
+        # Collect the full signature (may span multiple lines)
+        sig_lines = [line]
+        # If the line doesn't have both ')' and ':', it continues
+        while i + 1 < len(lines) and (")" not in sig_lines[-1] or ":" not in sig_lines[-1]):
+            i += 1
+            sig_lines.append(lines[i])
+        signature = "\n".join(sig_lines)
+        i += 1
+
+        # Determine the body indentation (first non-empty line after signature)
+        body_lines: list[str] = []
+        while i < len(lines):
+            if lines[i].strip() == "":
+                body_lines.append("")
+                i += 1
+                continue
+            # Check if this line is indented more than the def line
+            if lines[i][0] in (" ", "\t"):
+                body_lines.append(lines[i])
+                i += 1
+            else:
+                break
+
+        body = "\n".join(body_lines)
+        functions.append((signature, body))
+
+    return functions
+
+
+def _extract_block_text(body: str) -> str | None:
+    """Extract tutorial block text from a function body.
+
+    Looks for write_tutorial_block(\"\"\"...\"\"\") first, then falls back to
+    a docstring (\"\"\"...\"\"\"). In both cases, the content is dedented and
+    stripped.
+    """
+    # Try write_tutorial_block("""...""") -- match the triple-quoted string argument
+    m = re.search(r'write_tutorial_block\(\s*"""(.*?)"""\s*\)', body, re.DOTALL)
+    if m:
+        return textwrap.dedent(m.group(1)).strip()
+
+    # Fall back to docstring: first triple-quoted string in the body
+    m = re.search(r'"""(.*?)"""', body, re.DOTALL)
+    if m:
+        return textwrap.dedent(m.group(1)).strip()
+
+    return None
+
+
 def find_pytest_functions(test_dir: Path) -> list[tuple[str, str | None, Path]]:
-    """Find all pytest functions in a directory, returning (signature, docstring, file_path) tuples."""
+    """Find all test functions in a directory.
+
+    Returns (signature, block_text, file_path) tuples.
+    """
     results: list[tuple[str, str | None, Path]] = []
 
     for py_file in sorted(test_dir.rglob("*.py")):
-        source = py_file.read_text()
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
-            print(f"Warning: skipping {py_file} due to syntax error", file=sys.stderr)
+        if py_file.name == "conftest.py" or py_file.name == "serve_test_output.py":
             continue
-
-        source_lines = source.splitlines()
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not node.name.startswith("test_"):
-                continue
-
-            # Reconstruct the signature line from source.
-            # Find the def line(s) -- handle multi-line signatures.
-            sig_lines: list[str] = []
-            for line_idx in range(node.lineno - 1, min(node.end_lineno or node.lineno, len(source_lines))):
-                sig_lines.append(source_lines[line_idx])
-                if ")" in source_lines[line_idx] and ":" in source_lines[line_idx]:
-                    break
-
-            signature = "\n".join(sig_lines)
-            docstring = ast.get_docstring(node, clean=False)
-            results.append((signature, docstring, py_file))
+        source = py_file.read_text()
+        for signature, body in _parse_test_functions(source):
+            block_text = _extract_block_text(body)
+            results.append((signature, block_text, py_file))
 
     return results
-
-
-def block_matches_docstring(block: str, docstring: str) -> bool:
-    """Check if a script block appears in a pytest function's docstring."""
-    # The docstring will have the block indented. Dedent the docstring and check
-    # if the block appears as a substring.
-    dedented = textwrap.dedent(docstring).strip()
-    return block in dedented
 
 
 def main() -> None:
@@ -99,21 +147,19 @@ def main() -> None:
     # Find blocks with no corresponding pytest function.
     unmatched_blocks: list[str] = []
     for block in blocks:
-        has_match = any(
-            docstring is not None and block_matches_docstring(block, docstring) for _, docstring, _ in pytest_funcs
-        )
+        has_match = any(text is not None and block in text for _, text, _ in pytest_funcs)
         if not has_match:
             unmatched_blocks.append(block)
 
     # Find pytest functions with no corresponding block.
     unmatched_funcs: list[tuple[str, str | None, Path]] = []
-    for signature, docstring, file_path in pytest_funcs:
-        if docstring is None:
-            unmatched_funcs.append((signature, docstring, file_path))
+    for signature, text, file_path in pytest_funcs:
+        if text is None:
+            unmatched_funcs.append((signature, text, file_path))
             continue
-        has_match = any(block_matches_docstring(block, docstring) for block in blocks)
+        has_match = any(block in text for block in blocks)
         if not has_match:
-            unmatched_funcs.append((signature, docstring, file_path))
+            unmatched_funcs.append((signature, text, file_path))
 
     # Output results.
     if not unmatched_blocks and not unmatched_funcs:
@@ -127,12 +173,11 @@ def main() -> None:
 
     if unmatched_funcs:
         print("The following pytest functions don't correspond to any script block:\n")
-        for signature, docstring, file_path in unmatched_funcs:
+        for signature, text, file_path in unmatched_funcs:
             print(f"```\n# {file_path}\n{signature}")
-            if docstring is not None:
-                # Show the docstring as it appears indented in the source.
-                indented = textwrap.indent(docstring, "    ")
-                print(f'    """\n{indented}\n    """')
+            if text is not None:
+                indented = textwrap.indent(text, "    ")
+                print(f"    # extracted block text:\n{indented}")
             print("```\n")
 
     sys.exit(1)

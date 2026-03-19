@@ -5,17 +5,17 @@ from pathlib import Path
 
 import pytest
 
+from imbue.mng.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
-from imbue.skitwright.session import Session
 
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_source_path(e2e: Session, agent_name: str, tmp_path: Path) -> None:
-    """
+def test_create_with_source_path(e2e: E2eSession, agent_name: str, tmp_path: Path) -> None:
+    e2e.write_tutorial_block("""
     # by default, the agent uses the data from its current git repo (if any) or folder, but you can specify a different source:
     mng create my-task --source-path /path/to/some/other/project
-    """
+    """)
     source_dir = tmp_path / "other_project"
     source_dir.mkdir()
     (source_dir / "hello.txt").write_text("hello from source")
@@ -34,11 +34,11 @@ def test_create_with_source_path(e2e: Session, agent_name: str, tmp_path: Path) 
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_project_label(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_project_label(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # similarly, by default the agent is tagged with a "project" label that matches the name of the current git repo (or folder), but you can specify a different project:
     mng create my-task --project my-project
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --project my-project --command 'sleep 99999' --no-ensure-clean",
@@ -57,13 +57,13 @@ def test_create_with_project_label(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_source_path_no_git(e2e: Session, agent_name: str, tmp_path: Path) -> None:
-    """
+def test_create_with_source_path_no_git(e2e: E2eSession, agent_name: str, tmp_path: Path) -> None:
+    e2e.write_tutorial_block("""
     # mng doesn't require git at all--if there's no git repo, it will just use the files from the folder as the source data
     mkdir -p /tmp/my_random_folder
     echo "print('hello world')" > /tmp/my_random_folder/script.py
     mng create my-task --source-path /tmp/my_random_folder --command python -- script.py
-    """
+    """)
     source_dir = tmp_path / "my_random_folder"
     source_dir.mkdir()
     (source_dir / "script.py").write_text("print('hello world')\n")
@@ -82,13 +82,13 @@ def test_create_with_source_path_no_git(e2e: Session, agent_name: str, tmp_path:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_default_branch(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_default_branch(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # however, if you do use git, mng makes that convenient
     # by default, it creates a new git branch for each agent (so that their changes don't conflict with each other):
     mng create my-task
     git branch | grep mng/my-task
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean",
@@ -103,13 +103,13 @@ def test_create_default_branch(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_custom_branch_pattern(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_custom_branch_pattern(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # --branch controls branch creation. the default is :mng/* which creates a new branch named mng/{agent_name}
     # you can change the pattern (the * is replaced by the agent name):
     mng create my-task --branch ":feature/*"
     git branch | grep feature/my-task
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --branch ':feature/*' --command 'sleep 99999' --no-ensure-clean",
@@ -124,11 +124,11 @@ def test_create_with_custom_branch_pattern(e2e: Session, agent_name: str) -> Non
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_base_branch(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_base_branch(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can also specify a different base branch (instead of the current branch):
     mng create my-task --branch "main:mng/*"
-    """
+    """)
     # First, find out what the current branch is called so we can create a "main" branch
     # The temp_git_repo has a default branch; we just use it as-is since the base branch
     # must exist. We'll use the current branch name as the base.
@@ -153,11 +153,11 @@ def test_create_with_base_branch(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_explicit_branch_name(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_explicit_branch_name(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # or set the new branch name explicitly:
     mng create my-task --branch ":feature/my-task"
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --branch ':feature/{agent_name}' --command 'sleep 99999' --no-ensure-clean",
@@ -172,12 +172,12 @@ def test_create_with_explicit_branch_name(e2e: Session, agent_name: str) -> None
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_copy(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_copy(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can create a copy instead of a worktree:
     mng create my-task --copy
     # that is used by default if you're not in a git repo
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --copy --command 'sleep 99999' --no-ensure-clean",
@@ -192,11 +192,11 @@ def test_create_with_copy(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_copy_with_existing_branch(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_copy_with_existing_branch(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can disable new branch creation entirely by omitting the :NEW part (requires --in-place or --copy due to how worktrees work, and --in-place implies no new branch):
     mng create my-task --copy --branch main
-    """
+    """)
     current_branch_result = e2e.run(
         "git rev-parse --abbrev-ref HEAD",
         comment="Get current branch name",
@@ -218,11 +218,11 @@ def test_create_copy_with_existing_branch(e2e: Session, agent_name: str) -> None
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_clone(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_clone(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can create a "clone" instead of worktree or copy, which is a lightweight copy that shares git objects with the original repo but has its own separate working directory:
     mng create my-task --clone
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --clone --command 'sleep 99999' --no-ensure-clean",
@@ -237,12 +237,12 @@ def test_create_with_clone(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_shallow_depth(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_shallow_depth(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can make a shallow clone for faster setup:
     mng create my-task --depth 1
     # (--shallow-since clones since a specific date instead)
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --depth 1 --command 'sleep 99999' --no-ensure-clean",
@@ -257,12 +257,12 @@ def test_create_with_shallow_depth(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_from_another_agent(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_from_another_agent(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can clone from an existing agent's work directory:
     mng create my-task --from other-agent
     # (--source, --source-agent, and --source-host are alternative forms for more specific control)
-    """
+    """)
     source_agent = f"{agent_name}-source"
 
     expect(

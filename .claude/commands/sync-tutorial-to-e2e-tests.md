@@ -24,13 +24,13 @@ Read the tutorial script file and the test directory to understand the overall s
 Pay close attention to:
 - How existing test functions are structured (fixtures, assertions, setup/teardown)
 - What the tutorial script is demonstrating (the commands, their arguments, expected behavior)
-- The patterns used for docstrings (the block must appear verbatim in the docstring)
+- The patterns used for `write_tutorial_block()` calls (the block must appear verbatim in the call argument)
 
 ## Step 3: Handle unmatched pytest functions
 
 Handle these FIRST, before adding new tests, because some of these may pair up with unmatched script blocks.
 
-For each pytest function that doesn't correspond to any script block, compare its docstring against the list of unmatched script blocks. If there is a script block that mostly matches (e.g., a command was renamed, a flag was added, or a line was changed), the script block was likely modified after the test was written. In that case, update the test's docstring to exactly reproduce the current script block, and update the test logic to match the new behavior. This also resolves that script block, so it no longer needs a new test in step 4.
+For each pytest function that doesn't correspond to any script block, compare its `write_tutorial_block()` call against the list of unmatched script blocks. If there is a script block that mostly matches (e.g., a command was renamed, a flag was added, or a line was changed), the script block was likely modified after the test was written. In that case, update the `write_tutorial_block()` argument to exactly reproduce the current script block, and update the test logic to match the new behavior. This also resolves that script block, so it no longer needs a new test in step 4.
 
 If no script block is even a close match, the block was removed from the script entirely. Remove the test function.
 
@@ -52,19 +52,19 @@ Each subagent writes its tests and returns the result. After all subagents finis
 
 1. Understand what the block does by reading the surrounding context in the tutorial script.
 2. Write one or more pytest functions that test the behavior demonstrated by that block. A single block may warrant multiple tests if it demonstrates multiple behaviors or has interesting edge cases.
-3. Each function's docstring MUST contain the exact text of the script block (indented to match Python syntax). The docstring may contain additional content beyond the block.
-4. **CRITICAL docstring format**: The opening `"""` MUST be followed by a newline, and all content lines must share the same indentation. This is required for the matcher's `textwrap.dedent` to work. Example:
+3. Each function MUST call `e2e.write_tutorial_block("""...""")` as its first statement, with the exact text of the script block inside the triple-quoted string. The block text will be dedented and stripped automatically, so indent it naturally with the surrounding Python code. Example:
    ```python
-   def test_foo(e2e: Session, agent_name: str) -> None:
-       """
-       # comment from tutorial
-       mng create my-task --some-flag
-       # another comment
-       """
+   def test_foo(e2e: E2eSession, agent_name: str) -> None:
+       e2e.write_tutorial_block("""
+           # comment from tutorial
+           mng create my-task --some-flag
+           # another comment
+       """)
+       result = e2e.run(...)
    ```
-   Do NOT put text on the same line as the opening `"""` -- that breaks dedent because the first line has zero indentation while the rest have four spaces.
-5. The function name should be descriptive of what the block does (e.g., `test_create_task` for a block that runs `mng create ...`).
-6. Decorate each new test function with `@pytest.mark.release`, since these are e2e tests.
+4. The function name should be descriptive of what the block does (e.g., `test_create_task` for a block that runs `mng create ...`).
+5. Decorate each new test function with `@pytest.mark.release`, since these are e2e tests.
+6. Use `e2e: E2eSession` (imported from `imbue.mng.e2e.conftest`) as the fixture type, NOT `Session`.
 7. Follow the existing test patterns in the directory for style, fixtures, and assertions.
 
 ## Guidelines for writing test logic
@@ -75,7 +75,7 @@ When writing or updating tests, follow these two principles:
 
 **Verify the actual behavior, not just surface-level output.** The script blocks usually don't contain verification code, but the test must verify the exact desired behavior as thoroughly as possible. For example, if a script block creates an agent in a specific directory, it is not sufficient to only verify that the agent appears in the result of `mng list` -- you must also verify that the agent is running in that directory, e.g. by running `mng exec $agent_name pwd` and checking its output. Think about what the command is supposed to accomplish and assert on the concrete effects.
 
-**Add comments to transcript commands.** The Skitwright `Session.run()` method accepts an optional `comment` parameter that is recorded in the transcript above the command (as `# ...` lines). Use this to annotate each command with a brief description of what it does. Reuse comments from the tutorial script block where available -- if a script block has comments above or beside a command, use those as the comment text.
+**Add comments to transcript commands.** The `e2e.run()` method accepts an optional `comment` parameter that is recorded in the transcript above the command (as `# ...` lines). Use this to annotate each command with a brief description of what it does. Reuse comments from the tutorial script block where available -- if a script block has comments above or beside a command, use those as the comment text.
 
 ## Step 5: Verify
 

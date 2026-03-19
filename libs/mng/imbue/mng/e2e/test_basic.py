@@ -9,16 +9,16 @@ import json
 
 import pytest
 
+from imbue.mng.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
-from imbue.skitwright.session import Session
 
 
 @pytest.mark.release
-def test_help_succeeds(e2e: Session) -> None:
-    """
+def test_help_succeeds(e2e: E2eSession) -> None:
+    e2e.write_tutorial_block("""
     # or see the other commands--list, destroy, message, connect, push, pull, clone, and more!  These other commands are covered in their own sections below.
     mng --help
-    """
+    """)
     result = e2e.run(
         "mng --help",
         comment="or see the other commands--list, destroy, message, connect, push, pull, clone, and more!",
@@ -30,11 +30,11 @@ def test_help_succeeds(e2e: Session) -> None:
 
 
 @pytest.mark.release
-def test_create_help_succeeds(e2e: Session) -> None:
-    """
+def test_create_help_succeeds(e2e: E2eSession) -> None:
+    e2e.write_tutorial_block("""
     # tons more arguments for anything you could want! As always, you can learn more via --help
     mng create --help
-    """
+    """)
     result = e2e.run(
         "mng create --help",
         comment="tons more arguments for anything you could want! As always, you can learn more via --help",
@@ -45,14 +45,14 @@ def test_create_help_succeeds(e2e: Session) -> None:
 
 
 @pytest.mark.release
-def test_list_with_no_agents(e2e: Session) -> None:
+def test_list_with_no_agents(e2e: E2eSession) -> None:
     result = e2e.run("mng list", comment="List agents in a fresh environment")
     expect(result).to_succeed()
     expect(result.stdout).to_contain("No agents found")
 
 
 @pytest.mark.release
-def test_list_json_with_no_agents(e2e: Session) -> None:
+def test_list_json_with_no_agents(e2e: E2eSession) -> None:
     result = e2e.run("mng list --format json", comment="List agents as JSON in a fresh environment")
     expect(result).to_succeed()
     parsed = json.loads(result.stdout)
@@ -61,12 +61,12 @@ def test_list_json_with_no_agents(e2e: Session) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_named_agent(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_named_agent(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # when creating agents to accomplish tasks, it's recommended that you give them a name to make it easier to manage them:
     mng create my-task
     # that command give the agent a name of "my-task". If you don't specify a name, mng will generate a random one for you.
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean",
@@ -81,12 +81,12 @@ def test_create_named_agent(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_json_output(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_json_output(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can control output format for scripting:
     mng create my-task --no-connect --format json
     # (--quiet suppresses all output)
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --no-connect --command 'sleep 99999' --no-ensure-clean --format json",
@@ -102,12 +102,12 @@ def test_create_with_json_output(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_headless(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_headless(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # mng is very much meant to be used for scripting and automation, so nothing requires interactivity.
     # if you want to be sure that interactivity is disabled, you can use the --headless flag:
     mng create my-task --headless
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean --headless",
@@ -122,7 +122,7 @@ def test_create_headless(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_and_destroy_agent(e2e: Session, agent_name: str) -> None:
+def test_create_and_destroy_agent(e2e: E2eSession, agent_name: str) -> None:
     expect(
         e2e.run(
             f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean",
@@ -140,7 +140,7 @@ def test_create_and_destroy_agent(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_and_rename_agent(e2e: Session, agent_name: str) -> None:
+def test_create_and_rename_agent(e2e: E2eSession, agent_name: str) -> None:
     expect(
         e2e.run(
             f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean",
@@ -163,11 +163,11 @@ def test_create_and_rename_agent(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_label(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_label(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can add labels to organize your agents and tags for host metadata:
     mng create my-task --label team=backend --host-label env=staging
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean --label team=backend --host-label env=staging",

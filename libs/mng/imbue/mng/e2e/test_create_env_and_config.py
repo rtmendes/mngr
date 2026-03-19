@@ -2,18 +2,18 @@
 
 import pytest
 
+from imbue.mng.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
-from imbue.skitwright.session import Session
 
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_env(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_env(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can set environment variables for the agent:
     mng create my-task --env DEBUG=true
     # (--env-file loads from a file, --pass-env forwards a variable from your current shell)
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --env DEBUG=true --command 'sleep 99999' --no-ensure-clean",
@@ -28,13 +28,13 @@ def test_create_with_env(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_pass_env(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_pass_env(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # it is *strongly encouraged* to use either use --env-file or --pass-env, especially for any sensitive environment variables (like API keys) rather than --env, because that way they won't end up in your shell history or in your config files by accident. For example:
     export API_KEY=abc123
     mng create my-task --pass-env API_KEY
     # that command passes the API_KEY environment variable from your current shell into the agent's environment, without you having to specify the value on the command line.
-    """
+    """)
     expect(
         e2e.run(
             f"API_KEY=abc123 mng create {agent_name} --pass-env API_KEY --command 'sleep 99999' --no-ensure-clean",
@@ -48,8 +48,8 @@ def test_create_with_pass_env(e2e: Session, agent_name: str) -> None:
 
 
 @pytest.mark.release
-def test_create_with_template_modal_disabled(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_template_modal_disabled(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can use templates to quickly apply a set of preconfigured options:
     echo '[create_templates.my_modal_template]' >> .mng/settings.local.toml
     echo 'provider = "modal"' >> .mng/settings.local.toml
@@ -58,7 +58,7 @@ def test_create_with_template_modal_disabled(e2e: Session, agent_name: str) -> N
     # templates are defined in your config (see the CONFIGURATION section for more) and can be stacked: --template modal --template codex
     # templates take exactly the same parameters as the create command
     # -t is short for --template. Many commands have a short form (see the "--help")
-    """
+    """)
     # Append template config to the existing settings.local.toml.
     # The e2e env uses .$MNG_ROOT_NAME/ as the config directory (not .mng/).
     cfg = ".$MNG_ROOT_NAME/settings.local.toml"
@@ -86,11 +86,11 @@ def test_create_with_template_modal_disabled(e2e: Session, agent_name: str) -> N
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_plugin_flags(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_with_plugin_flags(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you can enable or disable specific plugins:
     mng create my-task --plugin my-plugin --disable-plugin other-plugin
-    """
+    """)
     result = e2e.run(
         f"mng create {agent_name} --plugin my-plugin --disable-plugin other-plugin --command 'sleep 99999' --no-ensure-clean",
         comment="you can enable or disable specific plugins",
@@ -107,12 +107,12 @@ def test_create_with_plugin_flags(e2e: Session, agent_name: str) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_in_place_alias_target(e2e: Session, agent_name: str) -> None:
-    """
+def test_create_in_place_alias_target(e2e: E2eSession, agent_name: str) -> None:
+    e2e.write_tutorial_block("""
     # you should probably use aliases for making little shortcuts for yourself, because many of the commands can get a bit long:
     echo "alias mc='mng create --in-place'" >> ~/.bashrc && source ~/.bashrc
     # or use a more sophisticated tool, like Espanso
-    """
+    """)
     expect(
         e2e.run(
             f"mng create {agent_name} --in-place --command 'sleep 99999' --no-ensure-clean",
@@ -126,11 +126,11 @@ def test_create_in_place_alias_target(e2e: Session, agent_name: str) -> None:
 
 
 @pytest.mark.release
-def test_config_set_headless(e2e: Session) -> None:
-    """
+def test_config_set_headless(e2e: E2eSession) -> None:
+    e2e.write_tutorial_block("""
     # or you can set that option in your config so that it always applies:
     mng config set headless true
-    """
+    """)
     result = e2e.run(
         "mng config set headless true",
         comment="or you can set that option in your config so that it always applies",
@@ -144,11 +144,11 @@ def test_config_set_headless(e2e: Session) -> None:
 
 
 @pytest.mark.release
-def test_env_var_mng_headless(e2e: Session) -> None:
-    """
+def test_env_var_mng_headless(e2e: E2eSession) -> None:
+    e2e.write_tutorial_block("""
     # or you can set it as an environment variable:
     export MNG_HEADLESS=true
-    """
+    """)
     result = e2e.run(
         "MNG_HEADLESS=true mng list",
         comment="or you can set it as an environment variable",
@@ -157,12 +157,12 @@ def test_env_var_mng_headless(e2e: Session) -> None:
 
 
 @pytest.mark.release
-def test_config_set_default_provider(e2e: Session) -> None:
-    """
+def test_config_set_default_provider(e2e: E2eSession) -> None:
+    e2e.write_tutorial_block("""
     # *all* mng options work like that. For example, if you want to always run agents in Modal by default, you can set that in your config:
     mng config set commands.create.provider modal
     # for more on configuration, see the CONFIGURATION section below
-    """
+    """)
     result = e2e.run(
         "mng config set commands.create.provider modal",
         comment="*all* mng options work like that",

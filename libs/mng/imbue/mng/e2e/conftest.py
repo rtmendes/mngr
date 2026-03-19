@@ -3,6 +3,7 @@ import shutil
 import signal
 import sys
 import tempfile
+import textwrap
 from collections.abc import Generator
 from datetime import datetime
 from datetime import timezone
@@ -14,6 +15,24 @@ from imbue.mng.utils.polling import poll_until
 from imbue.mng.utils.testing import get_short_random_string
 from imbue.skitwright.runner import run_command
 from imbue.skitwright.session import Session
+
+
+class E2eSession(Session):
+    """Session subclass that adds e2e-specific helpers like tutorial block writing."""
+
+    def __init__(self, env: dict[str, str], cwd: Path, output_dir: Path) -> None:
+        super().__init__(env=env, cwd=cwd)
+        self._output_dir = output_dir
+
+    def write_tutorial_block(self, block: str) -> None:
+        """Write the original tutorial script block to the test output directory.
+
+        The block text is dedented and stripped so that Python-indented
+        triple-quoted strings produce clean output without leading whitespace.
+        """
+        cleaned = textwrap.dedent(block).strip() + "\n"
+        (self._output_dir / "tutorial_block.txt").write_text(cleaned)
+
 
 _E2E_DIR = Path(__file__).resolve().parent
 _BIN_DIR = _E2E_DIR / "bin"
@@ -110,8 +129,8 @@ def e2e(
     project_config_dir: Path,
     e2e_run_dir: Path,
     request: pytest.FixtureRequest,
-) -> Generator[Session, None, None]:
-    """Provide an isolated skitwright Session for running mng CLI commands.
+) -> Generator[E2eSession, None, None]:
+    """Provide an isolated E2eSession for running mng CLI commands.
 
     Sets up a subprocess environment with:
     - Isolated MNG_HOST_DIR, MNG_PREFIX, MNG_ROOT_NAME (from parent fixtures)
@@ -161,7 +180,7 @@ def e2e(
         "is_enabled = false\n"
     )
 
-    session = Session(env=env, cwd=temp_git_repo)
+    session = E2eSession(env=env, cwd=temp_git_repo, output_dir=test_output_dir)
 
     yield session
 
