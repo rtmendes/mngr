@@ -16,8 +16,8 @@ from pathlib import Path
 
 _TEST_OUTPUT_DIR = Path(__file__).resolve().parent / ".test_output"
 
-_ASCIINEMA_PLAYER_CSS = "https://cdn.jsdelivr.net/npm/asciinema-player@3.9.0/dist/bundle/asciinema-player.css"
-_ASCIINEMA_PLAYER_JS = "https://cdn.jsdelivr.net/npm/asciinema-player@3.9.0/dist/bundle/asciinema-player.min.js"
+_ASCIINEMA_PLAYER_CSS = "https://cdn.jsdelivr.net/npm/asciinema-player@3.15.1/dist/bundle/asciinema-player.css"
+_ASCIINEMA_PLAYER_JS = "https://cdn.jsdelivr.net/npm/asciinema-player@3.15.1/dist/bundle/asciinema-player.min.js"
 
 # Standard 8-color and bright 8-color ANSI palette (indices 0-15).
 _ANSI_COLORS_16 = [
@@ -134,7 +134,7 @@ def _html_page(title: str, body: str) -> str:
   .transcript .prompt {{ color: #569cd6; }}
   .transcript .stderr-prefix {{ color: #f44747; }}
   .transcript .exit-code {{ color: #888; font-style: italic; }}
-  .cast-player {{ margin: 1em 0; }}
+  .cast-player {{ margin: 1em 0; max-height: 400px; overflow: auto; }}
   .cast-label {{ font-family: 'SF Mono', 'Menlo', 'Consolas', monospace; font-size: 0.85em; color: #666; margin-bottom: 0.3em; }}
 </style>
 </head>
@@ -240,7 +240,7 @@ def _test_page(run_name: str, test_name: str) -> str | None:
         player_inits.append(
             f"AsciinemaPlayer.create({json.dumps(cast_url)}, "
             f"document.getElementById({json.dumps(div_id)}), "
-            f"{{fit: 'width', theme: 'asciinema'}});"
+            f"{{fit: 'width', theme: 'asciinema', rows: 20}});"
         )
 
     if player_inits:
