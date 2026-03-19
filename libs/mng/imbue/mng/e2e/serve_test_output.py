@@ -135,14 +135,18 @@ def _html_page(title: str, body: str, sidebar: str | None = None) -> str:
     if sidebar is not None:
         sidebar_css = (
             ".layout { display: flex; gap: 0; }\n"
-            "  .sidebar { width: 240px; min-width: 240px; border-right: 1px solid #ddd; padding: 0.5em 1em; font-size: 0.85em; overflow-y: auto; max-height: calc(100vh - 4em); position: sticky; top: 2em; }\n"
-            "  .sidebar.collapsed { width: 0; min-width: 0; padding: 0; overflow: hidden; border-right: none; }\n"
+            "  .sidebar-panel { display: flex; flex-shrink: 0; border-right: 1px solid #ddd; }\n"
+            "  .sidebar-toggle { writing-mode: vertical-lr; cursor: pointer; user-select: none; "
+            "font-size: 0.8em; color: #666; padding: 0.5em 0.3em; background: #f0f0f0; border: none; "
+            "border-right: 1px solid #ddd; }\n"
+            "  .sidebar-toggle:hover { color: #0066cc; background: #e8e8e8; }\n"
+            "  .sidebar { width: 300px; padding: 0.5em 1em; font-size: 0.85em; overflow-y: auto; "
+            "max-height: calc(100vh - 4em); position: sticky; top: 2em; }\n"
+            "  .sidebar.collapsed { width: 0; padding: 0; overflow: hidden; }\n"
             "  .sidebar ul { list-style: none; padding: 0; margin: 0; }\n"
-            "  .sidebar li { margin: 0.2em 0; }\n"
+            "  .sidebar li { margin: 0.3em 0; }\n"
             "  .sidebar li.active { font-weight: bold; }\n"
             "  .sidebar a { color: #333; }\n"
-            "  .sidebar-toggle { cursor: pointer; user-select: none; font-size: 0.85em; color: #666; margin-bottom: 0.5em; }\n"
-            "  .sidebar-toggle:hover { color: #0066cc; }\n"
             "  .main-content { flex: 1; min-width: 0; padding-left: 1.5em; }"
         )
         sidebar_js = """
@@ -152,19 +156,27 @@ def _html_page(title: str, body: str, sidebar: str | None = None) -> str:
   var sidebar = document.querySelector('.sidebar');
   var toggle = document.querySelector('.sidebar-toggle');
   if (!sidebar || !toggle) return;
+  function update() {
+    var collapsed = sidebar.classList.contains('collapsed');
+    toggle.textContent = collapsed ? 'Tests' : 'Tests';
+  }
   if (localStorage.getItem(KEY) === 'true') {
     sidebar.classList.add('collapsed');
-    toggle.textContent = '>> Tests';
   }
+  update();
   toggle.addEventListener('click', function() {
     sidebar.classList.toggle('collapsed');
-    var collapsed = sidebar.classList.contains('collapsed');
-    localStorage.setItem(KEY, collapsed);
-    toggle.textContent = collapsed ? '>> Tests' : '<< Tests';
+    localStorage.setItem(KEY, sidebar.classList.contains('collapsed'));
+    update();
   });
 })();
 </script>"""
-        sidebar_html = f'<div class="sidebar"><div class="sidebar-toggle">&lt;&lt; Tests</div>{sidebar}</div>'
+        sidebar_html = (
+            '<div class="sidebar-panel">'
+            '<button class="sidebar-toggle">Tests</button>'
+            f'<div class="sidebar">{sidebar}</div>'
+            "</div>"
+        )
         body_wrapper_start = '<div class="layout">' + sidebar_html + '<div class="main-content">'
         body_wrapper_end = "</div></div>"
 
@@ -286,15 +298,25 @@ def _index_page() -> str:
     return _html_page("E2E Test Runs", "<nav><b>Test Runs</b></nav>\n<ul>\n" + items + "\n</ul>")
 
 
+def _build_test_sidebar(run_name: str, run_dir: Path, active_test: str | None = None) -> str:
+    """Build sidebar HTML listing all tests in a run."""
+    all_tests = sorted(d.name for d in run_dir.iterdir() if d.is_dir())
+    items: list[str] = []
+    for t in all_tests:
+        cls = ' class="active"' if t == active_test else ""
+        items.append(f'<li{cls}><a href="/run/{run_name}/{t}">{t}</a></li>')
+    return "<ul>" + "\n".join(items) + "</ul>"
+
+
 def _run_page(run_name: str) -> str | None:
     """List all tests in a run."""
     run_dir = _TEST_OUTPUT_DIR / run_name
     if not run_dir.is_dir():
         return None
-    tests = sorted(d for d in run_dir.iterdir() if d.is_dir())
-    items = "\n".join(f'<li><a href="/run/{run_name}/{t.name}">{t.name}</a></li>' for t in tests)
+    sidebar = _build_test_sidebar(run_name, run_dir)
     nav = f'<nav><a href="/">Test Runs</a> / <b>{html.escape(run_name)}</b></nav>'
-    return _html_page(f"Run {run_name}", f"{nav}\n<ul>\n{items}\n</ul>")
+    body = f"{nav}\n<p>Select a test from the sidebar to view its output.</p>"
+    return _html_page(f"Run {run_name}", body, sidebar=sidebar)
 
 
 def _test_page(run_name: str, test_name: str) -> str | None:
@@ -304,13 +326,7 @@ def _test_page(run_name: str, test_name: str) -> str | None:
     if not test_dir.is_dir():
         return None
 
-    # Build sidebar with all tests in this run
-    all_tests = sorted(d.name for d in run_dir.iterdir() if d.is_dir())
-    sidebar_items: list[str] = []
-    for t in all_tests:
-        cls = ' class="active"' if t == test_name else ""
-        sidebar_items.append(f'<li{cls}><a href="/run/{run_name}/{t}">{t}</a></li>')
-    sidebar = "<ul>" + "\n".join(sidebar_items) + "</ul>"
+    sidebar = _build_test_sidebar(run_name, run_dir, active_test=test_name)
 
     nav = (
         f'<nav><a href="/">Test Runs</a> / '
