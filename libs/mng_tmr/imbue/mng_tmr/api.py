@@ -15,7 +15,6 @@ from loguru import logger
 from markdown_it import MarkdownIt
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
-from imbue.concurrency_group.errors import ConcurrencyGroupError
 from imbue.concurrency_group.errors import ProcessError
 from imbue.concurrency_group.executor import ConcurrencyGroupExecutor
 from imbue.imbue_common.model_update import to_update
@@ -467,7 +466,7 @@ def poll_until_all_done(
                 is_streaming=False,
                 error_behavior=ErrorBehavior.CONTINUE,
             )
-        except (MngError, HostError, ConcurrencyGroupError, OSError, Exception) as exc:
+        except Exception as exc:
             logger.warning("Polling failed (will retry next cycle): {}", exc)
             time.sleep(poll_interval_seconds)
             continue
@@ -926,7 +925,7 @@ def wait_for_integrator(
                 is_streaming=False,
                 error_behavior=ErrorBehavior.CONTINUE,
             )
-        except (MngError, HostError, ConcurrencyGroupError, OSError, Exception) as exc:
+        except Exception as exc:
             logger.warning("Integrator polling failed (will retry next cycle): {}", exc)
             time.sleep(poll_interval_seconds)
             continue
