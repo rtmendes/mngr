@@ -716,9 +716,9 @@ def test_run_export_cached_channels_filtered_by_membership(temp_output_dir: Path
             {"id": "C456", "name": "external", "is_member": False},
         ],
     )
-    # Override to include all channels (simulate a previous --all run)
+    # Use channels=None and members_only=False to simulate a previous --all run
     settings_all = ExporterSettings(
-        channels=settings.channels,
+        channels=None,
         default_oldest=settings.default_oldest,
         output_dir=settings.output_dir,
         reaction_lookback=settings.reaction_lookback,
@@ -744,6 +744,28 @@ def test_run_export_cached_channels_filtered_by_membership(temp_output_dir: Path
     assert counts1.get("conversations.info", 0) == 1
 
 
+def test_run_export_channel_info_only_for_specified_channels(temp_output_dir: Path) -> None:
+    """When --channels is specified, conversations.info is only called for those channels."""
+    settings = ExporterSettings(
+        channels=(ChannelConfig(name=SlackChannelName("general")),),
+        default_oldest=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        output_dir=temp_output_dir,
+        reaction_lookback=0,
+        cache_ttl_seconds=0,
+    )
+    caller, counts = _tracking_api_caller(
+        channel_data=[
+            {"id": "C123", "name": "general", "is_member": True},
+            {"id": "C456", "name": "random", "is_member": True},
+            {"id": "C789", "name": "engineering", "is_member": True},
+        ],
+    )
+    run_export(settings, api_caller=caller)
+
+    # conversations.info should only be called for 'general', not all 3 member channels
+    assert counts.get("conversations.info", 0) == 1
+
+
 def test_run_export_all_channels_when_channels_is_none(temp_output_dir: Path) -> None:
     """When channels is None, all channels from the fetched channel list are exported."""
     settings = ExporterSettings(
@@ -764,3 +786,5 @@ def test_run_export_all_channels_when_channels_is_none(temp_output_dir: Path) ->
 
     # Should have fetched messages for both channels (forward fetch + reaction scan per channel)
     assert counts.get("conversations.history", 0) == 4
+    # conversations.info called for both channels (no --channels filter)
+    assert counts.get("conversations.info", 0) == 2

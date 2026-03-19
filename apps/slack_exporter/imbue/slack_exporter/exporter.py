@@ -261,9 +261,14 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
         )
         save_fetch_timestamp(settings.output_dir, DataType.CHANNELS, now)
 
-    # Always fetch per-channel info (unread markers + latest message timestamps).
-    # This is NOT cached because we need latest timestamps to skip unchanged channels.
-    fresh_markers, channel_latest = fetch_channel_info(api_caller, fresh_channels)
+    # Fetch per-channel info (unread markers + latest message timestamps).
+    # Only fetch for channels we will actually export to avoid unnecessary API calls.
+    if settings.channels is not None:
+        export_channel_names = {config.name for config in settings.channels}
+        channels_for_info = [ch for ch in fresh_channels if ch.channel_name in export_channel_names]
+    else:
+        channels_for_info = fresh_channels
+    fresh_markers, channel_latest = fetch_channel_info(api_caller, channels_for_info)
     existing_markers = load_existing_unread_markers(settings.output_dir)
     _diff_and_save(
         fresh_items=fresh_markers,
