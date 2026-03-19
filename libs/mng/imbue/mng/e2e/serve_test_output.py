@@ -196,6 +196,7 @@ def _html_page(title: str, nav: str, body: str, sidebar: str | None = None) -> s
   .transcript .stderr-prefix {{ color: #f44747; }}
   .transcript .exit-code {{ color: #888; font-style: italic; }}
   .cast-player {{ margin: 1em 0; }}
+  .cast-player > div {{ margin: 0 !important; }}
   {extra_css}
 </style>
 </head>
