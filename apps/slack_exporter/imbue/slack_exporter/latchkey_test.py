@@ -8,7 +8,7 @@ from imbue.slack_exporter.errors import SlackApiError
 from imbue.slack_exporter.latchkey import extract_next_cursor
 from imbue.slack_exporter.latchkey import fetch_paginated
 from imbue.slack_exporter.latchkey import parse_latchkey_response
-from imbue.slack_exporter.latchkey import retry_on_rate_limit
+from imbue.slack_exporter.latchkey import retry_on_transient_error
 from imbue.slack_exporter.testing import make_fake_api_caller
 from imbue.slack_exporter.testing import make_slack_response
 
@@ -173,7 +173,7 @@ def test_rate_limit_retry_retries_on_ratelimited() -> None:
             raise SlackApiError(method=method, error="ratelimited")
         return {"ok": True, "data": "success"}
 
-    result = retry_on_rate_limit(fake_caller, _noop_sleep, "conversations.list", None)
+    result = retry_on_transient_error(fake_caller, _noop_sleep, "conversations.list", None)
 
     assert result == {"ok": True, "data": "success"}
     assert call_count == 3
@@ -189,7 +189,7 @@ def test_rate_limit_retry_raises_non_ratelimit_errors_immediately() -> None:
         raise SlackApiError(method=method, error="channel_not_found")
 
     with pytest.raises(SlackApiError, match="channel_not_found"):
-        retry_on_rate_limit(fake_caller, _noop_sleep, "conversations.history", None)
+        retry_on_transient_error(fake_caller, _noop_sleep, "conversations.history", None)
 
     assert call_count == 1
 
@@ -201,4 +201,38 @@ def test_rate_limit_retry_raises_after_max_retries() -> None:
         raise SlackApiError(method=method, error="ratelimited")
 
     with pytest.raises(SlackApiError, match="ratelimited"):
-        retry_on_rate_limit(fake_caller, _noop_sleep, "conversations.history", None)
+        retry_on_transient_error(fake_caller, _noop_sleep, "conversations.history", None)
+
+
+def test_transient_network_error_retries_on_ssl_reset() -> None:
+    """Transient curl errors (e.g. SSL connection reset, exit code 35) are retried."""
+    call_count = 0
+
+    def fake_caller(method: str, query_params: dict[str, str] | None = None) -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise LatchkeyInvocationError(
+                command="latchkey curl url", return_code=35, stderr="SSL_connect: Connection reset"
+            )
+        return {"ok": True, "data": "success"}
+
+    result = retry_on_transient_error(fake_caller, _noop_sleep, "conversations.replies", None)
+
+    assert result == {"ok": True, "data": "success"}
+    assert call_count == 3
+
+
+def test_non_transient_latchkey_error_raises_immediately() -> None:
+    """Non-transient latchkey errors (e.g. auth failure, exit code 1) are not retried."""
+    call_count = 0
+
+    def fake_caller(method: str, query_params: dict[str, str] | None = None) -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        raise LatchkeyInvocationError(command="latchkey curl url", return_code=1, stderr="auth failed")
+
+    with pytest.raises(LatchkeyInvocationError):
+        retry_on_transient_error(fake_caller, _noop_sleep, "conversations.list", None)
+
+    assert call_count == 1
