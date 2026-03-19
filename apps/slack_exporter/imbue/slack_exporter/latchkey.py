@@ -18,47 +18,54 @@ _RATE_LIMIT_INITIAL_BACKOFF_SECONDS = 2.0
 _RATE_LIMIT_MAX_BACKOFF_SECONDS = 60.0
 
 
-def with_rate_limit_retry(
+def retry_on_rate_limit(
     api_caller: Callable[[str, dict[str, str] | None], dict[str, Any]],
     sleep_fn: Callable[[float], None],
-) -> Callable[[str, dict[str, str] | None], dict[str, Any]]:
-    """Wrap an API caller with exponential backoff retry on rate limit errors.
+    method: str,
+    query_params: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Call an API method with exponential backoff retry on rate limit errors.
 
     Retries up to _RATE_LIMIT_MAX_RETRIES times (~3 minutes total).
     Non-rate-limit errors are raised immediately.
     """
-
-    def wrapper(method: str, query_params: dict[str, str] | None = None) -> dict[str, Any]:
-        backoff = _RATE_LIMIT_INITIAL_BACKOFF_SECONDS
-        for attempt in range(_RATE_LIMIT_MAX_RETRIES + 1):
-            try:
-                return api_caller(method, query_params)
-            except SlackApiError as e:
-                if e.error != "ratelimited" or attempt == _RATE_LIMIT_MAX_RETRIES:
-                    raise
-                logger.warning(
-                    "Rate limited by Slack API (%s), retrying in %.0fs (attempt %d/%d)",
-                    method,
-                    backoff,
-                    attempt + 1,
-                    _RATE_LIMIT_MAX_RETRIES,
-                )
-                sleep_fn(backoff)
-                backoff = min(backoff * 2, _RATE_LIMIT_MAX_BACKOFF_SECONDS)
-        raise AssertionError("unreachable")
-
-    return wrapper
+    backoff = _RATE_LIMIT_INITIAL_BACKOFF_SECONDS
+    for attempt in range(_RATE_LIMIT_MAX_RETRIES + 1):
+        try:
+            return api_caller(method, query_params)
+        except SlackApiError as e:
+            if e.error != "ratelimited" or attempt == _RATE_LIMIT_MAX_RETRIES:
+                raise
+            logger.warning(
+                "Rate limited by Slack API (%s), retrying in %.0fs (attempt %d/%d)",
+                method,
+                backoff,
+                attempt + 1,
+                _RATE_LIMIT_MAX_RETRIES,
+            )
+            sleep_fn(backoff)
+            backoff = min(backoff * 2, _RATE_LIMIT_MAX_BACKOFF_SECONDS)
+    raise AssertionError("unreachable")
 
 
 def call_slack_api(
     method: str,
     query_params: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Call a Slack API method via latchkey curl and return the parsed JSON response.
+    """Call a Slack API method via latchkey curl, with automatic rate limit retry.
 
+    Retries with exponential backoff on rate limit errors (up to ~3 minutes).
     Raises LatchkeyInvocationError if the subprocess fails, or SlackApiError if
-    the Slack API returns ok=false.
+    the Slack API returns a non-rate-limit error.
     """
+    return retry_on_rate_limit(_call_slack_api_once, time.sleep, method, query_params)
+
+
+def _call_slack_api_once(
+    method: str,
+    query_params: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Execute a single Slack API call via latchkey curl."""
     url = f"https://slack.com/api/{method}"
     if query_params:
         url = f"{url}?{urlencode(query_params)}"
