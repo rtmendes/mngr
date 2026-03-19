@@ -705,6 +705,45 @@ def test_run_export_reaction_lookback_rechecks_relevant_threads(temp_output_dir:
     assert reply_reactions[0]["raw"]["reactions"][0]["name"] == "heart"
 
 
+def test_run_export_cached_channels_filtered_by_membership(temp_output_dir: Path) -> None:
+    """When members_only=True and cache contains non-member channels, only member channels are used."""
+    settings = _make_cached_settings(temp_output_dir)
+
+    # First run fetches channels including a non-member channel
+    caller1, counts1 = _tracking_api_caller(
+        channel_data=[
+            {"id": "C123", "name": "general", "is_member": True},
+            {"id": "C456", "name": "external", "is_member": False},
+        ],
+    )
+    # Override to include all channels (simulate a previous --all run)
+    settings_all = ExporterSettings(
+        channels=settings.channels,
+        default_oldest=settings.default_oldest,
+        output_dir=settings.output_dir,
+        reaction_lookback=settings.reaction_lookback,
+        cache_ttl_seconds=settings.cache_ttl_seconds,
+        members_only=False,
+    )
+    run_export(settings_all, api_caller=caller1)
+    # Both channels stored, conversations.info called for both
+    assert counts1.get("conversations.info", 0) == 2
+
+    # Second run with members_only=True: cache is fresh, but should filter out non-member channel
+    counts1.clear()
+    settings_members = ExporterSettings(
+        channels=settings.channels,
+        default_oldest=settings.default_oldest,
+        output_dir=settings.output_dir,
+        reaction_lookback=settings.reaction_lookback,
+        cache_ttl_seconds=settings.cache_ttl_seconds,
+        members_only=True,
+    )
+    run_export(settings_members, api_caller=caller1)
+    # conversations.info should only be called for the 1 member channel
+    assert counts1.get("conversations.info", 0) == 1
+
+
 def test_run_export_all_channels_when_channels_is_none(temp_output_dir: Path) -> None:
     """When channels is None, all channels from the fetched channel list are exported."""
     settings = ExporterSettings(

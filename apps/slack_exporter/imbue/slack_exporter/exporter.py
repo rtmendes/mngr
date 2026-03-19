@@ -245,6 +245,8 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     # Export channel list (cached with TTL for metadata like names/IDs)
     if _is_cache_fresh(fetch_metadata, DataType.CHANNELS, now, settings) and existing_channel_by_id:
         fresh_channels = list(existing_channel_by_id.values())
+        if settings.members_only:
+            fresh_channels = [ch for ch in fresh_channels if ch.raw.get("is_member", False)]
         logger.info("Using cached channel data (%d channels)", len(fresh_channels))
     else:
         fresh_channels = fetch_channel_list(api_caller, members_only=settings.members_only)
