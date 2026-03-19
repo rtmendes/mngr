@@ -1,7 +1,7 @@
 from pathlib import Path
 from textwrap import dedent
 
-from scripts.tutorial_matcher import block_matches_docstring
+from scripts.tutorial_matcher import _block_lines_in_body
 from scripts.tutorial_matcher import find_pytest_functions
 from scripts.tutorial_matcher import parse_script_blocks
 
@@ -41,22 +41,22 @@ def test_parse_skips_empty_blocks(tmp_path: Path) -> None:
     assert blocks == ["mng foo", "mng bar"]
 
 
-def test_block_matches_indented_docstring() -> None:
+def test_block_matches_indented_body() -> None:
     block = "# test foo\nmng foo"
-    docstring = "    # test foo\n    mng foo\n    "
-    assert block_matches_docstring(block, docstring)
+    body = "    # test foo\n    mng foo\n    "
+    assert _block_lines_in_body(block, body)
 
 
-def test_block_does_not_match_different_docstring() -> None:
+def test_block_does_not_match_different_body() -> None:
     block = "mng foo"
-    docstring = "    mng bar\n    "
-    assert not block_matches_docstring(block, docstring)
+    body = "    mng bar\n    "
+    assert not _block_lines_in_body(block, body)
 
 
-def test_block_matches_docstring_with_extra_content() -> None:
+def test_block_matches_body_with_extra_content() -> None:
     block = "mng foo"
-    docstring = "    mng foo\n\n    Some extra explanation."
-    assert block_matches_docstring(block, docstring)
+    body = "    mng foo\n\n    Some extra explanation."
+    assert _block_lines_in_body(block, body)
 
 
 def test_find_pytest_functions_discovers_test_funcs(tmp_path: Path) -> None:
@@ -96,16 +96,17 @@ def test_find_pytest_functions_returns_docstrings(tmp_path: Path) -> None:
         """)
     )
     funcs = find_pytest_functions(tmp_path)
-    assert funcs[0][1] is not None
     assert "mng foo" in funcs[0][1]
-    assert funcs[1][1] is None
+    assert "mng foo" not in funcs[1][1]
 
 
-def test_find_pytest_functions_warns_on_syntax_error(tmp_path: Path, capsys: object) -> None:
+def test_find_pytest_functions_extracts_from_malformed_files(tmp_path: Path) -> None:
     bad_file = tmp_path / "test_bad.py"
     bad_file.write_text("def test_broken(:\n    pass\n")
     funcs = find_pytest_functions(tmp_path)
-    assert funcs == []
+    # String-based parser still extracts functions from syntactically invalid files
+    assert len(funcs) == 1
+    assert "test_broken" in funcs[0][0]
 
 
 def test_find_pytest_functions_recurses_subdirs(tmp_path: Path) -> None:
