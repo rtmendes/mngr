@@ -20,14 +20,21 @@ def _format_timestamp(ts: float) -> str:
 def _get_channel_updated_timestamp(channel: dict[str, Any]) -> float:
     """Extract the best available activity timestamp from a channel object.
 
-    The Slack API returns "updated" in milliseconds and "created" in seconds.
+    The Slack API returns both "updated" and "created" as Unix timestamps.
+    The "updated" field may be in seconds or milliseconds depending on the
+    channel, so we detect the format by checking magnitude.
     """
-    updated_ms = channel.get("updated")
-    if updated_ms is not None:
-        return float(updated_ms) / 1000
+    raw_ts = channel.get("updated", channel.get("created", 0))
+    return _normalize_slack_timestamp(raw_ts)
 
-    created_seconds = channel.get("created", 0)
-    return float(created_seconds)
+
+def _normalize_slack_timestamp(raw_ts: int | float) -> float:
+    """Convert a Slack timestamp to seconds, handling both seconds and milliseconds."""
+    ts = float(raw_ts)
+    # Timestamps above 1e12 are in milliseconds (year ~2001 in seconds vs ~33658 in ms)
+    if ts > 1e12:
+        return ts / 1000
+    return ts
 
 
 def fetch_and_sort_channels(
