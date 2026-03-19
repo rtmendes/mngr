@@ -74,6 +74,8 @@ slack_export/
   messages/updated/events.jsonl        -- all message state changes (includes creates)
   reactions/created/events.jsonl         -- new per-message reaction state (first seen)
   reactions/updated/events.jsonl         -- all reaction state changes (includes creates)
+  relevant_thread_replies/created/events.jsonl -- replies in relevant threads (first seen)
+  relevant_thread_replies/updated/events.jsonl -- all relevant thread reply changes (includes creates)
   relevant_threads/created/events.jsonl  -- threads user participated in (first seen)
   relevant_threads/updated/events.jsonl  -- all relevant thread changes (includes creates)
   replies/created/events.jsonl           -- new thread replies
