@@ -599,6 +599,25 @@ def test_run_export_no_backfill_when_since_is_same_or_later(temp_output_dir: Pat
     assert counts2.get("conversations.history", 0) == 1
 
 
+def test_run_export_extracts_reactions_from_fetched_messages(default_settings: ExporterSettings) -> None:
+    """Reactions on messages from the forward fetch are extracted and saved."""
+    msg_with_reactions = {
+        "ts": "1700000000.000001",
+        "text": "hello",
+        "reactions": [{"name": "thumbsup", "users": ["U001"], "count": 1}],
+    }
+    api_caller = _standard_api_caller(message_data=[msg_with_reactions])
+    run_export(default_settings, api_caller=api_caller)
+
+    reaction_path = default_settings.output_dir / "reactions" / "created" / "events.jsonl"
+    assert reaction_path.exists()
+    lines = reaction_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["message_ts"] == "1700000000.000001"
+    assert record["raw"]["reactions"][0]["name"] == "thumbsup"
+
+
 def test_run_export_detects_relevant_threads(default_settings: ExporterSettings) -> None:
     """Threads where the authenticated user replied are detected as relevant."""
     threaded_message = {"ts": "1700000000.000001", "text": "parent", "reply_count": 1}

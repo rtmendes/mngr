@@ -146,6 +146,22 @@ def _extract_reaction_from_raw(
     )
 
 
+def _extract_reactions_from_messages(messages: list[MessageEvent]) -> list[ReactionEvent]:
+    """Extract reaction events from message events that have inline reactions."""
+    results: list[ReactionEvent] = []
+    for msg in messages:
+        event = _extract_reaction_from_raw(
+            raw=msg.raw,
+            channel_id=msg.channel_id,
+            channel_name=msg.channel_name,
+            message_ts=msg.message_ts,
+            thread_ts=None,
+        )
+        if event is not None:
+            results.append(event)
+    return results
+
+
 def _extract_reactions_from_replies(replies: list[ReplyEvent]) -> list[ReactionEvent]:
     """Extract reaction events from reply events that have inline reactions."""
     results: list[ReactionEvent] = []
@@ -399,6 +415,7 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
                 known_reply_keys=known_reply_keys,
                 latest_reply_by_thread=latest_reply_by_thread,
                 channel_export_metadata=channel_export_metadata,
+                existing_reactions=existing_reactions,
                 existing_relevant_threads=existing_relevant_threads,
                 user_id=self_identity.user_id,
                 settings=settings,
@@ -425,6 +442,7 @@ def _export_single_channel(
     known_reply_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]],
     latest_reply_by_thread: dict[tuple[SlackChannelId, SlackMessageTimestamp], SlackMessageTimestamp],
     channel_export_metadata: dict[SlackChannelId, SlackMessageTimestamp],
+    existing_reactions: dict[str, ReactionEvent],
     existing_relevant_threads: dict[str, RelevantThreadEvent],
     user_id: SlackUserId,
     settings: ExporterSettings,
@@ -432,7 +450,9 @@ def _export_single_channel(
 ) -> list[RelevantThreadEvent]:
     """Export messages, replies, and relevant threads from a single channel.
 
-    Returns newly detected relevant threads (reactions are handled in a deferred pass).
+    Also extracts reactions from fetched messages (free since data is already loaded).
+    Reply reactions are handled in a deferred pass at the end of the export.
+    Returns newly detected relevant threads.
     """
     existing_state = state_by_channel_id.get(channel_id)
 
@@ -485,7 +505,20 @@ def _export_single_channel(
     else:
         logger.info("  No new messages in channel %s", channel_config.name)
 
-    # Export replies and detect relevant threads (reactions deferred to end of export)
+    # Extract reactions from fetched messages (no extra API calls needed)
+    message_reactions = _extract_reactions_from_messages(all_fetched)
+    if message_reactions:
+        _diff_and_save(
+            fresh_items=message_reactions,
+            existing_by_key=existing_reactions,
+            get_key=lambda r: f"{r.channel_id}:{r.message_ts}",
+            get_raw=lambda r: r.raw,
+            save_fn=save_reaction_events,
+            output_dir=settings.output_dir,
+            entity_name="reactions",
+        )
+
+    # Export replies and detect relevant threads (reply reactions deferred to end of export)
     relevant_threads = _export_replies_for_channel(
         channel_id=channel_id,
         channel_name=channel_config.name,
