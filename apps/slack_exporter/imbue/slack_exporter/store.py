@@ -29,6 +29,7 @@ class DataType(StrEnum):
     CHANNELS = "channels"
     MESSAGES = "messages"
     REACTIONS = "reactions"
+    RELEVANT_THREAD_REPLIES = "relevant_thread_replies"
     RELEVANT_THREADS = "relevant_threads"
     REPLIES = "replies"
     SELF_IDENTITY = "self_identity"
@@ -157,6 +158,23 @@ def load_existing_reply_keys(
             known_keys.add((event.channel_id, event.thread_ts, event.reply_ts))
     logger.info("Loaded %d known replies from store", len(known_keys))
     return known_keys
+
+
+def load_existing_relevant_thread_reply_keys(
+    output_dir: Path,
+) -> set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]]:
+    """Load known relevant thread reply keys (channel_id, thread_ts, reply_ts) from both streams."""
+    known_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]] = set()
+    for stream in StreamType:
+        for record in _load_jsonl_records(_events_path(output_dir, DataType.RELEVANT_THREAD_REPLIES, stream)):
+            event = ReplyEvent.model_validate(record)
+            known_keys.add((event.channel_id, event.thread_ts, event.reply_ts))
+    logger.info("Loaded %d known relevant thread replies from store", len(known_keys))
+    return known_keys
+
+
+def save_relevant_thread_reply_events(output_dir: Path, stream: StreamType, events: Sequence[ReplyEvent]) -> None:
+    _append_events(_events_path(output_dir, DataType.RELEVANT_THREAD_REPLIES, stream), events)
 
 
 def load_existing_self_identity(output_dir: Path) -> dict[str, SelfIdentityEvent]:

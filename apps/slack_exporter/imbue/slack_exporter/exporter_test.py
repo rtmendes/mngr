@@ -652,6 +652,82 @@ def test_run_export_detects_relevant_threads(default_settings: ExporterSettings)
     assert "participated" in record["relevance_reasons"]
 
 
+def test_run_export_saves_relevant_thread_replies_for_newly_relevant_thread(
+    default_settings: ExporterSettings,
+) -> None:
+    """When a thread becomes relevant, all its replies are saved to relevant_thread_replies."""
+    threaded_message = {"ts": "1700000000.000001", "text": "parent", "reply_count": 2}
+    caller, _ = _tracking_api_caller(
+        message_data=[threaded_message],
+        reply_data=[
+            {"ts": "1700000000.000001", "thread_ts": "1700000000.000001", "text": "parent", "user": "U999"},
+            {"ts": "1700000000.000002", "thread_ts": "1700000000.000001", "text": "reply 1", "user": "U999"},
+            {"ts": "1700000000.000003", "thread_ts": "1700000000.000001", "text": "my reply", "user": "U001"},
+        ],
+    )
+    run_export(default_settings, api_caller=caller)
+
+    rt_replies_path = default_settings.output_dir / "relevant_thread_replies" / "created" / "events.jsonl"
+    assert rt_replies_path.exists()
+    lines = rt_replies_path.read_text().strip().splitlines()
+    # Both replies (excluding parent) should be in relevant_thread_replies
+    assert len(lines) == 2
+    reply_timestamps = sorted(json.loads(line)["reply_ts"] for line in lines)
+    assert reply_timestamps == ["1700000000.000002", "1700000000.000003"]
+
+
+def test_run_export_saves_new_replies_in_already_relevant_thread(temp_output_dir: Path) -> None:
+    """New replies in an already-relevant thread are saved to relevant_thread_replies."""
+    settings = ExporterSettings(
+        channels=(ChannelConfig(name=SlackChannelName("general")),),
+        default_oldest=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        output_dir=temp_output_dir,
+        max_recent_threads_for_reactions=0,
+        cache_ttl_seconds=0,
+    )
+
+    # Run 1: discover a relevant thread
+    threaded_msg_v1 = {
+        "ts": "1700000000.000001",
+        "text": "parent",
+        "reply_count": 1,
+        "latest_reply": "1700000000.000002",
+    }
+    caller1, _ = _tracking_api_caller(
+        message_data=[threaded_msg_v1],
+        reply_data=[
+            {"ts": "1700000000.000001", "thread_ts": "1700000000.000001", "text": "parent", "user": "U999"},
+            {"ts": "1700000000.000002", "thread_ts": "1700000000.000001", "text": "my reply", "user": "U001"},
+        ],
+    )
+    run_export(settings, api_caller=caller1)
+
+    rt_replies_path = temp_output_dir / "relevant_thread_replies" / "created" / "events.jsonl"
+    initial_count = len(rt_replies_path.read_text().strip().splitlines())
+    assert initial_count == 1
+
+    # Run 2: new reply in the same thread (already relevant)
+    threaded_msg_v2 = {
+        "ts": "1700000000.000001",
+        "text": "parent",
+        "reply_count": 2,
+        "latest_reply": "1700000000.000003",
+    }
+    caller2, _ = _tracking_api_caller(
+        message_data=[threaded_msg_v2],
+        reply_data=[
+            {"ts": "1700000000.000001", "thread_ts": "1700000000.000001", "text": "parent", "user": "U999"},
+            {"ts": "1700000000.000002", "thread_ts": "1700000000.000001", "text": "my reply", "user": "U001"},
+            {"ts": "1700000000.000003", "thread_ts": "1700000000.000001", "text": "new reply", "user": "U999"},
+        ],
+    )
+    run_export(settings, api_caller=caller2)
+
+    # The new reply should be added to relevant_thread_replies
+    updated_count = len(rt_replies_path.read_text().strip().splitlines())
+    assert updated_count == 2
+
+
 def test_run_export_deferred_reaction_pass_checks_relevant_threads(temp_output_dir: Path) -> None:
     """The deferred reaction pass fetches replies for the most recent relevant threads."""
     settings = ExporterSettings(
