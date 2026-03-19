@@ -61,9 +61,9 @@ class ExporterSettings(FrozenModel):
         default=True,
         description="Only export channels where the authenticated user is a member",
     )
-    reaction_lookback: int = Field(
-        default=10,
-        description="Number of recent relevant threads to re-check for reaction changes",
+    max_recent_threads_for_reactions: int = Field(
+        default=50,
+        description="Number of most recent relevant threads to check for reaction changes after export",
     )
     cache_ttl_seconds: int = Field(
         default=600,

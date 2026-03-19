@@ -61,8 +61,6 @@ _SLACK_SOURCE = EventSource("slack")
 
 _T = TypeVar("_T")
 
-_REACTION_SCAN_MESSAGE_LIMIT = 100
-
 _CHANNEL_INFO_THREAD_TIMEOUT_SECONDS: Final[float] = 600.0
 
 
@@ -148,22 +146,6 @@ def _extract_reaction_from_raw(
     )
 
 
-def _extract_reactions_from_messages(messages: list[MessageEvent]) -> list[ReactionEvent]:
-    """Extract reaction events from message events that have inline reactions."""
-    results: list[ReactionEvent] = []
-    for msg in messages:
-        event = _extract_reaction_from_raw(
-            raw=msg.raw,
-            channel_id=msg.channel_id,
-            channel_name=msg.channel_name,
-            message_ts=msg.message_ts,
-            thread_ts=None,
-        )
-        if event is not None:
-            results.append(event)
-    return results
-
-
 def _extract_reactions_from_replies(replies: list[ReplyEvent]) -> list[ReactionEvent]:
     """Extract reaction events from reply events that have inline reactions."""
     results: list[ReactionEvent] = []
@@ -234,6 +216,75 @@ def _fetch_and_save_channel_info(
         output_dir=settings.output_dir,
         entity_name="unread markers",
     )
+
+
+def _get_latest_reply_timestamp_for_thread(
+    rt: RelevantThreadEvent,
+    latest_reply_by_thread: dict[tuple[SlackChannelId, SlackMessageTimestamp], SlackMessageTimestamp],
+) -> SlackMessageTimestamp:
+    """Get the latest reply timestamp for a relevant thread, falling back to thread_ts."""
+    stored = latest_reply_by_thread.get((rt.channel_id, rt.thread_ts))
+    return stored if stored is not None else rt.thread_ts
+
+
+def _deferred_reaction_pass(
+    existing_relevant_threads: dict[str, RelevantThreadEvent],
+    new_relevant_threads: list[RelevantThreadEvent],
+    latest_reply_by_thread: dict[tuple[SlackChannelId, SlackMessageTimestamp], SlackMessageTimestamp],
+    existing_reactions: dict[str, ReactionEvent],
+    settings: ExporterSettings,
+    api_caller: SlackApiCaller,
+) -> None:
+    """Check reactions on the most recent relevant threads after all channels are exported."""
+    # Merge existing and newly detected relevant threads
+    all_relevant: dict[str, RelevantThreadEvent] = dict(existing_relevant_threads)
+    for rt in new_relevant_threads:
+        all_relevant[f"{rt.channel_id}:{rt.thread_ts}"] = rt
+
+    if not all_relevant:
+        return
+
+    # Sort by latest reply timestamp (most recent first)
+    sorted_threads = sorted(
+        all_relevant.values(),
+        key=lambda rt: _get_latest_reply_timestamp_for_thread(rt, latest_reply_by_thread),
+        reverse=True,
+    )
+    threads_to_check = sorted_threads[: settings.max_recent_threads_for_reactions]
+
+    if not threads_to_check:
+        return
+
+    logger.info("Checking reactions on %d most recent relevant threads", len(threads_to_check))
+
+    all_reactions: dict[str, ReactionEvent] = {}
+    for thread_idx, rt in enumerate(threads_to_check):
+        logger.info(
+            "  Checking reactions %d/%d: thread %s in %s",
+            thread_idx + 1,
+            len(threads_to_check),
+            rt.thread_ts,
+            rt.channel_name,
+        )
+        replies = _fetch_all_replies_for_thread(
+            channel_id=rt.channel_id,
+            channel_name=rt.channel_name,
+            thread_ts=rt.thread_ts,
+            api_caller=api_caller,
+        )
+        for reaction in _extract_reactions_from_replies(replies):
+            all_reactions[f"{reaction.channel_id}:{reaction.message_ts}"] = reaction
+
+    if all_reactions:
+        _diff_and_save(
+            fresh_items=list(all_reactions.values()),
+            existing_by_key=existing_reactions,
+            get_key=lambda r: f"{r.channel_id}:{r.message_ts}",
+            get_raw=lambda r: r.raw,
+            save_fn=save_reaction_events,
+            output_dir=settings.output_dir,
+            entity_name="reactions",
+        )
 
 
 def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
@@ -323,6 +374,8 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     latest_reply_by_thread = _build_latest_reply_by_thread(known_reply_keys)
     channel_export_metadata = load_channel_export_metadata(settings.output_dir)
 
+    all_new_relevant_threads: list[RelevantThreadEvent] = []
+
     with ConcurrencyGroup(
         name="slack-export",
         exit_timeout_seconds=_CHANNEL_INFO_THREAD_TIMEOUT_SECONDS,
@@ -333,12 +386,12 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
             name="channel-info",
         )
 
-        # Export messages in the main thread
+        # Export messages and replies in the main thread
         total_export_channels = len(channels_to_export)
         for channel_idx, channel_config in enumerate(channels_to_export):
             logger.info("Exporting channel %d/%d: %s", channel_idx + 1, total_export_channels, channel_config.name)
             channel_id = resolve_channel_id(channel_config.name, fresh_channels, channel_id_by_name)
-            _export_single_channel(
+            new_relevant = _export_single_channel(
                 channel_config=channel_config,
                 channel_id=channel_id,
                 state_by_channel_id=state_by_channel_id,
@@ -346,13 +399,22 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
                 known_reply_keys=known_reply_keys,
                 latest_reply_by_thread=latest_reply_by_thread,
                 channel_export_metadata=channel_export_metadata,
-                channel_latest=None,
-                existing_reactions=existing_reactions,
                 existing_relevant_threads=existing_relevant_threads,
                 user_id=self_identity.user_id,
                 settings=settings,
                 api_caller=api_caller,
             )
+            all_new_relevant_threads.extend(new_relevant)
+
+    # Deferred reaction pass: check reactions on the most recent relevant threads
+    _deferred_reaction_pass(
+        existing_relevant_threads=existing_relevant_threads,
+        new_relevant_threads=all_new_relevant_threads,
+        latest_reply_by_thread=latest_reply_by_thread,
+        existing_reactions=existing_reactions,
+        settings=settings,
+        api_caller=api_caller,
+    )
 
 
 def _export_single_channel(
@@ -363,46 +425,36 @@ def _export_single_channel(
     known_reply_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]],
     latest_reply_by_thread: dict[tuple[SlackChannelId, SlackMessageTimestamp], SlackMessageTimestamp],
     channel_export_metadata: dict[SlackChannelId, SlackMessageTimestamp],
-    channel_latest: SlackMessageTimestamp | None,
-    existing_reactions: dict[str, ReactionEvent],
     existing_relevant_threads: dict[str, RelevantThreadEvent],
     user_id: SlackUserId,
     settings: ExporterSettings,
     api_caller: SlackApiCaller,
-) -> None:
-    """Export messages, replies, reactions, and relevant threads from a single channel."""
+) -> list[RelevantThreadEvent]:
+    """Export messages, replies, and relevant threads from a single channel.
+
+    Returns newly detected relevant threads (reactions are handled in a deferred pass).
+    """
     existing_state = state_by_channel_id.get(channel_id)
 
     oldest_datetime = channel_config.oldest or settings.default_oldest
     requested_oldest_ts = _datetime_to_slack_timestamp(oldest_datetime)
 
-    # Check if there are new messages by comparing conversations.info latest with our state
-    has_new_messages = (
-        existing_state is None
-        or existing_state.latest_message_timestamp is None
-        or channel_latest is None
-        or channel_latest > existing_state.latest_message_timestamp
+    # Forward fetch: get new messages since last export (or from requested oldest on first run)
+    if existing_state and existing_state.latest_message_timestamp:
+        forward_oldest = existing_state.latest_message_timestamp
+        forward_inclusive = False
+        logger.info("  Resuming from timestamp %s for channel %s", forward_oldest, channel_config.name)
+    else:
+        forward_oldest = requested_oldest_ts
+        forward_inclusive = True
+
+    all_fetched = _fetch_all_messages_for_channel(
+        channel_id=channel_id,
+        channel_name=channel_config.name,
+        oldest_ts=forward_oldest,
+        is_inclusive=forward_inclusive,
+        api_caller=api_caller,
     )
-
-    all_fetched: list[MessageEvent] = []
-
-    if has_new_messages:
-        # Forward fetch: get new messages since last export (or from requested oldest on first run)
-        if existing_state and existing_state.latest_message_timestamp:
-            forward_oldest = existing_state.latest_message_timestamp
-            forward_inclusive = False
-            logger.info("  Resuming from timestamp %s for channel %s", forward_oldest, channel_config.name)
-        else:
-            forward_oldest = requested_oldest_ts
-            forward_inclusive = True
-
-        all_fetched = _fetch_all_messages_for_channel(
-            channel_id=channel_id,
-            channel_name=channel_config.name,
-            oldest_ts=forward_oldest,
-            is_inclusive=forward_inclusive,
-            api_caller=api_caller,
-        )
 
     # Backfill: fetch older messages if --since goes further back than what we've already searched
     searched_oldest = channel_export_metadata.get(channel_id)
@@ -433,49 +485,17 @@ def _export_single_channel(
     else:
         logger.info("  No new messages in channel %s", channel_config.name)
 
-    # Reaction scan: fetch recent messages to catch new reactions on older messages.
-    # Also used as the message source for reply/thread detection when no new messages were fetched.
-    reaction_scan_messages = _fetch_recent_messages_for_reactions(
+    # Export replies and detect relevant threads (reactions deferred to end of export)
+    relevant_threads = _export_replies_for_channel(
         channel_id=channel_id,
         channel_name=channel_config.name,
-        api_caller=api_caller,
-    )
-
-    # Use forward-fetched messages for reply detection, falling back to reaction scan
-    messages_for_replies = all_fetched if all_fetched else reaction_scan_messages
-
-    # Export replies, collecting reaction and relevance data
-    reply_reactions, relevant_threads = _export_replies_for_channel(
-        channel_id=channel_id,
-        channel_name=channel_config.name,
-        all_message_events=messages_for_replies,
+        all_message_events=all_fetched,
         known_reply_keys=known_reply_keys,
         latest_reply_by_thread=latest_reply_by_thread,
-        existing_relevant_threads=existing_relevant_threads,
         user_id=user_id,
         settings=settings,
         api_caller=api_caller,
     )
-
-    # Combine all reactions: from forward/backfill messages + reaction scan + replies
-    all_reactions: dict[str, ReactionEvent] = {}
-    for reaction in _extract_reactions_from_messages(all_fetched):
-        all_reactions[f"{reaction.channel_id}:{reaction.message_ts}"] = reaction
-    for reaction in _extract_reactions_from_messages(reaction_scan_messages):
-        all_reactions[f"{reaction.channel_id}:{reaction.message_ts}"] = reaction
-    for reaction in reply_reactions:
-        all_reactions[f"{reaction.channel_id}:{reaction.message_ts}"] = reaction
-
-    if all_reactions:
-        _diff_and_save(
-            fresh_items=list(all_reactions.values()),
-            existing_by_key=existing_reactions,
-            get_key=lambda r: f"{r.channel_id}:{r.message_ts}",
-            get_raw=lambda r: r.raw,
-            save_fn=save_reaction_events,
-            output_dir=settings.output_dir,
-            entity_name="reactions",
-        )
 
     # Save relevant threads
     if relevant_threads:
@@ -489,6 +509,8 @@ def _export_single_channel(
             entity_name="relevant threads",
         )
 
+    return relevant_threads
+
 
 def _export_replies_for_channel(
     channel_id: SlackChannelId,
@@ -496,29 +518,23 @@ def _export_replies_for_channel(
     all_message_events: list[MessageEvent],
     known_reply_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]],
     latest_reply_by_thread: dict[tuple[SlackChannelId, SlackMessageTimestamp], SlackMessageTimestamp],
-    existing_relevant_threads: dict[str, RelevantThreadEvent],
     user_id: SlackUserId,
     settings: ExporterSettings,
     api_caller: SlackApiCaller,
-) -> tuple[list[ReactionEvent], list[RelevantThreadEvent]]:
-    """Fetch replies for all threaded messages in a channel.
+) -> list[RelevantThreadEvent]:
+    """Fetch replies for threaded messages in a channel and detect relevant threads.
 
     Uses the latest_reply field from the Slack API to skip threads whose replies
-    have not changed since the last export. Also extracts reactions from replies
-    and detects threads relevant to the authenticated user.
-
-    Returns (reply_reactions, relevant_threads).
+    have not changed since the last export.
     """
     thread_parents = [m for m in all_message_events if m.raw.get("reply_count", 0) > 0]
     if not thread_parents:
-        return [], []
+        return []
 
     total_thread_parents = len(thread_parents)
     logger.info("  Found %d threads to check for replies", total_thread_parents)
     total_new_replies = 0
     skipped_threads = 0
-    skipped_thread_ts_values: list[SlackMessageTimestamp] = []
-    all_reply_reactions: list[ReactionEvent] = []
     thread_replies: dict[SlackMessageTimestamp, list[ReplyEvent]] = {}
 
     for thread_idx, parent in enumerate(thread_parents):
@@ -533,7 +549,6 @@ def _export_replies_for_channel(
             stored_latest = latest_reply_by_thread.get(thread_key)
             if stored_latest is not None and stored_latest >= SlackMessageTimestamp(api_latest_reply):
                 skipped_threads += 1
-                skipped_thread_ts_values.append(thread_ts)
                 continue
 
         replies = _fetch_all_replies_for_thread(
@@ -543,7 +558,6 @@ def _export_replies_for_channel(
             api_caller=api_caller,
         )
 
-        all_reply_reactions.extend(_extract_reactions_from_replies(replies))
         thread_replies[thread_ts] = replies
 
         new_replies = [
@@ -567,34 +581,7 @@ def _export_replies_for_channel(
         logger.info("  Saved %d new replies from channel %s", total_new_replies, channel_name)
 
     # Detect relevant threads from fetched replies
-    relevant_threads = _detect_relevant_threads(thread_replies, user_id, channel_id, channel_name)
-
-    # Reaction lookback: re-fetch skipped threads that are known-relevant
-    known_relevant_ts = {
-        SlackMessageTimestamp(key.split(":")[1])
-        for key in existing_relevant_threads
-        if key.startswith(f"{channel_id}:")
-    }
-    for rt in relevant_threads:
-        known_relevant_ts.add(rt.thread_ts)
-
-    relevant_skipped = sorted(
-        [ts for ts in skipped_thread_ts_values if ts in known_relevant_ts],
-        reverse=True,
-    )[: settings.reaction_lookback]
-
-    if relevant_skipped:
-        logger.info("  Re-checking %d relevant threads for reaction changes", len(relevant_skipped))
-    for thread_ts in relevant_skipped:
-        lookback_replies = _fetch_all_replies_for_thread(
-            channel_id=channel_id,
-            channel_name=channel_name,
-            thread_ts=thread_ts,
-            api_caller=api_caller,
-        )
-        all_reply_reactions.extend(_extract_reactions_from_replies(lookback_replies))
-
-    return all_reply_reactions, relevant_threads
+    return _detect_relevant_threads(thread_replies, user_id, channel_id, channel_name)
 
 
 def _fetch_all_replies_for_thread(
@@ -623,36 +610,6 @@ def _fetch_all_replies_for_thread(
             raw=raw,
         )
         for raw in raw_replies
-        if raw.get("ts")
-    ]
-
-
-def _fetch_recent_messages_for_reactions(
-    channel_id: SlackChannelId,
-    channel_name: SlackChannelName,
-    api_caller: SlackApiCaller,
-) -> list[MessageEvent]:
-    """Fetch the most recent messages from a channel for reaction scanning.
-
-    Single API call (no pagination) with limit=100.
-    """
-    data = api_caller(
-        "conversations.history",
-        {"channel": str(channel_id), "limit": str(_REACTION_SCAN_MESSAGE_LIMIT), "include_all_metadata": "true"},
-    )
-    raw_messages = data.get("messages", [])
-    return [
-        MessageEvent(
-            timestamp=make_iso_timestamp(),
-            type=EventType("message"),
-            event_id=make_event_id(),
-            source=_SLACK_SOURCE,
-            channel_id=channel_id,
-            channel_name=channel_name,
-            message_ts=SlackMessageTimestamp(raw["ts"]),
-            raw=raw,
-        )
-        for raw in raw_messages
         if raw.get("ts")
     ]
 

@@ -80,11 +80,7 @@ def _standard_api_caller(
     user_data: list[dict[str, Any]] | None = None,
     message_data: list[dict[str, Any]] | None = None,
 ) -> Any:
-    """Build a fake API caller with standard channel/user/message responses.
-
-    Provides two conversations.history responses: one for the forward fetch and
-    one for the reaction scan (both return the same message_data).
-    """
+    """Build a fake API caller with standard channel/user/message responses."""
     channels = channel_data or [{"id": "C123", "name": "general", "is_member": True}]
     msg_response = make_slack_response("messages", message_data or [])
     return make_fake_api_caller(
@@ -96,7 +92,7 @@ def _standard_api_caller(
                 for ch in channels
             ],
             "users.list": [make_slack_response("members", user_data or [])],
-            "conversations.history": [msg_response, msg_response],
+            "conversations.history": [msg_response],
         }
     )
 
@@ -187,9 +183,8 @@ def test_run_export_incremental_resumes_from_latest(default_settings: ExporterSe
 
     run_export(default_settings, api_caller=tracking_api_caller)
 
-    # Two conversations.history calls: forward fetch + reaction scan
-    assert len(captured_params) == 2
-    # First call is the forward fetch (resumes from latest message)
+    # One conversations.history call: forward fetch only
+    assert len(captured_params) == 1
     assert captured_params[0] is not None
     assert captured_params[0].get("oldest") == "1700000000.000001"
     assert captured_params[0].get("inclusive") == "false"
@@ -209,7 +204,6 @@ def test_run_export_fetches_replies_for_threaded_messages(default_settings: Expo
             ],
             "users.list": [make_slack_response("members", [])],
             "conversations.history": [
-                make_slack_response("messages", [threaded_message]),
                 make_slack_response("messages", [threaded_message]),
             ],
             "conversations.replies": [
@@ -250,7 +244,6 @@ def test_run_export_fetches_paginated_replies(default_settings: ExporterSettings
             ],
             "users.list": [make_slack_response("members", [])],
             "conversations.history": [
-                make_slack_response("messages", [threaded_message]),
                 make_slack_response("messages", [threaded_message]),
             ],
             "conversations.replies": [
@@ -370,7 +363,7 @@ def _make_cached_settings(temp_output_dir: Path, cache_ttl_seconds: int = 3600) 
         channels=(ChannelConfig(name=SlackChannelName("general")),),
         default_oldest=datetime(2024, 1, 1, tzinfo=timezone.utc),
         output_dir=temp_output_dir,
-        reaction_lookback=0,
+        max_recent_threads_for_reactions=0,
         cache_ttl_seconds=cache_ttl_seconds,
     )
 
@@ -426,8 +419,8 @@ def test_run_export_caches_channels_and_users_within_ttl(temp_output_dir: Path) 
     assert "conversations.list" not in call_counts
     assert "users.list" not in call_counts
     assert "auth.test" not in call_counts
-    # Messages are always fetched (forward fetch + reaction scan = 2 calls)
-    assert call_counts.get("conversations.history", 0) == 2
+    # Messages are always fetched (forward fetch only, no reaction scan)
+    assert call_counts.get("conversations.history", 0) == 1
 
 
 def test_run_export_refresh_forces_refetch(temp_output_dir: Path) -> None:
@@ -443,7 +436,7 @@ def test_run_export_refresh_forces_refetch(temp_output_dir: Path) -> None:
         channels=settings.channels,
         default_oldest=settings.default_oldest,
         output_dir=settings.output_dir,
-        reaction_lookback=settings.reaction_lookback,
+        max_recent_threads_for_reactions=settings.max_recent_threads_for_reactions,
         cache_ttl_seconds=settings.cache_ttl_seconds,
         refresh=True,
     )
@@ -563,8 +556,8 @@ def test_run_export_backfills_older_messages_when_since_is_earlier(temp_output_d
 
     run_export(backfill_settings, api_caller=tracking_caller)
 
-    # Should have made three conversations.history calls: forward + backfill + reaction scan
-    assert len(history_params) == 3
+    # Should have made two conversations.history calls: forward + backfill
+    assert len(history_params) == 2
 
     # Forward call: resumes from latest known message
     forward_params = history_params[0]
@@ -600,30 +593,10 @@ def test_run_export_no_backfill_when_since_is_same_or_later(temp_output_dir: Pat
     )
     run_export(settings, api_caller=caller1)
 
-    # Second run with the same --since: forward fetch + reaction scan, no backfill
+    # Second run with the same --since: forward fetch only, no backfill
     caller2, counts2 = _tracking_api_caller()
     run_export(settings, api_caller=caller2)
-    assert counts2.get("conversations.history", 0) == 2
-
-
-def test_run_export_extracts_reactions_from_messages(default_settings: ExporterSettings) -> None:
-    """Reactions embedded in message payloads are extracted and saved."""
-    msg_with_reactions = {
-        "ts": "1700000000.000001",
-        "text": "hello",
-        "reactions": [{"name": "thumbsup", "users": ["U001"], "count": 1}],
-    }
-    api_caller = _standard_api_caller(message_data=[msg_with_reactions])
-    run_export(default_settings, api_caller=api_caller)
-
-    reaction_path = default_settings.output_dir / "reactions" / "created" / "events.jsonl"
-    assert reaction_path.exists()
-    lines = reaction_path.read_text().strip().splitlines()
-    assert len(lines) == 1
-    record = json.loads(lines[0])
-    assert record["message_ts"] == "1700000000.000001"
-    assert record["source"] == "slack"
-    assert record["raw"]["reactions"][0]["name"] == "thumbsup"
+    assert counts2.get("conversations.history", 0) == 1
 
 
 def test_run_export_detects_relevant_threads(default_settings: ExporterSettings) -> None:
@@ -647,13 +620,13 @@ def test_run_export_detects_relevant_threads(default_settings: ExporterSettings)
     assert "participated" in record["relevance_reasons"]
 
 
-def test_run_export_reaction_lookback_rechecks_relevant_threads(temp_output_dir: Path) -> None:
-    """When reaction_lookback > 0, relevant threads with unchanged latest_reply are re-fetched."""
+def test_run_export_deferred_reaction_pass_checks_relevant_threads(temp_output_dir: Path) -> None:
+    """The deferred reaction pass fetches replies for the most recent relevant threads."""
     settings = ExporterSettings(
         channels=(ChannelConfig(name=SlackChannelName("general")),),
         default_oldest=datetime(2024, 1, 1, tzinfo=timezone.utc),
         output_dir=temp_output_dir,
-        reaction_lookback=5,
+        max_recent_threads_for_reactions=5,
         cache_ttl_seconds=0,
     )
 
@@ -664,18 +637,6 @@ def test_run_export_reaction_lookback_rechecks_relevant_threads(temp_output_dir:
         "reply_count": 1,
         "latest_reply": "1700000000.000002",
     }
-    caller1, counts1 = _tracking_api_caller(
-        message_data=[threaded_message],
-        reply_data=[
-            {"ts": "1700000000.000001", "thread_ts": "1700000000.000001", "text": "parent", "user": "U999"},
-            {"ts": "1700000000.000002", "thread_ts": "1700000000.000001", "text": "reply", "user": "U001"},
-        ],
-    )
-    run_export(settings, api_caller=caller1)
-    assert counts1.get("conversations.replies", 0) == 1
-
-    # Run 2: same latest_reply (thread would normally be skipped), but lookback should re-fetch it
-    # Add a reaction to the reply on the second run
     reply_with_reaction = [
         {"ts": "1700000000.000001", "thread_ts": "1700000000.000001", "text": "parent", "user": "U999"},
         {
@@ -686,16 +647,16 @@ def test_run_export_reaction_lookback_rechecks_relevant_threads(temp_output_dir:
             "reactions": [{"name": "heart", "users": ["U999"], "count": 1}],
         },
     ]
-    caller2, counts2 = _tracking_api_caller(
+    caller, counts = _tracking_api_caller(
         message_data=[threaded_message],
         reply_data=reply_with_reaction,
     )
-    run_export(settings, api_caller=caller2)
+    run_export(settings, api_caller=caller)
 
-    # The thread was skipped by latest_reply check but re-fetched by reaction lookback
-    assert counts2.get("conversations.replies", 0) == 1
+    # Channel loop fetches replies once, deferred pass fetches them again for reactions
+    assert counts.get("conversations.replies", 0) == 2
 
-    # The reaction should be saved
+    # The reaction should be saved by the deferred pass
     reaction_path = temp_output_dir / "reactions" / "created" / "events.jsonl"
     assert reaction_path.exists()
     reaction_lines = reaction_path.read_text().strip().splitlines()
@@ -721,7 +682,7 @@ def test_run_export_cached_channels_filtered_by_membership(temp_output_dir: Path
         channels=None,
         default_oldest=settings.default_oldest,
         output_dir=settings.output_dir,
-        reaction_lookback=settings.reaction_lookback,
+        max_recent_threads_for_reactions=settings.max_recent_threads_for_reactions,
         cache_ttl_seconds=settings.cache_ttl_seconds,
         members_only=False,
     )
@@ -736,7 +697,7 @@ def test_run_export_cached_channels_filtered_by_membership(temp_output_dir: Path
         channels=None,
         default_oldest=settings.default_oldest,
         output_dir=settings.output_dir,
-        reaction_lookback=settings.reaction_lookback,
+        max_recent_threads_for_reactions=settings.max_recent_threads_for_reactions,
         cache_ttl_seconds=settings.cache_ttl_seconds,
         members_only=True,
     )
@@ -751,7 +712,7 @@ def test_run_export_channel_info_only_for_specified_channels(temp_output_dir: Pa
         channels=(ChannelConfig(name=SlackChannelName("general")),),
         default_oldest=datetime(2024, 1, 1, tzinfo=timezone.utc),
         output_dir=temp_output_dir,
-        reaction_lookback=0,
+        max_recent_threads_for_reactions=0,
         cache_ttl_seconds=0,
     )
     caller, counts = _tracking_api_caller(
@@ -773,7 +734,7 @@ def test_run_export_all_channels_when_channels_is_none(temp_output_dir: Path) ->
         channels=None,
         default_oldest=datetime(2024, 1, 1, tzinfo=timezone.utc),
         output_dir=temp_output_dir,
-        reaction_lookback=0,
+        max_recent_threads_for_reactions=0,
         cache_ttl_seconds=0,
     )
     caller, counts = _tracking_api_caller(
@@ -785,7 +746,7 @@ def test_run_export_all_channels_when_channels_is_none(temp_output_dir: Path) ->
     )
     run_export(settings, api_caller=caller)
 
-    # Should have fetched messages for both channels (forward fetch + reaction scan per channel)
-    assert counts.get("conversations.history", 0) == 4
+    # Should have fetched messages for both channels (forward fetch only per channel)
+    assert counts.get("conversations.history", 0) == 2
     # conversations.info called for both channels (no --channels filter)
     assert counts.get("conversations.info", 0) == 2

@@ -73,10 +73,10 @@ Examples:
         help="Export all channels, not just those where you are a member",
     )
     parser.add_argument(
-        "--reaction-lookback",
+        "--max-recent-threads-for-reactions",
         type=int,
-        default=10,
-        help="Number of recent relevant threads to re-check for reaction changes (default: 10)",
+        default=50,
+        help="Number of most recent relevant threads to check for reaction changes (default: 50)",
     )
     parser.add_argument(
         "--refresh",
@@ -106,7 +106,7 @@ Examples:
         default_oldest=default_oldest,
         output_dir=args.output_dir,
         members_only=not args.all_channels,
-        reaction_lookback=args.reaction_lookback,
+        max_recent_threads_for_reactions=args.max_recent_threads_for_reactions,
         refresh=args.refresh,
         cache_ttl_seconds=cache_ttl_seconds,
     )
