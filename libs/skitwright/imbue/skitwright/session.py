@@ -20,15 +20,23 @@ class Session:
         self._cwd = cwd if cwd is not None else Path.cwd()
         self._transcript = Transcript()
 
-    def run(self, command: str, timeout: float = _DEFAULT_TIMEOUT) -> CommandResult:
-        """Run a shell command and return the result."""
+    def run(
+        self,
+        command: str,
+        timeout: float = _DEFAULT_TIMEOUT,
+        comment: str | None = None,
+    ) -> CommandResult:
+        """Run a shell command and return the result.
+
+        An optional comment is recorded in the transcript above the command.
+        """
         result = run_command(
             command=command,
             env=self._env,
             cwd=self._cwd,
             timeout=timeout,
         )
-        self._transcript.record(result)
+        self._transcript.record(result, comment=comment)
         return result
 
     @property

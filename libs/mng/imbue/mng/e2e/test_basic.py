@@ -15,7 +15,7 @@ from imbue.skitwright.session import Session
 
 @pytest.mark.release
 def test_help_succeeds(e2e: Session) -> None:
-    result = e2e.run("mng --help")
+    result = e2e.run("mng --help", comment="Verify top-level help includes core subcommands")
     expect(result).to_succeed()
     expect(result.stdout).to_contain("Usage")
     expect(result.stdout).to_contain("create")
@@ -24,7 +24,7 @@ def test_help_succeeds(e2e: Session) -> None:
 
 @pytest.mark.release
 def test_create_help_succeeds(e2e: Session) -> None:
-    result = e2e.run("mng create --help")
+    result = e2e.run("mng create --help", comment="Verify create help documents key flags")
     expect(result).to_succeed()
     expect(result.stdout).to_contain("--no-connect")
     expect(result.stdout).to_contain("--command")
@@ -32,14 +32,14 @@ def test_create_help_succeeds(e2e: Session) -> None:
 
 @pytest.mark.release
 def test_list_with_no_agents(e2e: Session) -> None:
-    result = e2e.run("mng list")
+    result = e2e.run("mng list", comment="List agents in a fresh environment")
     expect(result).to_succeed()
     expect(result.stdout).to_contain("No agents found")
 
 
 @pytest.mark.release
 def test_list_json_with_no_agents(e2e: Session) -> None:
-    result = e2e.run("mng list --format json")
+    result = e2e.run("mng list --format json", comment="List agents as JSON in a fresh environment")
     expect(result).to_succeed()
     parsed = json.loads(result.stdout)
     assert parsed["agents"] == []
@@ -48,9 +48,14 @@ def test_list_json_with_no_agents(e2e: Session) -> None:
 @pytest.mark.release
 @pytest.mark.tmux
 def test_create_and_list_agent(e2e: Session, agent_name: str) -> None:
-    expect(e2e.run(f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean")).to_succeed()
+    expect(
+        e2e.run(
+            f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean",
+            comment="Create a basic agent",
+        )
+    ).to_succeed()
 
-    list_result = e2e.run("mng list")
+    list_result = e2e.run("mng list", comment="Verify agent appears in list as RUNNING or WAITING")
     expect(list_result).to_succeed()
     expect(list_result.stdout).to_match(rf"{agent_name}\s+(RUNNING|WAITING)")
 
@@ -58,9 +63,14 @@ def test_create_and_list_agent(e2e: Session, agent_name: str) -> None:
 @pytest.mark.release
 @pytest.mark.tmux
 def test_create_with_json_output(e2e: Session, agent_name: str) -> None:
-    expect(e2e.run(f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean --format json")).to_succeed()
+    expect(
+        e2e.run(
+            f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean --format json",
+            comment="Create agent with JSON output format",
+        )
+    ).to_succeed()
 
-    list_result = e2e.run("mng list --format json")
+    list_result = e2e.run("mng list --format json", comment="Verify agent appears in JSON list")
     expect(list_result).to_succeed()
     parsed = json.loads(list_result.stdout)
     assert len(parsed["agents"]) == 1
@@ -69,9 +79,14 @@ def test_create_with_json_output(e2e: Session, agent_name: str) -> None:
 @pytest.mark.release
 @pytest.mark.tmux
 def test_create_headless(e2e: Session, agent_name: str) -> None:
-    expect(e2e.run(f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean --headless")).to_succeed()
+    expect(
+        e2e.run(
+            f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean --headless",
+            comment="Create a headless agent (no tmux session)",
+        )
+    ).to_succeed()
 
-    list_result = e2e.run("mng list")
+    list_result = e2e.run("mng list", comment="Verify headless agent appears in list")
     expect(list_result).to_succeed()
     expect(list_result.stdout).to_contain(agent_name)
 
@@ -79,12 +94,17 @@ def test_create_headless(e2e: Session, agent_name: str) -> None:
 @pytest.mark.release
 @pytest.mark.tmux
 def test_create_and_destroy_agent(e2e: Session, agent_name: str) -> None:
-    expect(e2e.run(f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean")).to_succeed()
+    expect(
+        e2e.run(
+            f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean",
+            comment="Create agent to be destroyed",
+        )
+    ).to_succeed()
 
-    destroy_result = e2e.run(f"mng destroy {agent_name} --force")
+    destroy_result = e2e.run(f"mng destroy {agent_name} --force", comment="Destroy the agent")
     expect(destroy_result).to_succeed()
 
-    list_result = e2e.run("mng list")
+    list_result = e2e.run("mng list", comment="Verify agent no longer appears in list")
     expect(list_result).to_succeed()
     expect(list_result.stdout).not_to_contain(agent_name)
 
@@ -92,13 +112,21 @@ def test_create_and_destroy_agent(e2e: Session, agent_name: str) -> None:
 @pytest.mark.release
 @pytest.mark.tmux
 def test_create_and_rename_agent(e2e: Session, agent_name: str) -> None:
-    expect(e2e.run(f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean")).to_succeed()
+    expect(
+        e2e.run(
+            f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean",
+            comment="Create agent to be renamed",
+        )
+    ).to_succeed()
 
     new_name = f"e2e-renamed-{agent_name.split('-')[-1]}"
-    rename_result = e2e.run(f"mng rename {agent_name} {new_name}")
+    rename_result = e2e.run(
+        f"mng rename {agent_name} {new_name}",
+        comment=f"Rename agent to {new_name}",
+    )
     expect(rename_result).to_succeed()
 
-    list_result = e2e.run("mng list")
+    list_result = e2e.run("mng list", comment="Verify only the new name appears")
     expect(list_result).to_succeed()
     expect(list_result.stdout).to_contain(new_name)
     expect(list_result.stdout).not_to_contain(agent_name)
@@ -108,10 +136,13 @@ def test_create_and_rename_agent(e2e: Session, agent_name: str) -> None:
 @pytest.mark.tmux
 def test_create_with_label_shows_in_list(e2e: Session, agent_name: str) -> None:
     expect(
-        e2e.run(f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean --label team=backend")
+        e2e.run(
+            f"mng create {agent_name} --command 'sleep 99999' --no-ensure-clean --label team=backend",
+            comment="Create agent with label team=backend",
+        )
     ).to_succeed()
 
-    list_result = e2e.run("mng list --format json")
+    list_result = e2e.run("mng list --format json", comment="Verify label appears in JSON output")
     expect(list_result).to_succeed()
     parsed = json.loads(list_result.stdout)
     agents = parsed["agents"]

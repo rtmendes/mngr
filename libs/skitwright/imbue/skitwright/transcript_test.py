@@ -69,3 +69,46 @@ def test_interleaved_stdout_and_stderr() -> None:
         )
     )
     assert t.format() == "$ mixed\n! warning\n  output\n? 0\n"
+
+
+def test_comment_appears_above_command() -> None:
+    t = Transcript()
+    t.record(
+        CommandResult(command="echo hi", exit_code=0, stdout="hi\n", stderr="", output_lines=(_out("hi"),)),
+        comment="Say hello",
+    )
+    assert t.format() == "# Say hello\n$ echo hi\n  hi\n? 0\n"
+
+
+def test_multiline_comment() -> None:
+    t = Transcript()
+    t.record(
+        CommandResult(command="ls", exit_code=0, stdout="", stderr=""),
+        comment="First line\nSecond line",
+    )
+    assert t.format() == "# First line\n# Second line\n$ ls\n? 0\n"
+
+
+def test_none_comment_produces_no_comment_lines() -> None:
+    t = Transcript()
+    t.record(
+        CommandResult(command="echo ok", exit_code=0, stdout="ok\n", stderr="", output_lines=(_out("ok"),)),
+        comment=None,
+    )
+    assert t.format() == "$ echo ok\n  ok\n? 0\n"
+
+
+def test_comments_mixed_with_uncommented_commands() -> None:
+    t = Transcript()
+    t.record(
+        CommandResult(command="cmd1", exit_code=0, stdout="", stderr=""),
+        comment="Setup",
+    )
+    t.record(
+        CommandResult(command="cmd2", exit_code=0, stdout="", stderr=""),
+    )
+    t.record(
+        CommandResult(command="cmd3", exit_code=0, stdout="", stderr=""),
+        comment="Verify",
+    )
+    assert t.format() == "# Setup\n$ cmd1\n? 0\n$ cmd2\n? 0\n# Verify\n$ cmd3\n? 0\n"
