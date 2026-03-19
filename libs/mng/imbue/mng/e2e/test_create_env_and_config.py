@@ -172,9 +172,9 @@ def test_config_set_default_provider(e2e: Session) -> None:
     )
     expect(result).to_succeed()
 
-    # Verify the value was persisted
+    # Verify the value was persisted (read from project scope where it was written)
     get_result = e2e.run(
-        "mng config get commands.create.provider",
+        "mng config get commands.create.provider --scope project",
         comment="for more on configuration, see the CONFIGURATION section below",
     )
     expect(get_result).to_succeed()
