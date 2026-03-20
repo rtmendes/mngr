@@ -441,7 +441,7 @@ def block_disabled_plugins(pm: pluggy.PluginManager, disabled_names: frozenset[s
     """
     for name in disabled_names:
         if is_strict:
-            if not pm.has_plugin(name):
+            if not pm.has_plugin(name) and not pm.is_blocked(name):
                 raise Exception(
                     f"Cannot disable plugin '{name}' because it is not registered. Possibly was not installed, or was disabled via a config file? Registered plugins: {pm.list_name_plugin()}"
                 )
