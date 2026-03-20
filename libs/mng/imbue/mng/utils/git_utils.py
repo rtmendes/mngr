@@ -72,10 +72,10 @@ def get_current_git_branch(path: Path | None, cg: ConcurrencyGroup) -> str | Non
 def derive_project_name_from_path(path: Path, cg: ConcurrencyGroup) -> str:
     """Derive a project name from a path.
 
-    Attempts to extract the project name from the git remote origin URL if available.
-    For worktrees without an origin remote, tries the source repository's origin.
-    Falls back to the source repository's directory name (for worktrees) or the
-    given path's directory name.
+    Attempts to extract the project name from the git remote origin URL if available
+    (for worktrees, this already checks the source repo's remotes since they share
+    git config). Falls back to the source repository's directory name (for worktrees)
+    or the given path's directory name.
     """
     # Try to get the project name from the git remote origin URL
     git_project_name = _get_project_name_from_git_remote(path, cg)
