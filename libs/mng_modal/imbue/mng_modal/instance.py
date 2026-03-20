@@ -1075,10 +1075,11 @@ class ModalProviderInstance(BaseProviderInstance):
         All setup (except starting sshd) is done via a single shell command for
         speed and to allow reuse by other providers.
         """
-        # Check for required packages and install if missing
-        self._check_and_install_packages(sandbox)
+        with log_span("Checking for required packages"):
+            # Check for required packages and install if missing
+            self._check_and_install_packages(sandbox)
 
-        with log_span("Configuring SSH keys in sandbox", ssh_user=ssh_user):
+        with log_span("Configuring SSH keys and hosts in sandbox", ssh_user=ssh_user):
             # Build and execute the SSH configuration command
             configure_ssh_cmd = build_configure_ssh_command(
                 user=ssh_user,
@@ -1088,18 +1089,18 @@ class ModalProviderInstance(BaseProviderInstance):
             )
             sandbox.exec("sh", "-c", configure_ssh_cmd).wait()
 
-        # Add known_hosts entries for outbound SSH if specified
-        if known_hosts:
-            add_known_hosts_cmd = build_add_known_hosts_command(ssh_user, tuple(known_hosts))
-            if add_known_hosts_cmd is not None:
-                with log_span("Adding {} known_hosts entries to sandbox", len(known_hosts)):
-                    sandbox.exec("sh", "-c", add_known_hosts_cmd).wait()
+            # Add known_hosts entries for outbound SSH if specified
+            if known_hosts:
+                add_known_hosts_cmd = build_add_known_hosts_command(ssh_user, tuple(known_hosts))
+                if add_known_hosts_cmd is not None:
+                    with log_span("Adding {} known_hosts entries to sandbox", len(known_hosts)):
+                        sandbox.exec("sh", "-c", add_known_hosts_cmd).wait()
 
-        if authorized_keys:
-            add_authorized_keys_cmd = build_add_authorized_keys_command(ssh_user, tuple(authorized_keys))
-            if add_authorized_keys_cmd is not None:
-                with log_span("Adding {} authorized_keys entries to sandbox", len(authorized_keys)):
-                    sandbox.exec("sh", "-c", add_authorized_keys_cmd).wait()
+            if authorized_keys:
+                add_authorized_keys_cmd = build_add_authorized_keys_command(ssh_user, tuple(authorized_keys))
+                if add_authorized_keys_cmd is not None:
+                    with log_span("Adding {} authorized_keys entries to sandbox", len(authorized_keys)):
+                        sandbox.exec("sh", "-c", add_authorized_keys_cmd).wait()
 
         with log_span("Starting sshd in sandbox"):
             sshd_log_path = f"{self.host_dir}/events/logs/sshd.log"
@@ -1132,6 +1133,39 @@ class ModalProviderInstance(BaseProviderInstance):
         """Create a pyinfra host with SSH connector."""
         return create_pyinfra_host(hostname, port, private_key_path, self._known_hosts_path)
 
+    def _create_host_data_records_in_modal(
+        self,
+        sandbox: SandboxInterface,
+        host_id: HostId,
+        host_name: HostName,
+        user_tags: Mapping[str, str] | None,
+        config: SandboxConfig,
+        host_data: CertifiedHostData,
+        ssh_host: str,
+        ssh_port: int,
+        host_public_key: str,
+    ):
+        # Set sandbox tags
+        sandbox_tags = self._build_sandbox_tags(
+            host_id=host_id,
+            name=host_name,
+            user_tags=user_tags,
+        )
+        with log_span("Setting sandbox tags: {}", list(sandbox_tags.keys())):
+            sandbox.set_tags(sandbox_tags)
+
+        # Create and write the initial host record to the volume
+        # This must happen BEFORE host.set_certified_data() because the callback
+        # _on_certified_host_data_updated expects the host record to already exist
+        host_record = HostRecord(
+            ssh_host=ssh_host,
+            ssh_port=ssh_port,
+            ssh_host_public_key=host_public_key,
+            config=config,
+            certified_host_data=host_data,
+        )
+        self._write_host_record(host_record)
+
     def _setup_sandbox_ssh_and_create_host(
         self,
         sandbox: SandboxInterface,
@@ -1151,98 +1185,116 @@ class ModalProviderInstance(BaseProviderInstance):
         Returns a tuple of (Host, ssh_host, ssh_port, host_public_key) so callers
         can use the SSH info for creating/updating host records.
         """
-        # Get SSH keypairs
-        private_key_path, client_public_key = self._get_ssh_keypair()
-        host_key_path, host_public_key = self._get_host_keypair()
-        host_private_key = host_key_path.read_text()
 
-        # Start sshd with our host key
-        self._start_sshd_in_sandbox(
-            sandbox,
-            client_public_key,
-            host_private_key,
-            host_public_key,
-            known_hosts=known_hosts,
-            authorized_keys=authorized_keys,
-        )
+        with self.mng_ctx.concurrency_group.make_concurrency_group("start ssh and create host") as concurrency_group:
+            # For persistent apps, deploy the snapshot function and create shutdown script
+            snapshot_url_future: Future[str] | None = None
+            if self.config.is_persistent:
+                # it's a little sad that we're constantly re-deploying this, but it's a bit too easy to make mistakes otherwise
+                #  (eg, we might end up with outdated code at that endpoint, which would be hard to debug)
+                snapshot_url_future = Future()
+                concurrency_group.start_new_thread(
+                    _set_result,
+                    (
+                        snapshot_url_future,
+                        lambda: deploy_function(
+                            "snapshot_and_shutdown", self.app_name, self.environment_name, self._modal_interface
+                        ),
+                    ),
+                )
 
-        # Get SSH connection info
-        ssh_host, ssh_port = self._get_ssh_info_from_sandbox(sandbox)
-        logger.trace("Found SSH endpoint available", ssh_host=ssh_host, ssh_port=ssh_port)
+            # Get SSH connection info
+            ssh_host, ssh_port = self._get_ssh_info_from_sandbox(sandbox)
+            logger.trace("Found SSH endpoint available", ssh_host=ssh_host, ssh_port=ssh_port)
 
-        # Add the host to our known_hosts file before waiting for sshd
-        with log_span("Adding host to known_hosts", ssh_host=ssh_host, ssh_port=ssh_port):
-            add_host_to_known_hosts(self._known_hosts_path, ssh_host, ssh_port, host_public_key)
+            # Get SSH keypairs
+            private_key_path, client_public_key = self._get_ssh_keypair()
+            host_key_path, host_public_key = self._get_host_keypair()
+            host_private_key = host_key_path.read_text()
 
-        # Wait for sshd to be ready
-        with log_span("Waiting for sshd to be ready..."):
-            self._wait_for_sshd(ssh_host, ssh_port)
-
-        # Set sandbox tags
-        sandbox_tags = self._build_sandbox_tags(
-            host_id=host_id,
-            name=host_name,
-            user_tags=user_tags,
-        )
-        with log_span("Setting sandbox tags: {}", list(sandbox_tags.keys())):
-            sandbox.set_tags(sandbox_tags)
-
-        # Create pyinfra host and connector
-        pyinfra_host = self._create_pyinfra_host(ssh_host, ssh_port, private_key_path)
-        connector = PyinfraConnector(pyinfra_host)
-
-        # Create and write the initial host record to the volume
-        # This must happen BEFORE host.set_certified_data() because the callback
-        # _on_certified_host_data_updated expects the host record to already exist
-        host_record = HostRecord(
-            ssh_host=ssh_host,
-            ssh_port=ssh_port,
-            ssh_host_public_key=host_public_key,
-            config=config,
-            certified_host_data=host_data,
-        )
-        self._write_host_record(host_record)
-
-        # Create the Host object with callback for future certified data updates
-        host = Host(
-            id=host_id,
-            connector=connector,
-            provider_instance=self,
-            mng_ctx=self.mng_ctx,
-            on_updated_host_data=lambda callback_host_id, certified_data: self._on_certified_host_data_updated(
-                callback_host_id, certified_data
-            ),
-        )
-
-        # Record BOOT activity for idle detection
-        host.record_activity(ActivitySource.BOOT)
-
-        # Write the host data.json (will also update volume via callback since host record already exists)
-        host.set_certified_data(host_data)
-
-        # For persistent apps, deploy the snapshot function and create shutdown script
-        if self.config.is_persistent:
-            # it's a little sad that we're constantly re-deploying this, but it's a bit too easy to make mistakes otherwise
-            #  (eg, we might end up with outdated code at that endpoint, which would be hard to debug)
-            snapshot_url = deploy_function(
-                "snapshot_and_shutdown", self.app_name, self.environment_name, self._modal_interface
+            # set up all the data in modal:
+            modal_ops_thread = concurrency_group.start_new_thread(
+                self._create_host_data_records_in_modal,
+                (sandbox, host_id, host_name, user_tags, config, host_data, ssh_host, ssh_port, host_public_key),
             )
-            self._create_shutdown_script(host, sandbox, host_id, snapshot_url)
 
-        # Start the activity watcher. We have to start it here because we only created the shutdown script (with the hardcoded sandbox id)
-        # in the above block, thus this cannot be started any earlier.
-        # Plus we really want the boot time to be written, etc, as otherwise it can be a bit racey
-        with log_span("Starting activity watcher in sandbox"):
-            start_activity_watcher_cmd = build_start_activity_watcher_command(str(self.host_dir))
-            sandbox.exec("sh", "-c", start_activity_watcher_cmd).wait()
+            # Start sshd with our host key
+            self._start_sshd_in_sandbox(
+                sandbox,
+                client_public_key,
+                host_private_key,
+                host_public_key,
+                known_hosts=known_hosts,
+                authorized_keys=authorized_keys,
+            )
 
-        # Start periodic volume sync to flush writes to the host volume (only when a host volume is mounted)
-        if self.config.is_host_volume_created:
-            with log_span("Starting volume sync in sandbox"):
-                volume_sync_cmd = build_start_volume_sync_command(HOST_VOLUME_MOUNT_PATH, str(self.host_dir))
-                sandbox.exec("sh", "-c", volume_sync_cmd).wait()
+            # Add the host to our known_hosts file before waiting for sshd
+            with log_span("Adding host to known_hosts", ssh_host=ssh_host, ssh_port=ssh_port):
+                add_host_to_known_hosts(self._known_hosts_path, ssh_host, ssh_port, host_public_key)
 
-        return host, ssh_host, ssh_port, host_public_key
+            # Wait for sshd to be ready
+            with log_span("Waiting for sshd to be ready..."):
+                self._wait_for_sshd(ssh_host, ssh_port)
+
+            with log_span("Executing post-ssh operations"):
+                # Create pyinfra host and connector
+                pyinfra_host = self._create_pyinfra_host(ssh_host, ssh_port, private_key_path)
+                connector = PyinfraConnector(pyinfra_host)
+
+                # for latency reasons, we set this afterwards:
+                true_on_updated_host_data = (
+                    lambda callback_host_id, certified_data: self._on_certified_host_data_updated(
+                        callback_host_id, certified_data
+                    )
+                )
+
+                # Create the Host object with callback for future certified data updates
+                host = Host(
+                    id=host_id,
+                    connector=connector,
+                    provider_instance=self,
+                    mng_ctx=self.mng_ctx,
+                    on_updated_host_data=None,
+                )
+
+                # Record BOOT activity for idle detection
+                set_boot_thread = concurrency_group.start_new_thread(host.record_activity, (ActivitySource.BOOT,))
+
+                # Write the host data.json (will also update volume via callback since host record already exists)
+                set_certified_data_thread = concurrency_group.start_new_thread(host.set_certified_data, (host_data,))
+
+                # then wait for them both, just a minor optimization to parallelize the writes
+                set_boot_thread.join(60.0)
+                set_certified_data_thread.join(60.0)
+
+            with log_span("Waiting for deploy to finish and creating shutdown script"):
+                if snapshot_url_future is not None:
+                    snapshot_url = snapshot_url_future.result(2 * 60.0)
+                    self._create_shutdown_script(host, sandbox, host_id, snapshot_url)
+
+            # Start the activity watcher. We have to start it here because we only created the shutdown script (with the hardcoded sandbox id)
+            # in the above block, thus this cannot be started any earlier.
+            # Plus we really want the boot time to be written, etc, as otherwise it can be a bit racey
+            with log_span("Starting activity watcher in sandbox"):
+                start_activity_watcher_cmd = build_start_activity_watcher_command(str(self.host_dir))
+                sandbox.exec("sh", "-c", start_activity_watcher_cmd).wait()
+
+            # Start periodic volume sync to flush writes to the host volume (only when a host volume is mounted)
+            if self.config.is_host_volume_created:
+                with log_span("Starting volume sync in sandbox"):
+                    volume_sync_cmd = build_start_volume_sync_command(HOST_VOLUME_MOUNT_PATH, str(self.host_dir))
+                    sandbox.exec("sh", "-c", volume_sync_cmd).wait()
+
+            with log_span("Waiting for modal operations to complete"):
+                # something has gone horribly wrong if those operations take longer than that
+                modal_ops_thread.join(timeout=2 * 60.0)
+
+            # update the on_updated_host_data field so that future updates will be propagated to the volume:
+            final_host = host.model_copy_update(
+                to_update(host.field_ref().on_updated_host_data, true_on_updated_host_data),
+            )
+
+            return final_host, ssh_host, ssh_port, host_public_key
 
     def _create_shutdown_script(
         self,
@@ -1838,16 +1890,17 @@ log "=== Shutdown script completed ==="
         )
 
         # Set up SSH and create host object using shared helper
-        host, ssh_host, ssh_port, host_public_key = self._setup_sandbox_ssh_and_create_host(
-            sandbox=sandbox,
-            host_id=host_id,
-            host_name=name,
-            user_tags=tags,
-            config=config,
-            host_data=host_data,
-            known_hosts=known_hosts,
-            authorized_keys=authorized_keys,
-        )
+        with log_span("Setting up SSH and creating Host object for {}", host_id):
+            host, ssh_host, ssh_port, host_public_key = self._setup_sandbox_ssh_and_create_host(
+                sandbox=sandbox,
+                host_id=host_id,
+                host_name=name,
+                user_tags=tags,
+                config=config,
+                host_data=host_data,
+                known_hosts=known_hosts,
+                authorized_keys=authorized_keys,
+            )
 
         return host
 
@@ -3248,3 +3301,12 @@ def _build_image_from_dockerfile_contents(
                 )
 
         return modal_image
+
+
+def _set_result(future: Future, func: Callable[[], str]) -> None:
+    try:
+        result = func()
+    except Exception as e:
+        future.set_exception(e)
+    else:
+        future.set_result(result)
