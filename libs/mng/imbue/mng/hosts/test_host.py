@@ -21,6 +21,7 @@ import pluggy
 import pytest
 from pyinfra.api.command import StringCommand
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mng.config.data_types import EnvVar
 from imbue.mng.config.data_types import MngConfig
@@ -1408,13 +1409,12 @@ def test_provision_agent_user_command_failure_raises(host_with_temp_dir: tuple[H
         ),
     )
 
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with pytest.raises(ConcurrencyExceptionGroup) as exc_info:
         host.provision_agent(agent, options, host.mng_ctx)
 
-    exception_group = exc_info.value
-    mng_errors = exception_group.subgroup(MngError)
-    assert mng_errors is not None
-    assert any("User command failed" in str(e) for e in mng_errors.exceptions)
+    assert exc_info.value.main_exception is not None
+    assert isinstance(exc_info.value.main_exception, MngError)
+    assert "User command failed" in str(exc_info.value.main_exception)
 
 
 def test_provision_agent_combined_options(host_with_temp_dir: tuple[Host, Path], tmp_path: Path) -> None:
