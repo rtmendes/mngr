@@ -1107,9 +1107,6 @@ class Host(BaseHost, OnlineHostInterface):
             result = source_host.execute_command(f"test -d {shlex.quote(str(source_path / '.git'))}")
             source_has_git = result.success
 
-        # Ensure the target directory exists before any transfer
-        self._mkdir(target_path)
-
         # Transfer files based on whether source has .git and whether we want to include it
         is_git_synced = options.git is not None and options.git.is_git_synced
         # Exclude .git from rsync if user has specified any git options (they're making an explicit choice)
@@ -1119,6 +1116,7 @@ class Host(BaseHost, OnlineHostInterface):
             # fall back to file copy if source is not a git repo
             if not source_has_git:
                 logger.warning("Source path is not a git repository, falling back to file copy")
+                self._mkdir(target_path)
                 self._rsync_files(source_host, source_path, target_path, "--delete", exclude_git=True)
             # Source is a git repo, transfer via git
             else:
@@ -1131,6 +1129,7 @@ class Host(BaseHost, OnlineHostInterface):
         # full sync behavior with file deletion.
         # Exclude .git from rsync if user specified git options (they're making an explicit choice about git handling)
         if options.data_options.is_rsync_enabled:
+            self._mkdir(target_path)
             self._rsync_files(
                 source_host,
                 source_path,
@@ -1195,7 +1194,7 @@ class Host(BaseHost, OnlineHostInterface):
             # existing bare repo so we skip the existence check.
             quoted_git_dir = shlex.quote(str(target_path / ".git"))
             quoted_target = shlex.quote(str(target_path))
-            init_parts = [f"git init --bare {quoted_git_dir}"]
+            init_parts = [f"mkdir -p {quoted_target}", f"git init --bare {quoted_git_dir}"]
             if not self.is_local:
                 init_parts.append(f"git config --global --add safe.directory {quoted_target}")
             init_cmd = " && ".join(init_parts)
