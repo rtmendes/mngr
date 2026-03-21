@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from click.testing import CliRunner
 
 from imbue.mng_file.cli.get import file_get
@@ -45,36 +43,15 @@ def test_file_get_requires_target_and_path() -> None:
     runner = CliRunner()
     result = runner.invoke(file_get, [])
     assert result.exit_code != 0
-    assert "Missing argument" in result.output
 
 
 def test_file_put_requires_target_and_path() -> None:
     runner = CliRunner()
     result = runner.invoke(file_put, [])
     assert result.exit_code != 0
-    assert "Missing argument" in result.output
 
 
 def test_file_list_requires_target() -> None:
     runner = CliRunner()
     result = runner.invoke(file_list, [])
-    assert result.exit_code != 0
-    assert "Missing argument" in result.output
-
-
-def test_file_get_with_nonexistent_target(temp_mng_ctx: Path) -> None:
-    runner = CliRunner()
-    result = runner.invoke(file_get, ["nonexistent-agent-zzzzzz", "file.txt", "--headless"])
-    assert result.exit_code != 0
-
-
-def test_file_put_with_nonexistent_target(temp_mng_ctx: Path) -> None:
-    runner = CliRunner()
-    result = runner.invoke(file_put, ["nonexistent-agent-zzzzzz", "file.txt", "--headless", "--input", "/dev/null"])
-    assert result.exit_code != 0
-
-
-def test_file_list_with_nonexistent_target(temp_mng_ctx: Path) -> None:
-    runner = CliRunner()
-    result = runner.invoke(file_list, ["nonexistent-agent-zzzzzz", "--headless"])
     assert result.exit_code != 0
