@@ -88,6 +88,7 @@ from imbue.mng.providers.ssh_host_setup import parse_warnings_from_output
 from imbue.mng_modal.config import ModalProviderConfig
 from imbue.mng_modal.errors import NoSnapshotsModalMngError
 from imbue.mng_modal.routes.deployment import deploy_function
+from imbue.mng_modal.routes.deployment import get_function_url
 from imbue.mng_modal.ssh_utils import add_host_to_known_hosts
 from imbue.mng_modal.ssh_utils import create_pyinfra_host
 from imbue.mng_modal.ssh_utils import load_or_create_host_keypair
@@ -1217,8 +1218,15 @@ class ModalProviderInstance(BaseProviderInstance):
                         ),
                     )
                 else:
-                    # FIXME: this is obviously broken--this needs to make a thread that uses the modal interface to *get* the URL for the deployed snapshot_and_shutdown function (we can assume that it exists)
-                    snapshot_url_future.set_result("http://fake-url-for-testing.com/snapshot_and_shutdown")
+                    concurrency_group.start_new_thread(
+                        _set_result,
+                        (
+                            snapshot_url_future,
+                            lambda: get_function_url(
+                                "snapshot_and_shutdown", self.app_name, self.environment_name, self._modal_interface
+                            ),
+                        ),
+                    )
 
             # Get SSH connection info
             ssh_host, ssh_port = self._get_ssh_info_from_sandbox(sandbox)
