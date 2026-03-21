@@ -708,38 +708,16 @@ def _make_snapshot_info(snapshot_id: str = "snap-001", name: str = "test-snapsho
     )
 
 
-def test_gc_snapshots_preserves_paused_host_snapshots(
-    gc_mock_provider: MockProviderInstance, temp_mng_ctx: MngContext
+@pytest.mark.parametrize("stop_reason", [HostState.PAUSED.value, HostState.STOPPED.value])
+def test_gc_snapshots_preserves_non_destroyed_host_snapshots(
+    gc_mock_provider: MockProviderInstance, temp_mng_ctx: MngContext, stop_reason: str
 ) -> None:
-    """gc_snapshots must not delete snapshots from PAUSED hosts.
+    """gc_snapshots must not delete snapshots from PAUSED or STOPPED hosts.
 
-    PAUSED hosts need their snapshots for resumption. Deleting them would
+    These hosts need their snapshots for resumption. Deleting them would
     cause the host to be considered DESTROYED.
     """
-    host = _make_offline_host(gc_mock_provider, temp_mng_ctx, stop_reason=HostState.PAUSED.value)
-    gc_mock_provider.mock_hosts = [host]
-    gc_mock_provider.mock_snapshots = [_make_snapshot_info()]
-
-    result = GcResult()
-    gc_snapshots(
-        providers=[gc_mock_provider],
-        dry_run=False,
-        error_behavior=ErrorBehavior.ABORT,
-        result=result,
-    )
-
-    assert len(result.snapshots_destroyed) == 0
-    assert gc_mock_provider.deleted_snapshots == []
-
-
-def test_gc_snapshots_preserves_stopped_host_snapshots(
-    gc_mock_provider: MockProviderInstance, temp_mng_ctx: MngContext
-) -> None:
-    """gc_snapshots must not delete snapshots from STOPPED hosts.
-
-    STOPPED hosts need their snapshots for resumption.
-    """
-    host = _make_offline_host(gc_mock_provider, temp_mng_ctx, stop_reason=HostState.STOPPED.value)
+    host = _make_offline_host(gc_mock_provider, temp_mng_ctx, stop_reason=stop_reason)
     gc_mock_provider.mock_hosts = [host]
     gc_mock_provider.mock_snapshots = [_make_snapshot_info()]
 
@@ -761,8 +739,8 @@ def test_gc_snapshots_preserves_paused_host_snapshots_snapshot_based_provider(
     """gc_snapshots preserves snapshots on providers that use snapshots for resumption.
 
     This mimics the Modal provider scenario where supports_shutdown_hosts=False
-    and the host relies on snapshots to determine its state. Without this fix,
-    gc would delete the snapshots, causing the host state to flip to DESTROYED.
+    and the host relies on snapshots to determine its state. If gc deleted the
+    snapshots, the host state would flip from PAUSED to DESTROYED.
     """
     gc_mock_provider.mock_supports_shutdown_hosts = False
     host = _make_offline_host(gc_mock_provider, temp_mng_ctx, stop_reason=HostState.PAUSED.value)
@@ -784,6 +762,39 @@ def test_gc_snapshots_preserves_paused_host_snapshots_snapshot_based_provider(
     assert gc_mock_provider.deleted_snapshots == []
     # Verify the host is still PAUSED after gc
     assert host.get_state() == HostState.PAUSED
+
+
+def test_gc_snapshots_deletes_destroyed_host_snapshots(
+    gc_mock_provider: MockProviderInstance, temp_mng_ctx: MngContext
+) -> None:
+    """gc_snapshots deletes snapshots from DESTROYED hosts.
+
+    When a host is destroyed, its snapshots are orphaned and serve no purpose.
+    gc_snapshots should clean these up.
+    """
+    # supports_shutdown_hosts=True makes get_state() return the stop_reason directly,
+    # so setting stop_reason=DESTROYED gives us a DESTROYED host on a provider that
+    # still supports snapshots (so gc_snapshots doesn't skip the provider).
+    host = _make_offline_host(gc_mock_provider, temp_mng_ctx, stop_reason=HostState.DESTROYED.value)
+    gc_mock_provider.mock_hosts = [host]
+
+    snapshot = _make_snapshot_info()
+    gc_mock_provider.mock_snapshots = [snapshot]
+
+    assert host.get_state() == HostState.DESTROYED
+
+    result = GcResult()
+    gc_snapshots(
+        providers=[gc_mock_provider],
+        dry_run=False,
+        error_behavior=ErrorBehavior.ABORT,
+        result=result,
+    )
+
+    assert len(result.snapshots_destroyed) == 1
+    assert result.snapshots_destroyed[0].id == snapshot.id
+    assert len(gc_mock_provider.deleted_snapshots) == 1
+    assert gc_mock_provider.deleted_snapshots[0] == (host.id, snapshot.id)
 
 
 # =========================================================================
