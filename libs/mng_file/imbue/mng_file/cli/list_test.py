@@ -84,6 +84,21 @@ def test_parse_list_output_skips_malformed_lines() -> None:
     assert parse_list_output("this is not valid find output\n") == []
 
 
+def test_parse_list_output_handles_non_numeric_size() -> None:
+    output = "file.txt\tnotanumber\t2026-03-21+12:00:00\tf\t-rw-r--r--\t/home/user/file.txt\n"
+    entries = parse_list_output(output)
+
+    assert len(entries) == 1
+    assert entries[0].size is None
+
+
+def test_parse_list_output_skips_empty_name() -> None:
+    output = "\t100\t2026-03-21+12:00:00\tf\t-rw-r--r--\t/home/user/\n"
+    entries = parse_list_output(output)
+
+    assert len(entries) == 0
+
+
 def test_parse_list_output_handles_symlink() -> None:
     output = "link.txt\t10\t2026-03-21+12:00:00\tl\tlrwxrwxrwx\t/home/user/link.txt\n"
     entries = parse_list_output(output)

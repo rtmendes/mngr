@@ -162,7 +162,7 @@ def test_resolve_file_target_result_is_online_false_when_no_host() -> None:
 # --- find_all_matching_agents ---
 
 
-def testfind_all_matching_agents_by_name() -> None:
+def test_find_all_matching_agents_by_name() -> None:
     host = _make_discovered_host()
     agent = _make_discovered_agent(name="my-agent")
     result = find_all_matching_agents("my-agent", {host: [agent]})
@@ -170,21 +170,21 @@ def testfind_all_matching_agents_by_name() -> None:
     assert result[0] == (host, agent)
 
 
-def testfind_all_matching_agents_by_id() -> None:
+def test_find_all_matching_agents_by_id() -> None:
     host = _make_discovered_host()
     agent = _make_discovered_agent()
     result = find_all_matching_agents(str(agent.agent_id), {host: [agent]})
     assert len(result) == 1
 
 
-def testfind_all_matching_agents_no_match() -> None:
+def test_find_all_matching_agents_no_match() -> None:
     host = _make_discovered_host()
     agent = _make_discovered_agent(name="other-agent")
     result = find_all_matching_agents("nonexistent", {host: [agent]})
     assert len(result) == 0
 
 
-def testfind_all_matching_agents_multiple_matches() -> None:
+def test_find_all_matching_agents_multiple_matches() -> None:
     host1 = _make_discovered_host(name="host-1")
     host2 = _make_discovered_host(name="host-2")
     agent1 = _make_discovered_agent(name="shared-name")
@@ -196,26 +196,26 @@ def testfind_all_matching_agents_multiple_matches() -> None:
 # --- find_all_matching_hosts ---
 
 
-def testfind_all_matching_hosts_by_name() -> None:
+def test_find_all_matching_hosts_by_name() -> None:
     host = _make_discovered_host(name="my-host")
     result = find_all_matching_hosts("my-host", [host])
     assert len(result) == 1
     assert result[0] == host
 
 
-def testfind_all_matching_hosts_by_id() -> None:
+def test_find_all_matching_hosts_by_id() -> None:
     host = _make_discovered_host()
     result = find_all_matching_hosts(str(host.host_id), [host])
     assert len(result) == 1
 
 
-def testfind_all_matching_hosts_no_match() -> None:
+def test_find_all_matching_hosts_no_match() -> None:
     host = _make_discovered_host(name="other-host")
     result = find_all_matching_hosts("nonexistent", [host])
     assert len(result) == 0
 
 
-def testfind_all_matching_hosts_multiple_matches() -> None:
+def test_find_all_matching_hosts_multiple_matches() -> None:
     host1 = _make_discovered_host(name="shared-name")
     host2 = _make_discovered_host(name="shared-name")
     result = find_all_matching_hosts("shared-name", [host1, host2])
