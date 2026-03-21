@@ -106,8 +106,6 @@ def file_put(ctx: click.Context, **kwargs: Any) -> None:
             relative_to=relative_to,
         )
 
-    full_path = resolve_full_path(resolved.base_path, opts.path)
-
     # Read content
     if opts.input is not None:
         content = Path(opts.input).read_bytes()
@@ -117,12 +115,15 @@ def file_put(ctx: click.Context, **kwargs: Any) -> None:
     # Write file -- prefer online host, fall back to volume
     with log_span("Writing file"):
         if resolved.is_online:
+            full_path = resolve_full_path(resolved.base_path, opts.path)
             resolved.host.write_file(full_path, content, mode=opts.mode)
+            display_path = full_path
         else:
             assert resolved.volume is not None
             if opts.mode is not None:
                 logger.warning("--mode is not supported when writing via volume (host is offline); ignoring")
             vol_path = compute_volume_path(relative_to, resolved.agent_id, opts.path)
             resolved.volume.write_files({vol_path: content})
+            display_path = Path(vol_path)
 
-    _emit_put_result(full_path, len(content), output_opts)
+    _emit_put_result(display_path, len(content), output_opts)

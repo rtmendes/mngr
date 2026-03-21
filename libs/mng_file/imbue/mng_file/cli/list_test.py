@@ -12,7 +12,7 @@ from imbue.mng_file.cli.list import _entry_to_field_mapping
 from imbue.mng_file.cli.list import _entry_to_json_dict
 from imbue.mng_file.cli.list import _get_field_value
 from imbue.mng_file.cli.list import list_files_on_volume
-from imbue.mng_file.cli.list import parse_find_output
+from imbue.mng_file.cli.list import parse_list_output
 from imbue.mng_file.data_types import FileEntry
 from imbue.mng_file.data_types import FileType
 
@@ -35,12 +35,12 @@ def _make_file_entry(
     )
 
 
-# --- parse_find_output ---
+# --- parse_list_output ---
 
 
-def test_parse_find_output_parses_file_entry() -> None:
+def test_parse_list_output_parses_file_entry() -> None:
     output = "myfile.txt\t1024\t2026-03-21+12:00:00\tf\t-rw-r--r--\t/home/user/myfile.txt\n"
-    entries = parse_find_output(output)
+    entries = parse_list_output(output)
 
     assert len(entries) == 1
     entry = entries[0]
@@ -52,41 +52,41 @@ def test_parse_find_output_parses_file_entry() -> None:
     assert entry.permissions == "-rw-r--r--"
 
 
-def test_parse_find_output_parses_directory_with_none_size() -> None:
+def test_parse_list_output_parses_directory_with_none_size() -> None:
     output = "subdir\t4096\t2026-03-21+10:00:00\td\tdrwxr-xr-x\t/home/user/subdir\n"
-    entries = parse_find_output(output)
+    entries = parse_list_output(output)
 
     assert len(entries) == 1
     assert entries[0].file_type == FileType.DIRECTORY
     assert entries[0].size is None
 
 
-def test_parse_find_output_skips_dot_entry() -> None:
+def test_parse_list_output_skips_dot_entry() -> None:
     output = ".\t4096\t2026-03-21+10:00:00\td\tdrwxr-xr-x\t/home/user\n"
-    assert parse_find_output(output) == []
+    assert parse_list_output(output) == []
 
 
-def test_parse_find_output_parses_multiple_entries() -> None:
+def test_parse_list_output_parses_multiple_entries() -> None:
     output = (
         "file1.txt\t100\t2026-03-21+12:00:00\tf\t-rw-r--r--\t/home/user/file1.txt\n"
         "file2.txt\t200\t2026-03-21+13:00:00\tf\t-rw-r--r--\t/home/user/file2.txt\n"
         "subdir\t4096\t2026-03-21+10:00:00\td\tdrwxr-xr-x\t/home/user/subdir\n"
     )
-    entries = parse_find_output(output)
+    entries = parse_list_output(output)
     assert [e.name for e in entries] == ["file1.txt", "file2.txt", "subdir"]
 
 
-def test_parse_find_output_handles_empty_output() -> None:
-    assert parse_find_output("") == []
+def test_parse_list_output_handles_empty_output() -> None:
+    assert parse_list_output("") == []
 
 
-def test_parse_find_output_skips_malformed_lines() -> None:
-    assert parse_find_output("this is not valid find output\n") == []
+def test_parse_list_output_skips_malformed_lines() -> None:
+    assert parse_list_output("this is not valid find output\n") == []
 
 
-def test_parse_find_output_handles_symlink() -> None:
+def test_parse_list_output_handles_symlink() -> None:
     output = "link.txt\t10\t2026-03-21+12:00:00\tl\tlrwxrwxrwx\t/home/user/link.txt\n"
-    entries = parse_find_output(output)
+    entries = parse_list_output(output)
 
     assert len(entries) == 1
     assert entries[0].file_type == FileType.SYMLINK

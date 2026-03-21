@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+from collections.abc import Sequence
 from pathlib import Path
 from typing import assert_never
 
@@ -9,8 +11,6 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.pure import pure
 from imbue.mng.api.discover import discover_all_hosts_and_agents
-from imbue.mng.api.find import resolve_agent_reference
-from imbue.mng.api.find import resolve_host_reference
 from imbue.mng.api.providers import get_provider_instance
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import MngError
@@ -19,9 +19,11 @@ from imbue.mng.hosts.host import get_agent_state_dir_path
 from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.interfaces.volume import Volume
 from imbue.mng.primitives import AgentId
+from imbue.mng.primitives import AgentName
 from imbue.mng.primitives import DiscoveredAgent
 from imbue.mng.primitives import DiscoveredHost
 from imbue.mng.primitives import HostId
+from imbue.mng.primitives import HostName
 from imbue.mng.providers.base_provider import BaseProviderInstance
 from imbue.mng_file.data_types import PathRelativeTo
 
@@ -127,10 +129,47 @@ class ResolveFileTargetResult(FrozenModel):
 
 
 @pure
-def _is_not_found_error(err: UserInputError) -> bool:
-    """Whether this UserInputError indicates a 'not found' condition rather than an ambiguity."""
-    message = str(err)
-    return "Could not find" in message
+def _find_matching_agents(
+    identifier: str,
+    agents_by_host: Mapping[DiscoveredHost, Sequence[DiscoveredAgent]],
+) -> list[tuple[DiscoveredHost, DiscoveredAgent]]:
+    """Find all agents matching the given identifier (by ID or name)."""
+    matches: list[tuple[DiscoveredHost, DiscoveredAgent]] = []
+    for host_ref, agent_refs in agents_by_host.items():
+        for agent_ref in agent_refs:
+            try:
+                agent_id = AgentId(identifier)
+                if agent_ref.agent_id == agent_id:
+                    matches.append((host_ref, agent_ref))
+            except ValueError:
+                try:
+                    agent_name = AgentName(identifier)
+                except ValueError:
+                    continue
+                if agent_ref.agent_name == agent_name:
+                    matches.append((host_ref, agent_ref))
+    return matches
+
+
+@pure
+def _find_matching_hosts(
+    identifier: str,
+    all_hosts: Sequence[DiscoveredHost],
+) -> list[DiscoveredHost]:
+    """Find all hosts matching the given identifier (by ID or name)."""
+    # Try as ID first
+    try:
+        host_id = HostId(identifier)
+        return [h for h in all_hosts if h.host_id == host_id]
+    except ValueError:
+        pass
+
+    # Try as name
+    try:
+        host_name = HostName(identifier)
+    except ValueError:
+        return []
+    return [h for h in all_hosts if h.host_name == host_name]
 
 
 def resolve_file_target(
@@ -151,35 +190,31 @@ def resolve_file_target(
 
     all_hosts = list(agents_by_host.keys())
 
-    # Try agent resolution -- only suppress "not found" errors, re-raise everything else
-    agent_result: tuple[DiscoveredHost, DiscoveredAgent] | None = None
-    try:
-        agent_result = resolve_agent_reference(
-            agent_identifier=target_identifier,
-            resolved_host=None,
-            agents_by_host=agents_by_host,
-        )
-    except UserInputError as err:
-        if _is_not_found_error(err):
-            logger.trace("Agent lookup did not find {}: {}", target_identifier, err)
-        else:
-            raise
+    # Find all matching agents and hosts
+    matching_agents = _find_matching_agents(target_identifier, agents_by_host)
+    matching_hosts = _find_matching_hosts(target_identifier, all_hosts)
 
-    # Try host resolution -- only suppress "not found" errors, re-raise everything else
-    host_result: DiscoveredHost | None = None
-    try:
-        host_result = resolve_host_reference(
-            host_identifier=target_identifier,
-            all_hosts=all_hosts,
+    # Check for ambiguity within each type
+    if len(matching_agents) > 1:
+        raise UserInputError(
+            f"Multiple agents found matching '{target_identifier}'. "
+            f"Use the full agent ID to disambiguate.\n\n"
+            f"To see all agent IDs, run:\n"
+            f"  mng list --fields id,name,host"
         )
-    except UserInputError as err:
-        if _is_not_found_error(err):
-            logger.trace("Host lookup did not find {}: {}", target_identifier, err)
-        else:
-            raise
+    if len(matching_hosts) > 1:
+        raise UserInputError(
+            f"Multiple hosts found matching '{target_identifier}'. "
+            f"Use the full host ID to disambiguate.\n\n"
+            f"To see all IDs, run:\n"
+            f"  mng list --fields id,name,host"
+        )
 
-    # Check for ambiguity
-    if agent_result is not None and host_result is not None:
+    has_agent_match = len(matching_agents) == 1
+    has_host_match = len(matching_hosts) == 1
+
+    # Check for cross-type ambiguity
+    if has_agent_match and has_host_match:
         raise UserInputError(
             f"'{target_identifier}' matches both an agent and a host. "
             f"Use the full ID to disambiguate.\n\n"
@@ -188,14 +223,14 @@ def resolve_file_target(
         )
 
     # Neither matched
-    if agent_result is None and host_result is None:
+    if not has_agent_match and not has_host_match:
         raise UserInputError(
             f"No agent or host found matching: {target_identifier}\n\nTo see available agents, run:\n  mng list"
         )
 
     # Agent matched
-    if agent_result is not None:
-        discovered_host, discovered_agent = agent_result
+    if has_agent_match:
+        discovered_host, discovered_agent = matching_agents[0]
         return _resolve_agent_target(
             discovered_host=discovered_host,
             discovered_agent=discovered_agent,
@@ -204,14 +239,14 @@ def resolve_file_target(
         )
 
     # Host matched
-    assert host_result is not None
+    discovered_host = matching_hosts[0]
     if relative_to != PathRelativeTo.HOST and relative_to != PathRelativeTo.WORK:
         raise UserInputError(
             f"--relative-to {relative_to.value.lower()} is only valid for agent targets. "
             f"Host targets always use MNG_HOST_DIR as the base path."
         )
     return _resolve_host_target(
-        discovered_host=host_result,
+        discovered_host=discovered_host,
         mng_ctx=mng_ctx,
     )
 

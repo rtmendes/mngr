@@ -97,16 +97,17 @@ def file_get(ctx: click.Context, **kwargs: Any) -> None:
             relative_to=relative_to,
         )
 
-    full_path = resolve_full_path(resolved.base_path, opts.path)
-
     # Read file -- prefer online host, fall back to volume
     with log_span("Reading file"):
         if resolved.is_online:
+            full_path = resolve_full_path(resolved.base_path, opts.path)
             content = resolved.host.read_file(full_path)
+            display_path = full_path
         else:
             assert resolved.volume is not None
             vol_path = compute_volume_path(relative_to, resolved.agent_id, opts.path)
             content = resolved.volume.read_file(vol_path)
+            display_path = Path(vol_path)
 
     # Output
     if opts.output is not None:
@@ -114,4 +115,4 @@ def file_get(ctx: click.Context, **kwargs: Any) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(content)
     else:
-        _emit_get_result(full_path, content, output_opts)
+        _emit_get_result(display_path, content, output_opts)

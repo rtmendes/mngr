@@ -61,11 +61,7 @@ _HEADER_LABELS: Final[dict[str, str]] = {
     "permissions": "PERMISSIONS",
 }
 
-# find -printf format: name\tsize\tmodified\ttype-char\tpermissions\tpath
-# %f = filename, %s = size, %T+ = mod time, %y = type char, %M = symbolic permissions, %p = full path
-_FIND_FORMAT: Final[str] = r"%f\t%s\t%T+\t%y\t%M\t%p\n"
-
-_FILE_TYPE_BY_FIND_CHAR: Final[dict[str, FileType]] = {
+_FILE_TYPE_BY_STAT_CHAR: Final[dict[str, FileType]] = {
     "f": FileType.FILE,
     "d": FileType.DIRECTORY,
     "l": FileType.SYMLINK,
@@ -74,6 +70,46 @@ _FILE_TYPE_BY_FIND_CHAR: Final[dict[str, FileType]] = {
     "b": FileType.BLOCK,
     "c": FileType.CHARACTER,
 }
+
+# Cross-platform Python script for listing files. Outputs tab-separated lines:
+# name\tsize\tmodified_iso\ttype_char\tpermissions_octal\tfull_path
+# Works on both macOS and Linux since it uses Python's os/stat modules.
+_LIST_SCRIPT: Final[str] = """
+import os, stat, sys
+from datetime import datetime, timezone
+
+d = sys.argv[1]
+is_recursive = sys.argv[2] == '1'
+
+def emit(path):
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return
+    name = os.path.basename(path)
+    if name == '.' or name == '':
+        return
+    mode = st.st_mode
+    if stat.S_ISDIR(mode): tc = 'd'
+    elif stat.S_ISLNK(mode): tc = 'l'
+    elif stat.S_ISREG(mode): tc = 'f'
+    elif stat.S_ISFIFO(mode): tc = 'p'
+    elif stat.S_ISSOCK(mode): tc = 's'
+    elif stat.S_ISBLK(mode): tc = 'b'
+    elif stat.S_ISCHR(mode): tc = 'c'
+    else: tc = '?'
+    mtime = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat()
+    perms = stat.filemode(mode)
+    sys.stdout.write(f'{name}\\t{st.st_size}\\t{mtime}\\t{tc}\\t{perms}\\t{path}\\n')
+
+if is_recursive:
+    for root, dirs, files in os.walk(d):
+        for name in dirs + files:
+            emit(os.path.join(root, name))
+else:
+    for name in os.listdir(d):
+        emit(os.path.join(d, name))
+"""
 
 
 class _FileListCliOptions(CommonCliOptions):
@@ -87,20 +123,19 @@ class _FileListCliOptions(CommonCliOptions):
 
 
 @pure
-def _parse_find_output_line(line: str) -> FileEntry | None:
-    """Parse a single line of find -printf output into a FileEntry."""
+def _parse_list_output_line(line: str) -> FileEntry | None:
+    """Parse a single tab-separated line from the list script output."""
     parts = line.split("\t", 5)
     if len(parts) != 6:
-        logger.trace("Skipping malformed find output line: {}", line)
+        logger.trace("Skipping malformed list output line: {}", line)
         return None
 
     name, size_str, modified, type_char, permissions, full_path = parts
 
-    # Skip the root directory entry itself
-    if name == ".":
+    if name == "." or name == "":
         return None
 
-    file_type = _FILE_TYPE_BY_FIND_CHAR.get(type_char, FileType.OTHER)
+    file_type = _FILE_TYPE_BY_STAT_CHAR.get(type_char, FileType.OTHER)
 
     parsed_size: int | None = None
     if file_type != FileType.DIRECTORY:
@@ -120,11 +155,11 @@ def _parse_find_output_line(line: str) -> FileEntry | None:
 
 
 @pure
-def parse_find_output(output: str) -> list[FileEntry]:
-    """Parse the output of find -printf into a list of FileEntry objects."""
+def parse_list_output(output: str) -> list[FileEntry]:
+    """Parse the tab-separated output from the list script into FileEntry objects."""
     entries: list[FileEntry] = []
     for line in output.strip().splitlines():
-        entry = _parse_find_output_line(line)
+        entry = _parse_list_output_line(line)
         if entry is not None:
             entries.append(entry)
     return entries
@@ -135,13 +170,11 @@ def list_files_on_host(
     directory: Path,
     is_recursive: bool,
 ) -> list[FileEntry]:
-    """List files in a directory on a remote host using find."""
+    """List files in a directory on a remote host using a cross-platform Python script."""
     quoted_dir = shlex.quote(str(directory))
+    is_recursive_flag = "1" if is_recursive else "0"
 
-    if is_recursive:
-        command = f"find {quoted_dir} -printf {shlex.quote(_FIND_FORMAT)}"
-    else:
-        command = f"find {quoted_dir} -maxdepth 1 -printf {shlex.quote(_FIND_FORMAT)}"
+    command = f"python3 -c {shlex.quote(_LIST_SCRIPT)} {quoted_dir} {is_recursive_flag}"
 
     with log_span("Listing files on host"):
         result = host.execute_command(command, timeout_seconds=30.0)
@@ -149,7 +182,7 @@ def list_files_on_host(
     if not result.success:
         raise MngError(f"Failed to list files at {directory}: {result.stderr}")
 
-    return parse_find_output(result.stdout)
+    return parse_list_output(result.stdout)
 
 
 def _list_volume_directory(
