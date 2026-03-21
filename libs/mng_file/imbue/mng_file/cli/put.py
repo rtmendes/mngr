@@ -15,6 +15,7 @@ from imbue.mng.cli.output_helpers import emit_final_json
 from imbue.mng.cli.output_helpers import write_human_line
 from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import OutputOptions
+from imbue.mng.errors import UserInputError
 from imbue.mng.primitives import OutputFormat
 from imbue.mng_file.cli.group import file_group
 from imbue.mng_file.cli.target import compute_volume_path
@@ -109,6 +110,13 @@ def file_put(ctx: click.Context, **kwargs: Any) -> None:
     # Read content
     if opts.input is not None:
         content = Path(opts.input).read_bytes()
+    elif sys.stdin.isatty():
+        raise UserInputError(
+            "No input provided. Either pipe data to stdin or use --input to specify a file.\n\n"
+            "Examples:\n"
+            "  echo 'hello' | mng file put my-agent file.txt\n"
+            "  mng file put my-agent file.txt --input local-file.txt"
+        )
     else:
         content = sys.stdin.buffer.read()
 
