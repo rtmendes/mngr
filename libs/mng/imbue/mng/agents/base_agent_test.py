@@ -1301,7 +1301,13 @@ def _create_failing_agent(
     temp_mng_ctx: MngContext,
     fail_count: int,
 ) -> _FailingAgent:
-    """Create a _FailingAgent with a stub host."""
+    """Create a _FailingAgent with a stub host and instant retry (no sleep).
+
+    Patches the tenacity wait strategy to wait_none() so tests run in
+    milliseconds instead of sleeping 2 seconds per retry.
+    """
+    from tenacity import wait_none
+
     stub = _StubHost()
     agent = _FailingAgent.model_construct(
         id=AgentId.generate(),
@@ -1318,6 +1324,8 @@ def _create_failing_agent(
     agent._fail_count = fail_count
     agent._send_attempts = 0
     agent._clear_input_calls = 0
+    # Eliminate tenacity wait so tests run instantly
+    agent.send_message.retry.wait = wait_none()
     return agent
 
 
@@ -1376,10 +1384,10 @@ def test_send_message_raises_after_max_attempts(
 # =========================================================================
 
 
-def test_clear_input_sends_ctrl_c(
+def test_clear_input_sends_ctrl_c_and_sleeps_when_no_tui_indicator(
     temp_mng_ctx: MngContext,
 ) -> None:
-    """clear_input should send Ctrl-C via tmux to the agent's pane."""
+    """clear_input should send Ctrl-C then remote-sleep when no TUI indicator is set."""
     stub = _StubHost()
     agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
 
@@ -1390,3 +1398,58 @@ def test_clear_input_sends_ctrl_c(
     assert "C-c" in stub.executed_commands[0]
     assert "send-keys" in stub.executed_commands[0]
     assert "sleep" in stub.executed_commands[1]
+
+
+class _TuiIndicatorStubHost(_StubHost):
+    """Stub host that returns configurable pane content for capture."""
+
+    def __init__(
+        self,
+        pane_content: str,
+        command_results: list[CommandResult] | None = None,
+    ) -> None:
+        super().__init__(command_results=command_results)
+        self.pane_content = pane_content
+
+
+class _TuiIndicatorAgent(BaseAgent):
+    """Agent with a configurable TUI ready indicator for testing clear_input."""
+
+    _tui_indicator: str | None = None
+
+    def get_tui_ready_indicator(self) -> str | None:
+        return self._tui_indicator
+
+
+def test_clear_input_polls_for_tui_indicator_when_configured(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """clear_input should poll for TUI indicator instead of sleeping when configured."""
+    stub = _StubHost(
+        command_results=[
+            CommandResult(success=True, stdout="", stderr=""),
+            CommandResult(success=True, stdout="ready> \n", stderr=""),
+        ]
+    )
+    agent = _TuiIndicatorAgent.model_construct(
+        id=AgentId.generate(),
+        name=AgentName("tui-agent"),
+        agent_type=AgentTypeName("test"),
+        work_dir=Path("/tmp/stub-work"),
+        create_time=datetime.now(timezone.utc),
+        host_id=HostId.generate(),
+        host=stub,
+        mng_ctx=temp_mng_ctx,
+        agent_config=AgentTypeConfig(command=CommandString("sleep 1000")),
+    )
+    agent._tui_indicator = "ready>"
+
+    agent.clear_input()
+
+    # First command is C-c, second is capture-pane (from poll_until checking pane content)
+    assert len(stub.executed_commands) >= 2
+    assert "C-c" in stub.executed_commands[0]
+    assert "send-keys" in stub.executed_commands[0]
+    # Should NOT have a remote sleep command (used polling instead)
+    sleep_commands = [cmd for cmd in stub.executed_commands if cmd.startswith("sleep")]
+    assert len(sleep_commands) == 0

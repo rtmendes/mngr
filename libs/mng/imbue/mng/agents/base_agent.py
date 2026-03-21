@@ -353,10 +353,15 @@ class BaseAgent(AgentInterface[AgentConfigT]):
 
             tui_indicator = self.get_tui_ready_indicator()
             if tui_indicator is not None:
-                poll_until(
+                if not poll_until(
                     lambda: self._check_pane_contains(self.tmux_target, tui_indicator),
                     timeout=_CLEAR_INPUT_SETTLE_SECONDS,
-                )
+                ):
+                    logger.warning(
+                        "TUI ready indicator '{}' not found after Ctrl-C (waited {:.1f}s)",
+                        tui_indicator,
+                        _CLEAR_INPUT_SETTLE_SECONDS,
+                    )
             else:
                 self.host.execute_command(
                     f"sleep {_CLEAR_INPUT_SETTLE_SECONDS}",
