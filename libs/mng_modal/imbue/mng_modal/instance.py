@@ -2562,9 +2562,13 @@ log "=== Shutdown script completed ==="
 
                 # Collect all data in one SSH command
                 with trace_span("Collecting listing data for {}", host_ref.host_id, _is_trace_span_enabled=False):
-                    raw = self._collect_all_listing_data_via_ssh(host)
-                    if raw is None:
-                        return super().get_host_and_agent_details(host_ref, agent_refs, field_generators, on_error)
+                    try:
+                        raw = self._collect_all_listing_data_via_ssh(host)
+                    except MngError as e:
+                        if on_error:
+                            on_error(host_ref, e)
+                        else:
+                            raise
             except HostConnectionError as e:
                 logger.debug(
                     "Host {} unreachable during optimized listing, falling back to default: {}",
@@ -2584,7 +2588,7 @@ log "=== Shutdown script completed ==="
 
             return host_details, agent_details_list
 
-    def _collect_all_listing_data_via_ssh(self, host: Host) -> dict[str, Any] | None:
+    def _collect_all_listing_data_via_ssh(self, host: Host) -> dict[str, Any]:
         """Execute a single SSH command to collect all data needed for listing."""
         host_dir = str(self.host_dir)
         prefix = self.mng_ctx.config.prefix
@@ -2596,8 +2600,7 @@ log "=== Shutdown script completed ==="
             result = host.execute_command(script, timeout_seconds=30.0)
 
         if not result.success:
-            logger.warning("Failed to collect listing data from host {}: {}", host.id, result.stderr)
-            return None
+            raise MngError(f"Failed to collect listing data from host {host.id}: {result.stdout}\n{result.stderr}")
 
         return _parse_listing_collection_output(result.stdout)
 
