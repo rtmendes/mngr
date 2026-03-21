@@ -73,6 +73,14 @@ def _is_agent_match(
         return str(agent_ref.agent_name) == identifier
 
 
+def _safe_host_identifier(identifier: str) -> HostId | HostName:
+    """Convert a string to HostId or HostName, falling back to HostName if HostId construction fails."""
+    try:
+        return HostId(identifier)
+    except ValueError:
+        return HostName(identifier)
+
+
 def _resolve_agent_target(
     identifier: str,
     agents_by_host: dict[DiscoveredHost, list[DiscoveredAgent]],
@@ -95,16 +103,14 @@ def _resolve_agent_target(
             f"Multiple agents found with name '{identifier}': {agent_list}. Use the agent ID instead."
         )
     else:
-        pass
-
-    host_ref, agent_ref = matching[0]
-    provider = get_provider_instance(host_ref.provider_name, mng_ctx)
-    return ResolvedTarget(
-        target=WaitTarget(identifier=identifier, target_type=WaitTargetType.AGENT),
-        provider=provider,
-        host_id=host_ref.host_id,
-        agent_id=agent_ref.agent_id,
-    )
+        host_ref, agent_ref = matching[0]
+        provider = get_provider_instance(host_ref.provider_name, mng_ctx)
+        return ResolvedTarget(
+            target=WaitTarget(identifier=identifier, target_type=WaitTargetType.AGENT),
+            provider=provider,
+            host_id=host_ref.host_id,
+            agent_id=agent_ref.agent_id,
+        )
 
 
 def _is_host_match(
@@ -137,21 +143,19 @@ def _resolve_host_target(
             matching.append(host_ref)
 
     if not matching:
-        raise HostNotFoundError(HostId(identifier) if is_host_id else HostName(identifier))
+        raise HostNotFoundError(_safe_host_identifier(identifier))
     elif len(matching) > 1:
         host_list = ", ".join(str(h.host_id) for h in matching)
         raise UserInputError(f"Multiple hosts found with name '{identifier}': {host_list}. Use the host ID instead.")
     else:
-        pass
-
-    host_ref = matching[0]
-    provider = get_provider_instance(host_ref.provider_name, mng_ctx)
-    return ResolvedTarget(
-        target=WaitTarget(identifier=identifier, target_type=WaitTargetType.HOST),
-        provider=provider,
-        host_id=host_ref.host_id,
-        agent_id=None,
-    )
+        host_ref = matching[0]
+        provider = get_provider_instance(host_ref.provider_name, mng_ctx)
+        return ResolvedTarget(
+            target=WaitTarget(identifier=identifier, target_type=WaitTargetType.HOST),
+            provider=provider,
+            host_id=host_ref.host_id,
+            agent_id=None,
+        )
 
 
 def _resolve_by_name(
@@ -187,15 +191,14 @@ def _resolve_by_name(
                 f"Multiple agents found with name '{identifier}': {agent_list}. Use the agent ID instead."
             )
         else:
-            pass
-        host_ref, agent_ref = agent_matches[0]
-        provider = get_provider_instance(host_ref.provider_name, mng_ctx)
-        return ResolvedTarget(
-            target=WaitTarget(identifier=identifier, target_type=WaitTargetType.AGENT),
-            provider=provider,
-            host_id=host_ref.host_id,
-            agent_id=agent_ref.agent_id,
-        )
+            host_ref, agent_ref = agent_matches[0]
+            provider = get_provider_instance(host_ref.provider_name, mng_ctx)
+            return ResolvedTarget(
+                target=WaitTarget(identifier=identifier, target_type=WaitTargetType.AGENT),
+                provider=provider,
+                host_id=host_ref.host_id,
+                agent_id=agent_ref.agent_id,
+            )
     elif host_matches:
         if len(host_matches) > 1:
             host_list = ", ".join(str(h.host_id) for h in host_matches)
@@ -203,15 +206,14 @@ def _resolve_by_name(
                 f"Multiple hosts found with name '{identifier}': {host_list}. Use the host ID instead."
             )
         else:
-            pass
-        host_ref = host_matches[0]
-        provider = get_provider_instance(host_ref.provider_name, mng_ctx)
-        return ResolvedTarget(
-            target=WaitTarget(identifier=identifier, target_type=WaitTargetType.HOST),
-            provider=provider,
-            host_id=host_ref.host_id,
-            agent_id=None,
-        )
+            host_ref = host_matches[0]
+            provider = get_provider_instance(host_ref.provider_name, mng_ctx)
+            return ResolvedTarget(
+                target=WaitTarget(identifier=identifier, target_type=WaitTargetType.HOST),
+                provider=provider,
+                host_id=host_ref.host_id,
+                agent_id=None,
+            )
     else:
         raise UserInputError(
             f"No agent or host found with name or ID: '{identifier}'. "

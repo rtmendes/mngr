@@ -1,6 +1,8 @@
 import pytest
 
 from imbue.mng.config.data_types import MngContext
+from imbue.mng.errors import AgentNotFoundError
+from imbue.mng.errors import HostNotFoundError
 from imbue.mng.errors import UserInputError
 from imbue.mng.primitives import AgentId
 from imbue.mng.primitives import AgentLifecycleState
@@ -17,11 +19,33 @@ from imbue.mng_wait.api import _is_host_match
 from imbue.mng_wait.api import _resolve_agent_target
 from imbue.mng_wait.api import _resolve_by_name
 from imbue.mng_wait.api import _resolve_host_target
+from imbue.mng_wait.api import _safe_host_identifier
 from imbue.mng_wait.api import wait_for_state
 from imbue.mng_wait.data_types import StateChange
 from imbue.mng_wait.data_types import StateSnapshot
 from imbue.mng_wait.data_types import WaitTarget
 from imbue.mng_wait.primitives import WaitTargetType
+
+# === _safe_host_identifier ===
+
+
+def test_safe_host_identifier_returns_host_id_for_valid_uuid() -> None:
+    valid_host_id = HostId.generate()
+    result = _safe_host_identifier(str(valid_host_id))
+    assert isinstance(result, HostId)
+    assert result == valid_host_id
+
+
+def test_safe_host_identifier_returns_host_name_for_invalid_uuid() -> None:
+    result = _safe_host_identifier("host-myserver")
+    assert isinstance(result, HostName)
+    assert str(result) == "host-myserver"
+
+
+def test_safe_host_identifier_returns_host_name_for_plain_name() -> None:
+    result = _safe_host_identifier("my-host")
+    assert isinstance(result, HostName)
+
 
 # === _is_agent_match ===
 
@@ -342,9 +366,8 @@ def test_resolve_agent_target_finds_agent_by_id(temp_mng_ctx: MngContext) -> Non
 
 def test_resolve_agent_target_raises_when_not_found(temp_mng_ctx: MngContext) -> None:
     agents_by_host, _host_ref, _agent_ref = _make_agents_by_host()
-    # Use a valid AgentId format that doesn't match any existing agent
     nonexistent_agent_id = str(AgentId.generate())
-    with pytest.raises(Exception, match="not found"):
+    with pytest.raises(AgentNotFoundError):
         _resolve_agent_target(nonexistent_agent_id, agents_by_host, temp_mng_ctx)
 
 
@@ -361,10 +384,16 @@ def test_resolve_host_target_finds_host_by_id(temp_mng_ctx: MngContext) -> None:
 
 def test_resolve_host_target_raises_when_not_found(temp_mng_ctx: MngContext) -> None:
     agents_by_host, _host_ref, _agent_ref = _make_agents_by_host()
-    # Use a valid HostId format that doesn't match any existing host
     nonexistent_host_id = str(HostId.generate())
-    with pytest.raises(Exception, match="not found"):
+    with pytest.raises(HostNotFoundError):
         _resolve_host_target(nonexistent_host_id, agents_by_host, temp_mng_ctx)
+
+
+def test_resolve_host_target_raises_host_not_found_for_invalid_id_format(temp_mng_ctx: MngContext) -> None:
+    """Ensure that a host-prefixed identifier with an invalid UUID format raises HostNotFoundError, not InvalidRandomIdError."""
+    agents_by_host, _host_ref, _agent_ref = _make_agents_by_host()
+    with pytest.raises(HostNotFoundError):
+        _resolve_host_target("host-myserver", agents_by_host, temp_mng_ctx)
 
 
 # === wait_for_state ===
