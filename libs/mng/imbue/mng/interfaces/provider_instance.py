@@ -18,11 +18,9 @@ from imbue.concurrency_group.executor import ConcurrencyGroupExecutor
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import AgentNotFoundOnHostError
-from imbue.mng.errors import BaseMngError
 from imbue.mng.errors import HostAuthenticationError
 from imbue.mng.errors import HostConnectionError
 from imbue.mng.errors import MngError
-from imbue.mng.hosts.common import compute_idle_seconds
 from imbue.mng.interfaces.agent import AgentInterface
 from imbue.mng.interfaces.data_types import AgentDetails
 from imbue.mng.interfaces.data_types import HostDetails
@@ -50,6 +48,22 @@ from imbue.mng.primitives import SnapshotId
 from imbue.mng.primitives import SnapshotName
 from imbue.mng.primitives import VolumeId
 from imbue.mng.utils.name_generator import generate_host_name
+
+
+def _compute_idle_seconds(
+    user_activity: datetime | None,
+    agent_activity: datetime | None,
+    ssh_activity: datetime | None,
+) -> float | None:
+    """Compute idle seconds from the most recent activity time."""
+    latest_activity: datetime | None = None
+    for activity_time in (user_activity, agent_activity, ssh_activity):
+        if activity_time is not None:
+            if latest_activity is None or activity_time > latest_activity:
+                latest_activity = activity_time
+    if latest_activity is None:
+        return None
+    return (datetime.now(timezone.utc) - latest_activity).total_seconds()
 
 
 def _build_host_details_from_host(
@@ -143,7 +157,7 @@ def _build_agent_details_from_online_agent(
     runtime_seconds = (now - start_time).total_seconds() if start_time else None
 
     # idle_seconds: include host-level ssh_activity; 0.0 if no activity yet
-    idle_seconds = compute_idle_seconds(user_activity, agent_activity, ssh_activity) or 0.0
+    idle_seconds = _compute_idle_seconds(user_activity, agent_activity, ssh_activity) or 0.0
 
     # Compute plugin-specific fields from field generators
     plugin_data: dict[str, Any] = {}
@@ -458,7 +472,7 @@ class ProviderInstanceInterface(MutableModel, ABC):
                     agent_details = _build_agent_details_from_offline_ref(agent_ref, host_details)
 
                 agent_details_list.append(agent_details)
-            except (MngError, BaseMngError) as e:
+            except MngError as e:
                 if on_agent_error is not None:
                     on_agent_error(agent_ref, e)
                     # callback didn't raise, skip this agent
