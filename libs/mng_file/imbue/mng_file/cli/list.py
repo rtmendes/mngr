@@ -1,5 +1,6 @@
 import json
 import shlex
+from collections import deque
 from collections.abc import Sequence
 from datetime import datetime
 from datetime import timezone
@@ -72,7 +73,7 @@ _FILE_TYPE_BY_STAT_CHAR: Final[dict[str, FileType]] = {
 }
 
 # Cross-platform Python script for listing files. Outputs tab-separated lines:
-# name\tsize\tmodified_iso\ttype_char\tpermissions_octal\tfull_path
+# name\tsize\tmodified_iso\ttype_char\tpermissions_str\tfull_path
 # Works on both macOS and Linux since it uses Python's os/stat modules.
 _LIST_SCRIPT: Final[str] = """
 import os, stat, sys
@@ -234,10 +235,10 @@ def list_files_on_volume(
     if not is_recursive:
         return entries
 
-    # Recurse into subdirectories
-    directories_to_visit = [e.path for e in entries if e.file_type == FileType.DIRECTORY]
+    # Recurse into subdirectories via BFS
+    directories_to_visit = deque(e.path for e in entries if e.file_type == FileType.DIRECTORY)
     while directories_to_visit:
-        subdir_path = directories_to_visit.pop(0)
+        subdir_path = directories_to_visit.popleft()
         sub_entries = _list_volume_directory(volume, subdir_path)
         entries.extend(sub_entries)
         directories_to_visit.extend(e.path for e in sub_entries if e.file_type == FileType.DIRECTORY)
