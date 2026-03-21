@@ -14,10 +14,6 @@ from typing import Sequence
 
 from loguru import logger
 from pydantic import Field
-from tenacity import retry
-from tenacity import retry_if_exception_type
-from tenacity import stop_after_attempt
-from tenacity import wait_fixed
 
 from imbue.imbue_common.logging import log_span
 from imbue.mng.config.data_types import MngContext
@@ -48,15 +44,6 @@ _CAPTURE_PANE_TIMEOUT_SECONDS: Final[float] = 5.0
 # Note that this does need to be fairly long, since it can take a little while for the machine to respond if you're unlucky
 # this is *especially* the case when running on modal, when really overloading the machine while it is starting, etc
 _DEFAULT_ENTER_SUBMISSION_WAIT_FOR_TIMEOUT_SECONDS: Final[float] = 20.0
-
-# How long to wait after sending Ctrl-C to let the TUI recover before retrying
-_CLEAR_INPUT_SETTLE_SECONDS: Final[float] = 3.0
-
-# Maximum number of send_message retry attempts (including the initial attempt)
-_SEND_MESSAGE_MAX_ATTEMPTS: Final[int] = 3
-
-# How long to wait between send_message retries (after clear_input settles)
-_SEND_MESSAGE_RETRY_WAIT_SECONDS: Final[float] = 2.0
 
 # Compiled once for _normalize_for_match performance
 _NON_ALNUM_RE: Final[re.Pattern[str]] = re.compile(r"[^a-z0-9]")
@@ -298,12 +285,8 @@ class BaseAgent(AgentInterface[AgentConfigT]):
         """Send a message to the running agent.
 
         Runs preflight checks (e.g., dialog detection) first -- errors from
-        preflight are NOT retried since they indicate a condition that won't
-        resolve by resending (e.g., a blocking dialog).
-
-        The actual send is retried on SendMessageError up to
-        _SEND_MESSAGE_MAX_ATTEMPTS times, with clear_input() called before
-        each retry to clear any garbled input in the TUI.
+        preflight indicate a condition that won't resolve by resending (e.g.,
+        a blocking dialog).
 
         For agents that echo input to the terminal (like Claude Code), uses a
         paste-detection approach to ensure the message is fully received before
@@ -314,68 +297,10 @@ class BaseAgent(AgentInterface[AgentConfigT]):
         """
         with log_span("Sending message to agent {} (length={})", self.name, len(message)):
             self._preflight_send_message(self.tmux_target)
-            self._send_message_with_retry(message)
-
-    @retry(
-        retry=retry_if_exception_type(SendMessageError),
-        stop=stop_after_attempt(_SEND_MESSAGE_MAX_ATTEMPTS),
-        wait=wait_fixed(_SEND_MESSAGE_RETRY_WAIT_SECONDS),
-        reraise=True,
-        before_sleep=lambda retry_state: retry_state.args[0]._on_send_message_retry(retry_state),
-    )
-    def _send_message_with_retry(self, message: str) -> None:
-        """Inner send with tenacity retry on SendMessageError.
-
-        Preflight checks are intentionally excluded from retry scope -- they
-        detect conditions (e.g., blocking dialogs) that won't resolve by
-        simply retrying the send.
-        """
-        if self.uses_paste_detection_send():
-            self._send_message_with_paste_detection(self.tmux_target, message)
-        else:
-            self._send_message_simple(self.tmux_target, message)
-
-    def _on_send_message_retry(self, retry_state: Any) -> None:
-        """Called before each send_message retry to clear garbled input."""
-        attempt = retry_state.attempt_number
-        logger.warning(
-            "send_message failed on attempt {}, clearing input before retry: {}",
-            attempt,
-            retry_state.outcome.exception(),
-        )
-        self.clear_input()
-
-    def clear_input(self) -> None:
-        """Clear any garbled input in the TUI before retrying a send.
-
-        Sends Ctrl-C to the tmux pane to interrupt any partial input, then
-        waits for the TUI to settle. If a TUI ready indicator is configured,
-        polls for it. Otherwise, uses a remote sleep to allow the TUI to
-        recover.
-
-        Subclasses can override this to provide agent-specific input clearing
-        behavior.
-        """
-        with log_span("Clearing input for agent {}", self.name):
-            cmd = f"tmux send-keys -t '{self.tmux_target}' C-c"
-            self.host.execute_command(cmd)
-
-            tui_indicator = self.get_tui_ready_indicator()
-            if tui_indicator is not None:
-                if not poll_until(
-                    lambda: self._check_pane_contains(self.tmux_target, tui_indicator),
-                    timeout=_CLEAR_INPUT_SETTLE_SECONDS,
-                ):
-                    logger.warning(
-                        "TUI ready indicator '{}' not found after Ctrl-C (waited {:.1f}s)",
-                        tui_indicator,
-                        _CLEAR_INPUT_SETTLE_SECONDS,
-                    )
+            if self.uses_paste_detection_send():
+                self._send_message_with_paste_detection(self.tmux_target, message)
             else:
-                self.host.execute_command(
-                    f"sleep {_CLEAR_INPUT_SETTLE_SECONDS}",
-                    timeout_seconds=_CLEAR_INPUT_SETTLE_SECONDS + 5.0,
-                )
+                self._send_message_simple(self.tmux_target, message)
 
     def uses_paste_detection_send(self) -> bool:
         """Return True to use paste-detection synchronization for send_message.
