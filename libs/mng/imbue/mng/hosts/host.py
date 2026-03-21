@@ -763,6 +763,10 @@ class Host(BaseHost, OnlineHostInterface):
             return CertifiedHostData(**data)
         except FileNotFoundError:
             now = datetime.now(timezone.utc)
+            # FIXME: this is suss--we should probably just explode if data.json is missing
+            #  It just means that the host is not yet properly initialized
+            #  For hosts that are currently being created, that's fine, but otherwise this should count as a busted host
+            #  Annoyingly we'll need to understand the difference (by checking to see if, eg, this host is locked)
             return CertifiedHostData(
                 host_id=str(self.id),
                 host_name=str(self.get_name()),

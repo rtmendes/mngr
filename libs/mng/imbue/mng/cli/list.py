@@ -1445,6 +1445,7 @@ def _write_unfiltered_full_snapshot(mng_ctx: MngContext, error_behavior: ErrorBe
         mng_ctx=mng_ctx,
         is_streaming=False,
         error_behavior=error_behavior,
+        reset_caches=True,
     )
 
 

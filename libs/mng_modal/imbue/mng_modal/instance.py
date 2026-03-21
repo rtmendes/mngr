@@ -3,6 +3,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future
@@ -563,6 +564,10 @@ class ModalProviderInstance(BaseProviderInstance):
     _host_record_cache_by_id: dict[HostId, HostRecord] = PrivateAttr(default_factory=dict)
     # a reference to the ssh process, just in case we ever need it (and to prevent it from being garbage collected)
     _ssh_process: ExecProcess | None = PrivateAttr(default=None)
+    # a list of *all* currently running sandboxes for this app
+    _full_sandbox_list_cache: list[SandboxInterface] | None = PrivateAttr(default=None)
+    # FIXME: this should be used to protect access to *all* of our cache variables, not just _full_sandbox_list_cache
+    _cache_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     config: ModalProviderConfig = Field(frozen=True, description="Modal provider configuration")
     modal_app: ModalProviderApp = Field(frozen=True, description="Modal app manager")
@@ -1534,6 +1539,18 @@ log "=== Shutdown script completed ==="
         """
         return self.modal_app.get_captured_output()
 
+    def _list_all_sandboxes_for_app(self, app: AppInterface) -> list[SandboxInterface]:
+        """
+        Caches the list of all sandboxes currently running for this app so that we're not constantly polling modal
+
+        Because this is cached, you MUST call reset_caches() if you want to see a new sandbox come online.
+        """
+        with self._cache_lock:
+            if self._full_sandbox_list_cache is not None:
+                return self._full_sandbox_list_cache
+            self._full_sandbox_list_cache = self._modal_interface.sandbox_list(app_id=app.get_app_id())
+            return self._full_sandbox_list_cache
+
     def _lookup_sandbox_by_host_id_once(self, host_id: HostId) -> SandboxInterface | None:
         """Perform a single lookup of a sandbox by host_id tag.
 
@@ -1548,7 +1565,7 @@ log "=== Shutdown script completed ==="
         #     for sandbox in self._modal_interface.sandbox_list(app_id=app.get_app_id(), tags={TAG_HOST_ID: str(host_id)}):
         #         return sandbox
         #     return None
-        for sandbox in self._modal_interface.sandbox_list(app_id=app.get_app_id()):
+        for sandbox in self._list_all_sandboxes_for_app(app):
             if sandbox.get_tags().get(TAG_HOST_ID) == str(host_id):
                 return sandbox
         return None
@@ -1575,12 +1592,14 @@ log "=== Shutdown script completed ==="
     def reset_caches(self) -> None:
         """Reset all caches on this instance.
 
-        This is primarily used for test isolation to ensure a clean state between tests.
+        This is primarily used for "list --stream", where we need to actually see new data, and for
+        test isolation to ensure a clean state between tests
         """
         self._sandbox_cache_by_id.clear()
         self._sandbox_cache_by_name.clear()
         self._host_by_id_cache.clear()
         self._host_record_cache_by_id.clear()
+        self._full_sandbox_list_cache.clear()
 
     def _find_sandbox_by_host_id(
         self, host_id: HostId, timeout: float = 5.0, poll_interval: float = 1.0
@@ -1600,7 +1619,7 @@ log "=== Shutdown script completed ==="
         app = self._get_modal_app()
         # FOLLOWUP: Same Modal tag-filtering bug as _lookup_sandbox_by_host_id_once.
         # Once fixed, this should use tags={TAG_HOST_NAME: str(name)} in sandbox_list.
-        for sandbox in self._modal_interface.sandbox_list(app_id=app.get_app_id()):
+        for sandbox in self._list_all_sandboxes_for_app(app):
             if sandbox.get_tags().get(TAG_HOST_NAME) == str(name):
                 return sandbox
         return None
@@ -1638,7 +1657,7 @@ log "=== Shutdown script completed ==="
         """
         app = self._get_modal_app()
         sandboxes: list[SandboxInterface] = []
-        for sandbox in self._modal_interface.sandbox_list(app_id=app.get_app_id()):
+        for sandbox in self._list_all_sandboxes_for_app(app):
             tags = sandbox.get_tags()
             if TAG_HOST_ID in tags:
                 sandboxes.append(sandbox)
@@ -2372,7 +2391,7 @@ log "=== Shutdown script completed ==="
         with log_span("Listing running sandbox host IDs for app={}", self.app_name):
             app = self._get_modal_app()
             with log_span("Listing sandboxes from Modal API (app_id={})", app.get_app_id()):
-                sandboxes = self._modal_interface.sandbox_list(app_id=app.get_app_id())
+                sandboxes = self._list_all_sandboxes_for_app(app)
             logger.debug("Found {} sandbox(es) for app={}", len(sandboxes), self.app_name)
 
             if not sandboxes:

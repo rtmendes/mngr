@@ -153,6 +153,9 @@ def list_agents(
     on_agent: Callable[[AgentDetails], None] | None = None,
     # Optional callback invoked immediately when each error is encountered (for streaming)
     on_error: Callable[[ErrorInfo], None] | None = None,
+    # whether to force the providers to refresh their caches and get new data. Only needed if calling this multiple
+    # times within the same process
+    reset_caches: bool = False,
 ) -> ListResult:
     """List all agents with optional filtering."""
     result = ListResult()
@@ -193,6 +196,7 @@ def list_agents(
                 params=params,
                 result=result,
                 results_lock=results_lock,
+                reset_caches=reset_caches,
             )
         else:
             # Batch mode: load all agents first, then process
@@ -202,6 +206,7 @@ def list_agents(
                 params=params,
                 result=result,
                 results_lock=results_lock,
+                reset_caches=reset_caches,
             )
 
     except MngError as e:
@@ -251,10 +256,13 @@ def _list_agents_batch(
     params: _ListAgentsParams,
     result: ListResult,
     results_lock: Lock,
+    reset_caches: bool = False,
 ) -> None:
     """Batch mode: load all agents from all providers, then process hosts."""
     with log_span("Loading agents from all providers"):
-        agents_by_host, providers = discover_all_hosts_and_agents(mng_ctx, provider_names, include_destroyed=True)
+        agents_by_host, providers = discover_all_hosts_and_agents(
+            mng_ctx, provider_names, include_destroyed=True, reset_caches=reset_caches
+        )
     provider_map = {provider.name: provider for provider in providers}
     logger.trace("Found {} hosts with agents", len(agents_by_host))
 
@@ -302,13 +310,14 @@ def _list_agents_streaming(
     params: _ListAgentsParams,
     result: ListResult,
     results_lock: Lock,
+    reset_caches: bool = False,
 ) -> None:
     """Streaming mode: each provider loads and processes hosts independently.
 
     Fast providers fire on_agent callbacks while slow providers are still loading.
     """
     with log_span("Loading agents from all providers (streaming)"):
-        providers = get_all_provider_instances(mng_ctx, provider_names)
+        providers = get_all_provider_instances(mng_ctx, provider_names, reset_caches=reset_caches)
         logger.trace("Found {} provider instances", len(providers))
 
         with ConcurrencyGroupExecutor(
@@ -437,8 +446,8 @@ def _build_host_details_from_host(
         name=host_name,
         provider_name=host_ref.provider_name,
         state=host.get_state() if not is_authentication_failure else HostState.UNAUTHENTICATED,
-        image=host.get_image(),
-        tags=host.get_tags(),
+        image=certified_data.image,
+        tags={**certified_data.user_tags},
         boot_time=boot_time,
         uptime_seconds=uptime_seconds,
         resource=resource,
@@ -448,7 +457,7 @@ def _build_host_details_from_host(
         locked_time=locked_time,
         plugin=host_plugin_data,
         ssh_activity_time=ssh_activity,
-        failure_reason=host.get_failure_reason(),
+        failure_reason=certified_data.failure_reason,
     )
     return host_details, ssh_activity
 

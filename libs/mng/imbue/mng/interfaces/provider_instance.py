@@ -88,6 +88,13 @@ class ProviderInstanceInterface(MutableModel, ABC):
         """
         ...
 
+    @abstractmethod
+    def reset_caches(self) -> None:
+        """Reset any internal caches held by this provider instance.
+
+        Use this if you want to ensure that the provider fetches fresh data from the underlying infrastructure on the next operation."""
+        ...
+
     # =========================================================================
     # Core Lifecycle Methods
     # =========================================================================

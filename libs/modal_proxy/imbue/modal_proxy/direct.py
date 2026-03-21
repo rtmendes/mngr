@@ -22,7 +22,6 @@ import modal
 import modal.exception
 from grpclib.exceptions import ProtocolError
 from grpclib.exceptions import StreamTerminatedError
-from loguru import logger
 from modal.stream_type import StreamType as ModalStreamType
 from modal.volume import FileEntryType as ModalFileEntryType
 from pydantic import ConfigDict
@@ -465,7 +464,6 @@ class DirectModalInterface(ModalInterface):
 
     @_translate_exceptions
     def sandbox_list(self, *, app_id: str) -> list[SandboxInterface]:
-        logger.error(f"Listing sandboxes for app_id={app_id}")
         return [DirectSandbox.model_construct(sandbox=sb) for sb in modal.Sandbox.list(app_id=app_id)]
 
     @_translate_exceptions
