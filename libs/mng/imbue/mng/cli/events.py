@@ -176,7 +176,6 @@ Press Ctrl+C to stop.""",
     see_also=(
         ("list", "List available agents"),
         ("exec", "Execute commands on an agent's host"),
-        ("file", "Read arbitrary files from an agent or host"),
     ),
 ).register()
 

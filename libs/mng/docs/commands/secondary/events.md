@@ -72,7 +72,6 @@ mng events [OPTIONS] TARGET [SOURCES]...
 
 - [mng list](../primary/list.md) - List available agents
 - [mng exec](../primary/exec.md) - Execute commands on an agent's host
-- [mng file](mng file) - Read arbitrary files from an agent or host
 
 ## Examples
 
