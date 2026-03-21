@@ -10,9 +10,6 @@ EXIT_CODE_SUCCESS: Final[int] = 0
 EXIT_CODE_ERROR: Final[int] = 1
 EXIT_CODE_TIMEOUT: Final[int] = 2
 
-# Default poll interval in seconds
-DEFAULT_POLL_INTERVAL_SECONDS: Final[float] = 5.0
-
 
 class WaitTargetType(UpperCaseStrEnum):
     """Whether the wait target is an agent or a host."""

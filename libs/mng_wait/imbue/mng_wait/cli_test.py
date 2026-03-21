@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import HostState
@@ -41,7 +45,7 @@ def _make_timed_out_result() -> WaitResult:
     )
 
 
-def test_emit_state_change_human_format() -> None:
+def test_emit_state_change_human_format(capsys: pytest.CaptureFixture[str]) -> None:
     change = StateChange(
         field="agent_state",
         old_value="RUNNING",
@@ -49,9 +53,12 @@ def test_emit_state_change_human_format() -> None:
         elapsed_seconds=5.0,
     )
     _emit_state_change(change, OutputFormat.HUMAN)
+    out = capsys.readouterr().out
+    assert "agent_state changed: RUNNING -> WAITING" in out
+    assert "5.0s" in out
 
 
-def test_emit_state_change_jsonl_format() -> None:
+def test_emit_state_change_jsonl_format(capsys: pytest.CaptureFixture[str]) -> None:
     change = StateChange(
         field="host_state",
         old_value="RUNNING",
@@ -59,9 +66,15 @@ def test_emit_state_change_jsonl_format() -> None:
         elapsed_seconds=10.0,
     )
     _emit_state_change(change, OutputFormat.JSONL)
+    out = capsys.readouterr().out
+    parsed = json.loads(out.strip())
+    assert parsed["event"] == "state_change"
+    assert parsed["field"] == "host_state"
+    assert parsed["old_value"] == "RUNNING"
+    assert parsed["new_value"] == "STOPPED"
 
 
-def test_emit_state_change_json_format_is_silent() -> None:
+def test_emit_state_change_json_format_produces_no_output(capsys: pytest.CaptureFixture[str]) -> None:
     change = StateChange(
         field="agent_state",
         old_value="RUNNING",
@@ -69,9 +82,11 @@ def test_emit_state_change_json_format_is_silent() -> None:
         elapsed_seconds=3.0,
     )
     _emit_state_change(change, OutputFormat.JSON)
+    out = capsys.readouterr().out
+    assert out == ""
 
 
-def test_output_result_matched_human() -> None:
+def test_output_result_matched_human_shows_target_and_state(capsys: pytest.CaptureFixture[str]) -> None:
     result = _make_matched_result()
     output_opts = OutputOptions(
         output_format=OutputFormat.HUMAN,
@@ -79,9 +94,13 @@ def test_output_result_matched_human() -> None:
         is_quiet=False,
     )
     _output_result(result, output_opts)
+    out = capsys.readouterr().out
+    assert "test-agent" in out
+    assert "DONE" in out
+    assert "5.0s" in out
 
 
-def test_output_result_timed_out_human() -> None:
+def test_output_result_timed_out_human_shows_timeout(capsys: pytest.CaptureFixture[str]) -> None:
     result = _make_timed_out_result()
     output_opts = OutputOptions(
         output_format=OutputFormat.HUMAN,
@@ -89,9 +108,12 @@ def test_output_result_timed_out_human() -> None:
         is_quiet=False,
     )
     _output_result(result, output_opts)
+    out = capsys.readouterr().out
+    assert "Timed out" in out
+    assert "test-agent" in out
 
 
-def test_output_result_json_format() -> None:
+def test_output_result_json_format_emits_valid_json(capsys: pytest.CaptureFixture[str]) -> None:
     result = _make_matched_result()
     output_opts = OutputOptions(
         output_format=OutputFormat.JSON,
@@ -99,9 +121,16 @@ def test_output_result_json_format() -> None:
         is_quiet=False,
     )
     _output_result(result, output_opts)
+    out = capsys.readouterr().out
+    parsed = json.loads(out.strip())
+    assert parsed["target"] == "test-agent"
+    assert parsed["is_matched"] is True
+    assert parsed["matched_state"] == "DONE"
+    assert parsed["final_host_state"] == "RUNNING"
+    assert parsed["final_agent_state"] == "DONE"
 
 
-def test_output_result_jsonl_format() -> None:
+def test_output_result_jsonl_format_emits_event(capsys: pytest.CaptureFixture[str]) -> None:
     result = _make_matched_result()
     output_opts = OutputOptions(
         output_format=OutputFormat.JSONL,
@@ -109,9 +138,14 @@ def test_output_result_jsonl_format() -> None:
         is_quiet=False,
     )
     _output_result(result, output_opts)
+    out = capsys.readouterr().out
+    parsed = json.loads(out.strip())
+    assert parsed["event"] == "result"
+    assert parsed["target"] == "test-agent"
+    assert parsed["is_matched"] is True
 
 
-def test_output_result_unmatched_not_timed_out() -> None:
+def test_output_result_unmatched_not_timed_out(capsys: pytest.CaptureFixture[str]) -> None:
     result = WaitResult(
         target=WaitTarget(identifier="test-host", target_type=WaitTargetType.HOST),
         is_matched=False,
@@ -127,3 +161,6 @@ def test_output_result_unmatched_not_timed_out() -> None:
         is_quiet=False,
     )
     _output_result(result, output_opts)
+    out = capsys.readouterr().out
+    assert "without match" in out
+    assert "test-host" in out

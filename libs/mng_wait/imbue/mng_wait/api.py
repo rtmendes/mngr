@@ -164,13 +164,13 @@ def _resolve_by_name(
     agent_matches: list[tuple[DiscoveredHost, DiscoveredAgent]] = []
     for host_ref, agent_refs in agents_by_host.items():
         for agent_ref in agent_refs:
-            if str(agent_ref.agent_name) == identifier:
+            if _is_agent_match(agent_ref, identifier, is_agent_id=False):
                 agent_matches.append((host_ref, agent_ref))
 
     # Collect host matches
     host_matches: list[DiscoveredHost] = []
     for host_ref in agents_by_host.keys():
-        if str(host_ref.host_name) == identifier:
+        if _is_host_match(host_ref, identifier, is_host_id=False):
             host_matches.append(host_ref)
 
     # If both match, it's ambiguous
@@ -274,7 +274,7 @@ def wait_for_state(
         try:
             current_snapshot = poll_target_state(resolved)
         except Exception as exc:
-            logger.debug("Polling error: {}", exc)
+            logger.warning("Polling error (will retry): {}", exc)
             current_snapshot = StateSnapshot()
 
         # Detect and log state changes
