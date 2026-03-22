@@ -465,6 +465,7 @@ def _is_modal_sandbox_timeout_text(text: str) -> bool:
     return "ModalSandboxTimeoutMngError" in text or "SandboxTimeoutError" in text
 
 
+# FOLLOWUP: this is jank--we should design a more principled way of retrying various types of errors.
 def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> bool | None:
     """Retry acceptance/release tests that fail due to transient Modal sandbox timeouts.
 
