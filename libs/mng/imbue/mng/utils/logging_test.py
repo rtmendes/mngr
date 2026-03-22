@@ -7,7 +7,6 @@ import sys
 import types
 from pathlib import Path
 
-import paramiko.transport
 import pytest
 from loguru import logger
 
@@ -26,6 +25,7 @@ from imbue.mng.utils.logging import RESET_COLOR
 from imbue.mng.utils.logging import WARNING_COLOR
 from imbue.mng.utils.logging import _ParamikoToLoguruHandler
 from imbue.mng.utils.logging import _format_user_message
+from imbue.mng.utils.logging import _patched_transport_log
 from imbue.mng.utils.logging import _resolve_log_dir
 from imbue.mng.utils.logging import remove_console_handlers
 from imbue.mng.utils.logging import setup_logging
@@ -645,7 +645,8 @@ def test_paramiko_transport_log_patch_joins_list_messages() -> None:
         transport_self = types.SimpleNamespace(
             logger=logging.getLogger("paramiko.transport"),
         )
-        paramiko.transport.Transport._log(transport_self, logging.ERROR, traceback_lines)
+        # Call the patched function directly (it accepts self: Any)
+        _patched_transport_log(transport_self, logging.ERROR, traceback_lines)
 
         # The patch should join the list into one record (not 4 separate ones)
         paramiko_messages = [m for m in messages if "[paramiko]" in m]
