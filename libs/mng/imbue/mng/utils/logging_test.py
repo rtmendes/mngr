@@ -2,6 +2,7 @@
 
 import io
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from imbue.mng.utils.logging import LoggingConfig
 from imbue.mng.utils.logging import LoggingSuppressor
 from imbue.mng.utils.logging import RESET_COLOR
 from imbue.mng.utils.logging import WARNING_COLOR
+from imbue.mng.utils.logging import _ParamikoToLoguruHandler
 from imbue.mng.utils.logging import _format_user_message
 from imbue.mng.utils.logging import _resolve_log_dir
 from imbue.mng.utils.logging import remove_console_handlers
@@ -480,3 +482,93 @@ def test_setup_logging_writes_to_current_stderr_after_stream_replacement(
         assert "dynamic sink regression test message" in captured_output
     finally:
         sys.stderr = original_stderr
+
+
+# =============================================================================
+# Tests for _ParamikoToLoguruHandler
+# =============================================================================
+
+
+def _emit_paramiko_record(handler: _ParamikoToLoguruHandler, message: str, level: int) -> None:
+    """Create and emit a logging record through the paramiko handler."""
+    record = logging.LogRecord(
+        name="paramiko.transport",
+        level=level,
+        pathname="transport.py",
+        lineno=2288,
+        msg=message,
+        args=(),
+        exc_info=None,
+    )
+    handler.emit(record)
+
+
+def test_paramiko_handler_routes_ssh_banner_error_to_debug() -> None:
+    """Expected SSH connection errors should be routed to debug level."""
+    handler = _ParamikoToLoguruHandler()
+    messages: list[str] = []
+    handler_id = logger.add(lambda msg: messages.append(msg), level="DEBUG")
+    try:
+        _emit_paramiko_record(handler, "Exception (client): Error reading SSH protocol banner", logging.ERROR)
+        assert any("[paramiko]" in m and "Exception (client)" in m for m in messages)
+    finally:
+        logger.remove(handler_id)
+
+
+def test_paramiko_handler_routes_socket_exception_to_debug() -> None:
+    handler = _ParamikoToLoguruHandler()
+    messages: list[str] = []
+    handler_id = logger.add(lambda msg: messages.append(msg), level="DEBUG")
+    try:
+        _emit_paramiko_record(handler, "Socket exception: Connection refused (111)", logging.ERROR)
+        assert any("[paramiko]" in m and "Socket exception" in m for m in messages)
+    finally:
+        logger.remove(handler_id)
+
+
+def test_paramiko_handler_routes_unknown_error_to_warning() -> None:
+    """Unexpected paramiko errors should remain visible at warning level."""
+    handler = _ParamikoToLoguruHandler()
+    messages: list[str] = []
+    handler_id = logger.add(lambda msg: messages.append(msg), level="WARNING")
+    try:
+        _emit_paramiko_record(handler, "Something completely unexpected happened", logging.ERROR)
+        assert any("[paramiko]" in m and "unexpected" in m for m in messages)
+    finally:
+        logger.remove(handler_id)
+
+
+def test_paramiko_handler_routes_warning_level_to_debug() -> None:
+    handler = _ParamikoToLoguruHandler()
+    messages: list[str] = []
+    handler_id = logger.add(lambda msg: messages.append(msg), level="DEBUG")
+    try:
+        _emit_paramiko_record(handler, "Some paramiko warning", logging.WARNING)
+        assert any("[paramiko]" in m and "warning" in m for m in messages)
+    finally:
+        logger.remove(handler_id)
+
+
+def test_paramiko_handler_routes_debug_level_to_trace() -> None:
+    handler = _ParamikoToLoguruHandler()
+    messages: list[str] = []
+    handler_id = logger.add(lambda msg: messages.append(msg), level="TRACE")
+    try:
+        _emit_paramiko_record(handler, "starting thread (client mode)", logging.DEBUG)
+        assert any("[paramiko]" in m and "starting thread" in m for m in messages)
+    finally:
+        logger.remove(handler_id)
+
+
+def test_paramiko_handler_routes_traceback_lines_to_debug() -> None:
+    """Traceback lines following an expected error should also go to debug."""
+    handler = _ParamikoToLoguruHandler()
+    messages: list[str] = []
+    handler_id = logger.add(lambda msg: messages.append(msg), level="DEBUG")
+    try:
+        _emit_paramiko_record(handler, "Traceback (most recent call last):", logging.ERROR)
+        _emit_paramiko_record(handler, '  File "/path/to/transport.py", line 42, in run', logging.ERROR)
+        _emit_paramiko_record(handler, "paramiko.ssh_exception.SSHException: banner error", logging.ERROR)
+        assert len([m for m in messages if "[paramiko]" in m]) == 3
+    finally:
+        logger.remove(handler_id)
