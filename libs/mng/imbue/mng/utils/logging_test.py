@@ -4,8 +4,11 @@ import io
 import json
 import logging
 import sys
+import threading
 import types
 from pathlib import Path
+from typing import Any
+from typing import cast
 
 import pytest
 from loguru import logger
@@ -25,6 +28,8 @@ from imbue.mng.utils.logging import RESET_COLOR
 from imbue.mng.utils.logging import WARNING_COLOR
 from imbue.mng.utils.logging import _ParamikoToLoguruHandler
 from imbue.mng.utils.logging import _format_user_message
+from imbue.mng.utils.logging import _is_paramiko_thread_exception
+from imbue.mng.utils.logging import _paramiko_threading_excepthook
 from imbue.mng.utils.logging import _patched_transport_log
 from imbue.mng.utils.logging import _resolve_log_dir
 from imbue.mng.utils.logging import remove_console_handlers
@@ -655,3 +660,79 @@ def test_paramiko_transport_log_patch_joins_list_messages() -> None:
         assert "banner" in paramiko_messages[0]
     finally:
         logger.remove(handler_id)
+
+
+# =============================================================================
+# Tests for paramiko threading.excepthook
+# =============================================================================
+
+
+def _make_paramiko_excepthook_args() -> threading.ExceptHookArgs:
+    import paramiko.channel
+
+    try:
+        cast(Any, paramiko.channel.Channel._send)(None, b"test", None)
+    except (AttributeError, TypeError, OSError) as e:
+        return threading.ExceptHookArgs((type(e), e, e.__traceback__, threading.current_thread()))
+    raise AssertionError("should not reach here")
+
+
+def _make_non_paramiko_excepthook_args() -> threading.ExceptHookArgs:
+    try:
+        raise RuntimeError("not paramiko")
+    except RuntimeError as e:
+        return threading.ExceptHookArgs((type(e), e, e.__traceback__, threading.current_thread()))
+    raise AssertionError("should not reach here")
+
+
+def test_is_paramiko_thread_exception_detects_paramiko_path() -> None:
+    """_is_paramiko_thread_exception returns True for paramiko frames."""
+    args = _make_paramiko_excepthook_args()
+    assert _is_paramiko_thread_exception(args)
+
+
+def test_is_paramiko_thread_exception_rejects_non_paramiko_path() -> None:
+    """_is_paramiko_thread_exception returns False for non-paramiko frames."""
+    args = _make_non_paramiko_excepthook_args()
+    assert not _is_paramiko_thread_exception(args)
+
+
+def test_paramiko_threading_excepthook_routes_to_debug() -> None:
+    """Paramiko thread exceptions should be logged at debug, not printed to stderr."""
+    args = _make_paramiko_excepthook_args()
+
+    messages: list[str] = []
+    handler_id = logger.add(lambda msg: messages.append(msg), level="DEBUG")
+    try:
+        _paramiko_threading_excepthook(args)
+        paramiko_messages = [m for m in messages if "[paramiko]" in m]
+        assert len(paramiko_messages) == 1
+        assert "Unhandled exception in thread" in paramiko_messages[0]
+    finally:
+        logger.remove(handler_id)
+
+
+def test_paramiko_threading_excepthook_forwards_non_paramiko() -> None:
+    """Non-paramiko thread exceptions should be forwarded to the original hook."""
+    args = _make_non_paramiko_excepthook_args()
+
+    forwarded: list[threading.ExceptHookArgs] = []
+    original_hook = mng_logging_module._original_threading_excepthook
+    mng_logging_module._original_threading_excepthook = lambda a: forwarded.append(a)
+    try:
+        _paramiko_threading_excepthook(args)
+        assert len(forwarded) == 1
+    finally:
+        mng_logging_module._original_threading_excepthook = original_hook
+
+
+def test_suppress_warnings_installs_threading_excepthook() -> None:
+    """suppress_warnings should install the paramiko threading excepthook."""
+    mng_logging_module._IS_THREADING_EXCEPTHOOK_INSTALLED["installed"] = False
+    original = threading.excepthook
+    try:
+        suppress_warnings()
+        assert threading.excepthook is _paramiko_threading_excepthook
+    finally:
+        threading.excepthook = original
+        mng_logging_module._IS_THREADING_EXCEPTHOOK_INSTALLED["installed"] = False
