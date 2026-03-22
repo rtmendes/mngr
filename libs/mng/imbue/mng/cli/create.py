@@ -200,7 +200,7 @@ class _CreateCommand(click.Command):
 @optgroup.option(
     "--name-style",
     type=click.Choice(_make_name_style_choices(), case_sensitive=False),
-    default="english",
+    default="coolname",
     show_default=True,
     help="Auto-generated name style",
 )
@@ -237,7 +237,7 @@ class _CreateCommand(click.Command):
 @optgroup.option(
     "--host-name-style",
     type=click.Choice(_make_host_name_style_choices(), case_sensitive=False),
-    default="astronomy",
+    default="coolname",
     show_default=True,
     help="Auto-generated host name style",
 )

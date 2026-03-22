@@ -855,7 +855,7 @@ class NewHostOptions(FrozenModel):
         description="Name for the new host (None means use provider default or auto-generate)",
     )
     name_style: HostNameStyle = Field(
-        default=HostNameStyle.ASTRONOMY,
+        default=HostNameStyle.COOLNAME,
         description="Style for auto-generated host name (used when name is None and provider has no default)",
     )
     tags: dict[str, str] = Field(
