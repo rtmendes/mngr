@@ -6,6 +6,7 @@ import logging
 import sys
 from pathlib import Path
 
+import pytest
 from loguru import logger
 
 import imbue.mng.utils.logging as mng_logging_module
@@ -503,25 +504,72 @@ def _emit_paramiko_record(handler: _ParamikoToLoguruHandler, message: str, level
     handler.emit(record)
 
 
-def test_paramiko_handler_routes_ssh_banner_error_to_debug() -> None:
-    """Expected SSH connection errors should be routed to debug level."""
+@pytest.mark.parametrize(
+    "message, input_level, expected_substring, sink_level",
+    [
+        pytest.param(
+            "Exception (client): Error reading SSH protocol banner",
+            logging.ERROR,
+            "Exception (client)",
+            "DEBUG",
+            id="ssh_banner_error_to_debug",
+        ),
+        pytest.param(
+            "Socket exception: Connection refused (111)",
+            logging.ERROR,
+            "Socket exception",
+            "DEBUG",
+            id="socket_exception_to_debug",
+        ),
+        pytest.param(
+            "EOF in transport thread",
+            logging.ERROR,
+            "EOF in transport",
+            "DEBUG",
+            id="eof_to_debug",
+        ),
+        pytest.param(
+            "Traceback (most recent call last):",
+            logging.ERROR,
+            "Traceback",
+            "DEBUG",
+            id="traceback_line_to_debug",
+        ),
+        pytest.param(
+            "paramiko.ssh_exception.SSHException: banner error",
+            logging.ERROR,
+            "paramiko.",
+            "DEBUG",
+            id="paramiko_exception_line_to_debug",
+        ),
+        pytest.param(
+            "Some paramiko warning",
+            logging.WARNING,
+            "warning",
+            "DEBUG",
+            id="warning_level_to_debug",
+        ),
+        pytest.param(
+            "starting thread (client mode)",
+            logging.DEBUG,
+            "starting thread",
+            "TRACE",
+            id="debug_level_to_trace",
+        ),
+    ],
+)
+def test_paramiko_handler_routes_expected_messages(
+    message: str,
+    input_level: int,
+    expected_substring: str,
+    sink_level: str,
+) -> None:
     handler = _ParamikoToLoguruHandler()
     messages: list[str] = []
-    handler_id = logger.add(lambda msg: messages.append(msg), level="DEBUG")
+    handler_id = logger.add(lambda msg: messages.append(msg), level=sink_level)
     try:
-        _emit_paramiko_record(handler, "Exception (client): Error reading SSH protocol banner", logging.ERROR)
-        assert any("[paramiko]" in m and "Exception (client)" in m for m in messages)
-    finally:
-        logger.remove(handler_id)
-
-
-def test_paramiko_handler_routes_socket_exception_to_debug() -> None:
-    handler = _ParamikoToLoguruHandler()
-    messages: list[str] = []
-    handler_id = logger.add(lambda msg: messages.append(msg), level="DEBUG")
-    try:
-        _emit_paramiko_record(handler, "Socket exception: Connection refused (111)", logging.ERROR)
-        assert any("[paramiko]" in m and "Socket exception" in m for m in messages)
+        _emit_paramiko_record(handler, message, input_level)
+        assert any("[paramiko]" in m and expected_substring in m for m in messages)
     finally:
         logger.remove(handler_id)
 
@@ -538,37 +586,13 @@ def test_paramiko_handler_routes_unknown_error_to_warning() -> None:
         logger.remove(handler_id)
 
 
-def test_paramiko_handler_routes_warning_level_to_debug() -> None:
+def test_paramiko_handler_expected_errors_not_routed_to_warning() -> None:
+    """Expected connection errors should NOT appear at warning level."""
     handler = _ParamikoToLoguruHandler()
     messages: list[str] = []
-    handler_id = logger.add(lambda msg: messages.append(msg), level="DEBUG")
+    handler_id = logger.add(lambda msg: messages.append(msg), level="WARNING")
     try:
-        _emit_paramiko_record(handler, "Some paramiko warning", logging.WARNING)
-        assert any("[paramiko]" in m and "warning" in m for m in messages)
-    finally:
-        logger.remove(handler_id)
-
-
-def test_paramiko_handler_routes_debug_level_to_trace() -> None:
-    handler = _ParamikoToLoguruHandler()
-    messages: list[str] = []
-    handler_id = logger.add(lambda msg: messages.append(msg), level="TRACE")
-    try:
-        _emit_paramiko_record(handler, "starting thread (client mode)", logging.DEBUG)
-        assert any("[paramiko]" in m and "starting thread" in m for m in messages)
-    finally:
-        logger.remove(handler_id)
-
-
-def test_paramiko_handler_routes_traceback_lines_to_debug() -> None:
-    """Traceback lines following an expected error should also go to debug."""
-    handler = _ParamikoToLoguruHandler()
-    messages: list[str] = []
-    handler_id = logger.add(lambda msg: messages.append(msg), level="DEBUG")
-    try:
-        _emit_paramiko_record(handler, "Traceback (most recent call last):", logging.ERROR)
-        _emit_paramiko_record(handler, '  File "/path/to/transport.py", line 42, in run', logging.ERROR)
-        _emit_paramiko_record(handler, "paramiko.ssh_exception.SSHException: banner error", logging.ERROR)
-        assert len([m for m in messages if "[paramiko]" in m]) == 3
+        _emit_paramiko_record(handler, "Exception (client): Error reading SSH protocol banner", logging.ERROR)
+        assert not any("[paramiko]" in m for m in messages)
     finally:
         logger.remove(handler_id)
