@@ -6,6 +6,7 @@ import logging
 import sys
 import threading
 import types
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from typing import cast
@@ -730,23 +731,18 @@ def test_threading_excepthook_routes_expected_paramiko_to_debug() -> None:
         logger.remove(handler_id)
 
 
-def test_threading_excepthook_routes_unexpected_paramiko_to_error() -> None:
-    """Unexpected paramiko thread exceptions should be logged at error, not debug."""
-    args = _make_paramiko_unexpected_args()
-
-    messages: list[str] = []
-    handler_id = logger.add(lambda msg: messages.append(msg), level="ERROR")
-    try:
-        _threading_excepthook(args)
-        error_messages = [m for m in messages if "Unhandled exception in thread" in m]
-        assert len(error_messages) == 1
-    finally:
-        logger.remove(handler_id)
-
-
-def test_threading_excepthook_routes_non_paramiko_to_error() -> None:
-    """Non-paramiko thread exceptions should be logged at error level."""
-    args = _make_non_paramiko_args()
+@pytest.mark.parametrize(
+    "make_args",
+    [
+        pytest.param(_make_paramiko_unexpected_args, id="unexpected-paramiko"),
+        pytest.param(_make_non_paramiko_args, id="non-paramiko"),
+    ],
+)
+def test_threading_excepthook_routes_non_expected_exceptions_to_error(
+    make_args: Callable[[], threading.ExceptHookArgs],
+) -> None:
+    """Any thread exception that is not the known paramiko error should be logged at error."""
+    args = make_args()
 
     messages: list[str] = []
     handler_id = logger.add(lambda msg: messages.append(msg), level="ERROR")
