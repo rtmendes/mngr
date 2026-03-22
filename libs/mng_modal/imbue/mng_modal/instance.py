@@ -2603,7 +2603,29 @@ log "=== Shutdown script completed ==="
             result = host.execute_command(script, timeout_seconds=30.0)
 
         if not result.success:
-            raise MngError(f"Failed to collect listing data from host {host.id}: {result.stdout}\n{result.stderr}")
+            try:
+                test_result = host.execute_command("echo hello", timeout_seconds=30.0)
+            except HostConnectionError as e:
+                self.on_connection_error(host.id)
+                logger.debug(
+                    "Host {} unreachable during SSH connection test after listing collection failure: {}",
+                    host.id,
+                    e,
+                )
+                raise HostConnectionError(f"Host {host.id} is unreachable") from e
+            else:
+                if not test_result.success:
+                    logger.debug(
+                        "Host {} SSH connection test failed after listing collection failure: stdout={}, stderr={}",
+                        host.id,
+                        test_result.stdout,
+                        test_result.stderr,
+                    )
+                    raise HostConnectionError(f"Host {host.id} is unreachable (SSH test command failed)")
+                else:
+                    raise MngError(
+                        f"Failed to collect listing data from host {host.id}: {result.stdout}\n{result.stderr}"
+                    )
 
         return _parse_listing_collection_output(result.stdout)
 
