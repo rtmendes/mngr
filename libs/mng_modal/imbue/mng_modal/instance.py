@@ -1111,9 +1111,9 @@ class ModalProviderInstance(BaseProviderInstance):
                 if add_authorized_keys_cmd is not None:
                     setup_parts.append(add_authorized_keys_cmd)
 
-            # Ensure the events/logs directory exists before sshd starts writing to it
-            sshd_log_path = f"{self.host_dir}/events/logs/sshd.log"
-            setup_parts.append(f"mkdir -p '{self.host_dir}/events/logs'")
+            # Ensure the logs directory exists before sshd starts writing to it
+            sshd_log_path = f"{self.host_dir}/logs/sshd.log"
+            setup_parts.append(f"mkdir -p '{self.host_dir}/logs'")
 
             combined_cmd = " && ".join(setup_parts)
             exit_code = sandbox.exec("sh", "-c", combined_cmd).wait()
@@ -1365,7 +1365,7 @@ set -euo pipefail
 # Usage: shutdown.sh [stop_reason]
 #   stop_reason: 'PAUSED' (idle shutdown, default) or 'STOPPED' (user requested)
 
-LOG_FILE="{host_dir_str}/events/logs/shutdown.log"
+LOG_FILE="{host_dir_str}/logs/shutdown.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
 log() {{
@@ -1414,12 +1414,14 @@ log "Agents: $AGENTS"
 {volume_sync_section}# Send the shutdown request with agent data and stop reason
 # Use --max-time to prevent hanging if the endpoint is slow
 log "Sending shutdown request to $SNAPSHOT_URL"
-if ! RESPONSE=$(curl -s --max-time 30 -w "\\n%{{http_code}}" -X POST "$SNAPSHOT_URL" \\
+RESPONSE=$(curl -s --max-time 30 -w "\\n%{{http_code}}" -X POST "$SNAPSHOT_URL" \\
     -H "Content-Type: application/json" \\
-    -d '{{"sandbox_id": "'"$SANDBOX_ID"'", "host_id": "'"$HOST_ID"'", "stop_reason": "'"$STOP_REASON"'", "agents": '"$AGENTS"'}}'); then
-    log "curl request failed"
-    log "=== Shutdown script completed with error ==="
-    exit 1
+    -d '{{"sandbox_id": "'"$SANDBOX_ID"'", "host_id": "'"$HOST_ID"'", "stop_reason": "'"$STOP_REASON"'", "agents": '"$AGENTS"'}}') || CURL_EXIT=$?
+if [ -n "${{CURL_EXIT:-}}" ]; then
+    log "curl request failed with exit code $CURL_EXIT"
+    log "Response (if any): $RESPONSE"
+    log "=== Shutdown script: curl failed, forcing shutdown ==="
+{volume_sync_section}    kill -9 1
 fi
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
