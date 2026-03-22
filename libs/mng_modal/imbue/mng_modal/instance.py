@@ -1703,6 +1703,7 @@ log "=== Shutdown script completed ==="
 
         Returns None if the host record doesn't exist on the volume.
         """
+        # FIXME: technically this method can fail if the sandbox goes offline right then, we should return None and warn here
         tags = sandbox.get_tags()
         host_id, name, user_tags = self._parse_sandbox_tags(tags)
 
@@ -2258,10 +2259,7 @@ log "=== Shutdown script completed ==="
                 sandbox = self._find_sandbox_by_host_id(host)
             if sandbox is not None:
                 with trace_span("Creating host object from sandbox for {}", host, _is_trace_span_enabled=False):
-                    try:
-                        host_obj = self._create_host_from_sandbox(sandbox, host_record)
-                    except HostConnectionError as e:
-                        logger.debug("Failed to create host from sandbox {}, assuming it is offline: {}", host, e)
+                    host_obj = self._create_host_from_sandbox(sandbox, host_record)
 
             if host_obj is None:
                 # No sandbox or couldn't connect - try host record (for stopped hosts)
@@ -2272,10 +2270,7 @@ log "=== Shutdown script completed ==="
             # If it's a HostName, search by name
             sandbox = self._find_sandbox_by_name(host)
             if sandbox is not None:
-                try:
-                    host_obj = self._create_host_from_sandbox(sandbox)
-                except HostConnectionError as e:
-                    logger.debug("Failed to create host from sandbox {}, assuming it is offline: {}", host, e)
+                host_obj = self._create_host_from_sandbox(sandbox)
 
             # No sandbox or couldn't connect - search host records by name (for stopped hosts)
             if host_obj is None:
@@ -2350,6 +2345,9 @@ log "=== Shutdown script completed ==="
                     if host_obj is not None:
                         hosts.append(host_obj)
                 except (KeyError, ValueError, HostConnectionError) as e:
+                    if isinstance(e, HostConnectionError):
+                        # must call on_connection_error when there is a connection error (to properly clear the cache)
+                        self.on_connection_error(host_id)
                     logger.warning("Failed to create host from sandbox {}: {}", host_id, e)
                     continue
             if host_id not in running_sandbox_by_host_id or host_obj is None:
@@ -2395,6 +2393,9 @@ log "=== Shutdown script completed ==="
                 if host_obj is not None:
                     hosts.append(host_obj)
             except (KeyError, ValueError, HostConnectionError) as e:
+                if isinstance(e, HostConnectionError):
+                    # must call on_connection_error when there is a connection error (to properly clear the cache)
+                    self.on_connection_error(host_id)
                 logger.warning("Failed to create host from sandbox {}: {}", host_id, e)
                 continue
 
@@ -2570,6 +2571,8 @@ log "=== Shutdown script completed ==="
                         else:
                             raise
             except HostConnectionError as e:
+                # must call on_connection_error when there is a connection error (to properly clear the cache)
+                self.on_connection_error(host_ref.host_id)
                 logger.debug(
                     "Host {} unreachable during optimized listing, falling back to default: {}",
                     host_ref.host_id,
