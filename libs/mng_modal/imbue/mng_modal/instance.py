@@ -23,6 +23,7 @@ from loguru import logger
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import PrivateAttr
+from pydantic import ValidationError
 from pyinfra.api import Host as PyinfraHost
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
@@ -770,7 +771,10 @@ class ModalProviderInstance(BaseProviderInstance):
 
         try:
             data = volume.read_file(path)
-            host_record = HostRecord.model_validate_json(data)
+            try:
+                host_record = HostRecord.model_validate_json(data)
+            except ValidationError as e:
+                raise MngError(f"Failed to parse host record JSON for host_id={host_id}: {e}\n{data}") from e
             logger.trace("Read host record from volume: {}", path, host_data=data.decode("utf-8"))
             # Cache the result
             self._host_record_cache_by_id[host_id] = host_record
