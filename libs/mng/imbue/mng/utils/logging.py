@@ -264,7 +264,10 @@ class _ParamikoToLoguruHandler(logging.Handler):
             pass
 
 
-_ORIGINAL_TRANSPORT_LOG = paramiko.transport.Transport._log
+# Store the original _log via getattr to break the type checker's connection
+# to the Transport._log method signature (which expects self: Transport).
+# Our patched version accepts self: object so it works in tests too.
+_ORIGINAL_TRANSPORT_LOG: Any = getattr(paramiko.transport.Transport, "_log")
 
 
 def _patched_transport_log(self: object, level: int, msg: object, *args: object) -> None:

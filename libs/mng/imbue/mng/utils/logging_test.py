@@ -6,6 +6,7 @@ import logging
 import sys
 import types
 from pathlib import Path
+from typing import Any
 
 import paramiko.transport
 import pytest
@@ -645,7 +646,9 @@ def test_paramiko_transport_log_patch_joins_list_messages() -> None:
         transport_self = types.SimpleNamespace(
             logger=logging.getLogger("paramiko.transport"),
         )
-        paramiko.transport.Transport._log(transport_self, logging.ERROR, traceback_lines)
+        # Call the patched _log via getattr to avoid type checker complaints about self type
+        patched_log: Any = getattr(paramiko.transport.Transport, "_log")
+        patched_log(transport_self, logging.ERROR, traceback_lines)
 
         # The patch should join the list into one record (not 4 separate ones)
         paramiko_messages = [m for m in messages if "[paramiko]" in m]
