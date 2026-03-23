@@ -76,6 +76,7 @@ Show the user a complete preview of the GitHub issue you would create:
 TITLE: <issue title>
 PRIORITY: <priority:critical|high|medium|low>
 SIZE: <size:xs|s|m|l|xl>
+PROJECT: <project:name> (or comma-separated if multiple)
 LABELS: <other labels, comma-separated>
 ---
 
@@ -87,7 +88,7 @@ Original backlog entry:
 ---
 ```
 
-**Label selection:** Every issue MUST have exactly one priority label and one size label. Add category labels as appropriate.
+**Label selection:** Every issue MUST have exactly one priority label, one size label, and at least one project label. Add category labels as appropriate.
 
 *Priority (required -- exactly one):*
 - `priority:critical` -- Blocking other work or actively broken. Drop everything.
@@ -101,6 +102,12 @@ Original backlog entry:
 - `size:m` -- Medium, a few hours. Some design decisions or multi-file changes.
 - `size:l` -- Large, roughly a day. Significant feature or refactor.
 - `size:xl` -- Extra large, multiple days. Major feature, cross-cutting changes, or exploration needed.
+
+*Project (required -- at least one):*
+
+Every issue must be tagged with the sub-project it belongs to. Use the `project:<name>` labels, which correspond to directories under `apps/` and `libs/`. If an issue spans multiple projects, apply multiple project labels. Determine the correct project by looking at which code the task would touch. If it is truly repo-wide (e.g., CI config, root-level tooling), ask the user which project label to use.
+
+To see the current list of project labels, run: `gh label list --search "project:" --json name --limit 100`
 
 *Category (at least one recommended):*
 - `bug` -- Something is broken or behaving incorrectly.
