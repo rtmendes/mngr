@@ -178,15 +178,10 @@ def _build_agent_prompt(
 
     prompt = f"""Run the test with: {run_cmd}
 
-If the test succeeds, consider whether the test can be improved: are the
-assertions thorough enough? Are there interesting edge cases worth covering?
+# If the test fails
 
-If you make improvements, record a change under the key "IMPROVE_TEST". If you
-identify an improvement that needs a larger-scale intervention, use status
-"BLOCKED". If no improvements are needed, leave the changes object empty.
-
-If the test fails, try to fix it. You can record multiple kinds of changes --
-they are not mutually exclusive (one entry per kind, not per individual edit):
+You can record multiple kinds of changes -- they are not mutually exclusive (one
+entry per kind, not per individual edit):
 
 - "FIX_TEST": fix the test code (including fixtures).
 - "FIX_IMPL": fix the program being tested.
@@ -195,6 +190,16 @@ they are not mutually exclusive (one entry per kind, not per individual edit):
 Each change has a status: "SUCCEEDED" if the fix worked, "FAILED" if you tried
 but could not complete it, or "BLOCKED" if the issue needs larger intervention
 beyond this task. If you cannot determine what is wrong, report no changes.
+
+# If the test succeeds - or after you fixed a failing test
+
+Consider whether the test can be improved: are the
+assertions thorough enough? Are there interesting edge cases worth covering?
+Is the code run in the pytest function close enough to the tutorial block?
+
+If you make improvements, record a change under the key "IMPROVE_TEST". If you
+identify an improvement that needs a larger-scale intervention, use status
+"BLOCKED". If no improvements are needed, leave the changes object empty.
 
 In all cases, write the result to a JSON file at
 $MNG_AGENT_STATE_DIR/plugin/{PLUGIN_NAME}/result.json with this schema:
