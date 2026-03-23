@@ -16,6 +16,7 @@ from imbue.minds.forwarding_server.agent_creator import load_creation_settings
 from imbue.minds.forwarding_server.agent_creator import make_log_callback
 from imbue.minds.primitives import GitBranch
 from imbue.minds.primitives import GitUrl
+from imbue.minds.primitives import LaunchMode
 from imbue.minds.testing import add_and_commit_git_repo
 from imbue.minds.testing import init_and_commit_git_repo
 from imbue.mng.primitives import AgentId
@@ -213,3 +214,25 @@ def test_make_log_callback_puts_lines_into_queue() -> None:
     callback("world\n", False)
     assert log_queue.get_nowait() == "hello"
     assert log_queue.get_nowait() == "world"
+
+
+def test_agent_creator_start_creation_accepts_launch_mode(tmp_path: Path) -> None:
+    """Verify start_creation accepts launch_mode and sets initial CLONING status."""
+    creator = AgentCreator(
+        paths=MindPaths(data_dir=tmp_path / "minds"),
+    )
+    agent_id = creator.start_creation("file:///nonexistent-repo", launch_mode=LaunchMode.DEV)
+    info = creator.get_creation_info(agent_id)
+    assert info is not None
+    assert info.status == AgentCreationStatus.CLONING
+
+
+def test_agent_creator_start_creation_defaults_to_local_mode(tmp_path: Path) -> None:
+    """Verify start_creation defaults to LOCAL launch mode."""
+    creator = AgentCreator(
+        paths=MindPaths(data_dir=tmp_path / "minds"),
+    )
+    # Should not raise -- LOCAL is the default
+    agent_id = creator.start_creation("file:///nonexistent-repo")
+    info = creator.get_creation_info(agent_id)
+    assert info is not None

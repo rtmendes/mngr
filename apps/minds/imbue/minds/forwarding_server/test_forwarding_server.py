@@ -1255,3 +1255,48 @@ def test_creating_page_rejects_unauthenticated(tmp_path: Path) -> None:
 
     response = client.get("/creating/{}".format(AgentId()))
     assert response.status_code == 403
+
+
+def test_create_form_submit_passes_launch_mode(tmp_path: Path) -> None:
+    """POST /create passes launch_mode to the creator."""
+    client, _, _ = _create_test_server_with_agent_creator(tmp_path)
+
+    response = client.post(
+        "/create",
+        data={
+            "git_url": "https://github.com/test/repo",
+            "agent_name": "my-agent",
+            "launch_mode": "DEV",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+
+def test_create_agent_api_passes_launch_mode(tmp_path: Path) -> None:
+    """POST /api/create-agent passes launch_mode to the creator."""
+    client, _, _ = _create_test_server_with_agent_creator(tmp_path)
+
+    response = client.post(
+        "/api/create-agent",
+        json={
+            "git_url": "https://github.com/test/repo",
+            "agent_name": "my-agent",
+            "launch_mode": "DEV",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "agent_id" in data
+
+
+def test_create_form_shows_launch_mode_dropdown(tmp_path: Path) -> None:
+    """GET /create form includes the launch mode dropdown."""
+    client, _, _ = _create_test_server_with_agent_creator(tmp_path)
+
+    response = client.get("/create")
+    assert response.status_code == 200
+    assert "launch_mode" in response.text
+    assert "local" in response.text
+    assert "cloud" in response.text
+    assert "dev" in response.text

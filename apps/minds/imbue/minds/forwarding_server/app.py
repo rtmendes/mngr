@@ -47,6 +47,7 @@ from imbue.minds.forwarding_server.templates import render_creating_page
 from imbue.minds.forwarding_server.templates import render_landing_page
 from imbue.minds.forwarding_server.templates import render_login_page
 from imbue.minds.forwarding_server.templates import render_login_redirect_page
+from imbue.minds.primitives import LaunchMode
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import ServerName
 from imbue.mng.primitives import AgentId
@@ -712,11 +713,12 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
     git_url = str(form.get("git_url", "")).strip()
     agent_name = str(form.get("agent_name", "")).strip()
     branch = str(form.get("branch", "")).strip()
+    launch_mode = LaunchMode(str(form.get("launch_mode", LaunchMode.LOCAL.value)))
     if not git_url:
-        html = render_create_form(git_url="", agent_name=agent_name, branch=branch)
+        html = render_create_form(git_url="", agent_name=agent_name, branch=branch, launch_mode=launch_mode)
         return HTMLResponse(content=html, status_code=400)
 
-    agent_id = agent_creator.start_creation(git_url, agent_name=agent_name, branch=branch)
+    agent_id = agent_creator.start_creation(git_url, agent_name=agent_name, branch=branch, launch_mode=launch_mode)
     return Response(status_code=303, headers={"Location": "/creating/{}".format(agent_id)})
 
 
@@ -757,6 +759,7 @@ async def _handle_create_agent_api(request: Request, auth_store: AuthStoreDep) -
     git_url = str(body.get("git_url", "")).strip()
     agent_name = str(body.get("agent_name", "")).strip()
     branch = str(body.get("branch", "")).strip()
+    launch_mode = LaunchMode(str(body.get("launch_mode", LaunchMode.LOCAL.value)))
     if not git_url:
         return Response(
             status_code=400,
@@ -764,7 +767,7 @@ async def _handle_create_agent_api(request: Request, auth_store: AuthStoreDep) -
             media_type="application/json",
         )
 
-    agent_id = agent_creator.start_creation(git_url, agent_name=agent_name, branch=branch)
+    agent_id = agent_creator.start_creation(git_url, agent_name=agent_name, branch=branch, launch_mode=launch_mode)
     return Response(
         content=json.dumps({"agent_id": str(agent_id), "status": "CLONING"}),
         media_type="application/json",

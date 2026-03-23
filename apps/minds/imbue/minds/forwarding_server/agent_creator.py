@@ -16,6 +16,7 @@ from collections.abc import Callable
 from enum import auto
 from pathlib import Path
 from typing import Final
+from typing import assert_never
 
 from loguru import logger
 from pydantic import Field
@@ -39,6 +40,7 @@ from imbue.minds.forwarding_server.vendor_mng import vendor_repos
 from imbue.minds.primitives import AgentName
 from imbue.minds.primitives import GitBranch
 from imbue.minds.primitives import GitUrl
+from imbue.minds.primitives import LaunchMode
 from imbue.mng.primitives import AgentId
 from imbue.mng_claude_mind.data_types import ClaudeMindSettings
 from imbue.mng_claude_mind.settings import load_settings_from_path
@@ -223,6 +225,86 @@ def run_mng_create(
         )
 
 
+_CONTAINER_SHARED_MOUNT_PATH: Final[str] = "/mnt/shared"
+
+
+def run_mng_create_docker(
+    source_dir: Path,
+    agent_name: AgentName,
+    agent_id: AgentId,
+    agent_type: str,
+    pass_env: tuple[str, ...],
+    shared_dir: Path,
+    on_output: OutputCallback | None = None,
+) -> None:
+    """Create an mng agent in a Docker container.
+
+    Unlike run_mng_create, this does not use --in-place. Instead it uses
+    --provider docker and --source-path so the cloned repo is pushed into
+    a new container. A bind mount maps the host shared directory to
+    /mnt/shared inside the container.
+
+    Raises MngCommandError if the command fails.
+    """
+    shared_dir.mkdir(parents=True, exist_ok=True)
+
+    mng_command: list[str] = [
+        MNG_BINARY,
+        "create",
+        agent_name,
+        "--id",
+        str(agent_id),
+        "--no-connect",
+        "--type",
+        agent_type,
+        "--provider",
+        "docker",
+        "--source-path",
+        str(source_dir),
+        "--env",
+        "ROLE=thinking",
+        "--env",
+        f"MIND_NAME={agent_name}",
+        "--label",
+        f"mind={agent_name}",
+        "--disable-plugin",
+        "ttyd",
+        "--yes",
+        "-s",
+        "-v={}:{}".format(shared_dir, _CONTAINER_SHARED_MOUNT_PATH),
+    ]
+
+    # If the source directory contains a Dockerfile, use it for the build
+    dockerfile_path = source_dir / "Dockerfile"
+    if dockerfile_path.is_file():
+        mng_command.extend(["-b", "--file={}".format(dockerfile_path), "-b", str(source_dir)])
+
+    for env_var in pass_env:
+        mng_command.extend(["--pass-env", env_var])
+
+    # FOLLOWUP: remove --dangerously-skip-permissions
+    mng_command.extend(["--", "--dangerously-skip-permissions"])
+
+    logger.debug("Running: {}", " ".join(mng_command))
+
+    cg = ConcurrencyGroup(name="mng-create-docker")
+    with cg:
+        result = cg.run_process_to_completion(
+            command=mng_command,
+            cwd=source_dir,
+            is_checked_after=False,
+            on_output=on_output,
+        )
+
+    if result.returncode != 0:
+        raise MngCommandError(
+            "mng create (docker) failed (exit code {}):\n{}".format(
+                result.returncode,
+                result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
+            )
+        )
+
+
 class AgentCreator(MutableModel):
     """Creates mng agents in the background from git repositories.
 
@@ -245,7 +327,13 @@ class AgentCreator(MutableModel):
     _log_queues: dict[str, queue.Queue[str]] = PrivateAttr(default_factory=dict)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
-    def start_creation(self, git_url: str, agent_name: str = "", branch: str = "") -> AgentId:
+    def start_creation(
+        self,
+        git_url: str,
+        agent_name: str = "",
+        branch: str = "",
+        launch_mode: LaunchMode = LaunchMode.LOCAL,
+    ) -> AgentId:
         """Start creating an agent from a git URL in a background thread.
 
         Returns the agent ID immediately. Use get_creation_info() to poll status,
@@ -262,7 +350,7 @@ class AgentCreator(MutableModel):
 
         thread = threading.Thread(
             target=self._create_agent_background,
-            args=(agent_id, git_url, effective_name, effective_branch, log_queue),
+            args=(agent_id, git_url, effective_name, effective_branch, log_queue, launch_mode),
             daemon=True,
             name="agent-creator-{}".format(agent_id),
         )
@@ -294,13 +382,14 @@ class AgentCreator(MutableModel):
         agent_name: str,
         branch: str,
         log_queue: queue.Queue[str],
+        launch_mode: LaunchMode,
     ) -> None:
         """Background thread that clones a repo and creates an mng agent."""
         aid = str(agent_id)
         mind_dir = self.paths.mind_dir(agent_id)
         emit_log = make_log_callback(log_queue)
         try:
-            with log_span("Creating agent {} from {}", agent_id, git_url):
+            with log_span("Creating agent {} from {} (mode: {})", agent_id, git_url, launch_mode):
                 self.paths.data_dir.mkdir(parents=True, exist_ok=True)
 
                 log_queue.put("[minds] Cloning {}...".format(git_url))
@@ -328,14 +417,14 @@ class AgentCreator(MutableModel):
                 with self._lock:
                     self._statuses[aid] = AgentCreationStatus.CREATING
 
-                log_queue.put("[minds] Creating agent '{}' (type: {})...".format(agent_name, agent_type))
-                run_mng_create(
+                self._run_create_for_mode(
+                    launch_mode=launch_mode,
                     mind_dir=mind_dir,
                     agent_name=parsed_name,
                     agent_id=agent_id,
                     agent_type=agent_type,
-                    pass_env=self.pass_env,
-                    on_output=emit_log,
+                    log_queue=log_queue,
+                    emit_log=emit_log,
                 )
 
                 log_queue.put("[minds] Agent created successfully.")
@@ -354,3 +443,45 @@ class AgentCreator(MutableModel):
                 shutil.rmtree(mind_dir, ignore_errors=True)
         finally:
             log_queue.put(LOG_SENTINEL)
+
+    def _run_create_for_mode(
+        self,
+        launch_mode: LaunchMode,
+        mind_dir: Path,
+        agent_name: AgentName,
+        agent_id: AgentId,
+        agent_type: str,
+        log_queue: queue.Queue[str],
+        emit_log: OutputCallback,
+    ) -> None:
+        """Dispatch agent creation to the appropriate provider based on launch mode."""
+        match launch_mode:
+            case LaunchMode.DEV:
+                log_queue.put("[minds] Creating agent '{}' (type: {}, mode: dev)...".format(agent_name, agent_type))
+                run_mng_create(
+                    mind_dir=mind_dir,
+                    agent_name=agent_name,
+                    agent_id=agent_id,
+                    agent_type=agent_type,
+                    pass_env=self.pass_env,
+                    on_output=emit_log,
+                )
+            case LaunchMode.LOCAL:
+                log_queue.put("[minds] Creating agent '{}' in Docker (type: {})...".format(agent_name, agent_type))
+                run_mng_create_docker(
+                    source_dir=mind_dir,
+                    agent_name=agent_name,
+                    agent_id=agent_id,
+                    agent_type=agent_type,
+                    pass_env=self.pass_env,
+                    shared_dir=self.paths.shared_dir,
+                    on_output=emit_log,
+                )
+                # The real data lives inside the Docker container, so clean up the
+                # local clone directory immediately.
+                log_queue.put("[minds] Cleaning up local clone directory...")
+                shutil.rmtree(mind_dir, ignore_errors=True)
+            case LaunchMode.CLOUD:
+                raise NotImplementedError("Cloud launch mode is not yet supported")
+            case _ as unreachable:
+                assert_never(unreachable)
