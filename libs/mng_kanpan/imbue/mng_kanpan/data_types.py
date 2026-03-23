@@ -92,9 +92,9 @@ class GitHubData(FrozenModel):
     create_pr_url generation and per-repo prs_loaded tracking.
     """
 
-    pr_by_repo_branch: dict[tuple[str, str], PrInfo] = Field(
+    pr_by_repo_branch: dict[str, dict[str, PrInfo]] = Field(
         default_factory=dict,
-        description="Mapping from (repo_path, branch) to the most relevant PR",
+        description="Nested mapping: repo_path -> branch -> most relevant PR",
     )
     repo_path_by_work_dir: dict[str, str] = Field(
         default_factory=dict,

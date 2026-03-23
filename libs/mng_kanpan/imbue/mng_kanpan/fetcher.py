@@ -119,15 +119,15 @@ def fetch_github_data(mng_ctx: MngContext, agents: list[AgentDetails]) -> GitHub
             logger.debug("Skipping agent {} ({}): no GitHub remote", agent.name, agent.work_dir)
 
     # Fetch PRs once per unique repo.
-    pr_by_repo_branch: dict[tuple[str, str], PrInfo] = {}
+    pr_by_repo_branch: dict[str, dict[str, PrInfo]] = {}
     prs_loaded_repos: set[str] = set()
 
     for repo_path, cwd in cwd_by_repo.items():
         pr_result = fetch_all_prs(cg, cwd=cwd)
         if pr_result.error is None:
             repo_index = _build_pr_branch_index(pr_result.prs)
-            for branch, pr in repo_index.items():
-                pr_by_repo_branch[(repo_path, branch)] = pr
+            if repo_index:
+                pr_by_repo_branch[repo_path] = repo_index
             prs_loaded_repos.add(repo_path)
         else:
             errors.append(pr_result.error)
@@ -425,10 +425,12 @@ def _lookup_pr(remote: GitHubData, agent_repo: str | None, branch: str | None) -
     if not branch:
         return None
     if agent_repo is not None:
-        return remote.pr_by_repo_branch.get((agent_repo, branch))
+        repo_prs = remote.pr_by_repo_branch.get(agent_repo)
+        return repo_prs.get(branch) if repo_prs is not None else None
     # Fallback for agents without a local work_dir: search all repos by branch.
-    for (_, pr_branch), pr in remote.pr_by_repo_branch.items():
-        if pr_branch == branch:
+    for repo_prs in remote.pr_by_repo_branch.values():
+        pr = repo_prs.get(branch)
+        if pr is not None:
             return pr
     return None
 

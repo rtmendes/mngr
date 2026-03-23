@@ -117,7 +117,7 @@ def test_fetch_github_data_skips_agents_without_remotes(tmp_path: Path) -> None:
         result = fetch_github_data(mng_ctx, [agent_no_remote, agent_with_remote])
 
     assert result.prs_loaded is True
-    assert result.pr_by_repo_branch[("org/repo", "mng/feature")] == pr
+    assert result.pr_by_repo_branch["org/repo"]["mng/feature"] == pr
     assert str(with_remote_dir) in result.repo_path_by_work_dir
     assert str(no_remote_dir) not in result.repo_path_by_work_dir
 
@@ -159,8 +159,8 @@ def test_fetch_github_data_fetches_per_repo(tmp_path: Path) -> None:
     assert call_count == 2
     assert result.prs_loaded is True
     assert len(result.prs_loaded_repos) == 2
-    assert result.pr_by_repo_branch[("org/repo-a", "mng/feature-a")] == pr_a
-    assert result.pr_by_repo_branch[("org/repo-b", "mng/feature-b")] == pr_b
+    assert result.pr_by_repo_branch["org/repo-a"]["mng/feature-a"] == pr_a
+    assert result.pr_by_repo_branch["org/repo-b"]["mng/feature-b"] == pr_b
 
 
 def test_fetch_github_data_deduplicates_repos(tmp_path: Path) -> None:
@@ -224,7 +224,7 @@ def test_fetch_github_data_partial_failure(tmp_path: Path) -> None:
     assert result.prs_loaded is True
     assert "org/good" in result.prs_loaded_repos
     assert "org/bad" not in result.prs_loaded_repos
-    assert result.pr_by_repo_branch[("org/good", "mng/feature")] == pr
+    assert result.pr_by_repo_branch["org/good"]["mng/feature"] == pr
     assert len(result.errors) == 1
     assert "auth required" in result.errors[0]
 
@@ -236,6 +236,7 @@ def test_fetch_github_data_no_local_agents() -> None:
     result = fetch_github_data(mng_ctx, [agent])
     assert result.prs_loaded is False
     assert result.pr_by_repo_branch == {}
+
     assert result.errors == ()
 
 
@@ -302,7 +303,7 @@ def test_fetch_board_snapshot_integrates_agents_and_prs() -> None:
     # fetch_github_data returns empty. Patch it directly to inject PR data.
     # The fallback branch-only lookup in _lookup_pr finds the PR for modal agents.
     remote = GitHubData(
-        pr_by_repo_branch={("org/repo", "mng/agent-1"): pr1},
+        pr_by_repo_branch={"org/repo": {"mng/agent-1": pr1}},
         prs_loaded_repos=frozenset({"org/repo"}),
         prs_loaded=True,
     )
