@@ -7,21 +7,19 @@ from pathlib import Path
 import pytest
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
-from imbue.mng.api.find import ensure_host_started
 from imbue.mng.config.data_types import EnvVar
 from imbue.mng.interfaces.data_types import AgentDetails
 from imbue.mng.interfaces.host import AgentEnvironmentOptions
 from imbue.mng.interfaces.host import AgentLabelOptions
+from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.primitives import AgentId
 from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import AgentName
 from imbue.mng.primitives import AgentTypeName
 from imbue.mng.primitives import CommandString
-from imbue.mng.primitives import HostName
 from imbue.mng.primitives import ProviderInstanceName
 from imbue.mng.primitives import SnapshotName
 from imbue.mng.primitives import WorkDirCopyMode
-from imbue.mng.providers.local.instance import LocalProviderInstance
 from imbue.mng_tmr.api import CollectTestsError
 from imbue.mng_tmr.api import PLUGIN_NAME
 from imbue.mng_tmr.api import _build_agent_options
@@ -607,20 +605,17 @@ def _make_agent_detail(agent_id: AgentId, host_dir: Path) -> AgentDetails:
     )
 
 
-def test_read_agent_result_parses_changes(local_provider: LocalProviderInstance) -> None:
-    host, _ = ensure_host_started(
-        local_provider.get_host(HostName("localhost")), is_start_desired=True, provider=local_provider
-    )
+def test_read_agent_result_parses_changes(localhost: OnlineHostInterface) -> None:
     agent_id = AgentId.generate()
     _write_result_json(
-        host.host_dir,
+        localhost.host_dir,
         agent_id,
         '{"changes": {"FIX_TEST": {"status": "SUCCEEDED", "summary_markdown": "Fixed it"}},'
         ' "errored": false, "tests_passing_before": false, "tests_passing_after": true,'
         ' "summary_markdown": "All good"}',
     )
-    detail = _make_agent_detail(agent_id, host.host_dir)
-    result = read_agent_result(detail, host)
+    detail = _make_agent_detail(agent_id, localhost.host_dir)
+    result = read_agent_result(detail, localhost)
     assert ChangeKind.FIX_TEST in result.changes
     assert result.changes[ChangeKind.FIX_TEST].status == ChangeStatus.SUCCEEDED
     assert result.tests_passing_before is False
@@ -628,69 +623,54 @@ def test_read_agent_result_parses_changes(local_provider: LocalProviderInstance)
     assert result.summary_markdown == "All good"
 
 
-def test_read_agent_result_empty_changes(local_provider: LocalProviderInstance) -> None:
-    host, _ = ensure_host_started(
-        local_provider.get_host(HostName("localhost")), is_start_desired=True, provider=local_provider
-    )
+def test_read_agent_result_empty_changes(localhost: OnlineHostInterface) -> None:
     agent_id = AgentId.generate()
     _write_result_json(
-        host.host_dir,
+        localhost.host_dir,
         agent_id,
         '{"changes": {}, "errored": false, "tests_passing_before": true,'
         ' "tests_passing_after": true, "summary_markdown": "Clean pass"}',
     )
-    detail = _make_agent_detail(agent_id, host.host_dir)
-    result = read_agent_result(detail, host)
+    detail = _make_agent_detail(agent_id, localhost.host_dir)
+    result = read_agent_result(detail, localhost)
     assert result.changes == {}
     assert result.errored is False
 
 
-def test_read_agent_result_invalid_json(local_provider: LocalProviderInstance) -> None:
-    host, _ = ensure_host_started(
-        local_provider.get_host(HostName("localhost")), is_start_desired=True, provider=local_provider
-    )
+def test_read_agent_result_invalid_json(localhost: OnlineHostInterface) -> None:
     agent_id = AgentId.generate()
-    _write_result_json(host.host_dir, agent_id, "not json")
-    detail = _make_agent_detail(agent_id, host.host_dir)
-    result = read_agent_result(detail, host)
+    _write_result_json(localhost.host_dir, agent_id, "not json")
+    detail = _make_agent_detail(agent_id, localhost.host_dir)
+    result = read_agent_result(detail, localhost)
     assert result.errored is True
     assert "Failed to read" in result.summary_markdown
 
 
-def test_read_agent_result_missing_file(local_provider: LocalProviderInstance) -> None:
-    host, _ = ensure_host_started(
-        local_provider.get_host(HostName("localhost")), is_start_desired=True, provider=local_provider
-    )
+def test_read_agent_result_missing_file(localhost: OnlineHostInterface) -> None:
     agent_id = AgentId.generate()
-    detail = _make_agent_detail(agent_id, host.host_dir)
-    result = read_agent_result(detail, host)
+    detail = _make_agent_detail(agent_id, localhost.host_dir)
+    result = read_agent_result(detail, localhost)
     assert result.errored is True
 
 
-def test_read_integrator_result_parses_merged_failed(local_provider: LocalProviderInstance) -> None:
-    host, _ = ensure_host_started(
-        local_provider.get_host(HostName("localhost")), is_start_desired=True, provider=local_provider
-    )
+def test_read_integrator_result_parses_merged_failed(localhost: OnlineHostInterface) -> None:
     agent_id = AgentId.generate()
     _write_result_json(
-        host.host_dir,
+        localhost.host_dir,
         agent_id,
         '{"merged": ["branch-a", "branch-b"], "failed": ["branch-c"], "summary_markdown": "Merged 2 of 3"}',
     )
-    detail = _make_agent_detail(agent_id, host.host_dir)
-    result = read_integrator_result(detail, host, "mng-tmr/integrated")
+    detail = _make_agent_detail(agent_id, localhost.host_dir)
+    result = read_integrator_result(detail, localhost, "mng-tmr/integrated")
     assert result.merged == ("branch-a", "branch-b")
     assert result.failed == ("branch-c",)
     assert result.branch_name == "mng-tmr/integrated"
     assert result.summary_markdown == "Merged 2 of 3"
 
 
-def test_read_integrator_result_missing_file(local_provider: LocalProviderInstance) -> None:
-    host, _ = ensure_host_started(
-        local_provider.get_host(HostName("localhost")), is_start_desired=True, provider=local_provider
-    )
+def test_read_integrator_result_missing_file(localhost: OnlineHostInterface) -> None:
     agent_id = AgentId.generate()
-    detail = _make_agent_detail(agent_id, host.host_dir)
-    result = read_integrator_result(detail, host, "mng-tmr/integrated")
+    detail = _make_agent_detail(agent_id, localhost.host_dir)
+    result = read_integrator_result(detail, localhost, "mng-tmr/integrated")
     assert result.branch_name == "mng-tmr/integrated"
     assert "Failed to read" in result.summary_markdown
