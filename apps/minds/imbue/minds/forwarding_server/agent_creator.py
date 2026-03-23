@@ -165,19 +165,37 @@ def load_creation_settings(repo_dir: Path) -> ClaudeMindSettings:
         return ClaudeMindSettings()
 
 
+_CONTAINER_SHARED_MOUNT_PATH: Final[str] = "/mnt/shared"
+
+
 def run_mng_create(
+    launch_mode: LaunchMode,
     mind_dir: Path,
     agent_name: AgentName,
     agent_id: AgentId,
     agent_type: str,
     pass_env: tuple[str, ...],
+    # required when launch_mode is LOCAL (the shared mount target on the host)
+    shared_dir: Path | None = None,
     on_output: OutputCallback | None = None,
 ) -> None:
     """Create an mng agent via ``mng create``.
 
-    Creates a local in-place agent with the mind=true label.
+    Builds the appropriate command based on launch_mode:
+    - DEV: runs in-place on the local provider.
+    - LOCAL: runs in a Docker container with a shared bind mount.
+    - CLOUD: raises NotImplementedError.
+
     Raises MngCommandError if the command fails.
     """
+    match launch_mode:
+        case LaunchMode.CLOUD:
+            raise NotImplementedError("Cloud launch mode is not yet supported")
+        case LaunchMode.DEV | LaunchMode.LOCAL:
+            pass
+        case _ as unreachable:
+            assert_never(unreachable)
+
     mng_command: list[str] = [
         MNG_BINARY,
         "create",
@@ -196,8 +214,31 @@ def run_mng_create(
         "--disable-plugin",
         "ttyd",
         "--yes",
-        "--in-place",
     ]
+
+    match launch_mode:
+        case LaunchMode.DEV:
+            mng_command.append("--in-place")
+        case LaunchMode.LOCAL:
+            if shared_dir is None:
+                raise MngCommandError("shared_dir is required for LOCAL launch mode")
+            shared_dir.mkdir(parents=True, exist_ok=True)
+            mng_command.extend(
+                [
+                    "--provider",
+                    "docker",
+                    "--source-path",
+                    str(mind_dir),
+                    "-s",
+                    "-v={}:{}".format(shared_dir, _CONTAINER_SHARED_MOUNT_PATH),
+                ]
+            )
+            # If the source directory contains a Dockerfile, use it for the build
+            dockerfile_path = mind_dir / "Dockerfile"
+            if dockerfile_path.is_file():
+                mng_command.extend(["-b", "--file={}".format(dockerfile_path), "-b", str(mind_dir)])
+        case _ as unreachable:
+            assert_never(unreachable)
 
     for env_var in pass_env:
         mng_command.extend(["--pass-env", env_var])
@@ -219,86 +260,6 @@ def run_mng_create(
     if result.returncode != 0:
         raise MngCommandError(
             "mng create failed (exit code {}):\n{}".format(
-                result.returncode,
-                result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
-            )
-        )
-
-
-_CONTAINER_SHARED_MOUNT_PATH: Final[str] = "/mnt/shared"
-
-
-def run_mng_create_docker(
-    source_dir: Path,
-    agent_name: AgentName,
-    agent_id: AgentId,
-    agent_type: str,
-    pass_env: tuple[str, ...],
-    shared_dir: Path,
-    on_output: OutputCallback | None = None,
-) -> None:
-    """Create an mng agent in a Docker container.
-
-    Unlike run_mng_create, this does not use --in-place. Instead it uses
-    --provider docker and --source-path so the cloned repo is pushed into
-    a new container. A bind mount maps the host shared directory to
-    /mnt/shared inside the container.
-
-    Raises MngCommandError if the command fails.
-    """
-    shared_dir.mkdir(parents=True, exist_ok=True)
-
-    mng_command: list[str] = [
-        MNG_BINARY,
-        "create",
-        agent_name,
-        "--id",
-        str(agent_id),
-        "--no-connect",
-        "--type",
-        agent_type,
-        "--provider",
-        "docker",
-        "--source-path",
-        str(source_dir),
-        "--env",
-        "ROLE=thinking",
-        "--env",
-        f"MIND_NAME={agent_name}",
-        "--label",
-        f"mind={agent_name}",
-        "--disable-plugin",
-        "ttyd",
-        "--yes",
-        "-s",
-        "-v={}:{}".format(shared_dir, _CONTAINER_SHARED_MOUNT_PATH),
-    ]
-
-    # If the source directory contains a Dockerfile, use it for the build
-    dockerfile_path = source_dir / "Dockerfile"
-    if dockerfile_path.is_file():
-        mng_command.extend(["-b", "--file={}".format(dockerfile_path), "-b", str(source_dir)])
-
-    for env_var in pass_env:
-        mng_command.extend(["--pass-env", env_var])
-
-    # FOLLOWUP: remove --dangerously-skip-permissions
-    mng_command.extend(["--", "--dangerously-skip-permissions"])
-
-    logger.debug("Running: {}", " ".join(mng_command))
-
-    cg = ConcurrencyGroup(name="mng-create-docker")
-    with cg:
-        result = cg.run_process_to_completion(
-            command=mng_command,
-            cwd=source_dir,
-            is_checked_after=False,
-            on_output=on_output,
-        )
-
-    if result.returncode != 0:
-        raise MngCommandError(
-            "mng create (docker) failed (exit code {}):\n{}".format(
                 result.returncode,
                 result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
             )
@@ -454,34 +415,22 @@ class AgentCreator(MutableModel):
         log_queue: queue.Queue[str],
         emit_log: OutputCallback,
     ) -> None:
-        """Dispatch agent creation to the appropriate provider based on launch mode."""
-        match launch_mode:
-            case LaunchMode.DEV:
-                log_queue.put("[minds] Creating agent '{}' (type: {}, mode: dev)...".format(agent_name, agent_type))
-                run_mng_create(
-                    mind_dir=mind_dir,
-                    agent_name=agent_name,
-                    agent_id=agent_id,
-                    agent_type=agent_type,
-                    pass_env=self.pass_env,
-                    on_output=emit_log,
-                )
-            case LaunchMode.LOCAL:
-                log_queue.put("[minds] Creating agent '{}' in Docker (type: {})...".format(agent_name, agent_type))
-                run_mng_create_docker(
-                    source_dir=mind_dir,
-                    agent_name=agent_name,
-                    agent_id=agent_id,
-                    agent_type=agent_type,
-                    pass_env=self.pass_env,
-                    shared_dir=self.paths.shared_dir,
-                    on_output=emit_log,
-                )
-                # The real data lives inside the Docker container, so clean up the
-                # local clone directory immediately.
-                log_queue.put("[minds] Cleaning up local clone directory...")
-                shutil.rmtree(mind_dir, ignore_errors=True)
-            case LaunchMode.CLOUD:
-                raise NotImplementedError("Cloud launch mode is not yet supported")
-            case _ as unreachable:
-                assert_never(unreachable)
+        """Run mng create for the given launch mode, then perform any post-creation cleanup."""
+        log_queue.put(
+            "[minds] Creating agent '{}' (type: {}, mode: {})...".format(agent_name, agent_type, launch_mode.value)
+        )
+        run_mng_create(
+            launch_mode=launch_mode,
+            mind_dir=mind_dir,
+            agent_name=agent_name,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            pass_env=self.pass_env,
+            shared_dir=self.paths.shared_dir if launch_mode == LaunchMode.LOCAL else None,
+            on_output=emit_log,
+        )
+        if launch_mode == LaunchMode.LOCAL:
+            # The real data lives inside the Docker container, so clean up the
+            # local clone directory immediately.
+            log_queue.put("[minds] Cleaning up local clone directory...")
+            shutil.rmtree(mind_dir, ignore_errors=True)
