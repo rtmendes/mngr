@@ -96,10 +96,6 @@ class GitHubData(FrozenModel):
         default_factory=dict,
         description="Nested mapping: repo_path -> branch -> most relevant PR",
     )
-    repo_path_by_work_dir: dict[str, str] = Field(
-        default_factory=dict,
-        description="Mapping from str(work_dir) to GitHub 'owner/repo' for each local agent with a GitHub remote",
-    )
     prs_loaded_repos: frozenset[str] = Field(
         default_factory=frozenset,
         description="Set of repo paths (e.g. 'owner/repo') for which PRs were successfully fetched",

@@ -90,33 +90,30 @@ def fetch_agent_snapshot(
 def fetch_github_data(mng_ctx: MngContext, agents: list[AgentDetails]) -> GitHubData:
     """Fetch GitHub PR data from all unique repos and build the PR-to-branch index.
 
-    Discovers each local agent's GitHub repo, fetches PRs once per unique repo,
-    and merges results. Agents without GitHub remotes are skipped (logged at
-    debug level) and do not block other agents.
+    Discovers repos from each agent's 'remote' label (set at creation time),
+    falling back to `git remote get-url origin` for local agents without the
+    label. Fetches PRs once per unique repo. Agents without GitHub remotes
+    are skipped and do not block other agents.
     """
     cg = mng_ctx.concurrency_group
     errors: list[str] = []
 
-    # Map each local agent work_dir to its GitHub repo path, and collect
-    # one representative cwd per unique repo for the gh CLI call.
-    repo_path_by_work_dir: dict[str, str] = {}
+    # Collect one local work_dir per unique repo for the gh CLI call.
+    # Repos are discovered from the 'remote' label (all agents) or by
+    # querying git directly (local agents without the label).
     cwd_by_repo: dict[str, Path] = {}
     seen_work_dirs: set[str] = set()
 
     for agent in agents:
-        if agent.host.provider_name != LOCAL_PROVIDER_NAME or not agent.work_dir.exists():
-            continue
-        work_dir_key = str(agent.work_dir)
-        if work_dir_key in seen_work_dirs:
-            continue
-        seen_work_dirs.add(work_dir_key)
-        repo_path = _get_github_repo_path(agent.work_dir, cg)
-        if repo_path is not None:
-            repo_path_by_work_dir[work_dir_key] = repo_path
-            if repo_path not in cwd_by_repo:
+        is_local = agent.host.provider_name == LOCAL_PROVIDER_NAME and agent.work_dir.exists()
+        repo_path = _get_agent_repo_path(agent)
+        if repo_path is None and is_local:
+            repo_path = _get_github_repo_path(agent.work_dir, cg)
+        if repo_path is not None and is_local and repo_path not in cwd_by_repo:
+            work_dir_key = str(agent.work_dir)
+            if work_dir_key not in seen_work_dirs:
+                seen_work_dirs.add(work_dir_key)
                 cwd_by_repo[repo_path] = agent.work_dir
-        else:
-            logger.debug("Skipping agent {} ({}): no GitHub remote", agent.name, agent.work_dir)
 
     # Fetch PRs once per unique repo.
     pr_by_repo_branch: dict[str, dict[str, PrInfo]] = {}
@@ -134,7 +131,6 @@ def fetch_github_data(mng_ctx: MngContext, agents: list[AgentDetails]) -> GitHub
 
     return GitHubData(
         pr_by_repo_branch=pr_by_repo_branch,
-        repo_path_by_work_dir=repo_path_by_work_dir,
         prs_loaded_repos=frozenset(prs_loaded_repos),
         prs_loaded=len(prs_loaded_repos) > 0,
         errors=tuple(errors),
@@ -150,7 +146,7 @@ def enrich_snapshot_with_github_data(snapshot: BoardSnapshot, remote: GitHubData
     """
     enriched_entries: list[AgentBoardEntry] = []
     for entry in snapshot.entries:
-        agent_repo = remote.repo_path_by_work_dir.get(str(entry.work_dir)) if entry.work_dir else None
+        agent_repo = _repo_path_from_labels(entry.column_data.labels)
         pr = _lookup_pr(remote, agent_repo, entry.branch)
         agent_prs_loaded = agent_repo in remote.prs_loaded_repos if agent_repo else False
         create_pr_url = (
@@ -216,7 +212,7 @@ def fetch_board_snapshot(
         is_local = agent.host.provider_name == LOCAL_PROVIDER_NAME
         local_work_dir = agent.work_dir if is_local and agent.work_dir.exists() else None
         commits_ahead = _get_commits_ahead(local_work_dir, cg) if local_work_dir is not None else None
-        agent_repo = remote.repo_path_by_work_dir.get(str(local_work_dir)) if local_work_dir else None
+        agent_repo = _get_agent_repo_path(agent)
         pr = _lookup_pr(remote, agent_repo, branch)
         agent_prs_loaded = agent_repo in remote.prs_loaded_repos if agent_repo else False
         create_pr_url = (
@@ -415,24 +411,27 @@ def _build_create_pr_url(repo_path: str | None, branch: str | None) -> str | Non
 
 
 @pure
-def _lookup_pr(remote: GitHubData, agent_repo: str | None, branch: str | None) -> PrInfo | None:
-    """Look up the PR for an agent by its repo and branch.
+def _get_agent_repo_path(agent: AgentDetails) -> str | None:
+    """Get the GitHub repo path for an agent from its 'remote' label."""
+    return _repo_path_from_labels(agent.labels)
 
-    Uses repo-qualified lookup when the agent's repo is known. For agents
-    without a known repo (e.g. remote/modal agents), falls back to searching
-    all repos by branch name.
-    """
-    if not branch:
+
+@pure
+def _repo_path_from_labels(labels: dict[str, str]) -> str | None:
+    """Extract GitHub 'owner/repo' from a labels dict's 'remote' entry."""
+    remote_url = labels.get("remote")
+    if remote_url is None:
         return None
-    if agent_repo is not None:
-        repo_prs = remote.pr_by_repo_branch.get(agent_repo)
-        return repo_prs.get(branch) if repo_prs is not None else None
-    # Fallback for agents without a local work_dir: search all repos by branch.
-    for repo_prs in remote.pr_by_repo_branch.values():
-        pr = repo_prs.get(branch)
-        if pr is not None:
-            return pr
-    return None
+    return _parse_github_repo_path(remote_url)
+
+
+@pure
+def _lookup_pr(remote: GitHubData, agent_repo: str | None, branch: str | None) -> PrInfo | None:
+    """Look up the PR for an agent by its repo and branch."""
+    if not branch or agent_repo is None:
+        return None
+    repo_prs = remote.pr_by_repo_branch.get(agent_repo)
+    return repo_prs.get(branch) if repo_prs is not None else None
 
 
 @pure

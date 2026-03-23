@@ -10,6 +10,7 @@ from imbue.mng.primitives import ProviderInstanceName
 from imbue.mng.utils.testing import init_git_repo_with_config
 from imbue.mng_kanpan.data_types import AgentBoardEntry
 from imbue.mng_kanpan.data_types import BoardSnapshot
+from imbue.mng_kanpan.data_types import ColumnData
 from imbue.mng_kanpan.data_types import GitHubData
 from imbue.mng_kanpan.data_types import PrState
 from imbue.mng_kanpan.data_types import RefreshHook
@@ -118,8 +119,6 @@ def test_fetch_github_data_skips_agents_without_remotes(tmp_path: Path) -> None:
 
     assert result.prs_loaded is True
     assert result.pr_by_repo_branch["org/repo"]["mng/feature"] == pr
-    assert str(with_remote_dir) in result.repo_path_by_work_dir
-    assert str(no_remote_dir) not in result.repo_path_by_work_dir
 
 
 def test_fetch_github_data_fetches_per_repo(tmp_path: Path) -> None:
@@ -244,17 +243,16 @@ def test_fetch_github_data_no_local_agents() -> None:
 
 
 def test_enrich_uses_per_agent_repo_for_create_pr_url() -> None:
-    """create_pr_url uses the agent's own repo, not a global one."""
+    """create_pr_url uses the agent's own repo from the 'remote' label."""
     entry = AgentBoardEntry(
         name=AgentName("agent-1"),
         state=AgentLifecycleState.RUNNING,
         provider_name=ProviderInstanceName("local"),
-        work_dir=Path("/work/agent-1"),
         branch="mng/feature",
+        column_data=ColumnData(labels={"remote": "git@github.com:org/my-repo.git"}),
     )
     snapshot = BoardSnapshot(entries=(entry,), fetch_time_seconds=1.0, prs_loaded=False)
     remote = GitHubData(
-        repo_path_by_work_dir={"/work/agent-1": "org/my-repo"},
         prs_loaded_repos=frozenset({"org/my-repo"}),
         prs_loaded=True,
     )
@@ -268,12 +266,11 @@ def test_enrich_suppresses_create_pr_url_when_repo_pr_fetch_failed() -> None:
         name=AgentName("agent-1"),
         state=AgentLifecycleState.RUNNING,
         provider_name=ProviderInstanceName("local"),
-        work_dir=Path("/work/agent-1"),
         branch="mng/feature",
+        column_data=ColumnData(labels={"remote": "git@github.com:org/my-repo.git"}),
     )
     snapshot = BoardSnapshot(entries=(entry,), fetch_time_seconds=1.0, prs_loaded=False)
     remote = GitHubData(
-        repo_path_by_work_dir={"/work/agent-1": "org/my-repo"},
         prs_loaded_repos=frozenset(),
         prs_loaded=False,
     )
@@ -286,7 +283,11 @@ def test_enrich_suppresses_create_pr_url_when_repo_pr_fetch_failed() -> None:
 
 def test_fetch_board_snapshot_integrates_agents_and_prs() -> None:
     agent1 = make_agent_details(
-        name="agent-1", state=AgentLifecycleState.RUNNING, provider_name="modal", initial_branch="mng/agent-1"
+        name="agent-1",
+        state=AgentLifecycleState.RUNNING,
+        provider_name="modal",
+        initial_branch="mng/agent-1",
+        labels={"remote": "git@github.com:org/repo.git"},
     )
     agent2 = make_agent_details(name="agent-2", state=AgentLifecycleState.DONE, provider_name="modal")
 
@@ -299,9 +300,8 @@ def test_fetch_board_snapshot_integrates_agents_and_prs() -> None:
     mng_ctx = MagicMock()
     mng_ctx.concurrency_group = MagicMock()
 
-    # Remote-only agents have no work_dirs to discover repos from, so
-    # fetch_github_data returns empty. Patch it directly to inject PR data.
-    # The fallback branch-only lookup in _lookup_pr finds the PR for modal agents.
+    # Modal agent has 'remote' label, so _get_agent_repo_path resolves its repo
+    # and _lookup_pr matches it against the PR data.
     remote = GitHubData(
         pr_by_repo_branch={"org/repo": {"mng/agent-1": pr1}},
         prs_loaded_repos=frozenset({"org/repo"}),
@@ -479,11 +479,16 @@ def test_fetch_board_snapshot_surfaces_gh_errors_and_suppresses_create_pr_url(tm
     repo_dir = tmp_path / "repo"
     init_git_repo_with_config(repo_dir)
 
-    agent = make_agent_details(name="agent-1", work_dir=repo_dir, provider_name="local", initial_branch="mng/agent-1")
+    agent = make_agent_details(
+        name="agent-1",
+        work_dir=repo_dir,
+        provider_name="local",
+        initial_branch="mng/agent-1",
+        labels={"remote": "git@github.com:org/repo.git"},
+    )
 
     # Simulate fetch_github_data returning an error for this repo.
     remote = GitHubData(
-        repo_path_by_work_dir={str(repo_dir): "org/repo"},
         prs_loaded_repos=frozenset(),
         prs_loaded=False,
         errors=("gh pr list failed: auth required",),
