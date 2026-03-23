@@ -16,6 +16,7 @@ from imbue.mng.primitives import AgentTypeName
 from imbue.mng.primitives import CommandString
 from imbue.mng.primitives import HostName
 from imbue.mng.providers.local.instance import LocalProviderInstance
+from imbue.mng.utils.polling import wait_for
 from imbue.mng.utils.testing import tmux_session_cleanup
 from imbue.mng.utils.testing import tmux_session_exists
 
@@ -89,20 +90,22 @@ def test_rename_running_agent_renames_tmux_session(
             [
                 "--name",
                 agent_name,
-                "--agent-cmd",
+                "--command",
                 "sleep 493817",
                 "--source",
                 str(temp_work_dir),
                 "--no-connect",
-                "--await-ready",
-                "--no-copy-work-dir",
                 "--no-ensure-clean",
             ],
             obj=plugin_manager,
             catch_exceptions=False,
         )
         assert create_result.exit_code == 0, f"Create failed: {create_result.output}"
-        assert tmux_session_exists(old_session_name)
+        wait_for(
+            lambda: tmux_session_exists(old_session_name),
+            timeout=15.0,
+            error_message=f"Expected tmux session {old_session_name} to exist",
+        )
 
         rename_result = cli_runner.invoke(
             rename,
@@ -113,8 +116,13 @@ def test_rename_running_agent_renames_tmux_session(
         assert rename_result.exit_code == 0, f"Rename failed: {rename_result.output}"
         assert "Renamed agent:" in rename_result.output
 
-        # The old session should be gone, the new one should exist
-        assert tmux_session_exists(new_session_name), "New tmux session should exist"
+        # The old session should be gone, the new one should exist.
+        # Use wait_for to tolerate brief propagation delays under heavy xdist load.
+        wait_for(
+            lambda: tmux_session_exists(new_session_name),
+            timeout=10.0,
+            error_message=f"New tmux session {new_session_name} should exist after rename",
+        )
         assert not tmux_session_exists(old_session_name), "Old tmux session should not exist"
 
 

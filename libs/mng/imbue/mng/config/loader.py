@@ -18,6 +18,7 @@ from imbue.mng.config.consts import PROFILES_DIRNAME
 from imbue.mng.config.consts import ROOT_CONFIG_FILENAME
 from imbue.mng.config.data_types import AgentTypeConfig
 from imbue.mng.config.data_types import CommandDefaults
+from imbue.mng.config.data_types import CreateCliOptions
 from imbue.mng.config.data_types import CreateTemplate
 from imbue.mng.config.data_types import CreateTemplateName
 from imbue.mng.config.data_types import MngConfig
@@ -65,6 +66,7 @@ def load_config(
     enabled_plugins: Sequence[str] | None = None,
     disabled_plugins: Sequence[str] | None = None,
     is_interactive: bool = False,
+    strict: bool | None = None,
 ) -> MngContext:
     """Load and merge configuration from all sources.
 
@@ -109,10 +111,11 @@ def load_config(
         commands={"create": CommandDefaults(defaults={"pass_host_env": ["EDITOR"]})},
     )
 
-    # When MNG_ALLOW_UNKNOWN_CONFIG is set, unknown fields in config files produce
-    # warnings instead of errors.  This is useful during development when a branch
-    # adds a new config field but other branches don't know about it yet.
-    allow_unknown = parse_bool_env(os.environ.get("MNG_ALLOW_UNKNOWN_CONFIG", ""))
+    if strict is None:
+        # When MNG_ALLOW_UNKNOWN_CONFIG is set, unknown fields in config files produce
+        # warnings instead of errors.  This is useful during development when a branch
+        # adds a new config field but other branches don't know about it yet.
+        strict = not parse_bool_env(os.environ.get("MNG_ALLOW_UNKNOWN_CONFIG", ""))
 
     # Load and merge config files in precedence order (user, project, local)
     for raw in (
@@ -121,9 +124,7 @@ def load_config(
         load_local_config(context_dir, root_name, concurrency_group),
     ):
         if raw is not None:
-            config = config.merge_with(
-                parse_config(raw, disabled_plugins=config_disabled_plugins, strict=not allow_unknown)
-            )
+            config = config.merge_with(parse_config(raw, disabled_plugins=config_disabled_plugins, strict=strict))
 
     # Apply environment variable overrides
     prefix = os.environ.get("MNG_PREFIX")
@@ -181,7 +182,18 @@ def load_config(
     if config.logging is not None:
         config_dict["logging"] = config.logging
 
+    config_dict["unset_vars"] = config.unset_vars
+    config_dict["pager"] = config.pager
+    config_dict["enabled_backends"] = config.enabled_backends
+    config_dict["connect_command"] = config.connect_command
+    config_dict["is_remote_agent_installation_allowed"] = config.is_remote_agent_installation_allowed
     config_dict["is_nested_tmux_allowed"] = config.is_nested_tmux_allowed
+    # Apply MNG_HEADLESS env var override (env var > config file > default)
+    headless_env = os.environ.get("MNG_HEADLESS")
+    if headless_env is not None:
+        config_dict["headless"] = parse_bool_env(headless_env)
+    else:
+        config_dict["headless"] = config.headless
     config_dict["is_error_reporting_enabled"] = config.is_error_reporting_enabled
     config_dict["is_allowed_in_pytest"] = config.is_allowed_in_pytest
     config_dict["pre_command_scripts"] = config.pre_command_scripts
@@ -308,7 +320,11 @@ def _parse_providers(
                     f' the plugin or add `plugin = "<plugin-name>"` to this provider'
                     f" block. Currently disabled plugins: {', '.join(sorted(disabled_plugins))}"
                 )
-            raise ConfigParseError(msg) from e
+            if strict:
+                raise ConfigParseError(msg) from e
+            else:
+                logger.warning(msg)
+                continue
         _check_unknown_fields(raw_config, config_class, f"providers.{name}", strict=strict)
         providers[ProviderInstanceName(name)] = config_class.model_construct(**raw_config)
 
@@ -478,6 +494,13 @@ def _parse_create_templates(raw_templates: dict[str, dict[str, Any]]) -> dict[Cr
     templates: dict[CreateTemplateName, CreateTemplate] = {}
 
     for template_name, raw_options in raw_templates.items():
+        # make sure the options don't define anything that cannot be handled:
+        for field in raw_options.keys():
+            if field not in CreateCliOptions.model_fields:
+                raise ConfigParseError(
+                    f"Unknown field '{field}' in create_templates.{template_name}. Valid fields: {sorted(CreateCliOptions.model_fields.keys())}"
+                )
+        # fine, add the template
         templates[CreateTemplateName(template_name)] = CreateTemplate.model_construct(options=raw_options)
 
     return templates
@@ -501,6 +524,11 @@ def parse_config(
     kwargs: dict[str, Any] = {}
     kwargs["prefix"] = raw.pop("prefix", None)
     kwargs["default_host_dir"] = raw.pop("default_host_dir", None)
+    kwargs["unset_vars"] = raw.pop("unset_vars", None)
+    kwargs["pager"] = raw.pop("pager", None)
+    kwargs["enabled_backends"] = raw.pop("enabled_backends", None)
+    kwargs["connect_command"] = raw.pop("connect_command", None)
+    kwargs["is_remote_agent_installation_allowed"] = raw.pop("is_remote_agent_installation_allowed", None)
     kwargs["agent_types"] = (
         _parse_agent_types(raw.pop("agent_types", {}), strict=strict) if "agent_types" in raw else {}
     )
@@ -515,14 +543,11 @@ def parse_config(
         _parse_create_templates(raw.pop("create_templates", {})) if "create_templates" in raw else {}
     )
     kwargs["logging"] = _parse_logging_config(raw.pop("logging", {}), strict=strict) if "logging" in raw else None
-    kwargs["is_nested_tmux_allowed"] = (
-        raw.pop("is_nested_tmux_allowed", None) if "is_nested_tmux_allowed" in raw else None
-    )
-    kwargs["is_error_reporting_enabled"] = (
-        raw.pop("is_error_reporting_enabled", None) if "is_error_reporting_enabled" in raw else None
-    )
-    kwargs["is_allowed_in_pytest"] = raw.pop("is_allowed_in_pytest", {}) if "is_allowed_in_pytest" in raw else None
-    kwargs["pre_command_scripts"] = raw.pop("pre_command_scripts", {}) if "pre_command_scripts" in raw else None
+    kwargs["is_nested_tmux_allowed"] = raw.pop("is_nested_tmux_allowed", None)
+    kwargs["headless"] = raw.pop("headless", None)
+    kwargs["is_error_reporting_enabled"] = raw.pop("is_error_reporting_enabled", None)
+    kwargs["is_allowed_in_pytest"] = raw.pop("is_allowed_in_pytest", None)
+    kwargs["pre_command_scripts"] = raw.pop("pre_command_scripts", None)
     kwargs["default_destroyed_host_persisted_seconds"] = raw.pop("default_destroyed_host_persisted_seconds", None)
 
     if len(raw) > 0:
@@ -557,8 +582,8 @@ def _parse_command_env_vars(environ: Mapping[str, str]) -> dict[str, CommandDefa
     See the comment at _ENV_COMMANDS_PREFIX for details.
 
     Examples:
-        MNG_COMMANDS_CREATE_NEW_BRANCH_PREFIX=agent/
-            -> commands["create"]["new_branch_prefix"] = "agent/"
+        MNG_COMMANDS_CREATE_BRANCH=main:mng/*
+            -> commands["create"]["branch"] = "main:mng/*"
 
         MNG_COMMANDS_CREATE_CONNECT=false
             -> commands["create"]["connect"] = "false"

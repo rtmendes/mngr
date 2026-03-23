@@ -20,12 +20,12 @@ from imbue.mng.interfaces.host import CreateAgentOptions
 from imbue.mng.primitives import AgentId
 from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import AgentName
-from imbue.mng.primitives import AgentReference
 from imbue.mng.primitives import AgentTypeName
 from imbue.mng.primitives import CommandString
+from imbue.mng.primitives import DiscoveredAgent
+from imbue.mng.primitives import DiscoveredHost
 from imbue.mng.primitives import HostId
 from imbue.mng.primitives import HostName
-from imbue.mng.primitives import HostReference
 from imbue.mng.primitives import ProviderInstanceName
 
 
@@ -173,7 +173,7 @@ def test_resolve_host_reference_with_none() -> None:
 
 def test_resolve_host_reference_by_id() -> None:
     host_id = HostId.generate()
-    host_ref = HostReference(
+    host_ref = DiscoveredHost(
         host_id=host_id,
         host_name=HostName("test-host"),
         provider_name=ProviderInstanceName("local"),
@@ -188,7 +188,7 @@ def test_resolve_host_reference_by_id() -> None:
 
 
 def test_resolve_host_reference_by_name() -> None:
-    host_ref = HostReference(
+    host_ref = DiscoveredHost(
         host_id=HostId.generate(),
         host_name=HostName("test-host"),
         provider_name=ProviderInstanceName("local"),
@@ -211,12 +211,12 @@ def test_resolve_host_reference_raises_when_not_found() -> None:
 
 
 def test_resolve_host_reference_raises_when_multiple_hosts_with_same_name() -> None:
-    host_ref1 = HostReference(
+    host_ref1 = DiscoveredHost(
         host_id=HostId.generate(),
         host_name=HostName("test-host"),
         provider_name=ProviderInstanceName("local"),
     )
-    host_ref2 = HostReference(
+    host_ref2 = DiscoveredHost(
         host_id=HostId.generate(),
         host_name=HostName("test-host"),
         provider_name=ProviderInstanceName("docker"),
@@ -242,12 +242,12 @@ def test_resolve_agent_reference_with_none() -> None:
 def test_resolve_agent_reference_by_id() -> None:
     host_id = HostId.generate()
     agent_id = AgentId.generate()
-    host_ref = HostReference(
+    host_ref = DiscoveredHost(
         host_id=host_id,
         host_name=HostName("test-host"),
         provider_name=ProviderInstanceName("local"),
     )
-    agent_ref = AgentReference(
+    agent_ref = DiscoveredAgent(
         host_id=host_id,
         agent_id=agent_id,
         agent_name=AgentName("test-agent"),
@@ -266,12 +266,12 @@ def test_resolve_agent_reference_by_id() -> None:
 def test_resolve_agent_reference_by_name() -> None:
     host_id = HostId.generate()
     agent_id = AgentId.generate()
-    host_ref = HostReference(
+    host_ref = DiscoveredHost(
         host_id=host_id,
         host_name=HostName("test-host"),
         provider_name=ProviderInstanceName("local"),
     )
-    agent_ref = AgentReference(
+    agent_ref = DiscoveredAgent(
         host_id=host_id,
         agent_id=agent_id,
         agent_name=AgentName("test-agent"),
@@ -293,24 +293,24 @@ def test_resolve_agent_reference_with_resolved_host_filters_by_host() -> None:
     agent_id1 = AgentId.generate()
     agent_id2 = AgentId.generate()
 
-    host_ref1 = HostReference(
+    host_ref1 = DiscoveredHost(
         host_id=host_id1,
         host_name=HostName("host1"),
         provider_name=ProviderInstanceName("local"),
     )
-    host_ref2 = HostReference(
+    host_ref2 = DiscoveredHost(
         host_id=host_id2,
         host_name=HostName("host2"),
         provider_name=ProviderInstanceName("local"),
     )
 
-    agent_ref1 = AgentReference(
+    agent_ref1 = DiscoveredAgent(
         host_id=host_id1,
         agent_id=agent_id1,
         agent_name=AgentName("test-agent"),
         provider_name=ProviderInstanceName("local"),
     )
-    agent_ref2 = AgentReference(
+    agent_ref2 = DiscoveredAgent(
         host_id=host_id2,
         agent_id=agent_id2,
         agent_name=AgentName("test-agent"),
@@ -344,24 +344,24 @@ def test_resolve_agent_reference_raises_when_multiple_agents_match() -> None:
     agent_id1 = AgentId.generate()
     agent_id2 = AgentId.generate()
 
-    host_ref1 = HostReference(
+    host_ref1 = DiscoveredHost(
         host_id=host_id1,
         host_name=HostName("host1"),
         provider_name=ProviderInstanceName("local"),
     )
-    host_ref2 = HostReference(
+    host_ref2 = DiscoveredHost(
         host_id=host_id2,
         host_name=HostName("host2"),
         provider_name=ProviderInstanceName("local"),
     )
 
-    agent_ref1 = AgentReference(
+    agent_ref1 = DiscoveredAgent(
         host_id=host_id1,
         agent_id=agent_id1,
         agent_name=AgentName("test-agent"),
         provider_name=ProviderInstanceName("local"),
     )
-    agent_ref2 = AgentReference(
+    agent_ref2 = DiscoveredAgent(
         host_id=host_id2,
         agent_id=agent_id2,
         agent_name=AgentName("test-agent"),
@@ -478,7 +478,7 @@ def test_parse_source_string_with_windows_drive_letter_ambiguity() -> None:
 def test_get_host_from_list_by_id_returns_matching_host() -> None:
     """get_host_from_list_by_id should return matching host."""
     host_id = HostId.generate()
-    host_ref = HostReference(
+    host_ref = DiscoveredHost(
         host_id=host_id,
         host_name=HostName("test"),
         provider_name=ProviderInstanceName("local"),
@@ -496,7 +496,7 @@ def test_get_host_from_list_by_id_returns_none_when_not_found() -> None:
 def test_get_unique_host_from_list_by_name_returns_matching_host() -> None:
     """get_unique_host_from_list_by_name should return matching host."""
     host_name = HostName("test-host")
-    host_ref = HostReference(
+    host_ref = DiscoveredHost(
         host_id=HostId.generate(),
         host_name=host_name,
         provider_name=ProviderInstanceName("local"),
@@ -523,7 +523,7 @@ def test_determine_resolved_path_uses_parsed_path_when_available() -> None:
 
 def test_determine_resolved_path_uses_agent_work_dir_when_no_parsed_path() -> None:
     """determine_resolved_path should use agent work dir when no parsed path."""
-    agent_ref = AgentReference(
+    agent_ref = DiscoveredAgent(
         host_id=HostId.generate(),
         agent_id=AgentId.generate(),
         agent_name=AgentName("test"),
@@ -539,7 +539,7 @@ def test_determine_resolved_path_uses_agent_work_dir_when_no_parsed_path() -> No
 
 def test_determine_resolved_path_prefers_parsed_path_over_agent_work_dir() -> None:
     """determine_resolved_path should prefer parsed path even when agent work dir available."""
-    agent_ref = AgentReference(
+    agent_ref = DiscoveredAgent(
         host_id=HostId.generate(),
         agent_id=AgentId.generate(),
         agent_name=AgentName("test"),
@@ -555,7 +555,7 @@ def test_determine_resolved_path_prefers_parsed_path_over_agent_work_dir() -> No
 
 def test_determine_resolved_path_raises_when_agent_but_no_work_dir() -> None:
     """determine_resolved_path should raise when agent specified but work dir not found."""
-    agent_ref = AgentReference(
+    agent_ref = DiscoveredAgent(
         host_id=HostId.generate(),
         agent_id=AgentId.generate(),
         agent_name=AgentName("test"),
@@ -602,11 +602,13 @@ def test_agent_match_construction() -> None:
         agent_id=agent_id,
         agent_name=AgentName("my-agent"),
         host_id=host_id,
+        host_name=HostName("my-host"),
         provider_name=ProviderInstanceName("local"),
     )
     assert match.agent_id == agent_id
     assert match.agent_name == AgentName("my-agent")
     assert match.host_id == host_id
+    assert match.host_name == HostName("my-host")
     assert match.provider_name == ProviderInstanceName("local")
 
 
@@ -629,12 +631,14 @@ def test_group_agents_by_host_single_host() -> None:
         agent_id=AgentId.generate(),
         agent_name=AgentName("agent-1"),
         host_id=host_id,
+        host_name=HostName("host"),
         provider_name=provider_name,
     )
     match2 = AgentMatch(
         agent_id=AgentId.generate(),
         agent_name=AgentName("agent-2"),
         host_id=host_id,
+        host_name=HostName("host"),
         provider_name=provider_name,
     )
 
@@ -656,12 +660,14 @@ def test_group_agents_by_host_multiple_hosts() -> None:
         agent_id=AgentId.generate(),
         agent_name=AgentName("agent-1"),
         host_id=host_id_1,
+        host_name=HostName("host-1"),
         provider_name=provider_name,
     )
     match2 = AgentMatch(
         agent_id=AgentId.generate(),
         agent_name=AgentName("agent-2"),
         host_id=host_id_2,
+        host_name=HostName("host-2"),
         provider_name=provider_name,
     )
 
@@ -684,6 +690,7 @@ def test_group_agents_by_host_key_format() -> None:
         agent_id=AgentId.generate(),
         agent_name=AgentName("agent"),
         host_id=host_id,
+        host_name=HostName("host"),
         provider_name=provider_name,
     )
 

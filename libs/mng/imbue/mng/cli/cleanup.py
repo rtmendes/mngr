@@ -6,7 +6,6 @@ import click
 from click_option_group import optgroup
 from loguru import logger
 from pydantic import ConfigDict
-from urwid.display.raw import Screen
 from urwid.event_loop.abstract_loop import ExitMainLoop
 from urwid.event_loop.main_loop import MainLoop
 from urwid.widget.attr_map import AttrMap
@@ -23,7 +22,6 @@ from imbue.imbue_common.pure import pure
 from imbue.mng.api.cleanup import execute_cleanup
 from imbue.mng.api.cleanup import find_agents_for_cleanup
 from imbue.mng.api.data_types import CleanupResult
-from imbue.mng.cli.common_opts import CommonCliOptions
 from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.connect import build_status_text
@@ -36,8 +34,10 @@ from imbue.mng.cli.output_helpers import emit_event
 from imbue.mng.cli.output_helpers import emit_final_json
 from imbue.mng.cli.output_helpers import emit_info
 from imbue.mng.cli.output_helpers import write_human_line
+from imbue.mng.cli.urwid_utils import create_urwid_screen_preserving_terminal
+from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import OutputOptions
-from imbue.mng.interfaces.data_types import AgentInfo
+from imbue.mng.interfaces.data_types import AgentDetails
 from imbue.mng.primitives import CleanupAction
 from imbue.mng.primitives import ErrorBehavior
 from imbue.mng.primitives import OutputFormat
@@ -59,9 +59,9 @@ class CleanupCliOptions(CommonCliOptions):
     exclude: tuple[str, ...]
     older_than: str | None
     idle_for: str | None
-    tag: tuple[str, ...]
+    host_label: tuple[str, ...]
     provider: tuple[str, ...]
-    agent_type: tuple[str, ...]
+    type: tuple[str, ...]
     action: str
     snapshot_before: bool
 
@@ -102,9 +102,9 @@ class CleanupCliOptions(CommonCliOptions):
     help="Select agents idle for at least this duration (e.g., 1h, 30m)",
 )
 @optgroup.option(
-    "--tag",
+    "--host-label",
     multiple=True,
-    help="Select agents/hosts with this tag (repeatable)",
+    help="Select agents/hosts with this host label (repeatable)",
 )
 @optgroup.option(
     "--provider",
@@ -112,7 +112,7 @@ class CleanupCliOptions(CommonCliOptions):
     help="Select hosts from this provider (repeatable)",
 )
 @optgroup.option(
-    "--agent-type",
+    "--type",
     multiple=True,
     help="Select this agent type, e.g., claude, codex (repeatable)",
 )
@@ -246,30 +246,30 @@ def _build_cel_filters_from_options(
         else:
             include_filters.append("(" + " || ".join(provider_conditions) + ")")
 
-    # --agent-type TYPE -> type == "TYPE" (repeatable, OR'd)
-    if opts.agent_type:
-        type_conditions = [f'type == "{t}"' for t in opts.agent_type]
+    # --type TYPE -> type == "TYPE" (repeatable, OR'd)
+    if opts.type:
+        type_conditions = [f'type == "{t}"' for t in opts.type]
         if len(type_conditions) == 1:
             include_filters.append(type_conditions[0])
         else:
             include_filters.append("(" + " || ".join(type_conditions) + ")")
 
-    # --tag TAG -> host.tags (repeatable)
-    if opts.tag:
-        for tag in opts.tag:
-            if "=" in tag:
-                key, value = tag.split("=", 1)
+    # --host-label KEY=VALUE -> host.tags (repeatable)
+    if opts.host_label:
+        for label in opts.host_label:
+            if "=" in label:
+                key, value = label.split("=", 1)
                 include_filters.append(f'host.tags.{key} == "{value}"')
             else:
-                include_filters.append(f'host.tags.{tag} == "true"')
+                include_filters.append(f'host.tags.{label} == "true"')
 
     return include_filters, exclude_filters
 
 
 def _run_interactive_selection(
-    agents: list[AgentInfo],
+    agents: list[AgentDetails],
     action: CleanupAction,
-) -> list[AgentInfo]:
+) -> list[AgentDetails]:
     """Show a urwid-based multi-select TUI for choosing agents to clean up."""
     if not agents:
         return []
@@ -286,12 +286,12 @@ class _CleanupSelectorState(MutableModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    agents: list[AgentInfo]
-    filtered_agents: list[AgentInfo] = []
+    agents: list[AgentDetails]
+    filtered_agents: list[AgentDetails] = []
     selected_ids: set[str] = set()
     list_walker: Any
     status_text: Any
-    result: list[AgentInfo] | None = None
+    result: list[AgentDetails] | None = None
     hide_stopped: bool = False
     search_query: str = ""
     last_ctrl_c_time: float = 0.0
@@ -308,7 +308,7 @@ def _selected_marker(is_selected: bool) -> str:
 
 
 def _create_cleanup_list_item(
-    agent: AgentInfo,
+    agent: AgentDetails,
     is_selected: bool,
     name_width: int,
     state_width: int,
@@ -460,7 +460,7 @@ class _CleanupInputHandler(MutableModel):
         return True if handled else None
 
 
-def _run_cleanup_selector(agents: list[AgentInfo], action: CleanupAction) -> list[AgentInfo]:
+def _run_cleanup_selector(agents: list[AgentDetails], action: CleanupAction) -> list[AgentDetails]:
     """Run the multi-select cleanup TUI and return selected agents."""
     # Calculate column widths
     name_width = min(max((len(str(a.name)) for a in agents), default=10), 40)
@@ -545,16 +545,14 @@ def _run_cleanup_selector(agents: list[AgentInfo], action: CleanupAction) -> lis
 
     input_handler = _CleanupInputHandler(state=state)
 
-    screen = Screen()
-    screen.tty_signal_keys(intr="undefined")
-
-    loop = MainLoop(
-        frame,
-        palette=palette,
-        unhandled_input=input_handler,
-        screen=screen,
-    )
-    loop.run()
+    with create_urwid_screen_preserving_terminal() as screen:
+        loop = MainLoop(
+            frame,
+            palette=palette,
+            unhandled_input=input_handler,
+            screen=screen,
+        )
+        loop.run()
 
     if state.result is None:
         return []
@@ -575,7 +573,7 @@ def _emit_no_agents_found(output_opts: OutputOptions) -> None:
 
 
 def _emit_dry_run_output(
-    agents: list[AgentInfo],
+    agents: list[AgentDetails],
     action: CleanupAction,
     output_opts: OutputOptions,
 ) -> None:
@@ -661,7 +659,7 @@ CommandHelpMetadata(
     key="cleanup",
     one_line_description="Destroy or stop agents and hosts to free up resources [experimental]",
     synopsis="mng [cleanup|clean] [--destroy|--stop] [--older-than DURATION] [--idle-for DURATION] "
-    "[--provider PROVIDER] [--agent-type TYPE] [--tag TAG] [-f|--force|--yes] [--dry-run]",
+    "[--provider PROVIDER] [--type TYPE] [--host-label KEY=VALUE] [-f|--force|--yes] [--dry-run]",
     description="""When running in a pty, defaults to providing an interactive interface for
 reviewing running agents and hosts and selecting which ones to destroy or stop.
 
@@ -681,7 +679,7 @@ see `mng gc`.""",
         ("Destroy agents older than 7 days", "mng cleanup --older-than 7d --yes"),
         ("Stop idle agents", "mng cleanup --stop --idle-for 1h --yes"),
         ("Destroy Docker agents only", "mng cleanup --provider docker --yes"),
-        ("Destroy by agent type", "mng cleanup --agent-type codex --yes"),
+        ("Destroy by agent type", "mng cleanup --type codex --yes"),
     ),
     see_also=(
         ("destroy", "Destroy specific agents by name"),

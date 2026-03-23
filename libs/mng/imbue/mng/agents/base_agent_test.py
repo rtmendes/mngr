@@ -8,8 +8,13 @@ from pathlib import Path
 import pytest
 
 from imbue.mng.agents.base_agent import BaseAgent
+from imbue.mng.agents.base_agent import _check_paste_content
+from imbue.mng.agents.base_agent import _normalize_for_match
 from imbue.mng.config.data_types import AgentTypeConfig
+from imbue.mng.config.data_types import MngContext
+from imbue.mng.errors import SendMessageError
 from imbue.mng.hosts.host import Host
+from imbue.mng.interfaces.data_types import CommandResult
 from imbue.mng.interfaces.host import DEFAULT_AGENT_READY_TIMEOUT_SECONDS
 from imbue.mng.primitives import ActivitySource
 from imbue.mng.primitives import AgentId
@@ -17,6 +22,7 @@ from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import AgentName
 from imbue.mng.primitives import AgentTypeName
 from imbue.mng.primitives import CommandString
+from imbue.mng.primitives import HostId
 from imbue.mng.primitives import HostName
 from imbue.mng.primitives import Permission
 from imbue.mng.providers.local.instance import LocalProviderInstance
@@ -350,11 +356,18 @@ def test_get_expected_process_name_uses_command_basename(
     assert test_agent.get_expected_process_name() == "sleep"
 
 
-def test_uses_marker_based_send_message_returns_false_by_default(
+def test_uses_paste_detection_send_returns_false_by_default(
     test_agent: BaseAgent,
 ) -> None:
-    """Test that uses_marker_based_send_message returns False by default."""
-    assert test_agent.uses_marker_based_send_message() is False
+    """Test that uses_paste_detection_send returns False by default."""
+    assert test_agent.uses_paste_detection_send() is False
+
+
+def test_tmux_target_appends_window_zero(
+    test_agent: BaseAgent,
+) -> None:
+    """tmux_target should return session_name:0 to always target window 0."""
+    assert test_agent.tmux_target == f"{test_agent.session_name}:0"
 
 
 def test_get_tui_ready_indicator_returns_none_by_default(
@@ -364,53 +377,34 @@ def test_get_tui_ready_indicator_returns_none_by_default(
     assert test_agent.get_tui_ready_indicator() is None
 
 
-@pytest.mark.tmux
-def test_send_backspace_with_noop_sends_keys_to_tmux(
-    test_agent: BaseAgent,
-) -> None:
-    """Test that _send_backspace_with_noop sends backspaces and noop keys to tmux session."""
-    session_name = f"{test_agent.mng_ctx.config.prefix}{test_agent.name}"
+def test_normalize_for_match_strips_non_alnum_and_lowercases() -> None:
+    """_normalize_for_match should strip non-alphanumeric chars and lowercase."""
+    assert _normalize_for_match("Hello, World!") == "helloworld"
+    assert _normalize_for_match("foo-bar_baz 123") == "foobarbaz123"
+    assert _normalize_for_match("") == ""
+    assert _normalize_for_match("  \n\t  ") == ""
 
-    # Create a tmux session with some text
-    test_agent.host.execute_command(
-        f"tmux new-session -d -s '{session_name}' 'cat'",
-        timeout_seconds=5.0,
-    )
 
-    try:
-        # Wait for cat to start
-        wait_for(
-            lambda: test_agent.host.execute_command(
-                f"tmux list-panes -t '{session_name}' -F '#{{pane_current_command}}'"
-            ).stdout.strip()
-            == "cat",
-            timeout=5.0,
-            error_message="cat process not ready",
-        )
+def test_check_paste_content_detects_paste_indicator() -> None:
+    """_check_paste_content returns True when tmux paste indicator is present."""
+    assert _check_paste_content("some text\n[Pasted text 123 chars]\nmore text", "anything") is True
 
-        # Send some text
-        test_agent.host.execute_command(f"tmux send-keys -t '{session_name}' -l 'hello'")
 
-        # Wait for text to appear
-        wait_for(
-            lambda: "hello" in (test_agent._capture_pane_content(session_name) or ""),
-            timeout=5.0,
-            error_message="text not visible in pane",
-        )
+def test_check_paste_content_detects_fuzzy_content_match() -> None:
+    """_check_paste_content returns True when normalized message tail is found in pane."""
+    pane = "prompt> hello world this is a test message"
+    assert _check_paste_content(pane, "Hello, World! This is a test message") is True
 
-        # Now send backspaces with noop - should remove some characters
-        test_agent._send_backspace_with_noop(session_name, count=2)
 
-        # Verify backspaces were processed (last 2 chars should be removed)
-        content = test_agent._capture_pane_content(session_name)
-        assert content is not None
-        # After backspaces, "hello" should become "hel"
-        assert "hel" in content
-    finally:
-        test_agent.host.execute_command(
-            f"tmux kill-session -t '{session_name}' 2>/dev/null",
-            timeout_seconds=5.0,
-        )
+def test_check_paste_content_returns_false_when_no_match() -> None:
+    """_check_paste_content returns False when neither paste indicator nor content match."""
+    pane = "prompt> totally different content"
+    assert _check_paste_content(pane, "Hello, World! This is a test message") is False
+
+
+def test_check_paste_content_handles_empty_message() -> None:
+    """_check_paste_content returns True for empty messages (nothing to verify)."""
+    assert _check_paste_content("some content", "") is True
 
 
 @pytest.mark.tmux
@@ -419,6 +413,7 @@ def test_send_enter_and_wait_for_signal_returns_true_when_signal_received(
 ) -> None:
     """Test that _send_enter_and_wait_for_signal returns True when tmux wait-for signal is received."""
     session_name = f"{test_agent.mng_ctx.config.prefix}{test_agent.name}"
+    tmux_target = f"{session_name}:0"
     wait_channel = f"mng-submit-{session_name}"
 
     # Create a tmux session
@@ -436,7 +431,7 @@ def test_send_enter_and_wait_for_signal_returns_true_when_signal_received(
         )
 
         # Call the method - it should receive the signal and return True
-        result = test_agent._send_enter_and_wait_for_signal(session_name, wait_channel)
+        result = test_agent._send_enter_and_wait_for_signal(tmux_target, wait_channel)
         assert result is True
     finally:
         test_agent.host.execute_command(
@@ -453,6 +448,7 @@ def test_send_enter_and_wait_for_signal_returns_false_on_timeout(
     # Use a shorter timeout so the test doesn't wait the full 2 seconds
     test_agent.enter_submission_timeout_seconds = 0.2
     session_name = f"{test_agent.mng_ctx.config.prefix}{test_agent.name}"
+    tmux_target = f"{session_name}:0"
     # Use a unique channel that won't be signaled
     wait_channel = f"mng-submit-never-signaled-{session_name}"
 
@@ -464,7 +460,7 @@ def test_send_enter_and_wait_for_signal_returns_false_on_timeout(
 
     try:
         # Call the method without signaling - should timeout and return False
-        result = test_agent._send_enter_and_wait_for_signal(session_name, wait_channel)
+        result = test_agent._send_enter_and_wait_for_signal(tmux_target, wait_channel)
         assert result is False
     finally:
         test_agent.host.execute_command(
@@ -977,3 +973,303 @@ def test_runtime_seconds_returns_positive_value_when_start_time_set(
     assert result is not None
     # Should be at least a few years worth of seconds (the start time is in 2020)
     assert result > 100_000
+
+
+# =========================================================================
+# _send_tmux_literal_keys tests
+# =========================================================================
+
+
+class _StubHost:
+    """Minimal stub for testing _send_tmux_literal_keys without real tmux.
+
+    Records execute_command and write_text_file calls for assertion.
+    """
+
+    def __init__(
+        self,
+        command_results: list[CommandResult] | None = None,
+    ) -> None:
+        default_result = CommandResult(success=True, stdout="", stderr="")
+        self._command_results = list(command_results) if command_results else []
+        self._default_result = default_result
+        self.executed_commands: list[str] = []
+        self.written_files: list[tuple[Path, str]] = []
+
+    def execute_command(self, command: str, **kwargs: object) -> CommandResult:
+        self.executed_commands.append(command)
+        if self._command_results:
+            return self._command_results.pop(0)
+        return self._default_result
+
+    def write_text_file(self, path: Path, content: str, **kwargs: object) -> None:
+        self.written_files.append((path, content))
+
+
+def _create_agent_with_stub_host(
+    temp_mng_ctx: MngContext,
+    stub: _StubHost,
+) -> BaseAgent:
+    """Create a BaseAgent that uses a stub host for command recording.
+
+    Uses model_construct to bypass Pydantic validation so the stub host
+    (which does not implement the full OnlineHostInterface) can be used.
+    """
+    return BaseAgent.model_construct(
+        id=AgentId.generate(),
+        name=AgentName("stub-agent"),
+        agent_type=AgentTypeName("test"),
+        work_dir=Path("/tmp/stub-work"),
+        create_time=datetime.now(timezone.utc),
+        host_id=HostId.generate(),
+        host=stub,
+        mng_ctx=temp_mng_ctx,
+        agent_config=AgentTypeConfig(command=CommandString("sleep 1000")),
+    )
+
+
+def test_send_tmux_literal_keys_short_message_uses_send_keys(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """Short messages should use tmux send-keys -l."""
+    stub = _StubHost()
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    agent._send_tmux_literal_keys("mng-test:0", "hello")
+
+    assert len(stub.executed_commands) == 1
+    assert "send-keys" in stub.executed_commands[0]
+    assert "-l" in stub.executed_commands[0]
+    assert len(stub.written_files) == 0
+
+
+def test_send_tmux_literal_keys_long_message_uses_load_buffer(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """Messages >= 1024 chars should use write_text_file + load-buffer + paste-buffer."""
+    stub = _StubHost()
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    long_message = "x" * 1024
+    agent._send_tmux_literal_keys("mng-test:0", long_message)
+
+    # Should write the file
+    assert len(stub.written_files) == 1
+    assert stub.written_files[0][1] == long_message
+
+    # Then execute load-buffer, paste-buffer, and cleanup
+    assert len(stub.executed_commands) == 3
+    assert "load-buffer" in stub.executed_commands[0]
+    assert "-b" in stub.executed_commands[0]
+    assert "paste-buffer" in stub.executed_commands[1]
+    assert "-b" in stub.executed_commands[1]
+    assert "delete-buffer" in stub.executed_commands[2]
+    assert "rm -f" in stub.executed_commands[2]
+
+
+def test_send_tmux_literal_keys_long_message_raises_on_load_buffer_failure(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """load-buffer failure should raise SendMessageError."""
+    stub = _StubHost(
+        command_results=[
+            CommandResult(success=False, stdout="", stderr="load failed"),
+        ]
+    )
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    with pytest.raises(SendMessageError, match="load-buffer failed"):
+        agent._send_tmux_literal_keys("mng-test:0", "x" * 1024)
+
+
+def test_send_tmux_literal_keys_long_message_raises_on_paste_buffer_failure(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """paste-buffer failure should raise SendMessageError."""
+    stub = _StubHost(
+        command_results=[
+            CommandResult(success=True, stdout="", stderr=""),
+            CommandResult(success=False, stdout="", stderr="paste failed"),
+        ]
+    )
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    with pytest.raises(SendMessageError, match="paste-buffer failed"):
+        agent._send_tmux_literal_keys("mng-test:0", "x" * 1024)
+
+
+def test_send_tmux_literal_keys_short_message_raises_on_send_keys_failure(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """send-keys failure should raise SendMessageError."""
+    stub = _StubHost(
+        command_results=[
+            CommandResult(success=False, stdout="", stderr="command too long"),
+        ]
+    )
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    with pytest.raises(SendMessageError, match="send-keys failed"):
+        agent._send_tmux_literal_keys("mng-test:0", "hello")
+
+
+# =========================================================================
+# _send_message_simple tests
+# =========================================================================
+
+
+def test_send_message_simple_sends_keys_and_enter(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """_send_message_simple should send keys then send Enter."""
+    stub = _StubHost()
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    agent._send_message_simple("mng-test:0", "hello")
+
+    assert len(stub.executed_commands) == 2
+    assert "send-keys" in stub.executed_commands[0]
+    assert "-l" in stub.executed_commands[0]
+    assert "Enter" in stub.executed_commands[1]
+
+
+def test_send_message_simple_raises_on_enter_failure(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """_send_message_simple should raise when Enter fails."""
+    stub = _StubHost(
+        command_results=[
+            CommandResult(success=True, stdout="", stderr=""),
+            CommandResult(success=False, stdout="", stderr="enter failed"),
+        ]
+    )
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    with pytest.raises(SendMessageError, match="send-keys Enter failed"):
+        agent._send_message_simple("mng-test:0", "hello")
+
+
+# =========================================================================
+# _raise_send_timeout tests
+# =========================================================================
+
+
+def test_raise_send_timeout_raises_send_message_error(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """_raise_send_timeout should raise SendMessageError with the given reason."""
+    stub = _StubHost()
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    with pytest.raises(SendMessageError, match="timeout reason"):
+        agent._raise_send_timeout("mng-test:0", "timeout reason")
+
+
+# =========================================================================
+# _get_command_basename tests
+# =========================================================================
+
+
+def test_get_command_basename_full_path(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """_get_command_basename should extract basename from a full path."""
+    stub = _StubHost()
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    assert agent._get_command_basename(CommandString("/usr/bin/python3 script.py")) == "python3"
+
+
+def test_get_command_basename_simple_command(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """_get_command_basename should handle a simple command name."""
+    stub = _StubHost()
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    assert agent._get_command_basename(CommandString("sleep 1000")) == "sleep"
+
+
+def test_get_command_basename_single_word(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """_get_command_basename should return the command itself for a single word."""
+    stub = _StubHost()
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    assert agent._get_command_basename(CommandString("python3")) == "python3"
+
+
+def test_get_command_basename_strips_leading_subshell_syntax(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """_get_command_basename should strip leading '(' from subshell-wrapped commands."""
+    stub = _StubHost()
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub)
+
+    assert agent._get_command_basename(CommandString("( /usr/bin/script.sh session ) &")) == "script.sh"
+
+
+# =========================================================================
+# get_reported_activity_record tests
+# =========================================================================
+
+
+def test_get_reported_activity_record_returns_none_when_no_activity(
+    test_agent: BaseAgent,
+) -> None:
+    """get_reported_activity_record should return None when no activity recorded."""
+    assert test_agent.get_reported_activity_record(ActivitySource.USER) is None
+
+
+def test_get_reported_activity_record_returns_json_after_recording(
+    test_agent: BaseAgent,
+) -> None:
+    """get_reported_activity_record should return JSON content after recording."""
+    test_agent.record_activity(ActivitySource.PROCESS)
+
+    result = test_agent.get_reported_activity_record(ActivitySource.PROCESS)
+    assert result is not None
+    data = json.loads(result)
+    assert data["agent_id"] == str(test_agent.id)
+    assert data["agent_name"] == str(test_agent.name)
+
+
+# =========================================================================
+# _write_data tests
+# =========================================================================
+
+
+def test_write_data_persists_to_file(
+    test_agent: BaseAgent,
+    local_provider: LocalProviderInstance,
+) -> None:
+    """_write_data should persist data to data.json."""
+    data = test_agent._read_data()
+    data["custom_field"] = "custom_value"
+    test_agent._write_data(data)
+
+    # Read back and verify
+    result = test_agent._read_data()
+    assert result["custom_field"] == "custom_value"
+
+
+# =========================================================================
+# _check_paste_content edge cases
+# =========================================================================
+
+
+def test_check_paste_content_short_message_tail() -> None:
+    """_check_paste_content with a short message should use its full length as probe."""
+    pane = "prompt> abc"
+    # Message shorter than 60 chars
+    assert _check_paste_content(pane, "abc") is True
+
+
+def test_check_paste_content_long_message_uses_tail() -> None:
+    """_check_paste_content with a long message should match on the last 60 chars."""
+    # Create a message longer than 60 chars where only the tail matches the pane
+    tail = "a" * 60
+    message = "x" * 100 + tail
+    pane = "prompt> " + tail
+    assert _check_paste_content(pane, message) is True

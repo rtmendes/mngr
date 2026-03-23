@@ -9,7 +9,7 @@
 mng [plugin|plug] <subcommand> [OPTIONS]
 ```
 
-Manage available and active plugins [experimental].
+Manage available and active plugins.
 
 Install, remove, view, enable, and disable plugins registered with mng.
 Plugins provide agent types, provider backends, CLI commands, and lifecycle hooks.
@@ -27,15 +27,14 @@ mng plugin [OPTIONS] COMMAND [ARGS]...
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
@@ -43,7 +42,7 @@ mng plugin [OPTIONS] COMMAND [ARGS]...
 
 ## mng plugin list
 
-List discovered plugins [experimental].
+List discovered plugins.
 
 Shows all plugins registered with mng, including built-in plugins
 and any externally installed plugins.
@@ -62,15 +61,14 @@ mng plugin list [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
@@ -118,16 +116,18 @@ $ mng plugin list --format '{name}\t{enabled}'
 
 ## mng plugin add
 
-Install a plugin package [experimental].
+Install a plugin package.
 
-Provide exactly one of NAME (positional), --path, or --git. NAME is a PyPI
-package specifier (e.g., 'mng-pair' or 'mng-pair>=1.0'). --path installs
-from a local directory in editable mode. --git installs from a git URL.
+All source types are repeatable and can be freely mixed in one command.
+NAME is a PyPI package specifier (e.g., 'mng-pair' or 'mng-pair>=1.0').
+--path installs from a local directory in editable mode.
+--git installs from a git URL.
+All plugins are installed in a single operation for speed.
 
 **Usage:**
 
 ```text
-mng plugin add [OPTIONS] [NAME]
+mng plugin add [OPTIONS] [NAMES]...
 ```
 **Options:**
 
@@ -135,15 +135,14 @@ mng plugin add [OPTIONS] [NAME]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
@@ -153,8 +152,8 @@ mng plugin add [OPTIONS] [NAME]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--path` | text | Install from a local path (editable mode) | None |
-| `--git` | text | Install from a git URL | None |
+| `--path` | text | Install from a local path (editable mode) [repeatable] | None |
+| `--git` | text | Install from a git URL [repeatable] | None |
 
 
 ## Examples
@@ -177,23 +176,36 @@ $ mng plugin add mng-pair>=1.0
 $ mng plugin add --path ./my-plugin
 ```
 
+**Install multiple local plugins**
+
+```bash
+$ mng plugin add --path ./plugin-a --path ./plugin-b
+```
+
 **Install from a git URL**
 
 ```bash
 $ mng plugin add --git https://github.com/user/mng-plugin.git
 ```
 
+**Mix all source types**
+
+```bash
+$ mng plugin add pkg-a --path ./local-b --git https://example.com/c.git
+```
+
 ## mng plugin remove
 
-Uninstall a plugin package [experimental].
+Uninstall a plugin package.
 
-Provide exactly one of NAME (positional) or --path. For local paths,
-the package name is read from pyproject.toml.
+Both source types are repeatable and can be freely mixed in one command.
+For local paths, the package name is read from pyproject.toml.
+All plugins are removed in a single operation.
 
 **Usage:**
 
 ```text
-mng plugin remove [OPTIONS] [NAME]
+mng plugin remove [OPTIONS] [NAMES]...
 ```
 **Options:**
 
@@ -201,15 +213,14 @@ mng plugin remove [OPTIONS] [NAME]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
@@ -219,7 +230,7 @@ mng plugin remove [OPTIONS] [NAME]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--path` | text | Remove by local path (reads package name from pyproject.toml) | None |
+| `--path` | text | Remove by local path (reads package name from pyproject.toml) [repeatable] | None |
 
 
 ## Examples
@@ -230,15 +241,27 @@ mng plugin remove [OPTIONS] [NAME]
 $ mng plugin remove mng-pair
 ```
 
+**Remove multiple by name**
+
+```bash
+$ mng plugin remove mng-pair mng-opencode
+```
+
 **Remove by local path**
 
 ```bash
 $ mng plugin remove --path ./my-plugin
 ```
 
+**Mix names and paths**
+
+```bash
+$ mng plugin remove mng-pair --path ./my-plugin
+```
+
 ## mng plugin enable
 
-Enable a plugin [experimental].
+Enable a plugin.
 
 Sets plugins.<name>.enabled = true in the configuration file at the
 specified scope.
@@ -254,15 +277,14 @@ mng plugin enable [OPTIONS] NAME
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
@@ -297,7 +319,7 @@ $ mng plugin enable modal --format json
 
 ## mng plugin disable
 
-Disable a plugin [experimental].
+Disable a plugin.
 
 Sets plugins.<name>.enabled = false in the configuration file at the
 specified scope.
@@ -313,15 +335,14 @@ mng plugin disable [OPTIONS] NAME
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
@@ -375,15 +396,14 @@ mng plugin install-wizard [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
@@ -440,10 +460,10 @@ $ mng plugin add mng-pair
 $ mng plugin add --path ./my-plugin
 ```
 
-**Install a plugin from git**
+**Install multiple plugins at once**
 
 ```bash
-$ mng plugin add --git https://github.com/user/mng-plugin.git
+$ mng plugin add pkg-a --path ./local-b --git https://example.com/c.git
 ```
 
 **Remove a plugin**

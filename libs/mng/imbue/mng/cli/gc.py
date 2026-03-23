@@ -11,7 +11,6 @@ from imbue.mng.api.data_types import GcResult
 from imbue.mng.api.gc import gc as api_gc
 from imbue.mng.api.providers import get_all_provider_instances
 from imbue.mng.api.providers import get_provider_instance
-from imbue.mng.cli.common_opts import CommonCliOptions
 from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.help_formatter import CommandHelpMetadata
@@ -23,6 +22,7 @@ from imbue.mng.cli.output_helpers import emit_info
 from imbue.mng.cli.output_helpers import format_size
 from imbue.mng.cli.output_helpers import write_human_line
 from imbue.mng.cli.watch_mode import run_watch_loop
+from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.interfaces.provider_instance import ProviderInstanceInterface
@@ -266,7 +266,9 @@ def _format_destroyed_message(resource_type: str, resource: Any, dry_run: bool) 
     if resource_type == "work_dir":
         return f"{action} work directory: {resource.path}"
     if resource_type == "machine":
-        return f"{action} machine: {resource.name} ({resource.provider_name})"
+        return f"{action} machine: {resource.host_name} ({resource.provider_name})"
+    if resource_type == "machine_record":
+        return f"{action} machine record: {resource.host_name} ({resource.provider_name})"
     if resource_type == "snapshot":
         return f"{action} snapshot: {resource.name}"
     if resource_type == "volume":

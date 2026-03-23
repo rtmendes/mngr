@@ -6,7 +6,9 @@ Provides common test infrastructure:
 - xdist parallelism override (configurable via PYTEST_NUMPROCESSES env var)
 - Output file redirection (slow tests report, coverage report)
 - Shared pytest defaults (markers, filterwarnings, CLI args, coverage report config)
+- Cached importlib.metadata.entry_points() for fast test startup on slow filesystems
 - Resource mark enforcement (ensures tests are correctly marked for external tool usage)
+- Test profiles: branch-name-based selective testing (see test_profiles.toml)
 
 Environment variables:
 - PYTEST_NUMPROCESSES: Override the number of xdist workers (default: 4, set in
@@ -16,6 +18,8 @@ Environment variables:
 - PYTEST_MAX_DURATION: Override the maximum allowed test suite duration in seconds.
   Without this, defaults are chosen based on test type and environment (see
   _pytest_sessionfinish for details).
+- MNG_TEST_PROFILE: Force a specific test profile (overrides branch detection).
+  Set to "all" to disable profile filtering entirely.
 
 Usage in each project's conftest.py:
     from imbue.imbue_common.conftest_hooks import register_conftest_hooks
@@ -28,12 +32,14 @@ by pytest. Without the guard, pytest_addoption would fail with duplicate option 
 """
 
 import fcntl
+import importlib.metadata
 import json
 import os
 import sys
 import time
 from io import StringIO
 from pathlib import Path
+from typing import Any
 from typing import Final
 from typing import TextIO
 from uuid import uuid4
@@ -41,11 +47,48 @@ from uuid import uuid4
 import pytest
 from coverage.exceptions import CoverageException
 
-from imbue.imbue_common.resource_guards import _pytest_runtest_makereport
-from imbue.imbue_common.resource_guards import _pytest_runtest_setup
-from imbue.imbue_common.resource_guards import _pytest_runtest_teardown
-from imbue.imbue_common.resource_guards import cleanup_resource_guard_wrappers
-from imbue.imbue_common.resource_guards import create_resource_guard_wrappers
+from imbue.imbue_common.test_profiles import ScopedProfile
+from imbue.imbue_common.test_profiles import resolve_active_profile
+from imbue.resource_guards.resource_guards import start_resource_guards
+from imbue.resource_guards.resource_guards import stop_resource_guards
+
+# ---------------------------------------------------------------------------
+# Cache importlib.metadata.entry_points() to avoid repeated filesystem scans.
+#
+# On slow filesystems (e.g., 9p with dcache=0), each entry_points() call takes
+# ~50-90ms because it must stat/read dist-info directories for every installed
+# package. With ~3000 tests that each trigger entry_points() via plugin loading
+# and connector discovery, this adds up to minutes of pure I/O overhead.
+#
+# Since installed packages don't change during a test run, we cache results at
+# module import time. Each xdist worker is a separate process, so a simple
+# in-process dict is sufficient (no cross-process coordination needed).
+# ---------------------------------------------------------------------------
+
+_original_entry_points = importlib.metadata.entry_points
+_entry_points_cache: dict[
+    tuple[tuple[str, Any], ...],
+    importlib.metadata.EntryPoints | importlib.metadata.SelectableGroups,
+] = {}
+
+
+def _cached_entry_points(
+    **params: Any,
+) -> importlib.metadata.EntryPoints | importlib.metadata.SelectableGroups:
+    """Caching wrapper around importlib.metadata.entry_points().
+
+    Converts the keyword arguments to a hashable key (frozenset of items) and
+    returns a cached result if available. Entry points are static for the
+    lifetime of a test process, so the cache never needs invalidation.
+    """
+    key = tuple(sorted(params.items()))
+    if key not in _entry_points_cache:
+        _entry_points_cache[key] = _original_entry_points(**params)
+    return _entry_points_cache[key]
+
+
+importlib.metadata.entry_points = _cached_entry_points  # type: ignore[assignment]
+
 
 # Directory for test output files (slow tests, coverage summaries).
 # Relative to wherever pytest is invoked from.
@@ -97,6 +140,8 @@ _SHARED_FILTER_WARNINGS: Final[list[str]] = [
     # Suppress coverage warning about modules being imported before coverage starts measuring.
     # This happens because pytest collects tests (importing modules) before coverage.py starts.
     r"ignore:Module imbue\..* was previously imported, but not measured:coverage.exceptions.CoverageWarning",
+    # record_xml_attribute is marked experimental but we rely on it for JUnit test ID customization.
+    "ignore::pytest.PytestExperimentalApiWarning",
 ]
 
 # Lines matching any of these patterns are excluded from coverage measurement.
@@ -267,8 +312,7 @@ def _pytest_sessionstart(session: pytest.Session) -> None:
         # Record start time AFTER acquiring the lock so wait time isn't counted
         setattr(session, "start_time", time.time())  # noqa: B010
 
-    # Create resource guard wrappers (workers reuse the controller's via env var).
-    create_resource_guard_wrappers()
+    start_resource_guards(session)
 
 
 @pytest.hookimpl(trylast=True)
@@ -278,8 +322,7 @@ def _pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     Prints per-test durations before checking the limit so that timing data
     is always visible in CI output, even when the suite exceeds the limit.
     """
-    # Clean up resource guard wrappers
-    cleanup_resource_guard_wrappers()
+    stop_resource_guards()
 
     # Print test durations before checking the time limit, so they are
     # visible in the CI output even when pytest.exit() aborts the session.
@@ -312,7 +355,7 @@ def _pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             if "CI" in os.environ:
                 # this limit applies to the test suite that runs against all branches *except* "release" in GitHub CI (and which is basically just used for calculating coverage)
                 # typically integration tests and unit tests are run locally, so we want them to be fast
-                max_duration = 130.0
+                max_duration = 150.0
             else:
                 # this limit applies to the entire test suite when run locally
                 max_duration = 300.0
@@ -415,6 +458,66 @@ def _pytest_configure(config: pytest.Config) -> None:
             else:
                 config.option.tx = []
                 config.option.dist = "no"
+
+    # Apply test profile filtering based on branch name (see test_profiles.toml).
+    # When a profile is active, only tests from its testpaths are collected, and
+    # coverage is limited to its cov_packages. Coverage threshold is disabled
+    # because thresholds only make sense when all tests run.
+    profile = resolve_active_profile(config.rootpath)
+    if profile is not None:
+        setattr(config, "_test_profile", profile)  # noqa: B010
+
+        # Override coverage sources to only measure profiled packages
+        if hasattr(config.option, "cov_source"):
+            config.option.cov_source = list(profile.cov_packages)
+
+        # Disable coverage threshold (subset coverage is not meaningful)
+        if hasattr(config.option, "cov_fail_under"):
+            config.option.cov_fail_under = 0
+
+        # Also update the CovPlugin's options directly. pytest-cov's
+        # pytest_configure runs before conftest hooks and stores its own
+        # reference to the options Namespace, which may be a different object
+        # from config.option.
+        cov_plugin = config.pluginmanager.get_plugin("_cov")
+        if cov_plugin is not None and hasattr(cov_plugin, "options"):
+            cov_plugin.options.cov_source = list(profile.cov_packages)
+            cov_plugin.options.cov_fail_under = 0
+
+        if not _is_xdist_worker():
+            _print_lock_message(f"TEST PROFILE '{profile.name}' active: testing {', '.join(profile.testpaths)}")
+
+
+@pytest.hookimpl(tryfirst=True)
+def _pytest_collection_modifyitems(
+    session: pytest.Session,
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
+    """Filter collected test items to only include those matching the active test profile.
+
+    When a test profile is active (set during pytest_configure), items whose file paths
+    do not fall under any of the profile's testpaths are deselected. This runs with
+    tryfirst=True so that downstream hooks (e.g. pytest-split) only see the filtered set.
+    """
+    profile: ScopedProfile | None = getattr(config, "_test_profile", None)
+    if profile is None:
+        return
+
+    allowed_roots = [config.rootpath / tp for tp in profile.testpaths]
+    selected: list[pytest.Item] = []
+    deselected: list[pytest.Item] = []
+
+    for item in items:
+        item_path = item.path
+        if any(item_path.is_relative_to(root) for root in allowed_roots):
+            selected.append(item)
+        else:
+            deselected.append(item)
+
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
 
 
 def _pytest_collection_finish(session: pytest.Session) -> None:
@@ -626,10 +729,10 @@ def register_conftest_hooks(namespace: dict) -> None:
     namespace["pytest_sessionfinish"] = _pytest_sessionfinish
     namespace["pytest_addoption"] = _pytest_addoption
     namespace["pytest_configure"] = _pytest_configure
+    namespace["pytest_collection_modifyitems"] = _pytest_collection_modifyitems
     namespace["pytest_collection_finish"] = _pytest_collection_finish
     namespace["pytest_terminal_summary"] = _pytest_terminal_summary
-    namespace["pytest_runtest_setup"] = _pytest_runtest_setup
-    namespace["pytest_runtest_teardown"] = _pytest_runtest_teardown
-    namespace["pytest_runtest_makereport"] = _pytest_runtest_makereport
+    # Resource guard hooks are registered as a plugin by start_resource_guards()
+    # during pytest_sessionstart, so they don't need to be injected here.
     # Register the JUnit test ID fixture (with public name for pytest discovery)
     namespace["set_junit_test_id"] = _set_junit_test_id

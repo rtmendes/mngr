@@ -9,7 +9,7 @@
 mng [snapshot|snap] [create|list|destroy] [AGENTS...] [OPTIONS]
 ```
 
-Create, list, and destroy host snapshots [experimental].
+Create, list, and destroy host snapshots.
 
 Snapshots capture the complete filesystem state of a host, allowing it to be
 restored later. Because the snapshot is at the host level, the state of all
@@ -37,15 +37,14 @@ mng snapshot [OPTIONS] COMMAND [ARGS]...
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
@@ -53,7 +52,7 @@ mng snapshot [OPTIONS] COMMAND [ARGS]...
 
 ## mng snapshot create
 
-Create a snapshot of agent host(s) [experimental].
+Create a snapshot of agent host(s).
 
 Positional arguments can be agent names/IDs or host names/IDs. Each
 identifier is automatically resolved: if it matches a known agent, that
@@ -103,15 +102,14 @@ mng snapshot create [OPTIONS] [IDENTIFIERS]...
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
@@ -152,7 +150,7 @@ $ mng snapshot create my-agent --format '{snapshot_id}'
 
 ## mng snapshot list
 
-List snapshots for agent host(s) [experimental].
+List snapshots for agent host(s).
 
 Shows snapshot ID, name, creation time, size, and host for each snapshot.
 
@@ -192,15 +190,14 @@ mng snapshot list [OPTIONS] [IDENTIFIERS]...
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
@@ -241,7 +238,7 @@ $ mng snapshot list my-agent --format '{name}\t{size}\t{host_id}'
 
 ## mng snapshot destroy
 
-Destroy snapshots for agent host(s) [experimental].
+Destroy snapshots for agent host(s).
 
 Requires either --snapshot (to delete specific snapshots) or --all-snapshots
 (to delete all snapshots for the resolved hosts). A confirmation prompt is
@@ -279,15 +276,14 @@ mng snapshot destroy [OPTIONS] [AGENTS]...
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided [experimental], fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `--json` | boolean | Alias for --format json | `False` |
-| `--jsonl` | boolean | Alias for --format jsonl | `False` |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
 | `-q`, `--quiet` | boolean | Suppress all console output | `False` |
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mng/logs/<timestamp>-<pid>.json) | None |
+| `--log-file` | path | Path to log file (overrides default ~/.mng/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
 | `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
 | `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNG_HEADLESS env var or 'headless' config key. | `False` |
 | `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |

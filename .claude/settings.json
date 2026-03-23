@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -42,6 +45,7 @@
     ]
   },
   "model": "opus[1m]",
+  "effortLevel": "high",
   "statusLine": {
     "type": "command",
     "command": "./scripts/claude_status_line.sh"

@@ -51,7 +51,7 @@ def _build_ssh_activity_wrapper_script(session_name: str, host_dir: Path, agent_
         f"sleep 5; done) & "
         "MNG_ACTIVITY_PID=$!; "
         # resize all tmux windows to be the correct size and signal the agent that it needs to redraw. We do this with a delay so that it happens after attaching.
-        f"(sleep 5 && tmux list-windows -t '{session_name}' -F '#I' | xargs -I{{}} tmux resize-window -t '{session_name}':{{}} -A && sleep 1 && pkill -SIGWINCH -f {agent_command}) & "
+        f"(sleep 5 && tmux list-windows -t '{session_name}' -F '#I' | xargs -I{{}} tmux resize-window -t '{session_name}':{{}} -A && sleep 1 && pkill -SIGWINCH -f {shlex.quote(agent_command)}) & "
         # actually attach
         f"tmux attach -t '{session_name}'; "
         "kill $MNG_ACTIVITY_PID 2>/dev/null; "
@@ -213,9 +213,14 @@ def connect_to_agent(
         # the first word of the script (e.g., 'mkdir') instead of the full script.
         ssh_args.extend(["-t", "bash -c " + shlex.quote(wrapper_script)])
 
+        # hack to make this work for me, we really should be more principled about this...
+        fixed_env = {**os.environ}
+        if fixed_env.get("TERM") == "xterm-kitty":
+            fixed_env["TERM"] = "xterm-256color"
+
         # Use run_interactive_subprocess instead of os.execvp so we can check the exit code
         # and run post-disconnect actions (destroy/stop) triggered by tmux key bindings
-        completed = run_interactive_subprocess(ssh_args)
+        completed = run_interactive_subprocess(ssh_args, env=fixed_env)
         exit_code = completed.returncode
 
         action = _determine_post_disconnect_action(exit_code, session_name)

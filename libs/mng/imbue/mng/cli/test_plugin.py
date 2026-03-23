@@ -324,22 +324,6 @@ def test_plugin_add_no_source_fails(
     assert result.exit_code != 0
 
 
-def test_plugin_add_name_and_path_mutually_exclusive(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-    temp_git_repo_cwd: Path,
-) -> None:
-    """Test that providing both NAME and --path fails."""
-
-    result = cli_runner.invoke(
-        plugin,
-        ["add", "mng-opencode", "--path", "./my-plugin"],
-        obj=plugin_manager,
-    )
-
-    assert result.exit_code != 0
-
-
 def test_plugin_add_invalid_name_fails(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
@@ -387,22 +371,6 @@ def test_plugin_remove_no_source_fails(
     result = cli_runner.invoke(
         plugin,
         ["remove"],
-        obj=plugin_manager,
-    )
-
-    assert result.exit_code != 0
-
-
-def test_plugin_remove_name_and_path_mutually_exclusive(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-    temp_git_repo_cwd: Path,
-) -> None:
-    """Test that providing both NAME and --path fails."""
-
-    result = cli_runner.invoke(
-        plugin,
-        ["remove", "mng-opencode", "--path", "./my-plugin"],
         obj=plugin_manager,
     )
 
@@ -459,4 +427,12 @@ def test_plugin_add_path_and_remove_lifecycle() -> None:
         assert "opencode" in plugin_names_after_add
     finally:
         # -- Always clean up: remove via mng plugin remove --
-        run_mng("plugin", "remove", "mng-opencode", "--format", "json")
+        remove_result = run_mng("plugin", "remove", "mng-opencode", "--format", "json")
+
+    # -- Verify the remove succeeded --
+    remove_output = json.loads(remove_result.stdout)
+    assert remove_output["package"] == "mng-opencode"
+
+    list_after_remove = run_mng("plugin", "list", "--format", "json")
+    plugin_names_after_remove = [p["name"] for p in json.loads(list_after_remove.stdout)["plugins"]]
+    assert "opencode" not in plugin_names_after_remove

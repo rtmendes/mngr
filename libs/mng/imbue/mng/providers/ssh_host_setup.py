@@ -28,12 +28,18 @@ class RequiredHostPackage(FrozenModel):
 # check in build_check_and_install_packages_command will still install any
 # that are missing (with a warning).
 REQUIRED_HOST_PACKAGES: Final[tuple[RequiredHostPackage, ...]] = (
+    RequiredHostPackage(
+        package="ca-certificates",
+        binary="update-ca-certificates",
+        check_cmd="test -f /etc/ssl/certs/ca-certificates.crt",
+    ),
     RequiredHostPackage(package="openssh-server", binary="sshd", check_cmd="test -x /usr/sbin/sshd"),
     RequiredHostPackage(package="tmux", binary="tmux"),
     RequiredHostPackage(package="curl", binary="curl"),
     RequiredHostPackage(package="rsync", binary="rsync"),
     RequiredHostPackage(package="git", binary="git"),
     RequiredHostPackage(package="jq", binary="jq"),
+    RequiredHostPackage(package="xxd", binary="xxd"),
 )
 
 
@@ -70,7 +76,7 @@ def build_check_and_install_packages_command(
     """Build a single shell command that checks for and installs required packages.
 
     This command:
-    1. Checks for each required package (sshd, tmux, curl, rsync, git, jq)
+    1. Checks for each required package (ca-certificates, sshd, tmux, curl, rsync, git, jq, xxd)
     2. Echoes a prefixed warning for each missing package
     3. Installs all missing packages in a single apt-get call
     4. Creates the sshd run directory (/run/sshd)
@@ -264,7 +270,7 @@ def build_start_volume_sync_command(
     Returns a shell command string that can be executed via sh -c.
     """
     script_path = f"{mng_host_dir}/commands/volume_sync.sh"
-    log_path = f"{mng_host_dir}/logs/volume_sync.log"
+    log_path = f"{mng_host_dir}/events/logs/volume_sync.log"
 
     # The sync script content (simple loop)
     sync_script = f"#!/bin/sh\nwhile true; do sync {volume_mount_path} 2>/dev/null; sleep 60; done\n"
@@ -272,7 +278,7 @@ def build_start_volume_sync_command(
 
     script_lines = [
         f"mkdir -p '{mng_host_dir}/commands'",
-        f"mkdir -p '{mng_host_dir}/logs'",
+        f"mkdir -p '{mng_host_dir}/events/logs'",
         f"printf '%s' '{escaped_script}' > '{script_path}'",
         f"chmod +x '{script_path}'",
         f"nohup '{script_path}' > '{log_path}' 2>&1 &",
@@ -309,12 +315,12 @@ def build_start_activity_watcher_command(
 
     log_lib_path = f"{mng_host_dir}/commands/mng_log.sh"
     script_path = f"{mng_host_dir}/commands/activity_watcher.sh"
-    log_path = f"{mng_host_dir}/logs/activity_watcher.log"
+    log_path = f"{mng_host_dir}/events/logs/activity_watcher.log"
 
     script_lines = [
-        # Create commands and logs directories
+        # Create commands and events directories
         f"mkdir -p '{mng_host_dir}/commands'",
-        f"mkdir -p '{mng_host_dir}/logs'",
+        f"mkdir -p '{mng_host_dir}/events/logs'",
         # Write the shared logging library
         f"printf '%s' '{escaped_log_lib}' > '{log_lib_path}'",
         f"chmod +x '{log_lib_path}'",

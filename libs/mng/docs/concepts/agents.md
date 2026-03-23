@@ -8,7 +8,7 @@ Each agent has a name, a unique identifier (`agent-id`), and is a particular ["a
 
 Each agent can have **labels** -- key-value string pairs that provide metadata about the agent. The most common label is `project`, which is automatically set based on the git remote origin or folder name. Labels are used for filtering and organizing agents (e.g., `mng list --project mng` or `mng list --label env=prod`).
 
-Labels are distinct from host **tags**: labels are agent-level metadata, while tags are host-level metadata. Use `--label KEY=VALUE` when creating an agent to attach custom labels, and `--tag KEY=VALUE` for host-level tags.
+Labels are distinct from **host labels**: labels are agent-level metadata, while host labels are host-level metadata. Use `--label KEY=VALUE` when creating an agent to attach custom labels, and `--host-label KEY=VALUE` for host-level labels.
 
 Nothing stops you from creating additional invocations of agent programs inside the tmux session (e.g. launching multiple Claude Code's), but only the main agent process for a given tmux session is considered by `mng` for the purposes of detecting the agent's state.
 
@@ -32,14 +32,14 @@ mng create my-agent claude --idle-timeout 1h      # Override timeout
 
 ## Running a Custom Command
 
-Use `--agent-cmd` (or `--agent-command`) to run a literal command instead of using an agent type:
+Use `--command` to run a literal command instead of using an agent type:
 
 ```bash
-mng create my-agent --agent-cmd "sleep 1000"      # Run a simple command
-mng create my-agent --agent-cmd "./my-script.sh"  # Run a custom script
+mng create my-agent --command "sleep 1000"      # Run a simple command
+mng create my-agent --command "./my-script.sh"  # Run a custom script
 ```
 
-The `--agent-cmd` flag implicitly uses the "generic" agent type, which simply runs the provided command without any special handling. This means `--agent-cmd` and `--agent-type` are mutually exclusive: you either specify an agent type (like `claude` or `codex`), or you provide a literal command to run.
+The `--command` flag implicitly uses the "generic" agent type, which simply runs the provided command without any special handling. This means `--command` and `--type` are mutually exclusive: you either specify an agent type (like `claude` or `codex`), or you provide a literal command to run.
 
 See [`mng create`](../commands/primary/create.md) for all available options.
 

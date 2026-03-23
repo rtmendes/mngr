@@ -8,7 +8,9 @@ from click_option_group import OptionGroup
 
 from imbue.imbue_common.model_update import to_update
 from imbue.mng.agents.agent_registry import load_agents_from_plugins
+from imbue.mng.cli.archive import archive
 from imbue.mng.cli.ask import ask
+from imbue.mng.cli.capture import capture
 from imbue.mng.cli.cleanup import cleanup
 from imbue.mng.cli.clone import clone
 from imbue.mng.cli.common_opts import TCommand
@@ -20,16 +22,18 @@ from imbue.mng.cli.connect import connect
 from imbue.mng.cli.create import create
 from imbue.mng.cli.default_command_group import DefaultCommandGroup
 from imbue.mng.cli.destroy import destroy
+from imbue.mng.cli.events import events
 from imbue.mng.cli.exec import exec_command
 from imbue.mng.cli.gc import gc
 from imbue.mng.cli.help_formatter import get_help_metadata
 from imbue.mng.cli.issue_reporting import handle_not_implemented_error
 from imbue.mng.cli.issue_reporting import handle_unexpected_error
+from imbue.mng.cli.label import label
 from imbue.mng.cli.limit import limit
 from imbue.mng.cli.list import list_command
-from imbue.mng.cli.logs import logs
 from imbue.mng.cli.message import message
 from imbue.mng.cli.migrate import migrate
+from imbue.mng.cli.observe import observe
 from imbue.mng.cli.plugin import plugin as plugin_command
 from imbue.mng.cli.provision import provision
 from imbue.mng.cli.pull import pull
@@ -38,6 +42,7 @@ from imbue.mng.cli.rename import rename
 from imbue.mng.cli.snapshot import snapshot
 from imbue.mng.cli.start import start
 from imbue.mng.cli.stop import stop
+from imbue.mng.cli.transcript import transcript
 from imbue.mng.config.loader import block_disabled_plugins
 from imbue.mng.config.pre_readers import read_disabled_plugins
 from imbue.mng.errors import BaseMngError
@@ -71,8 +76,9 @@ def _call_on_error_hook(ctx: click.Context, error: BaseException) -> None:
 class AliasAwareGroup(DefaultCommandGroup):
     """Custom click.Group that shows aliases inline with commands in --help.
 
-    When no subcommand is given, defaults to 'create'. When an unrecognized
-    subcommand is given, it is treated as arguments to 'create' (e.g.
+    When no subcommand is given, shows help. Users can configure a default
+    subcommand via ``[commands.mng] default_subcommand`` in config files
+    (e.g. set to ``"create"`` to restore the old behavior where
     ``mng my-task`` is equivalent to ``mng create my-task``).
     """
 
@@ -96,14 +102,14 @@ class AliasAwareGroup(DefaultCommandGroup):
             return result
         except NotImplementedError as e:
             _call_on_error_hook(ctx, e)
-            handle_not_implemented_error(e)
+            handle_not_implemented_error(e, is_interactive=ctx.meta.get("is_interactive"))
         except (click.ClickException, click.Abort, click.exceptions.Exit, BaseMngError, bdb.BdbQuit) as e:
             _call_on_error_hook(ctx, e)
             raise
         except Exception as e:
             _call_on_error_hook(ctx, e)
             if ctx.meta.get("is_error_reporting_enabled", False):
-                handle_unexpected_error(e)
+                handle_unexpected_error(e, is_interactive=ctx.meta.get("is_interactive"))
             raise
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
@@ -295,12 +301,13 @@ def reset_plugin_manager() -> None:
 # Add built-in commands to the CLI group
 BUILTIN_COMMANDS: list[click.Command] = [
     ask,
+    capture,
     create,
     cleanup,
     destroy,
     exec_command,
     list_command,
-    logs,
+    events,
     connect,
     message,
     provision,
@@ -313,7 +320,10 @@ BUILTIN_COMMANDS: list[click.Command] = [
     snapshot,
     config,
     gc,
+    label,
     plugin_command,
+    observe,
+    transcript,
 ]
 
 for cmd in BUILTIN_COMMANDS:
@@ -335,8 +345,9 @@ cli.add_command(rename, name="mv")
 cli.add_command(snapshot, name="snap")
 cli.add_command(stop, name="s")
 
-# Add clone as a standalone command (not in BUILTIN_COMMANDS since it uses
-# UNPROCESSED args and delegates to create, which already has plugin options applied)
+# Add commands that use UNPROCESSED args and delegate to other commands.
+# Not in BUILTIN_COMMANDS since plugin options are applied to the delegate target.
+cli.add_command(archive)
 cli.add_command(clone)
 cli.add_command(migrate)
 

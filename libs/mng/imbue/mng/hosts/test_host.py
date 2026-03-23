@@ -29,6 +29,7 @@ from imbue.mng.errors import LockNotHeldError
 from imbue.mng.errors import MngError
 from imbue.mng.hosts.common import is_macos
 from imbue.mng.hosts.host import Host
+from imbue.mng.hosts.tmux import capture_tmux_pane_content
 from imbue.mng.interfaces.agent import AgentInterface
 from imbue.mng.interfaces.data_types import ActivityConfig
 from imbue.mng.interfaces.host import AgentDataOptions
@@ -52,6 +53,7 @@ from imbue.mng.providers.ssh.instance import SSHHostConfig
 from imbue.mng.providers.ssh.instance import SSHProviderInstance
 from imbue.mng.utils.polling import poll_until
 from imbue.mng.utils.polling import wait_for
+from imbue.mng.utils.testing import capture_tmux_pane_contents
 from imbue.mng.utils.testing import generate_ssh_keypair
 from imbue.mng.utils.testing import local_sshd
 
@@ -680,8 +682,8 @@ def test_unset_vars_applied_during_agent_start(
         result = host.execute_command(f"tmux has-session -t '{session_name}'")
         if not result.success:
             return False
-        capture_result = host.execute_command(f"tmux capture-pane -t '{session_name}' -p")
-        return capture_result.success and ("sleep 736249" in capture_result.stdout)
+        pane_content = capture_tmux_pane_content(host, session_name)
+        return pane_content is not None and "sleep 736249" in pane_content
 
     wait_for(session_ready, timeout=30.0, poll_interval=0.5, error_message="tmux session not ready")
 
@@ -701,10 +703,9 @@ def test_unset_vars_applied_during_agent_start(
     host.execute_command(f"tmux send-keys -t '{session_name}' 'echo PROFILE_VALUE=${{PROFILE:-UNSET}}' Enter")
 
     def check_output() -> bool:
-        capture_result = host.execute_command(f"tmux capture-pane -t '{session_name}' -p")
-        if not capture_result.success:
+        output = capture_tmux_pane_content(host, session_name)
+        if output is None:
             return False
-        output = capture_result.stdout
         has_histfile = "HISTFILE_VALUE=UNSET" in output or "HISTFILE_VALUE=" in output
         has_profile = "PROFILE_VALUE=UNSET" in output or "PROFILE_VALUE=" in output
         return has_histfile and has_profile
@@ -1563,9 +1564,9 @@ def _init_git_repo(path: Path, commit_message: str = "Initial commit") -> None:
 
 
 def test_get_ssh_connection_info_returns_none_for_local_host(host_with_temp_dir: tuple[Host, Path]) -> None:
-    """Test that _get_ssh_connection_info returns None for local hosts."""
+    """Test that get_ssh_connection_info returns None for local hosts."""
     host, _ = host_with_temp_dir
-    ssh_info = host._get_ssh_connection_info()
+    ssh_info = host.get_ssh_connection_info()
     assert ssh_info is None
 
 
@@ -1835,7 +1836,7 @@ def test_create_work_dir_generates_new_branch(
     host_with_temp_dir: tuple[Host, Path],
     setup_git_config: None,
 ) -> None:
-    """Test that git transfer creates a new branch when is_new_branch is True."""
+    """Test that git transfer creates a new branch when new_branch_name is set."""
     host, temp_dir = host_with_temp_dir
 
     source_path = temp_dir / "source_new_branch"
@@ -1851,7 +1852,7 @@ def test_create_work_dir_generates_new_branch(
         agent_type=AgentTypeName("generic"),
         command=CommandString("sleep 1"),
         target_path=target_path,
-        git=AgentGitOptions(is_new_branch=True, new_branch_prefix="test/"),
+        git=AgentGitOptions(new_branch_name="test/new-branch-test"),
     )
 
     work_dir = host.create_agent_work_dir(host, source_path, options).path
@@ -1859,7 +1860,7 @@ def test_create_work_dir_generates_new_branch(
     assert work_dir == target_path
     assert (work_dir / "file.txt").read_text() == "content"
 
-    # Check the branch name starts with test/
+    # Check the branch name
     result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         cwd=work_dir,
@@ -1867,7 +1868,7 @@ def test_create_work_dir_generates_new_branch(
         text=True,
     )
     assert result.returncode == 0
-    assert result.stdout.strip().startswith("test/")
+    assert result.stdout.strip() == "test/new-branch-test"
 
 
 @pytest.mark.rsync
@@ -1899,7 +1900,7 @@ def test_create_work_dir_preserves_origin_remote(
         agent_type=AgentTypeName("generic"),
         command=CommandString("sleep 1"),
         target_path=target_path,
-        git=AgentGitOptions(is_new_branch=True, new_branch_prefix="test/"),
+        git=AgentGitOptions(new_branch_name="test/origin-test"),
     )
 
     work_dir = host.create_agent_work_dir(host, source_path, options).path
@@ -1939,7 +1940,7 @@ def test_create_work_dir_works_without_origin_remote(
         agent_type=AgentTypeName("generic"),
         command=CommandString("sleep 1"),
         target_path=target_path,
-        git=AgentGitOptions(is_new_branch=True, new_branch_prefix="test/"),
+        git=AgentGitOptions(new_branch_name="test/no-origin-test"),
     )
 
     work_dir = host.create_agent_work_dir(host, source_path, options).path
@@ -2150,12 +2151,23 @@ def test_new_tmux_window_inherits_env_vars(
     temp_profile_dir: Path,
     plugin_manager: pluggy.PluginManager,
     mng_test_prefix: str,
+    tmp_home_dir: Path,
 ) -> None:
     """Test that new tmux windows created by the user also have env vars.
 
     This verifies that the default-command sources env files so that any new
     window/pane created by the user will have the agent's env vars available.
     """
+    # Write shell rc files with a known prompt in the fake HOME so we can
+    # reliably detect when the shell is ready. We need .zshenv (empty, to
+    # suppress errors from the real user's .zshenv which references paths
+    # under $HOME that don't exist in the fake HOME), plus .zshrc and
+    # .bashrc to set the prompt for whichever shell the user has.
+    prompt_sentinel = "MNG_TEST_READY>"
+    (tmp_home_dir / ".zshenv").write_text("")
+    (tmp_home_dir / ".zshrc").write_text(f"PS1='{prompt_sentinel} '\n")
+    (tmp_home_dir / ".bashrc").write_text(f"PS1='{prompt_sentinel} '\n")
+
     config = MngConfig(default_host_dir=temp_host_dir, prefix=mng_test_prefix)
     mng_ctx = MngContext(config=config, pm=plugin_manager, profile_dir=temp_profile_dir)
     provider = LocalProviderInstance(
@@ -2187,16 +2199,42 @@ def test_new_tmux_window_inherits_env_vars(
     host.start_agents([agent.id])
 
     try:
-        # Create a new window in the session (simulating what a user would do)
-        # This window should inherit env vars via tmux set-environment
+        # Create a new window in the session (simulating what a user would do).
+        # This window should inherit env vars via the default-command which
+        # sources the agent's env files. Pass -e HOME/ZDOTDIR so the shell
+        # reads our controlled rc files (tmux overrides HOME from the passwd
+        # database for new window processes, so we must re-override it).
+        fake_home = str(tmp_home_dir)
         subprocess.run(
-            ["tmux", "new-window", "-t", session_name, "-n", "user-window"],
+            [
+                "tmux",
+                "new-window",
+                "-t",
+                session_name,
+                "-n",
+                "user-window",
+                "-e",
+                f"HOME={fake_home}",
+                "-e",
+                f"ZDOTDIR={fake_home}",
+            ],
             check=True,
             capture_output=True,
         )
 
-        # Keys sent before the shell is ready are buffered in the pty.
+        # Wait for the shell to be ready before sending keys
         window_target = f"{session_name}:user-window"
+
+        def shell_prompt_visible() -> bool:
+            pane = capture_tmux_pane_contents(window_target)
+            return prompt_sentinel in pane
+
+        if not poll_until(shell_prompt_visible, timeout=10.0):
+            pane_stdout = capture_tmux_pane_contents(window_target)
+            raise AssertionError(
+                f"Shell prompt did not appear in new tmux window within 10s.\nPane content:\n{pane_stdout}"
+            )
+
         subprocess.run(
             [
                 "tmux",
@@ -2218,16 +2256,12 @@ def test_new_tmux_window_inherits_env_vars(
             return "NEW_WINDOW_VAR=new_window_value_123456" in content
 
         if not poll_until(check_marker_file, timeout=10.0):
-            pane_content = subprocess.run(
-                ["tmux", "capture-pane", "-t", window_target, "-p"],
-                capture_output=True,
-                text=True,
-            )
+            pane_stdout = capture_tmux_pane_contents(window_target)
             marker_content = marker_file.read_text() if marker_file.exists() else "<file does not exist>"
             raise AssertionError(
                 f"New tmux window did not inherit environment variables.\n"
                 f"Marker file content: {marker_content!r}\n"
-                f"Pane content:\n{pane_content.stdout}"
+                f"Pane content:\n{pane_stdout}"
             )
 
     finally:

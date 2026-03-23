@@ -15,6 +15,7 @@ from pyinfra.api import Host as PyinfraHost
 from pyinfra.api import State as PyinfraState
 from pyinfra.api.inventory import Inventory
 
+from imbue.imbue_common.model_update import to_update
 from imbue.mng.agents.base_agent import BaseAgent
 from imbue.mng.api.connect import SIGNAL_EXIT_CODE_DESTROY
 from imbue.mng.api.connect import SIGNAL_EXIT_CODE_STOP
@@ -22,6 +23,7 @@ from imbue.mng.api.connect import _build_ssh_activity_wrapper_script
 from imbue.mng.api.connect import _build_ssh_args
 from imbue.mng.api.connect import _determine_post_disconnect_action
 from imbue.mng.api.connect import connect_to_agent
+from imbue.mng.api.connect import resolve_connect_command
 from imbue.mng.api.connect import run_connect_command
 from imbue.mng.api.data_types import ConnectionOptions
 from imbue.mng.config.data_types import AgentTypeConfig
@@ -482,6 +484,26 @@ def test_ssh_wrapper_script_is_correctly_quoted_for_bash_c() -> None:
     assert parsed == ["bash", "-c", wrapper_script]
 
 
+def test_build_ssh_activity_wrapper_script_quotes_agent_command_with_metacharacters() -> None:
+    """Test that agent_command is shell-quoted to prevent syntax errors.
+
+    When agent_command contains shell metacharacters (e.g. '(' from a command
+    like '( script.sh ... ) &'), it must be quoted so that pkill -f receives
+    it as a literal pattern rather than as shell syntax.
+    """
+    script = _build_ssh_activity_wrapper_script("mng-test", Path("/mng"), "(")
+
+    # The '(' should be quoted (e.g. as '(') so bash doesn't interpret it as subshell syntax
+    assert "pkill -SIGWINCH -f '('" in script
+
+
+def test_build_ssh_activity_wrapper_script_quotes_normal_agent_command() -> None:
+    """Test that even normal agent_command values are properly quoted."""
+    script = _build_ssh_activity_wrapper_script("mng-test", Path("/mng"), "claude")
+
+    assert "pkill -SIGWINCH -f claude" in script
+
+
 # =========================================================================
 # Tests for nested tmux detection in connect_to_agent (local host)
 # =========================================================================
@@ -578,3 +600,32 @@ def test_run_connect_command_sets_host_is_local_false_for_remote(tmp_path: Path)
 
         content = output_file.read_text().strip()
         assert content == "false"
+
+
+# =============================================================================
+# resolve_connect_command tests
+# =============================================================================
+
+
+def test_resolve_connect_command_prefers_cli_option(temp_mng_ctx: MngContext) -> None:
+    """resolve_connect_command should prefer the CLI option over config."""
+    result = resolve_connect_command("cli-command", temp_mng_ctx)
+    assert result == "cli-command"
+
+
+def test_resolve_connect_command_falls_back_to_config(temp_mng_ctx: MngContext) -> None:
+    """resolve_connect_command should fall back to config.connect_command when CLI is None."""
+    config_with_cmd = temp_mng_ctx.config.model_copy_update(
+        to_update(temp_mng_ctx.config.field_ref().connect_command, "config-command"),
+    )
+    ctx = temp_mng_ctx.model_copy_update(
+        to_update(temp_mng_ctx.field_ref().config, config_with_cmd),
+    )
+    result = resolve_connect_command(None, ctx)
+    assert result == "config-command"
+
+
+def test_resolve_connect_command_returns_none_when_neither_set(temp_mng_ctx: MngContext) -> None:
+    """resolve_connect_command should return None when neither CLI nor config is set."""
+    result = resolve_connect_command(None, temp_mng_ctx)
+    assert result is None

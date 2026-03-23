@@ -38,8 +38,8 @@ pytestmark = pytest.mark.skipif(not _is_claude_installed(), reason="Claude Code 
 def claude_test_env(temp_git_repo: Path) -> dict[str, str]:
     """Create a Claude trust config and env vars for subprocess tests.
 
-    Trusts the temp_git_repo so that mng's extend_claude_trust_to_worktree
-    can propagate trust to any worktrees created from it.
+    Trusts the temp_git_repo so that mng can propagate trust to any
+    worktrees created from it.
 
     Also adds .claude/settings.local.json to .gitignore so that mng's
     readiness hooks (written to that file) don't appear as unstaged changes
@@ -70,11 +70,10 @@ def _create_agent(
     args = [
         "create",
         name,
-        "--agent-type",
+        "--type",
         "claude",
         "--no-connect",
         "--no-ensure-clean",
-        "--await-ready",
         "--pass-env",
         "HOME",
         "--pass-env",
@@ -116,7 +115,6 @@ def claude_agent(claude_test_env: dict[str, str], temp_git_repo: Path) -> Genera
 
 @pytest.mark.acceptance
 @pytest.mark.tmux
-@pytest.mark.rsync
 @pytest.mark.timeout(300)
 def test_mng_create_with_message_succeeds(claude_test_env: dict[str, str], temp_git_repo: Path) -> None:
     """Test that `mng create --message` successfully sends a message to Claude.
@@ -137,7 +135,6 @@ def test_mng_create_with_message_succeeds(claude_test_env: dict[str, str], temp_
 
 @pytest.mark.acceptance
 @pytest.mark.tmux
-@pytest.mark.rsync
 @pytest.mark.timeout(300)
 def test_mng_create_with_message_multiple_times(claude_test_env: dict[str, str], temp_git_repo: Path) -> None:
     """Test that `mng create --message` works reliably across multiple trials.

@@ -3,19 +3,23 @@
 from typing import Any
 
 import click
+import pluggy
 import pytest
 from click.core import ParameterSource
+from click.testing import CliRunner
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
-from imbue.mng.cli.common_opts import CommonCliOptions
 from imbue.mng.cli.common_opts import _process_template_escapes
-from imbue.mng.cli.common_opts import _resolve_format_flags
 from imbue.mng.cli.common_opts import _run_pre_command_scripts
 from imbue.mng.cli.common_opts import _run_single_script
+from imbue.mng.cli.common_opts import _split_known_and_plugin_params
+from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import apply_config_defaults
 from imbue.mng.cli.common_opts import apply_create_template
 from imbue.mng.cli.common_opts import parse_output_options
+from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.config.data_types import CommandDefaults
+from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import CreateTemplate
 from imbue.mng.config.data_types import CreateTemplateName
 from imbue.mng.config.data_types import MngConfig
@@ -140,37 +144,37 @@ def test_run_pre_command_scripts_includes_stderr_in_error(mng_test_prefix: str, 
 def test_apply_config_defaults_empty_string_clears_tuple_param(mng_test_prefix: str) -> None:
     """apply_config_defaults should convert empty string to empty tuple for tuple params."""
     ctx = _make_click_context(
-        params={"add_command": ("default_cmd",), "other_param": "value"},
+        params={"extra_window": ("default_cmd",), "other_param": "value"},
     )
 
     # Create config with empty string for the tuple param (simulating env var override)
     config = MngConfig(
         prefix=mng_test_prefix,
-        commands={"create": CommandDefaults(defaults={"add_command": ""})},
+        commands={"create": CommandDefaults(defaults={"extra_window": ""})},
     )
 
     result = apply_config_defaults(ctx, config, "create")
 
     # Empty string should be converted to empty tuple for tuple params
-    assert result["add_command"] == ()
+    assert result["extra_window"] == ()
 
 
 def test_apply_config_defaults_non_empty_string_replaces_tuple_param(mng_test_prefix: str) -> None:
     """apply_config_defaults should replace tuple param with config list value."""
     ctx = _make_click_context(
-        params={"add_command": (), "other_param": "value"},
+        params={"extra_window": (), "other_param": "value"},
     )
 
     # Create config with a list value for the tuple param
     config = MngConfig(
         prefix=mng_test_prefix,
-        commands={"create": CommandDefaults(defaults={"add_command": ["cmd1", "cmd2"]})},
+        commands={"create": CommandDefaults(defaults={"extra_window": ["cmd1", "cmd2"]})},
     )
 
     result = apply_config_defaults(ctx, config, "create")
 
     # List value should be used directly
-    assert result["add_command"] == ["cmd1", "cmd2"]
+    assert result["extra_window"] == ["cmd1", "cmd2"]
 
 
 def test_apply_config_defaults_empty_string_does_not_affect_non_tuple_params(mng_test_prefix: str) -> None:
@@ -210,19 +214,19 @@ def test_apply_create_template_no_templates(mng_test_prefix: str) -> None:
 def test_apply_create_template_single_template(mng_test_prefix: str) -> None:
     """apply_create_template should apply a single template's values."""
     ctx = _make_click_context(
-        params={"template": ("mytemplate",), "new_host": None, "name": "default"},
+        params={"template": ("mytemplate",), "type": None, "name": "default"},
     )
 
     config = MngConfig(
         prefix=mng_test_prefix,
         create_templates={
-            CreateTemplateName("mytemplate"): CreateTemplate(options={"new_host": "modal"}),
+            CreateTemplateName("mytemplate"): CreateTemplate(options={"type": "codex"}),
         },
     )
 
     result = apply_create_template(ctx, ctx.params.copy(), config)
 
-    assert result["new_host"] == "modal"
+    assert result["type"] == "codex"
 
 
 def test_apply_create_template_multiple_templates_stack(mng_test_prefix: str) -> None:
@@ -230,8 +234,8 @@ def test_apply_create_template_multiple_templates_stack(mng_test_prefix: str) ->
     ctx = _make_click_context(
         params={
             "template": ("host-template", "agent-template"),
-            "new_host": None,
-            "agent_type": None,
+            "snapshot": None,
+            "type": None,
             "name": "default",
         },
     )
@@ -239,15 +243,15 @@ def test_apply_create_template_multiple_templates_stack(mng_test_prefix: str) ->
     config = MngConfig(
         prefix=mng_test_prefix,
         create_templates={
-            CreateTemplateName("host-template"): CreateTemplate(options={"new_host": "modal"}),
-            CreateTemplateName("agent-template"): CreateTemplate(options={"agent_type": "codex"}),
+            CreateTemplateName("host-template"): CreateTemplate(options={"snapshot": "my-snapshot"}),
+            CreateTemplateName("agent-template"): CreateTemplate(options={"type": "codex"}),
         },
     )
 
     result = apply_create_template(ctx, ctx.params.copy(), config)
 
-    assert result["new_host"] == "modal"
-    assert result["agent_type"] == "codex"
+    assert result["snapshot"] == "my-snapshot"
+    assert result["type"] == "codex"
 
 
 def test_apply_create_template_later_template_overrides_earlier(mng_test_prefix: str) -> None:
@@ -255,21 +259,21 @@ def test_apply_create_template_later_template_overrides_earlier(mng_test_prefix:
     ctx = _make_click_context(
         params={
             "template": ("first", "second"),
-            "new_host": None,
+            "type": None,
         },
     )
 
     config = MngConfig(
         prefix=mng_test_prefix,
         create_templates={
-            CreateTemplateName("first"): CreateTemplate(options={"new_host": "docker"}),
-            CreateTemplateName("second"): CreateTemplate(options={"new_host": "modal"}),
+            CreateTemplateName("first"): CreateTemplate(options={"type": "codex"}),
+            CreateTemplateName("second"): CreateTemplate(options={"type": "claude"}),
         },
     )
 
     result = apply_create_template(ctx, ctx.params.copy(), config)
 
-    assert result["new_host"] == "modal"
+    assert result["type"] == "claude"
 
 
 def test_apply_create_template_cli_args_override_all_templates(mng_test_prefix: str) -> None:
@@ -277,24 +281,24 @@ def test_apply_create_template_cli_args_override_all_templates(mng_test_prefix: 
     ctx = _make_click_context(
         params={
             "template": ("first", "second"),
-            "new_host": "local",
+            "type": "generic",
         },
         source_by_param_name={
-            "new_host": ParameterSource.COMMANDLINE,
+            "type": ParameterSource.COMMANDLINE,
         },
     )
 
     config = MngConfig(
         prefix=mng_test_prefix,
         create_templates={
-            CreateTemplateName("first"): CreateTemplate(options={"new_host": "docker"}),
-            CreateTemplateName("second"): CreateTemplate(options={"new_host": "modal"}),
+            CreateTemplateName("first"): CreateTemplate(options={"type": "codex"}),
+            CreateTemplateName("second"): CreateTemplate(options={"type": "claude"}),
         },
     )
 
     result = apply_create_template(ctx, ctx.params.copy(), config)
 
-    assert result["new_host"] == "local"
+    assert result["type"] == "generic"
 
 
 def test_apply_create_template_unknown_template_raises_error(mng_test_prefix: str) -> None:
@@ -306,7 +310,7 @@ def test_apply_create_template_unknown_template_raises_error(mng_test_prefix: st
     config = MngConfig(
         prefix=mng_test_prefix,
         create_templates={
-            CreateTemplateName("existing"): CreateTemplate(options={"new_host": "modal"}),
+            CreateTemplateName("existing"): CreateTemplate(options={"type": "codex"}),
         },
     )
 
@@ -319,14 +323,14 @@ def test_apply_create_template_second_template_unknown_raises_error(mng_test_pre
     ctx = _make_click_context(
         params={
             "template": ("existing", "nonexistent"),
-            "new_host": None,
+            "type": None,
         },
     )
 
     config = MngConfig(
         prefix=mng_test_prefix,
         create_templates={
-            CreateTemplateName("existing"): CreateTemplate(options={"new_host": "modal"}),
+            CreateTemplateName("existing"): CreateTemplate(options={"type": "codex"}),
         },
     )
 
@@ -367,73 +371,6 @@ def test_process_template_escapes_no_escapes() -> None:
 def test_process_template_escapes_literal_backslash_before_t() -> None:
     """_process_template_escapes should treat \\\\t as literal backslash + t, not as tab."""
     assert _process_template_escapes("\\\\t") == "\\t"
-
-
-# =============================================================================
-# Tests for _resolve_format_flags
-# =============================================================================
-
-
-def _make_common_cli_opts(
-    output_format: str = "human",
-    json_flag: bool = False,
-    jsonl_flag: bool = False,
-) -> CommonCliOptions:
-    """Create a CommonCliOptions with minimal required fields."""
-    return CommonCliOptions(
-        output_format=output_format,
-        json_flag=json_flag,
-        jsonl_flag=jsonl_flag,
-        quiet=False,
-        verbose=0,
-        log_file=None,
-        log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
-        plugin=(),
-        disable_plugin=(),
-    )
-
-
-def test_resolve_format_flags_no_flags() -> None:
-    """_resolve_format_flags should return output_format when no flags are set."""
-    ctx = _make_click_context({"output_format": "human"})
-    opts = _make_common_cli_opts(output_format="human")
-    assert _resolve_format_flags(ctx, opts) == "human"
-
-
-def test_resolve_format_flags_json_flag() -> None:
-    """_resolve_format_flags should return 'json' when --json flag is set."""
-    ctx = _make_click_context({"output_format": "human"})
-    opts = _make_common_cli_opts(json_flag=True)
-    assert _resolve_format_flags(ctx, opts) == "json"
-
-
-def test_resolve_format_flags_jsonl_flag() -> None:
-    """_resolve_format_flags should return 'jsonl' when --jsonl flag is set."""
-    ctx = _make_click_context({"output_format": "human"})
-    opts = _make_common_cli_opts(jsonl_flag=True)
-    assert _resolve_format_flags(ctx, opts) == "jsonl"
-
-
-def test_resolve_format_flags_both_flags_raises() -> None:
-    """_resolve_format_flags should raise when both --json and --jsonl are set."""
-    ctx = _make_click_context({"output_format": "human"})
-    opts = _make_common_cli_opts(json_flag=True, jsonl_flag=True)
-    with pytest.raises(click.UsageError, match="mutually exclusive"):
-        _resolve_format_flags(ctx, opts)
-
-
-def test_resolve_format_flags_json_with_explicit_format_raises() -> None:
-    """_resolve_format_flags should raise when --json is used with explicit --format."""
-    ctx = _make_click_context(
-        {"output_format": "jsonl"},
-        source_by_param_name={"output_format": ParameterSource.COMMANDLINE},
-    )
-    opts = _make_common_cli_opts(output_format="jsonl", json_flag=True)
-    with pytest.raises(click.UsageError, match="mutually exclusive"):
-        _resolve_format_flags(ctx, opts)
 
 
 # =============================================================================
@@ -589,3 +526,105 @@ def test_apply_create_template_skips_unknown_params(mng_test_prefix: str) -> Non
     )
     result = apply_create_template(ctx, ctx.params.copy(), config)
     assert "nonexistent_param" not in result
+
+
+# =============================================================================
+# Tests for _split_known_and_plugin_params
+# =============================================================================
+
+
+def test_split_known_and_plugin_params_separates_known_from_extra() -> None:
+    """_split_known_and_plugin_params should separate known fields from plugin params."""
+    params = {
+        "output_format": "human",
+        "quiet": False,
+        "verbose": 0,
+        "log_file": None,
+        "log_commands": None,
+        "log_command_output": None,
+        "log_env_vars": None,
+        "project_context_path": None,
+        "plugin": (),
+        "disable_plugin": (),
+        "test_plugin_option": "hello",
+        "another_plugin_flag": True,
+    }
+
+    known, plugin = _split_known_and_plugin_params(params, CommonCliOptions)
+
+    assert "output_format" in known
+    assert "quiet" in known
+    assert "test_plugin_option" not in known
+    assert "another_plugin_flag" not in known
+
+    assert "test_plugin_option" in plugin
+    assert plugin["test_plugin_option"] == "hello"
+    assert "another_plugin_flag" in plugin
+    assert plugin["another_plugin_flag"] is True
+    assert "output_format" not in plugin
+
+
+def test_split_known_and_plugin_params_all_known() -> None:
+    """_split_known_and_plugin_params should return empty plugin params when all are known."""
+    params = {
+        "output_format": "human",
+        "quiet": False,
+        "verbose": 0,
+        "log_file": None,
+        "log_commands": None,
+        "log_command_output": None,
+        "log_env_vars": None,
+        "project_context_path": None,
+        "plugin": (),
+        "disable_plugin": (),
+    }
+
+    known, plugin = _split_known_and_plugin_params(params, CommonCliOptions)
+
+    assert known == params
+    assert plugin == {}
+
+
+def test_split_known_and_plugin_params_empty_params() -> None:
+    """_split_known_and_plugin_params should handle empty params dict."""
+    known, plugin = _split_known_and_plugin_params({}, CommonCliOptions)
+
+    assert known == {}
+    assert plugin == {}
+
+
+# =============================================================================
+# Tests for --headless flag integration with setup_command_context
+# =============================================================================
+
+
+def test_headless_flag_sets_is_interactive_false_via_setup_command_context(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """--headless CLI flag should result in is_interactive=False on MngContext.
+
+    This tests the full integration path: --headless flag -> CommonCliOptions.headless
+    -> setup_command_context -> mng_ctx.is_interactive=False.
+    """
+    captured_is_interactive: list[bool] = []
+
+    @click.command()
+    @add_common_options
+    @click.pass_context
+    def test_command(ctx: click.Context, **kwargs: Any) -> None:
+        mng_ctx, _output_opts, _opts = setup_command_context(
+            ctx=ctx,
+            command_name="test",
+            command_class=CommonCliOptions,
+        )
+        captured_is_interactive.append(mng_ctx.is_interactive)
+
+    result = cli_runner.invoke(
+        test_command,
+        ["--headless"],
+        obj=plugin_manager,
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert captured_is_interactive == [False]

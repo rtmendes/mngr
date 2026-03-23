@@ -12,7 +12,9 @@ from imbue.mng.uv_tool import build_uv_tool_install_add
 from imbue.mng.uv_tool import build_uv_tool_install_add_git
 from imbue.mng.uv_tool import build_uv_tool_install_add_many
 from imbue.mng.uv_tool import build_uv_tool_install_add_path
+from imbue.mng.uv_tool import build_uv_tool_install_add_requirements
 from imbue.mng.uv_tool import build_uv_tool_install_remove
+from imbue.mng.uv_tool import build_uv_tool_install_remove_multiple
 from imbue.mng.uv_tool import get_receipt_path
 from imbue.mng.uv_tool import read_receipt
 from imbue.mng.uv_tool import require_uv_tool_receipt
@@ -24,29 +26,29 @@ from imbue.mng.uv_tool import require_uv_tool_receipt
 
 def test_tool_requirement_minimal() -> None:
     """ToolRequirement should create with just a name."""
-    req = ToolRequirement(name="mng")
-    assert req.name == "mng"
-    assert req.specifier is None
-    assert req.editable is None
-    assert req.git is None
+    requirement = ToolRequirement(name="mng")
+    assert requirement.name == "mng"
+    assert requirement.specifier is None
+    assert requirement.editable is None
+    assert requirement.git is None
 
 
 def test_tool_requirement_with_specifier() -> None:
     """ToolRequirement should store version specifiers."""
-    req = ToolRequirement(name="mng", specifier=">=0.1.0")
-    assert req.specifier == ">=0.1.0"
+    requirement = ToolRequirement(name="mng", specifier=">=0.1.0")
+    assert requirement.specifier == ">=0.1.0"
 
 
 def test_tool_requirement_with_editable() -> None:
     """ToolRequirement should store editable paths."""
-    req = ToolRequirement(name="my-plugin", editable="/path/to/plugin")
-    assert req.editable == "/path/to/plugin"
+    requirement = ToolRequirement(name="my-plugin", editable="/path/to/plugin")
+    assert requirement.editable == "/path/to/plugin"
 
 
 def test_tool_requirement_with_git() -> None:
     """ToolRequirement should store git URLs."""
-    req = ToolRequirement(name="my-plugin", git="https://github.com/user/repo.git")
-    assert req.git == "https://github.com/user/repo.git"
+    requirement = ToolRequirement(name="my-plugin", git="https://github.com/user/repo.git")
+    assert requirement.git == "https://github.com/user/repo.git"
 
 
 # =============================================================================
@@ -56,32 +58,32 @@ def test_tool_requirement_with_git() -> None:
 
 def test_requirement_to_with_arg_plain_name() -> None:
     """Plain name should produce --with name."""
-    req = ToolRequirement(name="mng-opencode")
-    assert _requirement_to_with_arg(req) == ("--with", "mng-opencode")
+    requirement = ToolRequirement(name="mng-opencode")
+    assert _requirement_to_with_arg(requirement) == ("--with", "mng-opencode")
 
 
 def test_requirement_to_with_arg_with_specifier() -> None:
     """Name with specifier should produce --with name+specifier."""
-    req = ToolRequirement(name="mng-opencode", specifier=">=1.0")
-    assert _requirement_to_with_arg(req) == ("--with", "mng-opencode>=1.0")
+    requirement = ToolRequirement(name="mng-opencode", specifier=">=1.0")
+    assert _requirement_to_with_arg(requirement) == ("--with", "mng-opencode>=1.0")
 
 
 def test_requirement_to_with_arg_editable() -> None:
     """Editable should produce --with-editable path."""
-    req = ToolRequirement(name="my-plugin", editable="/path/to/plugin")
-    assert _requirement_to_with_arg(req) == ("--with-editable", "/path/to/plugin")
+    requirement = ToolRequirement(name="my-plugin", editable="/path/to/plugin")
+    assert _requirement_to_with_arg(requirement) == ("--with-editable", "/path/to/plugin")
 
 
 def test_requirement_to_with_arg_directory() -> None:
     """Directory should produce --with-editable path."""
-    req = ToolRequirement(name="my-plugin", directory="/path/to/plugin")
-    assert _requirement_to_with_arg(req) == ("--with-editable", "/path/to/plugin")
+    requirement = ToolRequirement(name="my-plugin", directory="/path/to/plugin")
+    assert _requirement_to_with_arg(requirement) == ("--with-editable", "/path/to/plugin")
 
 
 def test_requirement_to_with_arg_git() -> None:
     """Git should produce --with 'name @ git+url'."""
-    req = ToolRequirement(name="my-plugin", git="https://github.com/user/repo.git")
-    assert _requirement_to_with_arg(req) == ("--with", "my-plugin @ git+https://github.com/user/repo.git")
+    requirement = ToolRequirement(name="my-plugin", git="https://github.com/user/repo.git")
+    assert _requirement_to_with_arg(requirement) == ("--with", "my-plugin @ git+https://github.com/user/repo.git")
 
 
 # =============================================================================
@@ -390,3 +392,92 @@ def test_build_uv_tool_install_add_many_no_existing_extras() -> None:
         "--with",
         "mng-tutor",
     )
+
+
+# =============================================================================
+# Tests for build_uv_tool_install_add_requirements
+# =============================================================================
+
+
+def test_build_uv_tool_install_add_requirements_multiple_paths() -> None:
+    """build_uv_tool_install_add_requirements should add multiple editable deps in one command."""
+    receipt = _make_receipt()
+    new_requirements = [
+        ToolRequirement(name="plugin-a", editable="/path/to/a"),
+        ToolRequirement(name="plugin-b", editable="/path/to/b"),
+    ]
+    cmd = build_uv_tool_install_add_requirements(receipt, new_requirements)
+    assert cmd == (
+        "uv",
+        "tool",
+        "install",
+        "mng",
+        "--reinstall",
+        "--with-editable",
+        "/path/to/a",
+        "--with-editable",
+        "/path/to/b",
+    )
+
+
+def test_build_uv_tool_install_add_requirements_preserves_existing_extras() -> None:
+    """build_uv_tool_install_add_requirements should preserve existing extras."""
+    receipt = _make_receipt(extras=[ToolRequirement(name="existing-dep")])
+    new_requirements = [ToolRequirement(name="new-dep", editable="/path/to/new")]
+    cmd = build_uv_tool_install_add_requirements(receipt, new_requirements)
+    assert cmd == (
+        "uv",
+        "tool",
+        "install",
+        "mng",
+        "--reinstall",
+        "--with",
+        "existing-dep",
+        "--with-editable",
+        "/path/to/new",
+    )
+
+
+def test_build_uv_tool_install_add_requirements_empty_list() -> None:
+    """build_uv_tool_install_add_requirements with empty list should just reinstall."""
+    receipt = _make_receipt()
+    cmd = build_uv_tool_install_add_requirements(receipt, [])
+    assert cmd == ("uv", "tool", "install", "mng", "--reinstall")
+
+
+# =============================================================================
+# Tests for build_uv_tool_install_remove_multiple
+# =============================================================================
+
+
+def test_build_uv_tool_install_remove_multiple_removes_all() -> None:
+    """build_uv_tool_install_remove_multiple should remove all specified packages."""
+    receipt = _make_receipt(
+        extras=[
+            ToolRequirement(name="keep-me"),
+            ToolRequirement(name="remove-a"),
+            ToolRequirement(name="remove-b"),
+        ]
+    )
+    cmd = build_uv_tool_install_remove_multiple(receipt, {"remove-a", "remove-b"})
+    assert cmd == (
+        "uv",
+        "tool",
+        "install",
+        "mng",
+        "--reinstall",
+        "--with",
+        "keep-me",
+    )
+
+
+def test_build_uv_tool_install_remove_multiple_all_deps() -> None:
+    """build_uv_tool_install_remove_multiple should work when removing all extras."""
+    receipt = _make_receipt(
+        extras=[
+            ToolRequirement(name="dep-a"),
+            ToolRequirement(name="dep-b"),
+        ]
+    )
+    cmd = build_uv_tool_install_remove_multiple(receipt, {"dep-a", "dep-b"})
+    assert cmd == ("uv", "tool", "install", "mng", "--reinstall")

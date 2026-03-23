@@ -7,7 +7,7 @@ from loguru import logger
 
 from imbue.mng.api.message import MessageResult
 from imbue.mng.api.message import send_message_to_agents
-from imbue.mng.cli.common_opts import CommonCliOptions
+from imbue.mng.cli.agent_addr import parse_identifier_as_address
 from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.help_formatter import CommandHelpMetadata
@@ -16,6 +16,7 @@ from imbue.mng.cli.output_helpers import AbortError
 from imbue.mng.cli.output_helpers import emit_event
 from imbue.mng.cli.output_helpers import emit_final_json
 from imbue.mng.cli.output_helpers import write_human_line
+from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.errors import UserInputError
 from imbue.mng.primitives import ErrorBehavior
@@ -41,6 +42,7 @@ class MessageCliOptions(CommonCliOptions):
     exclude: tuple[str, ...]
     stdin: bool
     message_content: str | None
+    provider: tuple[str, ...]
     on_error: str
     start: bool
 
@@ -97,6 +99,11 @@ class MessageCliOptions(CommonCliOptions):
     default="continue",
     help="What to do when errors occur: abort (stop immediately) or continue (keep going)",
 )
+@optgroup.option(
+    "--provider",
+    multiple=True,
+    help="Message only agents using specified provider (repeatable)",
+)
 @add_common_options
 @click.pass_context
 def message(ctx: click.Context, **kwargs) -> None:
@@ -132,18 +139,24 @@ def _message_impl(ctx: click.Context, **kwargs) -> None:
         raise UserInputError("Cannot specify both agent names and --all")
 
     # Get message content
-    message_content = _get_message_content(opts.message_content, ctx)
+    message_content = _get_message_content(opts.message_content, ctx, is_interactive=mng_ctx.is_interactive)
 
     error_behavior = ErrorBehavior(opts.on_error.upper())
 
-    # Build include filters from agent identifiers
+    # Build include filters from agent identifiers, parsing addresses
     include_filters = list(opts.include)
     if agent_identifiers:
-        # Create a CEL filter that matches any of the provided identifiers
+        # Create a CEL filter that matches any of the provided identifiers.
+        # Parse agent addresses to extract the name/ID part and host/provider constraints.
         ref_filters = []
         for ref in agent_identifiers:
-            ref_filter = f'(name == "{ref}" || id == "{ref}")'
-            ref_filters.append(ref_filter)
+            plain_id, address = parse_identifier_as_address(ref)
+            ref_filter = f'(name == "{plain_id}" || id == "{plain_id}")'
+            if address.host_name is not None:
+                ref_filter += f' && host.name == "{address.host_name}"'
+            if address.provider_name is not None:
+                ref_filter += f' && host.provider == "{address.provider_name}"'
+            ref_filters.append(f"({ref_filter})")
         combined_filter = " || ".join(ref_filters)
         include_filters.append(combined_filter)
 
@@ -159,6 +172,7 @@ def _message_impl(ctx: click.Context, **kwargs) -> None:
             is_start_desired=opts.start,
             on_success=lambda agent_name: _emit_jsonl_success(agent_name),
             on_error=lambda agent_name, error: _emit_jsonl_error(agent_name, error),
+            provider_names=opts.provider,
         )
         if result.failed_agents:
             ctx.exit(1)
@@ -173,6 +187,7 @@ def _message_impl(ctx: click.Context, **kwargs) -> None:
         all_agents=opts.all_agents,
         error_behavior=error_behavior,
         is_start_desired=opts.start,
+        provider_names=opts.provider,
     )
 
     _emit_output(result, output_opts)
@@ -184,14 +199,18 @@ def _message_impl(ctx: click.Context, **kwargs) -> None:
         ctx.exit(1)
 
 
-def _get_message_content(message_option: str | None, ctx: click.Context) -> str:
+def _get_message_content(message_option: str | None, ctx: click.Context, is_interactive: bool) -> str:
     """Get the message content from option, stdin, or editor."""
     if message_option is not None:
         return message_option
 
-    # Check if stdin has data (not a tty)
+    # Check if stdin has piped data (not a tty)
     if not sys.stdin.isatty():
         return sys.stdin.read()
+
+    # In headless mode, we cannot open an editor
+    if not is_interactive:
+        raise UserInputError("No message provided and running in headless mode (use --message to provide one)")
 
     # Interactive mode: open editor
     message_from_editor = click.edit()

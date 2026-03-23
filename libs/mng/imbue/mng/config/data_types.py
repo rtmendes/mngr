@@ -41,6 +41,7 @@ _DEFAULT_DESTROYED_HOST_PERSISTED_SECONDS: Final[float] = 60.0 * 60.0 * 24.0 * 7
 # === Helper Functions ===
 
 T = TypeVar("T")
+PluginConfigT = TypeVar("PluginConfigT", bound="PluginConfig")
 
 
 @pure
@@ -422,6 +423,11 @@ class MngConfig(FrozenModel):
         default=False,
         description="Allow attaching to tmux sessions from within an existing tmux session by unsetting $TMUX",
     )
+    headless: bool = Field(
+        default=False,
+        description="When true, disables all interactive behavior (prompts, TUI, editor). "
+        "Equivalent to passing --headless on the CLI. Can also be set via MNG_HEADLESS env var.",
+    )
     is_error_reporting_enabled: bool = Field(
         default=True,
         description="Whether to prompt users to report unexpected errors as GitHub issues when running interactively",
@@ -458,10 +464,10 @@ class MngConfig(FrozenModel):
         # Merge pager (scalar - override wins if not None)
         merged_pager = override.pager if override.pager is not None else self.pager
 
-        # Merge unset_vars (list - concatenate)
-        merged_unset_vars = list(self.unset_vars) + list(override.unset_vars)
+        # Merge unset_vars (list - concatenate if override is not None)
+        merged_unset_vars = merge_list_fields(self.unset_vars, override.unset_vars)
 
-        # Merge enabled_backends (list - override wins if not empty, otherwise keep base)
+        # Merge enabled_backends (list - override wins if not None/empty, otherwise keep base)
         merged_enabled_backends = override.enabled_backends if override.enabled_backends else self.enabled_backends
 
         # Merge agent_types (dict - merge keys, with per-key merge)
@@ -554,6 +560,11 @@ class MngConfig(FrozenModel):
         if override.is_nested_tmux_allowed is not None:
             merged_is_nested_tmux_allowed = override.is_nested_tmux_allowed
 
+        # Merge headless (scalar - override wins if not None)
+        merged_headless = self.headless
+        if override.headless is not None:
+            merged_headless = override.headless
+
         # Merge is_error_reporting_enabled (scalar - override wins if not None)
         merged_is_error_reporting_enabled = self.is_error_reporting_enabled
         if override.is_error_reporting_enabled is not None:
@@ -590,6 +601,7 @@ class MngConfig(FrozenModel):
             connect_command=merged_connect_command,
             logging=merged_logging,
             is_nested_tmux_allowed=merged_is_nested_tmux_allowed,
+            headless=merged_headless,
             is_error_reporting_enabled=merged_is_error_reporting_enabled,
             is_allowed_in_pytest=is_allowed_in_pytest,
             default_destroyed_host_persisted_seconds=default_destroyed_host_persisted_seconds,
@@ -627,6 +639,17 @@ class MngContext(FrozenModel):
         default_factory=lambda: ConcurrencyGroup(name="default"),
         description="Top-level concurrency group for managing spawned processes",
     )
+
+    def get_plugin_config(self, name: str, config_type: type[PluginConfigT]) -> PluginConfigT:
+        """Get a plugin's typed config, falling back to defaults if absent."""
+        config = self.config.plugins.get(PluginName(name))
+        if config is None:
+            return config_type()
+        if not isinstance(config, config_type):
+            raise ConfigParseError(
+                f"Plugin '{name}' config has type {type(config).__name__}, expected {config_type.__name__}"
+            )
+        return config
 
     def get_profile_user_id(self) -> UserId:
         return get_or_create_user_id(self.profile_dir)
@@ -672,3 +695,107 @@ def get_or_create_user_id(profile_dir: Path) -> UserId:
             user_id = uuid4().hex
         atomic_write(user_id_file, user_id)
     return UserId(user_id)
+
+
+class CommonCliOptions(FrozenModel):
+    """Base class for common CLI options shared across all commands.
+
+    This captures the options added by the @add_common_options decorator.
+    All command-specific option classes should inherit from this class.
+
+    Note that this class VERY INTENTIONALLY DOES NOT use Field() decorators with descriptions, defaults, etc.
+    For that information, see the @add_common_options decorator and its click.option() decorators.
+    """
+
+    headless: bool = False
+    output_format: str
+    quiet: bool
+    verbose: int
+    log_file: str | None
+    log_commands: bool | None
+    log_command_output: bool | None
+    log_env_vars: bool | None
+    project_context_path: str | None
+    plugin: tuple[str, ...]
+    disable_plugin: tuple[str, ...]
+
+
+class CreateCliOptions(CommonCliOptions):
+    """Options passed from the CLI to the create command.
+
+    This captures all the click parameters so we can pass them as a single object
+    to helper functions instead of passing dozens of individual parameters.
+
+    Inherits common options (output_format, quiet, verbose, etc.) from CommonCliOptions.
+
+    Note that this class VERY INTENTIONALLY DOES NOT use Field() decorators with descriptions, defaults, etc.
+    For that information, see the click.option() and click.argument() decorators on the create() function itself.
+    """
+
+    positional_name: str | None
+    positional_agent_type: str | None
+    agent_args: tuple[str, ...]
+    template: tuple[str, ...]
+    type: str | None
+    reuse: bool
+    connect: bool
+    connect_command: str | None
+    ensure_clean: bool
+    name: str | None
+    id: str | None
+    name_style: str
+    command: str | None
+    extra_window: tuple[str, ...]
+    source: str | None
+    source_agent: str | None
+    source_host: str | None
+    source_path: str | None
+    target: str | None
+    target_path: str | None
+    in_place: bool
+    copy_source: bool
+    clone: bool
+    worktree: bool
+    rsync: bool | None
+    rsync_args: str | None
+    include_git: bool
+    include_unclean: bool | None
+    include_gitignored: bool
+    branch: str
+    depth: int | None
+    shallow_since: str | None
+    env: tuple[str, ...]
+    env_file: tuple[str, ...]
+    pass_env: tuple[str, ...]
+    provider: str | None
+    new_host: bool
+    host_name_style: str
+    host_label: tuple[str, ...]
+    label: tuple[str, ...]
+    project: str | None
+    host_env: tuple[str, ...]
+    host_env_file: tuple[str, ...]
+    pass_host_env: tuple[str, ...]
+    snapshot: str | None
+    build_arg: tuple[str, ...]
+    start_arg: tuple[str, ...]
+    reconnect: bool
+    interactive: bool | None
+    message: str | None
+    message_file: str | None
+    edit_message: bool
+    retry: int
+    retry_delay: str
+    attach_command: str | None
+    idle_timeout: str | None
+    idle_mode: str | None
+    activity_sources: str | None
+    start_on_boot: bool | None
+    start_host: bool
+    grant: tuple[str, ...]
+    user_command: tuple[str, ...]
+    sudo_command: tuple[str, ...]
+    upload_file: tuple[str, ...]
+    append_to_file: tuple[str, ...]
+    prepend_to_file: tuple[str, ...]
+    yes: bool

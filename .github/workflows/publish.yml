@@ -52,6 +52,9 @@ jobs:
             uv run scripts/verify_publish.py
           fi
 
+      - name: Build resource-guards
+        run: pyproject-build libs/resource_guards -o dist/
+
       - name: Build imbue-common
         run: pyproject-build libs/imbue_common -o dist/
 
@@ -61,11 +64,20 @@ jobs:
       - name: Build mng
         run: pyproject-build libs/mng -o dist/
 
+      - name: Build mng-claude
+        run: pyproject-build libs/mng_claude -o dist/
+
       - name: Build mng-pair
         run: pyproject-build libs/mng_pair -o dist/
 
       - name: Build mng-opencode
         run: pyproject-build libs/mng_opencode -o dist/
+
+      - name: Build mng-kanpan
+        run: pyproject-build libs/mng_kanpan -o dist/
+
+      - name: Build mng-tutor
+        run: pyproject-build libs/mng_tutor -o dist/
 
       - name: Publish packages to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

@@ -7,13 +7,12 @@ from click_option_group import optgroup
 from loguru import logger
 
 from imbue.imbue_common.pure import pure
+from imbue.mng.api.discover import discover_all_hosts_and_agents
 from imbue.mng.api.find import AgentMatch
-from imbue.mng.api.find import find_agents_by_identifiers_or_state
 from imbue.mng.api.find import group_agents_by_host
 from imbue.mng.api.find import resolve_host_reference
-from imbue.mng.api.list import load_all_agents_grouped_by_host
 from imbue.mng.api.providers import get_provider_instance
-from imbue.mng.cli.common_opts import CommonCliOptions
+from imbue.mng.cli.agent_addr import find_agents_by_addresses
 from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.help_formatter import CommandHelpMetadata
@@ -21,17 +20,18 @@ from imbue.mng.cli.help_formatter import add_pager_help_option
 from imbue.mng.cli.output_helpers import emit_event
 from imbue.mng.cli.output_helpers import emit_final_json
 from imbue.mng.cli.output_helpers import write_human_line
+from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.errors import AgentNotFoundOnHostError
 from imbue.mng.errors import HostOfflineError
-from imbue.mng.hosts.common import get_activity_sources_for_idle_mode
 from imbue.mng.interfaces.data_types import ActivityConfig
+from imbue.mng.interfaces.data_types import get_activity_sources_for_idle_mode
 from imbue.mng.interfaces.host import HostInterface
 from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.primitives import ActivitySource
+from imbue.mng.primitives import DiscoveredHost
 from imbue.mng.primitives import HostId
-from imbue.mng.primitives import HostReference
 from imbue.mng.primitives import IdleMode
 from imbue.mng.primitives import OutputFormat
 from imbue.mng.primitives import Permission
@@ -205,9 +205,9 @@ def _apply_activity_config_to_host(
     )
 
 
-def _build_host_references(mng_ctx: MngContext) -> list[HostReference]:
-    """Build a deduplicated list of HostReferences from all known agents."""
-    agents_by_host, _ = load_all_agents_grouped_by_host(mng_ctx, include_destroyed=False)
+def _build_host_references(mng_ctx: MngContext) -> list[DiscoveredHost]:
+    """Build a deduplicated list of DiscoveredHosts from all known agents."""
+    agents_by_host, _ = discover_all_hosts_and_agents(mng_ctx, include_destroyed=False)
     return list(agents_by_host.keys())
 
 
@@ -410,8 +410,8 @@ def limit(ctx: click.Context, **kwargs: Any) -> None:
         return
 
     # Find agents (match all states for limit command)
-    agents = find_agents_by_identifiers_or_state(
-        agent_identifiers=agent_identifiers,
+    agents = find_agents_by_addresses(
+        raw_identifiers=agent_identifiers,
         filter_all=opts.limit_all,
         target_state=None,
         mng_ctx=mng_ctx,
@@ -491,7 +491,7 @@ def limit(ctx: click.Context, **kwargs: Any) -> None:
 
 def _apply_host_only_changes(
     host_identifier: str,
-    all_hosts: list[HostReference],
+    all_hosts: list[DiscoveredHost],
     opts: LimitCliOptions,
     output_opts: OutputOptions,
     dry_run: bool,

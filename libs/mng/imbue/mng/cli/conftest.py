@@ -1,22 +1,25 @@
-from datetime import datetime
-from datetime import timezone
+from collections.abc import Callable
 from pathlib import Path
+from typing import Generator
 
 import click
 import pluggy
 import pytest
 from click.testing import CliRunner
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.mng.cli.archive import archive
+from imbue.mng.cli.capture import capture
 from imbue.mng.cli.cleanup import cleanup
 from imbue.mng.cli.config import config
 from imbue.mng.cli.connect import ConnectCliOptions
 from imbue.mng.cli.connect import connect
-from imbue.mng.cli.create import CreateCliOptions
 from imbue.mng.cli.destroy import destroy
+from imbue.mng.cli.events import events
 from imbue.mng.cli.exec import exec_command
 from imbue.mng.cli.gc import gc
+from imbue.mng.cli.label import label
 from imbue.mng.cli.limit import limit
-from imbue.mng.cli.logs import logs
 from imbue.mng.cli.message import message
 from imbue.mng.cli.migrate import migrate
 from imbue.mng.cli.provision import provision
@@ -26,54 +29,11 @@ from imbue.mng.cli.rename import rename
 from imbue.mng.cli.snapshot import snapshot
 from imbue.mng.cli.start import start
 from imbue.mng.cli.stop import stop
-from imbue.mng.interfaces.data_types import AgentInfo
-from imbue.mng.interfaces.data_types import HostInfo
-from imbue.mng.interfaces.data_types import SnapshotInfo
+from imbue.mng.cli.transcript import transcript
+from imbue.mng.config.data_types import CreateCliOptions
 from imbue.mng.main import cli
-from imbue.mng.primitives import AgentId
-from imbue.mng.primitives import AgentLifecycleState
-from imbue.mng.primitives import AgentName
-from imbue.mng.primitives import CommandString
-from imbue.mng.primitives import HostId
-from imbue.mng.primitives import HostState
-from imbue.mng.primitives import ProviderInstanceName
-
-
-def make_test_agent_info(
-    name: str = "test-agent",
-    state: AgentLifecycleState = AgentLifecycleState.RUNNING,
-    create_time: datetime | None = None,
-    snapshots: list[SnapshotInfo] | None = None,
-    host_plugin: dict | None = None,
-    host_tags: dict[str, str] | None = None,
-    labels: dict[str, str] | None = None,
-) -> AgentInfo:
-    """Create a real AgentInfo for testing.
-
-    Shared helper used across CLI test files to avoid duplicating AgentInfo
-    construction logic. Accepts optional overrides for commonly varied fields.
-    """
-    host_info = HostInfo(
-        id=HostId.generate(),
-        name="test-host",
-        provider_name=ProviderInstanceName("local"),
-        snapshots=snapshots or [],
-        state=HostState.RUNNING,
-        plugin=host_plugin or {},
-        tags=host_tags or {},
-    )
-    return AgentInfo(
-        id=AgentId.generate(),
-        name=AgentName(name),
-        type="generic",
-        command=CommandString("sleep 100"),
-        work_dir=Path("/tmp/test"),
-        create_time=create_time or datetime.now(timezone.utc),
-        start_on_boot=False,
-        state=state,
-        labels=labels or {},
-        host=host_info,
-    )
+from imbue.mng.utils.testing import cleanup_tmux_session
+from imbue.mng.utils.testing import create_test_agent_via_cli
 
 
 @pytest.fixture
@@ -98,20 +58,15 @@ def default_create_cli_opts() -> CreateCliOptions:
         positional_agent_type=None,
         agent_args=(),
         template=(),
-        agent_type=None,
+        type=None,
         reuse=False,
         connect=True,
-        await_ready=None,
-        await_agent_stopped=None,
-        copy_work_dir=None,
         ensure_clean=True,
-        snapshot_source=None,
         name=None,
-        agent_id=None,
+        id=None,
         name_style="english",
-        agent_command=None,
-        add_command=(),
-        user=None,
+        command=None,
+        extra_window=(),
         source=None,
         source_agent=None,
         source_host=None,
@@ -127,38 +82,29 @@ def default_create_cli_opts() -> CreateCliOptions:
         include_git=True,
         include_unclean=None,
         include_gitignored=False,
-        base_branch=None,
-        new_branch="",
-        new_branch_prefix="mng/",
+        branch=":mng/*",
         depth=None,
         shallow_since=None,
-        agent_env=(),
-        agent_env_file=(),
-        pass_agent_env=(),
-        host=None,
-        new_host=None,
-        host_name=None,
+        env=(),
+        env_file=(),
+        pass_env=(),
+        provider=None,
+        new_host=False,
         host_name_style="astronomy",
-        tag=(),
+        host_label=(),
         label=(),
         project=None,
         host_env=(),
         host_env_file=(),
         pass_host_env=(),
-        known_hosts=(),
-        authorized_keys=(),
         snapshot=None,
         build_arg=(),
-        build_args=None,
         start_arg=(),
-        start_args=None,
         reconnect=True,
         interactive=None,
         message=None,
         message_file=None,
         edit_message=False,
-        resume_message=None,
-        resume_message_file=None,
         retry=3,
         retry_delay="5s",
         attach_command=None,
@@ -174,8 +120,6 @@ def default_create_cli_opts() -> CreateCliOptions:
         upload_file=(),
         append_to_file=(),
         prepend_to_file=(),
-        create_directory=(),
-        ready_timeout=10.0,
         yes=False,
     )
 
@@ -227,19 +171,100 @@ def intercepted_execvp_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str,
     return calls
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+_WORKSPACE_PACKAGES = (
+    _REPO_ROOT / "libs" / "imbue_common",
+    _REPO_ROOT / "libs" / "concurrency_group",
+    _REPO_ROOT / "libs" / "mng",
+)
+
+
+@pytest.fixture
+def isolated_mng_venv(tmp_path: Path) -> Path:
+    """Create a temporary venv with mng installed for subprocess-based tests.
+
+    Returns the venv directory. Use `venv / "bin" / "mng"` to run mng
+    commands, or `venv / "bin" / "python"` for the interpreter.
+
+    This fixture is useful for tests that install/uninstall packages and
+    need full isolation from the main workspace venv.
+    """
+    venv_dir = tmp_path / "isolated-venv"
+
+    install_args: list[str] = []
+    for pkg in _WORKSPACE_PACKAGES:
+        install_args.extend(["-e", str(pkg)])
+
+    cg = ConcurrencyGroup(name="isolated-venv-setup")
+    with cg:
+        cg.run_process_to_completion(("uv", "venv", str(venv_dir)))
+        cg.run_process_to_completion(
+            ("uv", "pip", "install", "--python", str(venv_dir / "bin" / "python"), *install_args)
+        )
+
+    return venv_dir
+
+
+def _create_and_track_test_agent(
+    cli_runner: CliRunner,
+    temp_work_dir: Path,
+    mng_test_prefix: str,
+    plugin_manager: pluggy.PluginManager,
+    created_sessions: list[str],
+    agent_name: str,
+    agent_cmd: str = "sleep 482917",
+) -> str:
+    """Create a test agent via CLI and track its session for cleanup."""
+    session_name = create_test_agent_via_cli(
+        cli_runner, temp_work_dir, mng_test_prefix, plugin_manager, agent_name, agent_cmd
+    )
+    created_sessions.append(session_name)
+    return session_name
+
+
+@pytest.fixture
+def create_test_agent(
+    cli_runner: CliRunner,
+    temp_work_dir: Path,
+    mng_test_prefix: str,
+    plugin_manager: pluggy.PluginManager,
+) -> Generator[Callable[..., str], None, None]:
+    """Factory fixture that creates test agents via CLI and cleans up automatically.
+
+    Usage:
+        def test_something(create_test_agent):
+            session_name = create_test_agent("my-agent")
+            # ... test logic ...
+            # cleanup happens automatically on fixture teardown
+
+    Supports creating multiple agents per test -- all are cleaned up.
+    """
+    created_sessions: list[str] = []
+    yield lambda agent_name, agent_cmd="sleep 482917": _create_and_track_test_agent(
+        cli_runner, temp_work_dir, mng_test_prefix, plugin_manager, created_sessions, agent_name, agent_cmd
+    )
+
+    for session_name in created_sessions:
+        cleanup_tmux_session(session_name)
+
+
 # =============================================================================
 # Parametrized --help tests (replaces per-file test_*_help_exits_zero)
 # =============================================================================
 
 _HELP_TEST_CASES: list[tuple[click.Command, list[str], str]] = [
+    (archive, ["--help"], "archive"),
+    (capture, ["--help"], "capture"),
     (cleanup, ["--help"], "cleanup"),
     (config, ["--help"], "config"),
     (connect, ["--help"], "connect"),
     (destroy, ["--help"], "destroy"),
     (exec_command, ["--help"], "exec"),
     (gc, ["--help"], "gc"),
+    (label, ["--help"], "label"),
     (limit, ["--help"], "limit"),
-    (logs, ["--help"], "logs"),
+    (events, ["--help"], "events"),
+    (transcript, ["--help"], "transcript"),
     (message, ["--help"], "message"),
     (migrate, ["--help"], "migrate"),
     (provision, ["--help"], "provision"),
@@ -275,10 +300,13 @@ def test_help_exits_zero(
 # =============================================================================
 
 _NONEXISTENT_AGENT_CASES: list[tuple[click.Command, list[str], str]] = [
+    (capture, ["nonexistent-agent-55123"], "capture"),
     (destroy, ["nonexistent-agent-88421"], "destroy"),
     (exec_command, ["nonexistent-agent-99999", "echo hello"], "exec"),
+    (label, ["nonexistent-agent-44321", "--label", "key=value"], "label"),
     (limit, ["nonexistent-agent-77234", "--idle-timeout", "300"], "limit"),
-    (logs, ["nonexistent-agent-34892"], "logs"),
+    (events, ["nonexistent-agent-34892"], "events"),
+    (transcript, ["nonexistent-agent-82341"], "transcript"),
     (provision, ["nonexistent-agent-77412"], "provision"),
     (pull, ["nonexistent-agent-66201"], "pull"),
     (push, ["nonexistent-agent-77312"], "push"),

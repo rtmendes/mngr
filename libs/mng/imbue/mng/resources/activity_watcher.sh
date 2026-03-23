@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Activity watcher script for mng hosts.
 # This script monitors activity files and calls shutdown.sh when the host becomes idle.
 #
@@ -36,8 +36,8 @@ fi
 
 # Configure and source the shared logging library
 _MNG_LOG_TYPE="activity_watcher"
-_MNG_LOG_SOURCE="activity_watcher"
-_MNG_LOG_FILE="$HOST_DATA_DIR/logs/activity_watcher/events.jsonl"
+_MNG_LOG_SOURCE="logs/activity_watcher"
+_MNG_LOG_FILE="$HOST_DATA_DIR/events/logs/activity_watcher/events.jsonl"
 # shellcheck source=mng_log.sh
 source "$HOST_DATA_DIR/commands/mng_log.sh"
 

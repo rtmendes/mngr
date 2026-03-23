@@ -10,7 +10,7 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_call
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.pure import pure
-from imbue.mng.api.list import load_all_agents_grouped_by_host
+from imbue.mng.api.discover import discover_all_hosts_and_agents
 from imbue.mng.api.providers import get_provider_instance
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import AgentNotFoundError
@@ -23,10 +23,10 @@ from imbue.mng.interfaces.host import OnlineHostInterface
 from imbue.mng.primitives import AgentId
 from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import AgentName
-from imbue.mng.primitives import AgentReference
+from imbue.mng.primitives import DiscoveredAgent
+from imbue.mng.primitives import DiscoveredHost
 from imbue.mng.primitives import HostId
 from imbue.mng.primitives import HostName
-from imbue.mng.primitives import HostReference
 from imbue.mng.primitives import LOCAL_PROVIDER_NAME
 from imbue.mng.primitives import ProviderInstanceName
 from imbue.mng.providers.base_provider import BaseProviderInstance
@@ -100,7 +100,7 @@ def parse_source_string(
 @pure
 def determine_resolved_path(
     parsed_path: str | None,
-    resolved_agent: AgentReference | None,
+    resolved_agent: DiscoveredAgent | None,
     agent_work_dir_if_available: Path | None,
 ) -> Path:
     """Determine the final path from parsed components.
@@ -120,9 +120,9 @@ def determine_resolved_path(
 @pure
 def resolve_host_reference(
     host_identifier: str | None,
-    all_hosts: Sequence[HostReference],
-) -> HostReference | None:
-    """Resolve a host identifier (ID or name) to a HostReference.
+    all_hosts: Sequence[DiscoveredHost],
+) -> DiscoveredHost | None:
+    """Resolve a host identifier (ID or name) to a DiscoveredHost.
 
     Returns None if host_identifier is None.
     Raises UserInputError if host cannot be found or multiple hosts match the name.
@@ -146,9 +146,9 @@ def resolve_host_reference(
 @pure
 def resolve_agent_reference(
     agent_identifier: str | None,
-    resolved_host: HostReference | None,
-    agents_by_host: Mapping[HostReference, Sequence[AgentReference]],
-) -> tuple[HostReference, AgentReference] | None:
+    resolved_host: DiscoveredHost | None,
+    agents_by_host: Mapping[DiscoveredHost, Sequence[DiscoveredAgent]],
+) -> tuple[DiscoveredHost, DiscoveredAgent] | None:
     """Resolve an agent identifier (ID or name) to host and agent references.
 
     Returns None if agent_identifier is None.
@@ -157,7 +157,7 @@ def resolve_agent_reference(
     if agent_identifier is None:
         return None
 
-    matching_agents: list[tuple[HostReference, AgentReference]] = []
+    matching_agents: list[tuple[DiscoveredHost, DiscoveredAgent]] = []
 
     for host_ref, agent_refs in agents_by_host.items():
         if resolved_host is not None and host_ref.host_id != resolved_host.host_id:
@@ -181,18 +181,27 @@ def resolve_agent_reference(
         return matching_agents[0]
 
 
+class ResolvedSource(FrozenModel):
+    """Full resolution result from resolve_source_detailed, including agent info when available."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    location: HostLocation = Field(description="The resolved host and path")
+    agent_id: AgentId | None = Field(default=None, description="The resolved source agent ID, if any")
+
+
 @log_call
 def resolve_source_location(
     source: str | None,
     source_agent: str | None,
     source_host: str | None,
     source_path: str | None,
-    agents_by_host: Mapping[HostReference, Sequence[AgentReference]],
+    agents_by_host: Mapping[DiscoveredHost, Sequence[DiscoveredAgent]],
     mng_ctx: MngContext,
     *,
     is_start_desired: bool = True,
-) -> HostLocation:
-    """Parse and resolve source location to a concrete host and path.
+) -> ResolvedSource:
+    """Parse and resolve source location to a concrete host, path, and optional agent ID.
 
     source format: [AGENT | AGENT.HOST[.PROVIDER] | AGENT.HOST[.PROVIDER]:PATH | HOST[.PROVIDER]:PATH | PATH]
 
@@ -218,7 +227,7 @@ def resolve_source_location(
         agent_result = resolve_agent_reference(parsed.agent, resolved_host, agents_by_host)
 
     # Extract resolved agent if found
-    resolved_agent: AgentReference | None = None
+    resolved_agent: DiscoveredAgent | None = None
     if agent_result is not None:
         resolved_host, resolved_agent = agent_result
 
@@ -242,7 +251,7 @@ def resolve_source_location(
     # Resolve the final path
     agent_work_dir: Path | None = None
     if resolved_agent is not None:
-        for agent_ref in online_host.get_agent_references():
+        for agent_ref in online_host.discover_agents():
             if agent_ref.agent_id == resolved_agent.agent_id:
                 agent_work_dir = agent_ref.work_dir
                 break
@@ -253,14 +262,14 @@ def resolve_source_location(
         agent_work_dir_if_available=agent_work_dir,
     )
 
-    return HostLocation(
-        host=online_host,
-        path=resolved_path,
+    return ResolvedSource(
+        location=HostLocation(host=online_host, path=resolved_path),
+        agent_id=resolved_agent.agent_id if resolved_agent is not None else None,
     )
 
 
 @pure
-def get_host_from_list_by_id(host_id: HostId, all_hosts: Sequence[HostReference]) -> HostReference | None:
+def get_host_from_list_by_id(host_id: HostId, all_hosts: Sequence[DiscoveredHost]) -> DiscoveredHost | None:
     for host in all_hosts:
         if host.host_id == host_id:
             return host
@@ -268,7 +277,9 @@ def get_host_from_list_by_id(host_id: HostId, all_hosts: Sequence[HostReference]
 
 
 @pure
-def get_unique_host_from_list_by_name(host_name: HostName, all_hosts: Sequence[HostReference]) -> HostReference | None:
+def get_unique_host_from_list_by_name(
+    host_name: HostName, all_hosts: Sequence[DiscoveredHost]
+) -> DiscoveredHost | None:
     matching_hosts = [host for host in all_hosts if host.host_name == host_name]
     if len(matching_hosts) == 1:
         return matching_hosts[0]
@@ -332,7 +343,7 @@ def ensure_agent_started(agent: AgentInterface, host: OnlineHostInterface, is_st
 @log_call
 def find_and_maybe_start_agent_by_name_or_id(
     agent_str: str,
-    agents_by_host: Mapping[HostReference, Sequence[AgentReference]],
+    agents_by_host: Mapping[DiscoveredHost, Sequence[DiscoveredAgent]],
     mng_ctx: MngContext,
     command_name: str,
     is_start_desired: bool = False,
@@ -420,6 +431,7 @@ class AgentMatch(FrozenModel):
     agent_id: AgentId = Field(description="Unique identifier for the matched agent")
     agent_name: AgentName = Field(description="Human-readable name of the matched agent")
     host_id: HostId = Field(description="Unique identifier for the host the agent runs on")
+    host_name: HostName = Field(description="Human-readable name of the host the agent runs on")
     provider_name: ProviderInstanceName = Field(description="Name of the provider instance that owns the host")
 
 
@@ -438,7 +450,7 @@ def find_agents_by_identifiers_or_state(
 
     Raises AgentNotFoundError if any identifier does not match an agent.
     """
-    agents_by_host, _ = load_all_agents_grouped_by_host(mng_ctx, include_destroyed=False)
+    agents_by_host, _ = discover_all_hosts_and_agents(mng_ctx, include_destroyed=False)
 
     # Collect candidate matches from the lightweight agent references
     candidates: list[AgentMatch] = []
@@ -468,6 +480,7 @@ def find_agents_by_identifiers_or_state(
                         agent_id=agent_ref.agent_id,
                         agent_name=agent_ref.agent_name,
                         host_id=host_ref.host_id,
+                        host_name=host_ref.host_name,
                         provider_name=host_ref.provider_name,
                     )
                 )
