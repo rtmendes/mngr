@@ -170,6 +170,8 @@ def _build_agent_prompt(
     pytest_flags: tuple[str, ...],
     prompt_suffix: str = "",
 ) -> str:
+    # Human-sanctioned: prompt is currently specific to mng's E2E tutorial tests.
+    # This should be made generic in the future, but is acceptable for now.
     """Build the prompt/initial message for a test-running agent."""
     flags_str = " ".join(pytest_flags)
     run_cmd = f"pytest {test_node_id}"
@@ -200,6 +202,8 @@ Consider whether the test can be improved:
   because this can make the tests very brittle.
 
 - Are there interesting edge cases worth covering?
+
+- Is the code run in the pytest function close enough to the tutorial block?
 
 If you make improvements, record a change under the key "IMPROVE_TEST". If you
 identify an improvement that needs a larger-scale intervention, use status
