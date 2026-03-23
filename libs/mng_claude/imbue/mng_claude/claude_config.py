@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from typing import Final
 
 from loguru import logger
 
@@ -323,6 +324,18 @@ def accept_bypass_permissions(config_path: Path) -> None:
     logger.trace("Accepted bypass permissions in Claude config")
 
 
+def acknowledge_cost_threshold(config_path: Path) -> None:
+    """Set hasAcknowledgedCostThreshold=true in the given config file. No-op if already set."""
+    with _claude_config_lock(config_path):
+        config = read_claude_config(config_path)
+        if config.get("hasAcknowledgedCostThreshold", False):
+            return
+        config["hasAcknowledgedCostThreshold"] = True
+        _write_claude_config_atomic(config_path, config)
+
+    logger.trace("Acknowledged cost threshold in Claude config")
+
+
 def check_claude_dialogs_dismissed(config_path: Path, source_path: Path) -> None:
     """Check that all known Claude startup dialogs have been dismissed.
 
@@ -349,6 +362,7 @@ def ensure_claude_dialogs_dismissed(config_path: Path, source_path: Path) -> Non
     add_claude_trust_for_path(config_path, source_path)
     dismiss_effort_callout(config_path)
     complete_onboarding(config_path)
+    acknowledge_cost_threshold(config_path)
     # bypassPermissionsModeAccepted: not set here (Claude Code resets it).
     # skipDangerousModePermissionPrompt in settings.json handles this instead.
 
@@ -399,6 +413,10 @@ def encode_claude_project_dir_name(path: Path) -> str:
 # Readiness Hooks Configuration
 # =============================================================================
 
+# Guard prefix for readiness hook commands: exit gracefully if this is not the
+# main Claude session (e.g. a reviewer sub-agent that resumed a session).
+_SESSION_GUARD: Final[str] = '[ -z "$MAIN_CLAUDE_SESSION_ID" ] && exit 0; '
+
 
 @pure
 def build_readiness_hooks_config() -> dict[str, Any]:
@@ -433,12 +451,12 @@ def build_readiness_hooks_config() -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": 'touch "$MNG_AGENT_STATE_DIR/session_started"',
+                            "command": _SESSION_GUARD + 'touch "$MNG_AGENT_STATE_DIR/session_started"',
                         },
                         {
                             "type": "command",
                             "command": (
-                                "_MNG_HOOK_INPUT=$(cat);"
+                                _SESSION_GUARD + "_MNG_HOOK_INPUT=$(cat);"
                                 ' _MNG_NEW_SID=$(echo "$_MNG_HOOK_INPUT" | jq -r ".session_id // empty");'
                                 ' if [ -z "$_MNG_NEW_SID" ]; then'
                                 ' echo "mng: SessionStart hook failed to extract session_id from hook input: $_MNG_HOOK_INPUT" >&2;'
@@ -458,11 +476,13 @@ def build_readiness_hooks_config() -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": """touch "$MNG_AGENT_STATE_DIR/active" && rm -f "$MNG_AGENT_STATE_DIR/permissions_waiting" && mkdir -p $MNG_HOST_DIR/events/mng/activity && echo '{"source": "mng/activity", "type": "activity", "event_id": "'"evt-$(head -c 16 /dev/urandom | xxd -p)"'", "timestamp": "'"$(date -u +"%Y-%m-%dT%H:%M:%S.000000000Z")"'"}' >> $MNG_HOST_DIR/events/mng/activity/events.jsonl""",
+                            "command": _SESSION_GUARD
+                            + """touch "$MNG_AGENT_STATE_DIR/active" && rm -f "$MNG_AGENT_STATE_DIR/permissions_waiting" && mkdir -p $MNG_HOST_DIR/events/mng/activity && echo '{"source": "mng/activity", "type": "activity", "event_id": "'"evt-$(head -c 16 /dev/urandom | xxd -p)"'", "timestamp": "'"$(date -u +"%Y-%m-%dT%H:%M:%S.000000000Z")"'"}' >> $MNG_HOST_DIR/events/mng/activity/events.jsonl""",
                         },
                         {
                             "type": "command",
-                            "command": "tmux wait-for -S \"mng-submit-$(tmux display-message -p '#S')\" 2>/dev/null || true",
+                            "command": _SESSION_GUARD
+                            + "tmux wait-for -S \"mng-submit-$(tmux display-message -p '#S')\" 2>/dev/null || true",
                         },
                     ]
                 }
@@ -472,7 +492,7 @@ def build_readiness_hooks_config() -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": 'touch "$MNG_AGENT_STATE_DIR/permissions_waiting"',
+                            "command": _SESSION_GUARD + 'touch "$MNG_AGENT_STATE_DIR/permissions_waiting"',
                         },
                     ],
                 }
@@ -482,7 +502,7 @@ def build_readiness_hooks_config() -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": 'rm -f "$MNG_AGENT_STATE_DIR/permissions_waiting"',
+                            "command": _SESSION_GUARD + 'rm -f "$MNG_AGENT_STATE_DIR/permissions_waiting"',
                         },
                     ],
                 }
@@ -492,7 +512,7 @@ def build_readiness_hooks_config() -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": 'rm -f "$MNG_AGENT_STATE_DIR/permissions_waiting"',
+                            "command": _SESSION_GUARD + 'rm -f "$MNG_AGENT_STATE_DIR/permissions_waiting"',
                         },
                     ],
                 }
@@ -503,7 +523,8 @@ def build_readiness_hooks_config() -> dict[str, Any]:
                     "hooks": [
                         {
                             "type": "command",
-                            "command": """rm -f "$MNG_AGENT_STATE_DIR/active" "$MNG_AGENT_STATE_DIR/permissions_waiting" && mkdir -p $MNG_HOST_DIR/events/mng/activity && echo '{"source": "mng/activity", "type": "activity", "event_id": "'"evt-$(head -c 16 /dev/urandom | xxd -p)"'", "timestamp": "'"$(date -u +"%Y-%m-%dT%H:%M:%S.000000000Z")"'"}' >> $MNG_HOST_DIR/events/mng/activity/events.jsonl""",
+                            "command": _SESSION_GUARD
+                            + """rm -f "$MNG_AGENT_STATE_DIR/active" "$MNG_AGENT_STATE_DIR/permissions_waiting" && mkdir -p $MNG_HOST_DIR/events/mng/activity && echo '{"source": "mng/activity", "type": "activity", "event_id": "'"evt-$(head -c 16 /dev/urandom | xxd -p)"'", "timestamp": "'"$(date -u +"%Y-%m-%dT%H:%M:%S.000000000Z")"'"}' >> $MNG_HOST_DIR/events/mng/activity/events.jsonl""",
                         },
                     ],
                 }

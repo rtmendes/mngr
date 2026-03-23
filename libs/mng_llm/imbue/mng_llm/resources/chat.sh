@@ -9,6 +9,7 @@
 #   chat --new --name <name>                        Create or resume a named conversation (user-initiated)
 #   chat --new --name <name> --as-agent <message>   Create or resume a named conversation (agent-initiated)
 #   chat --resume <conversation-id>                 Resume an existing conversation by ID
+#   chat --reply <conversation-id> <message>        Inject another agent reply into an existing conversation
 #   chat --list                                     List all conversations
 #   chat --help                                     Show usage information
 #   chat                                            List conversations and show help hint
@@ -44,11 +45,6 @@ LOG_FILE="$_MNG_LOG_FILE"
 # set this so that we dont get back funny-looking echo output
 export LLM_MATCHED_RESPONSE="Thinking..."
 
-# Nanosecond-precision UTC timestamp in ISO 8601 format.
-iso_timestamp_ns() {
-    date -u +"%Y-%m-%dT%H:%M:%S.%NZ"
-}
-
 # Log a message to the log file (not to stdout, since chat is interactive)
 log() {
     log_info "$*"
@@ -71,10 +67,19 @@ insert_conversation_record() {
     local conversation_id="$1"
     local tags="${2:-\{\}}"
     local created_at
-    created_at=$(iso_timestamp_ns)
+    created_at=$(mng_timestamp)
 
     mng llmdb insert "$_LLM_DB" "$conversation_id" "$tags" "$created_at"
     log "Inserted conversation record: conversation_id=$conversation_id tags=$tags"
+}
+
+# Look up the most recently inserted response ID for a conversation.
+# Prints the response_id if found, or nothing if not found.
+get_last_response_id() {
+    local conversation_id="$1"
+    if [ -f "$_LLM_DB" ]; then
+        mng llmdb last-response-id "$_LLM_DB" "$conversation_id"
+    fi
 }
 
 build_tool_args() {
@@ -197,8 +202,15 @@ new_conversation() {
                 log "Injecting agent message into existing conversation $existing_id"
                 llm inject --cid "$existing_id" -m "$model" "$message"
                 log "Agent message injected successfully"
+                local message_id
+                message_id=$(get_last_response_id "$existing_id")
+                echo "conversation_id=$existing_id"
+                if [ -n "$message_id" ]; then
+                    echo "message_id=$message_id"
+                fi
+            else
+                echo "conversation_id=$existing_id"
             fi
-            echo "$existing_id"
         else
             resume_conversation "$existing_id"
         fi
@@ -219,8 +231,15 @@ new_conversation() {
             log "Injecting agent message into new conversation $conversation_id"
             llm inject --cid "$conversation_id" -m "$model" "$message"
             log "Agent message injected successfully"
+            local message_id
+            message_id=$(get_last_response_id "$conversation_id")
+            echo "conversation_id=$conversation_id"
+            if [ -n "$message_id" ]; then
+                echo "message_id=$message_id"
+            fi
+        else
+            echo "conversation_id=$conversation_id"
         fi
-        echo "$conversation_id"
     else
         local tool_args
         tool_args=$(build_tool_args)
@@ -291,6 +310,25 @@ resume_conversation() {
     log "Starting live-chat session (resume): conversation_id=$conversation_id model=$model tool_args='$tool_args'"
     # shellcheck disable=SC2086
     exec llm live-chat --show-history -c --cid "$conversation_id" -m "$model" "${template_args[@]}" $tool_args
+}
+
+reply_to_conversation() {
+    local conversation_id="$1"
+    local message="$2"
+
+    local model
+    model=$(get_model)
+
+    log "reply_to_conversation: conversation_id=$conversation_id model=$model message_len=${#message}"
+
+    llm inject --cid "$conversation_id" -m "$model" "$message"
+    log "Reply injected successfully"
+
+    local message_id
+    message_id=$(get_last_response_id "$conversation_id")
+    if [ -n "$message_id" ]; then
+        echo "message_id=$message_id"
+    fi
 }
 
 list_conversations() {
@@ -381,10 +419,15 @@ show_help() {
     echo "Usage:"
     echo "  chat --new --name <name> [--as-agent <msg>]  Create or resume a named conversation"
     echo "  chat --resume <conversation-id>              Resume an existing conversation"
+    echo "  chat --reply <conversation-id> <message>     Inject another agent reply into an existing conversation"
     echo "  chat --list                                  List all conversations"
     echo "  chat --help                                  Show this help message"
     echo ""
     echo "With no arguments, lists conversations (same as --list)."
+    echo ""
+    echo "Output (when injecting messages):"
+    echo "  conversation_id=<id>   Conversation that was created or injected into"
+    echo "  message_id=<id>        Response ID of the injected message"
     echo ""
     echo "Environment:"
     echo "  MNG_LLM_MODEL   Model for llm commands (default: claude-opus-4.6)"
@@ -404,6 +447,18 @@ case "${1:-}" in
             exit 1
         fi
         resume_conversation "$@"
+        ;;
+    --reply)
+        shift
+        if [ -z "${1:-}" ]; then
+            echo "Usage: chat --reply <conversation-id> <message>" >&2
+            exit 1
+        fi
+        if [ -z "${2:-}" ]; then
+            echo "Usage: chat --reply <conversation-id> <message>" >&2
+            exit 1
+        fi
+        reply_to_conversation "$1" "$2"
         ;;
     --list)
         list_conversations

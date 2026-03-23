@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from abc import ABC
 from abc import abstractmethod
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from typing import Callable
+from typing import Generic
 from typing import Mapping
 from typing import Sequence
 from typing import TYPE_CHECKING
+from typing import TypeVar
 
 from pydantic import Field
 
@@ -30,9 +33,16 @@ if TYPE_CHECKING:
     from imbue.mng.interfaces.host import CreateAgentOptions
     from imbue.mng.interfaces.host import OnlineHostInterface
 
+AgentConfigT = TypeVar("AgentConfigT", bound=AgentTypeConfig)
 
-class AgentInterface(MutableModel, ABC):
-    """Interface for agent implementations."""
+
+class AgentInterface(MutableModel, ABC, Generic[AgentConfigT]):
+    """Interface for agent implementations.
+
+    Generic over AgentConfigT so that each agent subclass can declare the
+    specific config type it requires, and ``self.agent_config`` will have
+    the correct narrowed type for the type checker.
+    """
 
     id: AgentId = Field(frozen=True, description="Unique identifier for this agent")
     name: AgentName = Field(description="Human-readable agent name")
@@ -41,7 +51,7 @@ class AgentInterface(MutableModel, ABC):
     create_time: datetime = Field(frozen=True, description="When the agent was created")
     host_id: HostId = Field(description="ID of the host this agent runs on")
     mng_ctx: MngContext = Field(frozen=True, repr=False, description="Mng context")
-    agent_config: AgentTypeConfig = Field(frozen=True, repr=False, description="Agent type config")
+    agent_config: AgentConfigT = Field(frozen=True, repr=False, description="Agent type config")
 
     @abstractmethod
     def get_host(self) -> OnlineHostInterface:
@@ -149,8 +159,11 @@ class AgentInterface(MutableModel, ABC):
         ...
 
     @abstractmethod
-    def capture_pane_content(self) -> str | None:
+    def capture_pane_content(self, include_scrollback: bool = False) -> str | None:
         """Capture the current tmux pane content for this agent.
+
+        When include_scrollback is True, captures the full scrollback buffer
+        instead of just the visible pane.
 
         Returns the pane content as a string, or None if capture fails
         (e.g., the session doesn't exist or the host is unreachable).
@@ -394,4 +407,37 @@ class AgentInterface(MutableModel, ABC):
         Use this method to perform agent-type-specific cleanup, such as
         removing external configuration entries or releasing resources.
         """
+        ...
+
+
+class NoPermissionsAgentMixin:
+    """Marker mixin for agents that are granted no permissions.
+
+    These agents have no tool access and cannot perform destructive actions
+    (e.g. configured with --tools ""). Because no permissions are granted,
+    trust validation and permission dialogs are unnecessary during provisioning.
+    """
+
+
+class HeadlessAgentMixin(ABC):
+    """Mixin for agent types that run headlessly (no TUI, no interactive input).
+
+    Headless agents produce their output non-interactively and expose it
+    via output(). This mixin serves as a marker interface so callers can
+    check for headless capability without depending on a specific agent
+    implementation.
+    """
+
+    @abstractmethod
+    def output(self) -> str:
+        """Wait for the agent to finish and return its complete output."""
+        ...
+
+
+class StreamingHeadlessAgentMixin(HeadlessAgentMixin):
+    """Headless agent that can also stream output incrementally."""
+
+    @abstractmethod
+    def stream_output(self) -> Iterator[str]:
+        """Yield output chunks as they become available."""
         ...

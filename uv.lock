@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -24,15 +24,20 @@ members = [
     "mng-mind",
     "mng-mind-chat",
     "mng-modal",
+    "mng-notifications",
     "mng-opencode",
     "mng-pair",
+    "mng-pi-coding",
     "mng-recursive",
     "mng-schedule",
     "mng-test-coder",
+    "mng-tmr",
     "mng-ttyd",
     "mng-tutor",
+    "modal-proxy",
     "resource-guards",
     "sculptor-web",
+    "skitwright",
     "slack-exporter",
 ]
 
@@ -655,7 +660,7 @@ wheels = [
 
 [[package]]
 name = "concurrency-group"
-version = "0.1.7"
+version = "0.1.8"
 source = { editable = "libs/concurrency_group" }
 dependencies = [
     { name = "imbue-common" },
@@ -1519,7 +1524,7 @@ dev = [
 
 [[package]]
 name = "imbue-common"
-version = "0.1.7"
+version = "0.1.8"
 source = { editable = "libs/imbue_common" }
 dependencies = [
     { name = "click" },
@@ -1811,7 +1816,7 @@ requires-dist = [
 
 [[package]]
 name = "mng"
-version = "0.1.7"
+version = "0.1.8"
 source = { editable = "libs/mng" }
 dependencies = [
     { name = "cel-python" },
@@ -1868,14 +1873,18 @@ version = "0.1.0"
 source = { editable = "libs/mng_claude" }
 dependencies = [
     { name = "mng" },
+]
+
+[package.dev-dependencies]
+dev = [
     { name = "mng-modal" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "mng", editable = "libs/mng" },
-    { name = "mng-modal", editable = "libs/mng_modal" },
-]
+requires-dist = [{ name = "mng", editable = "libs/mng" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "mng-modal", editable = "libs/mng_modal" }]
 
 [[package]]
 name = "mng-claude-mind"
@@ -1888,6 +1897,7 @@ dependencies = [
     { name = "mng-mind" },
     { name = "mng-recursive" },
     { name = "mng-ttyd" },
+    { name = "tomlkit" },
     { name = "watchdog" },
 ]
 
@@ -1899,6 +1909,7 @@ requires-dist = [
     { name = "mng-mind", editable = "libs/mng_mind" },
     { name = "mng-recursive", editable = "libs/mng_recursive" },
     { name = "mng-ttyd", editable = "libs/mng_ttyd" },
+    { name = "tomlkit", specifier = ">=0.12.0" },
     { name = "watchdog", specifier = ">=4.0" },
 ]
 
@@ -1921,7 +1932,7 @@ requires-dist = [
 
 [[package]]
 name = "mng-kanpan"
-version = "0.1.2"
+version = "0.1.3"
 source = { editable = "libs/mng_kanpan" }
 dependencies = [
     { name = "click" },
@@ -1995,6 +2006,7 @@ dependencies = [
     { name = "dockerfile-parse" },
     { name = "mng" },
     { name = "modal" },
+    { name = "modal-proxy" },
 ]
 
 [package.metadata]
@@ -2002,11 +2014,27 @@ requires-dist = [
     { name = "dockerfile-parse", specifier = ">=2.0.0" },
     { name = "mng", editable = "libs/mng" },
     { name = "modal", specifier = "==1.3.1" },
+    { name = "modal-proxy", editable = "libs/modal_proxy" },
+]
+
+[[package]]
+name = "mng-notifications"
+version = "0.1.0"
+source = { editable = "libs/mng_notifications" }
+dependencies = [
+    { name = "click-option-group" },
+    { name = "mng" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click-option-group", specifier = ">=0.5.6" },
+    { name = "mng", editable = "libs/mng" },
 ]
 
 [[package]]
 name = "mng-opencode"
-version = "0.1.3"
+version = "0.1.4"
 source = { editable = "libs/mng_opencode" }
 dependencies = [
     { name = "mng" },
@@ -2017,7 +2045,7 @@ requires-dist = [{ name = "mng", editable = "libs/mng" }]
 
 [[package]]
 name = "mng-pair"
-version = "0.1.3"
+version = "0.1.4"
 source = { editable = "libs/mng_pair" }
 dependencies = [
     { name = "click-option-group" },
@@ -2029,6 +2057,17 @@ requires-dist = [
     { name = "click-option-group", specifier = ">=0.5.6" },
     { name = "mng", editable = "libs/mng" },
 ]
+
+[[package]]
+name = "mng-pi-coding"
+version = "0.1.0"
+source = { editable = "libs/mng_pi_coding" }
+dependencies = [
+    { name = "mng" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "mng", editable = "libs/mng" }]
 
 [[package]]
 name = "mng-recursive"
@@ -2086,6 +2125,21 @@ requires-dist = [
 ]
 
 [[package]]
+name = "mng-tmr"
+version = "0.1.0"
+source = { editable = "libs/mng_tmr" }
+dependencies = [
+    { name = "markdown-it-py" },
+    { name = "mng" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "markdown-it-py", specifier = ">=3.0.0" },
+    { name = "mng", editable = "libs/mng" },
+]
+
+[[package]]
 name = "mng-ttyd"
 version = "0.1.0"
 source = { editable = "libs/mng_ttyd" }
@@ -2098,7 +2152,7 @@ requires-dist = [{ name = "mng", editable = "libs/mng" }]
 
 [[package]]
 name = "mng-tutor"
-version = "0.1.2"
+version = "0.1.3"
 source = { editable = "libs/mng_tutor" }
 dependencies = [
     { name = "click" },
@@ -2136,6 +2190,27 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f1/3e/97805b561e37eaac6b8baae7ee58bf203225bde6e98c4969652c8c6178a9/modal-1.3.1.tar.gz", hash = "sha256:c15e9218d59f9b04224ab55561eba131c1c657ff02d0f797776f9be699145774", size = 659259, upload-time = "2026-01-22T16:15:52.638Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/bb/6ad9a6df012cfc5adecfb639622b525c2b4d82833ff800cb62b7c462599a/modal-1.3.1-py3-none-any.whl", hash = "sha256:aae46d83d9b034e2ec28c82b0cbdd2e74e21aca3db18dbeb708e3ba36f726209", size = 755322, upload-time = "2026-01-22T16:15:50.668Z" },
+]
+
+[[package]]
+name = "modal-proxy"
+version = "0.1.0"
+source = { editable = "libs/modal_proxy" }
+dependencies = [
+    { name = "concurrency-group" },
+    { name = "imbue-common" },
+    { name = "mng" },
+    { name = "modal" },
+    { name = "resource-guards" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "concurrency-group", editable = "libs/concurrency_group" },
+    { name = "imbue-common", editable = "libs/imbue_common" },
+    { name = "mng", editable = "libs/mng" },
+    { name = "modal", specifier = "==1.3.1" },
+    { name = "resource-guards", editable = "libs/resource_guards" },
 ]
 
 [[package]]
@@ -2932,7 +3007,7 @@ wheels = [
 
 [[package]]
 name = "resource-guards"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "libs/resource_guards" }
 dependencies = [
     { name = "pytest" },
@@ -3103,16 +3178,29 @@ wheels = [
 ]
 
 [[package]]
+name = "skitwright"
+version = "0.1.0"
+source = { editable = "libs/skitwright" }
+dependencies = [
+    { name = "imbue-common" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "imbue-common", editable = "libs/imbue_common" }]
+
+[[package]]
 name = "slack-exporter"
 version = "0.1.0"
 source = { editable = "apps/slack_exporter" }
 dependencies = [
+    { name = "concurrency-group" },
     { name = "imbue-common" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "concurrency-group", editable = "libs/concurrency_group" },
     { name = "imbue-common", editable = "libs/imbue_common" },
     { name = "pydantic", specifier = ">=2.5.0" },
 ]

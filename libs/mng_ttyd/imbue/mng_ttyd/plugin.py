@@ -12,6 +12,7 @@ from imbue.mng_ttyd import resources as ttyd_resources
 
 TTYD_WINDOW_NAME = "terminal"
 TTYD_SERVER_NAME = "terminal"
+TTYD_VERSION = "1.7.7"
 
 
 def _build_ttyd_command() -> str:
@@ -89,17 +90,54 @@ def _load_ttyd_resource(filename: str) -> str:
     return resource_files.joinpath(filename).read_text()
 
 
+def _build_ttyd_install_command() -> str:
+    """Build a shell command that downloads the ttyd binary for the current architecture."""
+    return (
+        "ARCH=$(uname -m) && "
+        f'curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/{TTYD_VERSION}/ttyd.${{ARCH}}" '
+        "-o /usr/local/bin/ttyd && "
+        "chmod +x /usr/local/bin/ttyd"
+    )
+
+
+TTYD_INSTALL_COMMAND = _build_ttyd_install_command()
+
+
+def _ensure_ttyd_installed(host: OnlineHostInterface) -> None:
+    """Check if ttyd is installed on the host and install it if missing.
+
+    Downloads the ttyd binary from GitHub releases for the host's architecture.
+    """
+    check_result = host.execute_command("command -v ttyd >/dev/null 2>&1", timeout_seconds=10.0)
+    if check_result.success:
+        logger.debug("ttyd is already installed on the host")
+        return
+
+    logger.info("ttyd is not installed on the host, installing...")
+    install_result = host.execute_command(
+        TTYD_INSTALL_COMMAND,
+        timeout_seconds=120.0,
+    )
+    if not install_result.success:
+        logger.warning("Failed to install ttyd: {}", install_result.stderr)
+    else:
+        logger.info("ttyd installed successfully")
+
+
 @hookimpl
 def on_after_provisioning(
     agent: AgentInterface,
     host: OnlineHostInterface,
     mng_ctx: MngContext,
 ) -> None:
-    """Provision the ttyd agent terminal dispatch script.
+    """Provision ttyd on the host and write the agent terminal dispatch script.
 
-    Writes commands/ttyd/agent.sh so that the ttyd server can attach
-    to the primary agent's tmux session via URL-arg dispatch (?arg=agent).
+    Ensures ttyd is installed on the host, then writes commands/ttyd/agent.sh
+    so that the ttyd server can attach to the primary agent's tmux session
+    via URL-arg dispatch (?arg=agent).
     """
+    _ensure_ttyd_installed(host)
+
     agent_dir = host.host_dir / "agents" / str(agent.id)
     ttyd_dir = agent_dir / "commands" / "ttyd"
 

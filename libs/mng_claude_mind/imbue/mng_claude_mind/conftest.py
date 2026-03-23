@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import subprocess
 from collections.abc import Generator
 from pathlib import Path
@@ -9,16 +10,9 @@ import pytest
 from imbue.mng.providers.ssh_host_setup import load_resource_script
 from imbue.mng.utils.plugin_testing import register_plugin_test_fixtures
 from imbue.mng.utils.testing import init_git_repo_with_config
-from imbue.mng_llm.conftest import (
-    create_mind_conversations_table_in_test_db as create_mind_conversations_table_in_test_db,
-)
-from imbue.mng_llm.conftest import create_test_llm_db as create_test_llm_db
-from imbue.mng_llm.conftest import write_conversation_to_db as write_conversation_to_db
-from imbue.mng_llm.conftest import write_minds_settings_toml as write_minds_settings_toml
-from imbue.mng_llm.provisioning import MIND_CONVERSATIONS_TABLE_SQL as MIND_CONVERSATIONS_TABLE_SQL
+from imbue.mng_llm.conftest import create_mind_conversations_table_in_test_db
 from imbue.mng_llm.provisioning import load_llm_resource
-from imbue.mng_mind.conftest import StubCommandResult as StubCommandResult
-from imbue.mng_mind.conftest import StubHost as StubHost
+from imbue.mng_mind.conftest import StubHost
 from imbue.mng_mind.conftest import isolate_tmux_server_impl
 from imbue.mng_mind.conftest import reset_loguru_impl
 
@@ -149,10 +143,37 @@ def temp_git_repo(tmp_path: Path) -> Path:
     return repo_dir
 
 
+def parse_chat_output(stdout: str) -> dict[str, str]:
+    """Parse key=value pairs from chat.sh output.
+
+    Returns a dict mapping keys to values. Lines that are not in
+    key=value format are ignored.
+    """
+    result: dict[str, str] = {}
+    for line in stdout.strip().splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            result[key.strip()] = value.strip()
+    return result
+
+
+def create_mind_conversations_table_only(db_path: Path) -> None:
+    """Create only the mind_conversations table (not llm's conversations table).
+
+    Used in tests that need ``llm inject`` to run its own migrations.
+    The standard ``create_mind_conversations_table_in_test_db`` creates both
+    tables, which conflicts with llm's migration system.
+    """
+    from imbue.mng_llm.provisioning import MIND_CONVERSATIONS_TABLE_SQL
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(MIND_CONVERSATIONS_TABLE_SQL)
+        conn.commit()
+
+
 def assert_conversation_exists_in_db(db_path: Path, conversation_id: str) -> None:
     """Assert that a conversation record exists in the mind_conversations table."""
-    import sqlite3
-
     with sqlite3.connect(str(db_path)) as conn:
         rows = conn.execute(
             "SELECT conversation_id FROM mind_conversations WHERE conversation_id = ?",

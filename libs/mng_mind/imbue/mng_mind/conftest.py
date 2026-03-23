@@ -2,6 +2,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 import types
 from collections.abc import Generator
 from pathlib import Path
@@ -12,11 +14,6 @@ from loguru import logger
 
 from imbue.mng.utils.plugin_testing import register_plugin_test_fixtures
 from imbue.mng.utils.testing import init_git_repo_with_config
-from imbue.mng_llm.conftest import (
-    create_mind_conversations_table_in_test_db as create_mind_conversations_table_in_test_db,
-)
-from imbue.mng_llm.conftest import write_conversation_to_db as write_conversation_to_db
-from imbue.mng_llm.conftest import write_minds_settings_toml as write_minds_settings_toml
 from imbue.mng_mind import event_watcher as event_watcher_module
 
 register_plugin_test_fixtures(globals())
@@ -153,6 +150,43 @@ def create_fake_mng_binary(bin_dir: Path) -> Path:
     return mng_bin
 
 
+class SyntheticLoopEnv:
+    """Pre-built environment for _run_synthetic_events_loop tests.
+
+    Use the ``synthetic_loop_env`` fixture to create instances.
+    """
+
+    mind_state_dir: Path
+    event_buffer: list[str]
+    buffer_lock: threading.Lock
+    stop_event: threading.Event
+    last_real_event_monotonic: list[float]
+
+
+def _create_synthetic_loop_env(mind_state_dir: Path) -> SyntheticLoopEnv:
+    """Create a SyntheticLoopEnv with fresh mutable state."""
+    env = SyntheticLoopEnv()
+    env.mind_state_dir = mind_state_dir
+    env.event_buffer = []
+    env.buffer_lock = threading.Lock()
+    env.stop_event = threading.Event()
+    env.last_real_event_monotonic = [time.monotonic()]
+    return env
+
+
+@pytest.fixture()
+def synthetic_loop_env(tmp_path: Path) -> SyntheticLoopEnv:
+    """Create an environment for synthetic events loop tests.
+
+    Creates the mind state dir with the onboarding marker already present
+    (so tests don't need to handle onboarding unless explicitly testing it).
+    """
+    mind_state_dir = tmp_path / "mind"
+    mind_state_dir.mkdir(parents=True)
+    (mind_state_dir / ".onboarding_sent").touch()
+    return _create_synthetic_loop_env(mind_state_dir)
+
+
 class EventWatcherSubprocessCapture:
     """Records calls to subprocess.run for assertion in event watcher tests."""
 
@@ -191,3 +225,11 @@ def mock_subprocess_failure(monkeypatch: pytest.MonkeyPatch, fake_mng_binary: Pa
     mock_sp = types.SimpleNamespace(run=capture.run, TimeoutExpired=subprocess.TimeoutExpired)
     monkeypatch.setattr(event_watcher_module, "subprocess", mock_sp)
     return capture
+
+
+def create_executable_script(directory: Path, name: str, content: str) -> str:
+    """Create an executable script file and return its path as a string."""
+    script = directory / name
+    script.write_text(content)
+    script.chmod(0o755)
+    return str(script)

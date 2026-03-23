@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from typing import Any
 from typing import Final
 
@@ -21,23 +23,31 @@ from imbue.mng_claude.claude_config import build_readiness_hooks_config
 from imbue.mng_claude.claude_config import merge_hooks_config
 from imbue.mng_claude.plugin import ClaudeAgent
 from imbue.mng_claude.plugin import ClaudeAgentConfig
-from imbue.mng_claude_mind.provisioning import build_memory_sync_hooks_config
+from imbue.mng_claude.plugin import build_claude_json_for_agent
+from imbue.mng_claude_mind.provisioning import build_stop_hook_config
 from imbue.mng_claude_mind.provisioning import create_mind_symlinks
 from imbue.mng_claude_mind.provisioning import provision_claude_settings
+from imbue.mng_claude_mind.provisioning import provision_event_exclude_sources
+from imbue.mng_claude_mind.provisioning import provision_stop_hook_script
+from imbue.mng_claude_mind.provisioning import run_link_skills_script
 from imbue.mng_claude_mind.provisioning import setup_memory_directory
 from imbue.mng_claude_mind.settings import load_settings_from_host
+from imbue.mng_llm.data_types import ProvisioningSettings
 from imbue.mng_llm.plugin import set_llm_model_env_var
 from imbue.mng_llm.plugin import set_uv_tool_env_vars
+from imbue.mng_llm.provisioning import check_llm_toolchain
 from imbue.mng_llm.provisioning import configure_llm_user_path
-from imbue.mng_llm.provisioning import create_daily_conversation
+from imbue.mng_llm.provisioning import create_first_daily_conversation
 from imbue.mng_llm.provisioning import create_mind_conversations_table
 from imbue.mng_llm.provisioning import create_slack_notifications_conversation
 from imbue.mng_llm.provisioning import create_system_notifications_conversation
+from imbue.mng_llm.provisioning import create_work_log_conversation
 from imbue.mng_llm.provisioning import install_llm_toolchain
 from imbue.mng_llm.provisioning import provision_llm_tools
 from imbue.mng_llm.provisioning import provision_supporting_services
 from imbue.mng_llm.provisioning import resolve_work_dir_abs
-from imbue.mng_mind.provisioning import provision_default_content
+from imbue.mng_mind.data_types import SOURCE_COMMON_TRANSCRIPT
+from imbue.mng_mind.provisioning import provision_link_skills_script_file
 from imbue.mng_recursive.provisioning import provision_mng_for_agent
 
 # Supporting service tmux window names and commands.
@@ -53,6 +63,11 @@ EVENT_WATCHER_COMMAND: Final[str] = "mng mindevents"
 WEB_SERVER_WINDOW_NAME: Final[str] = "web_server"
 WEB_SERVER_COMMAND: Final[str] = "mng llmweb"
 
+# Observer: runs 'mng observe' writing events to the agent's state directory
+# so each mind has its own local copy of agent state events.
+OBSERVER_WINDOW_NAME: Final[str] = "observer"
+OBSERVER_COMMAND: Final[str] = 'mng observe --events-dir "$MNG_AGENT_STATE_DIR"'
+
 
 class ClaudeMindConfig(ClaudeAgentConfig):
     """Config for the claude-mind agent type.
@@ -66,6 +81,24 @@ class ClaudeMindConfig(ClaudeAgentConfig):
         default=True,
         description="Automatically trust the agent's working directory in ~/.claude.json. "
         "Enabled by default for minds since they run in-place in their own repo.",
+    )
+    sync_home_settings: bool = Field(
+        default=False,
+        description="Whether to sync Claude settings from ~/.claude/ to the per-agent config dir",
+    )
+    sync_claude_json: bool = Field(
+        default=False,
+        description="Whether to sync the local ~/.claude.json to a remote host (useful for API key settings and permissions)",
+    )
+    sync_claude_credentials: bool = Field(
+        default=False,
+        description="Whether to sync the local ~/.claude/.credentials.json to the per-agent config dir",
+    )
+    symlink_user_resources: bool = Field(
+        default=False,
+        description="Whether to symlink (True) or copy (False) user resources from ~/.claude/ "
+        "into local per-agent config dirs. Symlinks avoid duplication and keep the "
+        "per-agent dir lightweight; copies provide full isolation.",
     )
     install_llm: bool = Field(
         default=True,
@@ -85,42 +118,33 @@ class ClaudeMindAgent(ClaudeAgent):
 
     During provisioning:
     - Installs the llm toolchain (via mng_llm plugin)
-    - Provisions default content (via mng_mind plugin)
+    - Provisions the link_skills.sh script (via mng_mind plugin)
     - Provisions Claude-specific settings.json and skills symlink
-    - Syncs per-role memory/ into Claude project memory via hooks
+    - Sets autoMemoryDirectory to point to per-role memory/
 
     Via tmux windows (injected by override_command_options), the following
     supporting services run alongside the role agent:
     - Conversation watcher (syncs llm DB to events/messages/events.jsonl)
     - Event watcher (sends new events to primary role agent via mng message)
     - Web server (main web interface with conversation selector and agent list)
+    - Observer (runs mng observe writing agent state events to the agent state directory)
     """
+
+    agent_config: ClaudeMindConfig = Field(frozen=True, repr=False, description="Agent type config")
 
     enter_submission_timeout_seconds: float = Field(
         default=15.0,
         description="Timeout in seconds for waiting on the enter submission signal",
     )
 
-    def _get_mind_config(self) -> ClaudeMindConfig:
-        """Get the mind-specific config from this agent.
-
-        Raises RuntimeError if the agent config is not a ClaudeMindConfig,
-        which indicates a misconfiguration in the agent type registration.
-        """
-        if not isinstance(self.agent_config, ClaudeMindConfig):
-            raise RuntimeError(
-                f"ClaudeMindAgent requires ClaudeMindConfig, got {type(self.agent_config).__name__}. "
-                "This indicates the agent type was registered with the wrong config class."
-            )
-        return self.agent_config
-
-    def _configure_role_hooks(
+    def _configure_role_settings(
         self,
         host: OnlineHostInterface,
         active_role: str,
         role_dir_abs: str,
+        settings: ProvisioningSettings,
     ) -> None:
-        """Write all hooks (readiness + memory sync) to the active role's settings.local.json."""
+        """Write hooks and required settings to the active role's settings.local.json."""
         settings_path = self.work_dir / active_role / ".claude" / "settings.local.json"
 
         existing_settings: dict[str, Any] = {}
@@ -135,12 +159,15 @@ class ClaudeMindAgent(ClaudeAgent):
         if merged is not None:
             existing_settings = merged
 
-        memory_config = build_memory_sync_hooks_config(role_dir_abs)
-        merged = merge_hooks_config(existing_settings, memory_config)
+        stop_hook_path = provision_stop_hook_script(host, self.work_dir, active_role, settings)
+        stop_config = build_stop_hook_config(stop_hook_path)
+        merged = merge_hooks_config(existing_settings, stop_config)
         if merged is not None:
             existing_settings = merged
 
-        with log_span("Configuring hooks in {}", settings_path):
+        existing_settings["autoMemoryDirectory"] = f"{role_dir_abs}/memory"
+
+        with log_span("Configuring settings in {}", settings_path):
             host.write_text_file(settings_path, json.dumps(existing_settings, indent=2) + "\n")
 
     @staticmethod
@@ -172,7 +199,7 @@ class ClaudeMindAgent(ClaudeAgent):
     ) -> CommandString:
         """Prepend ``cd "$ROLE" &&`` so Claude Code runs from within the role directory."""
         base_command = super().assemble_command(host, agent_args, command_override)
-        return CommandString(f'cd "$ROLE" && {base_command}')
+        return CommandString(f'cd "$ROLE" && ( {base_command} )')
 
     def provision(
         self,
@@ -186,35 +213,41 @@ class ClaudeMindAgent(ClaudeAgent):
         1. Per-agent mng installation (via mng_recursive, before super())
         2. Settings loading from minds.toml
         3. llm + plugin installation (via mng_llm)
-        4. Default content (GLOBAL.md, role prompts, skills) via mng_mind
-        5. Claude-specific settings.json injection
-        6. Symlinks (CLAUDE.md -> GLOBAL.md, CLAUDE.local.md -> PROMPT.md, .claude/skills -> skills)
-        7. All hooks (readiness + memory sync) written to <role>/.claude/settings.local.json
-        8. Supporting service scripts and chat utilities (via mng_llm)
-        9. LLM tool scripts for conversation context (via mng_llm)
-        10. Per-role memory directory setup
+        4. link_skills.sh script (via mng_mind)
+        5. Symlink shared skills into active role's skills directory
+        6. Claude-specific settings.json injection
+        7. Symlinks (CLAUDE.md -> GLOBAL.md, CLAUDE.local.md -> PROMPT.md, .claude/skills -> skills)
+        8. All hooks (readiness + stop) and settings written to <role>/.claude/settings.local.json
+        9. Supporting service scripts and chat utilities (via mng_llm)
+        10. LLM tool scripts for conversation context (via mng_llm)
+        11. Per-role memory directory setup
         """
 
         provision_mng_for_agent(agent=self, host=host, mng_ctx=mng_ctx)
 
         super().provision(host, options, mng_ctx)
 
-        config = self._get_mind_config()
+        config = self.agent_config
         active_role = self._get_role_from_env(options)
+
+        provision_event_exclude_sources(host, self.work_dir, exclude_sources=(SOURCE_COMMON_TRANSCRIPT,))
 
         settings = load_settings_from_host(host, self.work_dir)
         provisioning = settings.provisioning
 
         if config.install_llm:
             install_llm_toolchain(host, provisioning)
+        else:
+            check_llm_toolchain(host, provisioning)
 
-        provision_default_content(host, self.work_dir, provisioning)
+        provision_link_skills_script_file(host, self.work_dir, provisioning)
+        run_link_skills_script(host, self.work_dir, active_role, provisioning)
         provision_claude_settings(host, self.work_dir, active_role, provisioning)
         create_mind_symlinks(host, self.work_dir, active_role, provisioning)
 
         work_dir_abs = resolve_work_dir_abs(host, self.work_dir, provisioning)
         role_dir_abs = f"{work_dir_abs}/{active_role}"
-        self._configure_role_hooks(host, active_role, role_dir_abs)
+        self._configure_role_settings(host, active_role, role_dir_abs, provisioning)
 
         agent_state_dir = self._get_agent_dir()
 
@@ -224,13 +257,34 @@ class ClaudeMindAgent(ClaudeAgent):
         configure_llm_user_path(host, agent_state_dir, provisioning)
         create_mind_conversations_table(host, agent_state_dir, provisioning)
 
-        if config.install_llm:
-            create_system_notifications_conversation(host, agent_state_dir, provisioning)
-            create_slack_notifications_conversation(host, agent_state_dir, provisioning)
-            chat_model = settings.chat.model or "claude-opus-4.6"
-            create_daily_conversation(host, agent_state_dir, provisioning, chat_model)
+        create_system_notifications_conversation(host, agent_state_dir, provisioning)
+        create_slack_notifications_conversation(host, agent_state_dir, provisioning)
+        chat_model = settings.chat.model or "claude-opus-4.6"
+        create_work_log_conversation(host, agent_state_dir, provisioning, chat_model)
+        create_first_daily_conversation(host, agent_state_dir, provisioning, chat_model, settings.chat.welcome_message)
 
-        setup_memory_directory(host, self.work_dir, active_role, role_dir_abs, provisioning)
+        setup_memory_directory(host, self.work_dir, active_role, provisioning)
+
+    def _build_per_agent_claude_json(self, options: CreateAgentOptions, config: ClaudeAgentConfig) -> dict[str, Any]:
+        data = super()._build_per_agent_claude_json(options, config)
+        # FOLLOWUP: we can remove this eventually (once the agents are started inside VMs, it will be set properly anyway)
+        data["bypassPermissionsModeAccepted"] = True
+        # approve the API key so that the agent doesnt get blocked
+        user_claude_json_data = build_claude_json_for_agent(True, Path("."), None)
+        env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        conf_key = user_claude_json_data.get("primaryApiKey", "")
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if env_key or conf_key:
+            approved_section = data.setdefault("customApiKeyResponses", {})
+            approved_list = approved_section.get("approved", [])
+            if api_key[-20:] not in approved_list:
+                approved_list.append(api_key[-20:])
+            if conf_key[-20:] not in approved_list:
+                approved_list.append(conf_key[-20:])
+            approved_section["approved"] = approved_list
+            approved_section["rejected"] = []
+
+        return data
 
 
 def inject_supporting_services(params: dict[str, Any]) -> None:
@@ -241,6 +295,7 @@ def inject_supporting_services(params: dict[str, Any]) -> None:
         f'{CONV_WATCHER_WINDOW_NAME}="{CONV_WATCHER_COMMAND}"',
         f'{EVENT_WATCHER_WINDOW_NAME}="{EVENT_WATCHER_COMMAND}"',
         f'{WEB_SERVER_WINDOW_NAME}="{WEB_SERVER_COMMAND}"',
+        f'{OBSERVER_WINDOW_NAME}="{OBSERVER_COMMAND}"',
     )
 
 

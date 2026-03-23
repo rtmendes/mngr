@@ -10,8 +10,8 @@ import pytest
 from click.testing import CliRunner
 
 from imbue.imbue_common.model_update import to_update
+from imbue.mng.cli.agent_addr import parse_agent_address
 from imbue.mng.cli.create import _create_agent
-from imbue.mng.cli.create import _parse_agent_address
 from imbue.mng.cli.create import _setup_create
 from imbue.mng.cli.create import create
 from imbue.mng.config.data_types import CreateCliOptions
@@ -149,7 +149,7 @@ def test_connect_flag_calls_tmux_attach_for_local_agent(
     """
     agent_name = f"test-connect-local-{int(time.time())}"
     session_name = f"{mng_test_prefix}{agent_name}"
-    address = _parse_agent_address(agent_name)
+    address = parse_agent_address(agent_name)
 
     opts = default_create_cli_opts.model_copy_update(
         to_update(default_create_cli_opts.field_ref().command, "sleep 397265"),
@@ -990,6 +990,55 @@ def test_ensure_clean_skipped_with_explicit_base_branch(
                 str(temp_git_repo),
                 "--branch",
                 "other-branch:mng/*",
+                "--no-connect",
+            ],
+            obj=plugin_manager,
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, f"CLI failed with: {result.output}"
+        assert "uncommitted changes" not in result.output
+
+        # Wait for background session so cleanup can properly kill it
+        wait_for_agent_session(session_name)
+
+
+@pytest.mark.tmux
+def test_ensure_clean_skipped_with_explicit_base_branch_copy_mode(
+    cli_runner: CliRunner,
+    temp_git_repo: Path,
+    temp_host_dir: Path,
+    mng_test_prefix: str,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Ensure-clean check is skipped with an explicit base branch even in copy mode (not just worktree)."""
+    # Create a second branch to use as base
+    subprocess.run(
+        ["git", "branch", "other-branch"],
+        cwd=temp_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Make the repo dirty
+    (temp_git_repo / "dirty.txt").write_text("uncommitted change")
+
+    agent_name = f"test-copy-base-clean-{int(time.time())}"
+    session_name = f"{mng_test_prefix}{agent_name}"
+
+    with tmux_session_cleanup(session_name):
+        result = cli_runner.invoke(
+            create,
+            [
+                "--name",
+                agent_name,
+                "--command",
+                "sleep 847192",
+                "--source",
+                str(temp_git_repo),
+                "--branch",
+                "other-branch:mng/*",
+                "--copy",
                 "--no-connect",
             ],
             obj=plugin_manager,

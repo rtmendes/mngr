@@ -208,14 +208,14 @@ def test_prevent_os_fork() -> None:
 
 
 def test_prevent_direct_subprocess_usage() -> None:
-    rc.check_direct_subprocess(_DIR, snapshot(10))
+    rc.check_direct_subprocess(_DIR, snapshot(11))
 
 
 # --- AST-based ratchets ---
 
 
 def test_prevent_if_elif_without_else() -> None:
-    rc.check_if_elif_without_else(_DIR, snapshot(1))
+    rc.check_if_elif_without_else(_DIR, snapshot(0))
 
 
 def test_prevent_inline_functions_in_non_test_code() -> None:

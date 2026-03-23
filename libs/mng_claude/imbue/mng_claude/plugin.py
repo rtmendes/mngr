@@ -12,6 +12,7 @@ from abc import ABC
 from abc import abstractmethod
 from collections.abc import Mapping
 from collections.abc import Sequence
+from concurrent.futures import Future
 from datetime import datetime
 from datetime import timezone
 from enum import auto
@@ -26,6 +27,7 @@ from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.errors import ProcessSetupError
+from imbue.concurrency_group.executor import ConcurrencyGroupExecutor
 from imbue.imbue_common.enums import UpperCaseStrEnum
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
@@ -34,6 +36,7 @@ from imbue.mng.agents.base_agent import BaseAgent
 from imbue.mng.config.data_types import AgentTypeConfig
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.errors import AgentStartError
+from imbue.mng.errors import MngError
 from imbue.mng.errors import NoCommandDefinedError
 from imbue.mng.errors import PluginMngError
 from imbue.mng.errors import SendMessageError
@@ -49,7 +52,6 @@ from imbue.mng.plugins.hookspecs import OptionStackItem
 from imbue.mng.primitives import AgentLifecycleState
 from imbue.mng.primitives import CommandString
 from imbue.mng.primitives import WorkDirCopyMode
-from imbue.mng.providers.ssh_host_setup import load_resource_script as _load_mng_resource_script
 from imbue.mng.utils.git_utils import find_git_common_dir
 from imbue.mng.utils.polling import poll_until
 from imbue.mng_claude import hookimpl
@@ -57,6 +59,7 @@ from imbue.mng_claude import resources as _claude_resources
 from imbue.mng_claude.claude_config import ClaudeDirectoryNotTrustedError
 from imbue.mng_claude.claude_config import ClaudeEffortCalloutNotDismissedError
 from imbue.mng_claude.claude_config import ClaudeOnboardingNotCompletedError
+from imbue.mng_claude.claude_config import acknowledge_cost_threshold
 from imbue.mng_claude.claude_config import add_claude_trust_for_path
 from imbue.mng_claude.claude_config import build_readiness_hooks_config
 from imbue.mng_claude.claude_config import check_claude_dialogs_dismissed
@@ -235,7 +238,7 @@ def _build_settings_json_content(sync_local: bool) -> str:
     return json.dumps(data, indent=2) + "\n"
 
 
-def _build_claude_json_for_agent(
+def build_claude_json_for_agent(
     sync_local: bool, work_dir: Path, version: str | None, current_time: datetime | None = None
 ) -> dict[str, Any]:
     """Build .claude.json data for the per-agent config dir.
@@ -243,8 +246,8 @@ def _build_claude_json_for_agent(
     Used for remote hosts and deploys where all dialogs must be suppressed
     to prevent them from intercepting automated tmux input. Uses the local
     file as a base when sync_local is True and the file exists, otherwise
-    uses generated defaults. Forces bypassPermissionsModeAccepted and
-    effortCalloutDismissed.
+    uses generated defaults. Forces bypassPermissionsModeAccepted,
+    effortCalloutDismissed, and hasAcknowledgedCostThreshold.
 
     Returns the dict so callers can do further modifications (e.g. keychain merge)
     before serializing.
@@ -258,6 +261,7 @@ def _build_claude_json_for_agent(
         data = _generate_claude_json(version, current_time=current_time)
     data["bypassPermissionsModeAccepted"] = True
     data["effortCalloutDismissed"] = True
+    data["hasAcknowledgedCostThreshold"] = True
     # Add trust for work_dir so Claude doesn't show the trust dialog
     # (which would intercept tmux send-keys input):
     projects = data.setdefault("projects", {})
@@ -609,16 +613,16 @@ def _load_claude_resource_script(filename: str) -> str:
 def _provision_background_scripts(host: OnlineHostInterface, agent_state_dir: Path) -> None:
     """Write the background task scripts to $MNG_AGENT_STATE_DIR/commands/.
 
-    Provisions mng_log.sh (shared logging library), stream_transcript.sh, and claude_background_tasks.sh so they can be
-    launched by the agent's assemble_command at runtime.
+    Provisions stream_transcript.sh, claude_background_tasks.sh, and
+    common_transcript.sh so they can be launched by the agent's
+    assemble_command at runtime.
+
+    Note: mng_log.sh (shared logging library) is provisioned by
+    Host.provision_agent() to both host-level and agent-level commands
+    directories, so we do not write it here.
     """
     commands_dir = agent_state_dir / "commands"
     host.execute_command(f"mkdir -p {shlex.quote(str(commands_dir))}", timeout_seconds=5.0)
-
-    # mng_log.sh is a shared script from the core mng package
-    mng_log_content = _load_mng_resource_script("mng_log.sh")
-    with log_span("Writing mng_log.sh to agent state dir"):
-        host.write_file(commands_dir / "mng_log.sh", mng_log_content.encode(), mode="0755")
 
     # Claude-specific scripts from this plugin's resources
     for script_name in ("stream_transcript.sh", "claude_background_tasks.sh", "common_transcript.sh"):
@@ -686,13 +690,21 @@ class DialogIndicator(FrozenModel, ABC):
 
     @abstractmethod
     def get_match_string(self) -> str:
-        """Return the string to look for in the tmux pane content."""
+        """Return the primary string to look for in the tmux pane content."""
         ...
 
     @abstractmethod
     def get_description(self) -> str:
         """Return a human-readable description for error messages."""
         ...
+
+    def matches(self, content: str) -> bool:
+        """Check whether this dialog is present in the given pane content.
+
+        Default implementation checks for get_match_string() in the content.
+        Subclasses can override for more complex matching (e.g. multiple strings).
+        """
+        return self.get_match_string() in content
 
 
 class DialogDetectedError(SendMessageError):
@@ -747,15 +759,29 @@ class EffortCalloutIndicator(DialogIndicator):
         return "effort callout"
 
 
-class ClaudeAgent(BaseAgent):
-    """Agent implementation for Claude with session resumption support."""
+class CostThresholdDialogIndicator(DialogIndicator):
+    """Detects the Claude Code cost threshold dialog shown when API spending reaches a threshold.
 
-    def _get_claude_config(self) -> ClaudeAgentConfig:
-        """Get the claude-specific config from this agent."""
-        if isinstance(self.agent_config, ClaudeAgentConfig):
-            return self.agent_config
-        # Fall back to default config if not a ClaudeAgentConfig
-        return ClaudeAgentConfig()
+    This dialog blocks all input and must be acknowledged. It is detected by the
+    presence of both the spending guidance text and the claude code docs URL.
+    """
+
+    _MATCH_SPENDING_TEXT: str = "Learn more about how to monitor your spending:"
+    _MATCH_DOCS_URL: str = "https://code.claude.com/"
+
+    def get_match_string(self) -> str:
+        return self._MATCH_SPENDING_TEXT
+
+    def get_description(self) -> str:
+        return "cost threshold dialog"
+
+    def matches(self, content: str) -> bool:
+        """Check for both the spending text and the docs URL in the pane content."""
+        return self._MATCH_SPENDING_TEXT in content and self._MATCH_DOCS_URL in content
+
+
+class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
+    """Agent implementation for Claude with session resumption support."""
 
     def get_claude_config_dir(self) -> Path:
         """Return the per-agent Claude config directory path.
@@ -768,7 +794,7 @@ class ClaudeAgent(BaseAgent):
     def modify_env_vars(self, host: OnlineHostInterface, env_vars: dict[str, str]) -> None:
         """Add CLAUDE_CONFIG_DIR and optionally enable common transcript emission."""
         env_vars["CLAUDE_CONFIG_DIR"] = str(self.get_claude_config_dir())
-        config = self._get_claude_config()
+        config = self.agent_config
         if config.emit_common_transcript:
             env_vars["MNG_EMIT_COMMON_TRANSCRIPT"] = "1"
 
@@ -817,13 +843,14 @@ class ClaudeAgent(BaseAgent):
         CustomApiKeyDialogIndicator(),
         ThemeSelectionIndicator(),
         EffortCalloutIndicator(),
+        CostThresholdDialogIndicator(),
     )
 
     def _preflight_send_message(self, tmux_target: str) -> None:
         """Check for blocking dialogs before sending a message.
 
         Checks the permissions_waiting file (set by the PermissionRequest hook)
-        and captures the tmux pane for other dialog indicators (trust, theme, effort).
+        and captures the tmux pane for known dialog indicators.
         Raises DialogDetectedError if any are found.
         """
         if self._check_file_exists(self._get_agent_dir() / "permissions_waiting"):
@@ -834,8 +861,7 @@ class ClaudeAgent(BaseAgent):
             return
 
         for indicator in self._DIALOG_INDICATORS:
-            match_string = indicator.get_match_string()
-            if match_string in content:
+            if indicator.matches(content):
                 raise DialogDetectedError(str(self.name), indicator.get_description())
 
     def wait_for_ready_signal(
@@ -971,7 +997,7 @@ class ClaudeAgent(BaseAgent):
                     "Use --copy or --clone instead."
                 )
 
-        config = self._get_claude_config()
+        config = self.agent_config
 
         # Validate dialogs for non-interactive local runs so we fail early with
         # a clear message. Skip when trust_working_directory is True because
@@ -1008,7 +1034,7 @@ class ClaudeAgent(BaseAgent):
         mng_ctx: MngContext,
     ) -> Sequence[FileTransferSpec]:
         """Return file transfers for claude settings."""
-        config = self._get_claude_config()
+        config = self.agent_config
         transfers: list[FileTransferSpec] = []
 
         # Transfer repo-local claude settings
@@ -1166,7 +1192,7 @@ class ClaudeAgent(BaseAgent):
         - Writes .claude.json, .credentials.json, settings.json directly
         - Copies skills/, agents/, commands/, plugins/ from ~/.claude/
         """
-        config = self._get_claude_config()
+        config = self.agent_config
         config_dir = self.get_claude_config_dir()
 
         # Create the config directory (0700: contains credentials and session data)
@@ -1209,8 +1235,11 @@ class ClaudeAgent(BaseAgent):
         if config.sync_home_settings or config.sync_claude_json or config.sync_claude_credentials:
             _warn_about_version_consistency(config, mng_ctx.concurrency_group)
 
+        file_transfers: list[tuple[Path, bytes]] = []
         # 1. Always ship settings.json
-        host.write_text_file(config_dir / "settings.json", _build_settings_json_content(config.sync_home_settings))
+        file_transfers.append(
+            (config_dir / "settings.json", _build_settings_json_content(config.sync_home_settings).encode("utf-8"))
+        )
 
         # 2. Transfer other home dir files (skills, agents, commands) if syncing is enabled
         if config.sync_home_settings:
@@ -1220,7 +1249,7 @@ class ClaudeAgent(BaseAgent):
                 # settings.json is handled separately above
                 if relative_path == Path("settings.json"):
                     continue
-                host.write_file(config_dir / relative_path, source_path.read_bytes())
+                file_transfers.append((config_dir / relative_path, source_path.read_bytes()))
 
         # 3. Always ship .claude.json
         # Resolve the work_dir on the remote host so the trust entry matches
@@ -1229,8 +1258,13 @@ class ClaudeAgent(BaseAgent):
         realpath_result = host.execute_command(f"realpath {shlex.quote(str(self.work_dir))}", timeout_seconds=5.0)
         if realpath_result.success and realpath_result.stdout.strip():
             resolved_work_dir = Path(realpath_result.stdout.strip())
-        claude_json_data = _build_claude_json_for_agent(config.sync_claude_json, resolved_work_dir, config.version)
-        host.write_text_file(config_dir / ".claude.json", json.dumps(claude_json_data, indent=2) + "\n")
+        claude_json_data = build_claude_json_for_agent(config.sync_claude_json, resolved_work_dir, config.version)
+        file_transfers.append(
+            (config_dir / ".claude.json", (json.dumps(claude_json_data, indent=2) + "\n").encode("utf-8"))
+        )
+
+        # Ship the files we were supposed to ship (all at once, in parallel):
+        _parallel_file_transfer(file_transfers, host, mng_ctx)
 
         # 4. Ship credentials (API key via .claude.json, OAuth via .credentials.json)
         _provision_remote_api_key(host, config_dir, claude_json_data, config, mng_ctx.concurrency_group)
@@ -1248,8 +1282,9 @@ class ClaudeAgent(BaseAgent):
 
         Starts from the user's global ~/.claude.json to preserve all existing
         dialog states (trust, effort callout, bypass permissions, onboarding).
-        Only adds per-agent identity: worktree source project config and
-        primaryApiKey. Falls back to generated defaults if no global config exists.
+        Adds per-agent identity (worktree source project config, primaryApiKey)
+        and forces hasAcknowledgedCostThreshold to suppress the cost threshold
+        dialog. Falls back to generated defaults if no global config exists.
 
         Trust for work_dir is added by extending from the source directory
         (for worktree/copy modes), by trust_working_directory config, or
@@ -1286,6 +1321,9 @@ class ClaudeAgent(BaseAgent):
         if config.trust_working_directory:
             projects.setdefault(str(self.work_dir.resolve()), {})["hasTrustDialogAccepted"] = True
 
+        # Always suppress the cost threshold dialog (it blocks all input)
+        data["hasAcknowledgedCostThreshold"] = True
+
         return data
 
     def provision(
@@ -1303,7 +1341,7 @@ class ClaudeAgent(BaseAgent):
         - clone: trust is prompted for the work_dir
         - trust_working_directory=True: trust is auto-added for work_dir
         """
-        config = self._get_claude_config()
+        config = self.agent_config
 
         if host.is_local:
             # Determine the source path for trust extension
@@ -1319,6 +1357,9 @@ class ClaudeAgent(BaseAgent):
                 # Check/prompt for all blocking dialogs
                 # source_path=None (clone/no-git) means trust is prompted for work_dir
                 self._ensure_no_blocking_dialogs(source_path, mng_ctx)
+
+        # no matter what, *always* dismiss the cost popup, it's pointless
+        acknowledge_cost_threshold(get_claude_config_path())
 
         # Ensure claude is installed (and at the right version if pinned)
         if config.check_installation:
@@ -1509,7 +1550,32 @@ def _generate_claude_json(version: str | None, current_time: datetime | None = N
         "officialMarketplaceAutoInstallAttempted": True,
         "officialMarketplaceAutoInstalled": True,
         "autoUpdatesProtectedForNative": True,
+        "hasAcknowledgedCostThreshold": True,
     }
+
+
+def _parallel_file_transfer(transfers: Sequence[tuple[Path, bytes]], host, mng_ctx):
+    remote_folders: list[str] = []
+    for dest_path, _dest_contents in transfers:
+        remote_folders.append(shlex.quote(str(dest_path.parent)))
+    mkdir_result = host.execute_command(f"mkdir -p {' '.join(remote_folders)}")
+    if not mkdir_result.success:
+        raise MngError(f"Failed to create directories: {mkdir_result.stderr}")
+
+    # then upload them all in parallel
+    count = 0
+    futures: list[Future[None]] = []
+    with ConcurrencyGroupExecutor(
+        parent_cg=mng_ctx.concurrency_group, name="upload_deploy_files", max_workers=16
+    ) as executor:
+        for dest_path, dest_contents in transfers:
+            futures.append(executor.submit(host.write_file, path=dest_path, content=dest_contents))
+            logger.trace("Uploaded deploy file: {} -> {}", dest_path, dest_path)
+            count += 1
+
+    # Re-raise any thread exceptions (e.g. abort-mode errors)
+    for future in futures:
+        future.result()
 
 
 @hookimpl
@@ -1622,9 +1688,9 @@ def get_files_for_deploy(
     # we set the time to a constant for better caching:
     FIXED_TIME = datetime(2026, 2, 23, 3, 4, 7, tzinfo=timezone.utc)
     # it's a little silly to pass in repo_root here, but whatever, it will also get reset when we're provisioning
-    claude_json_data = _build_claude_json_for_agent(False, repo_root, None, current_time=FIXED_TIME)
+    claude_json_data = build_claude_json_for_agent(False, repo_root, None, current_time=FIXED_TIME)
     # also inject our API key here, since deployed versions need it
-    user_claude_json_data = _build_claude_json_for_agent(True, Path("."), None)
+    user_claude_json_data = build_claude_json_for_agent(True, Path("."), None)
     api_key = user_claude_json_data.get("primaryApiKey", os.environ.get("ANTHROPIC_API_KEY", ""))
     if api_key:
         approved_keys = claude_json_data.setdefault("customApiKeyResponses", {})
@@ -1664,7 +1730,7 @@ def modify_env_vars_for_deploy(
     env_vars: dict[str, str],
 ) -> None:
     if "ANTHROPIC_API_KEY" not in env_vars:
-        user_claude_json_data = _build_claude_json_for_agent(True, Path("."), None)
+        user_claude_json_data = build_claude_json_for_agent(True, Path("."), None)
         token = user_claude_json_data.get("primaryApiKey", "") or os.environ.get("ANTHROPIC_API_KEY", "")
         if not token:
             raise UserInputError(

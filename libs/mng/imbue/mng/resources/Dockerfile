@@ -22,6 +22,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xxd \
     && rm -rf /var/lib/apt/lists/*
 
+# Install ttyd binary from GitHub releases (not available via apt)
+RUN ARCH=$(uname -m) && \
+    curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${ARCH}" \
+    -o /usr/local/bin/ttyd && \
+    chmod +x /usr/local/bin/ttyd
+
 RUN mkdir -p -m 755 /etc/apt/keyrings \
 	&& out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 	&& cat $out | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \

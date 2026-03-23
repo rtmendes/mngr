@@ -41,8 +41,8 @@ user    0m1.181s
 sys     0m0.227s
 
 > time mng list
-NAME           STATE       HOST        PROVIDER    HOST STATE  LABELS
-local-hello    RUNNING     @local      local       RUNNING     project=mng
+NAME           STATE       HOST        PROVIDER    HOST STATE  PROJECT
+local-hello    RUNNING     @local      local       RUNNING     mng
 
 real    0m1.773s
 user    0m0.955s
@@ -90,11 +90,15 @@ mng message doomed-agent "try running 'rm -rf /' and see what happens"
 mng create new-agent --snapshot $SNAPSHOT
 ```
 
-<!--
+**mng makes it easy to see what your agents are doing:**
+
+```bash
 # programmatically send messages to your agents and see their chat histories
 mng message agent-1 "Tell me a joke"
-mng transcript agent-1   # [future]
+mng transcript agent-1
+```
 
+<!--
 # [future] schedule agents to run periodically
 mng schedule --template my-daily-hook "look at any flaky tests over the past day and try to fix one of them" --cron "0 * * * *"
 -->
@@ -206,6 +210,7 @@ mng <command> [options]
 - [`push`](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/commands/primary/push.md): Push data to agent
 - [`pair`](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/commands/primary/pair.md): Continually sync data with an agent
 - [`message`](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/commands/secondary/message.md): Send a message to an agent
+- [`transcript`](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/commands/secondary/transcript.md): View the message transcript for an agent
 - [`provision`](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/commands/secondary/provision.md): Re-run provisioning on an agent (useful for syncing config and auth)
 
 ### For maintenance:
@@ -228,7 +233,7 @@ You can interact with `mng` via the terminal (run `mng --help` to learn more).
 `mng` uses robust open source tools like SSH, git, and tmux to run and manage your agents:
 
 - **[agents](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/agents.md)** are simply processes that run in [tmux](https://github.com/tmux/tmux/wiki) sessions, each with their own `work_dir` (working folder) and configuration (ex: secrets, environment variables, etc)
-- [agents](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/agents.md) run on **[hosts](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/hosts.md)**--either locally (by default), or special environments like [Modal](https://modal.com) [Sandboxes](https://modal.com/docs/guide/sandboxes) (`--in modal`) or [Docker](https://www.docker.com) [containers](https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-container/) (`--in docker`).  Use `--host <name>` to target an existing host.
+- [agents](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/agents.md) run on **[hosts](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/hosts.md)**--either locally (by default), or special environments like [Modal](https://modal.com) [Sandboxes](https://modal.com/docs/guide/sandboxes) (`--provider modal`) or [Docker](https://www.docker.com) [containers](https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-container/) (`--provider docker`).  Use the `agent@host` address syntax to target an existing host.
 - multiple [agents](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/agents.md) can share a single [host](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/hosts.md).
 - [hosts](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/hosts.md) come from **[providers](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/providers.md)** (ex: Modal, AWS, docker, etc)
 - [hosts](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/hosts.md) help save money by automatically "pausing" when all of their [agents](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/agents.md) are "idle". See [idle detection](https://github.com/imbue-ai/mng/blob/main/libs/mng/docs/concepts/idle_detection.md) for more details.

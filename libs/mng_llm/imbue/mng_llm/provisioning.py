@@ -21,7 +21,6 @@ from loguru import logger
 from imbue.imbue_common.logging import log_span
 from imbue.mng.interfaces.data_types import CommandResult
 from imbue.mng.interfaces.host import OnlineHostInterface
-from imbue.mng.providers.ssh_host_setup import load_resource_script
 from imbue.mng_llm import resources as llm_resources
 from imbue.mng_llm.data_types import ProvisioningSettings
 
@@ -109,6 +108,18 @@ def _sql_quote(value: str) -> str:
     return f"'{escaped}'"
 
 
+def check_llm_toolchain(host: OnlineHostInterface, settings: ProvisioningSettings) -> None:
+    check_result = execute_with_timing(
+        host,
+        "command -v llm",
+        hard_timeout=settings.command_check_hard_timeout_seconds,
+        warn_threshold=settings.command_check_warn_threshold_seconds,
+        label="llm check",
+    )
+    if not check_result.success:
+        raise Exception("llm command not found on host. Please run install_llm_toolchain() to install it.")
+
+
 def install_llm_toolchain(host: OnlineHostInterface, settings: ProvisioningSettings) -> None:
     """Install llm, llm-anthropic, and llm-live-chat on the host.
 
@@ -163,9 +174,12 @@ def provision_supporting_services(
     """Write supporting service shell scripts to $MNG_AGENT_STATE_DIR/commands/.
 
     Provisions:
-    - Shared logging library (mng_log.sh)
     - Service scripts to commands/ (e.g. chat.sh)
     - Ttyd dispatch scripts to commands/ttyd/ (e.g. chat.sh)
+
+    Note: mng_log.sh (shared logging library) is provisioned by
+    Host.provision_agent() to both host-level and agent-level commands
+    directories, so we do not write it here.
     """
     commands_dir = agent_state_dir / "commands"
     ttyd_dir = commands_dir / "ttyd"
@@ -176,13 +190,6 @@ def provision_supporting_services(
         warn_threshold=settings.fs_warn_threshold_seconds,
         label="mkdir commands/ttyd",
     )
-
-    # Provision the shared logging library (from mng core resources) first,
-    # since the supporting service scripts source it.
-    mng_log_content = load_resource_script("mng_log.sh")
-    mng_log_path = commands_dir / "mng_log.sh"
-    with log_span("Writing mng_log.sh to host"):
-        host.write_file(mng_log_path, mng_log_content.encode(), mode="0755")
 
     for script_name in _SERVICE_SCRIPT_FILES:
         script_content = load_llm_resource(script_name)
@@ -420,11 +427,12 @@ def create_slack_notifications_conversation(
     )
 
 
-def create_daily_conversation(
+def create_first_daily_conversation(
     host: OnlineHostInterface,
     agent_state_dir: Path,
     settings: ProvisioningSettings,
     chat_model: str,
+    welcome_message: str,
 ) -> None:
     """Create a daily conversation tagged with today's date."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -435,7 +443,7 @@ def create_daily_conversation(
         settings,
         model=chat_model,
         prompt="",
-        response="Hi, I'm Selene! How can I help?",
+        response=welcome_message,
         label="daily",
         llm_user_path=llm_data_dir,
     )
@@ -450,3 +458,38 @@ def create_daily_conversation(
         tags={"daily": today, "name": f"Daily Thread ({today})"},
     )
     logger.info("Created daily conversation: conversation_id={} date={}", conversation_id, today)
+
+
+def create_work_log_conversation(
+    host: OnlineHostInterface,
+    agent_state_dir: Path,
+    settings: ProvisioningSettings,
+    chat_model: str,
+) -> None:
+    """Create a work log conversation for tracking current agent activity.
+
+    The work log is always present and serves as a place for agents to
+    communicate what they are currently working on. This helps with
+    debugging and keeps the user informed of agent activity.
+    """
+    llm_data_dir = agent_state_dir / "llm_data"
+    conversation_id = _inject_conversation(
+        host,
+        settings,
+        model=chat_model,
+        prompt="",
+        response="Work log initialized. I will use this thread to communicate what I am currently working on.",
+        label="work_log",
+        llm_user_path=llm_data_dir,
+    )
+    if conversation_id is None:
+        return
+
+    _insert_conversation_record(
+        host,
+        agent_state_dir,
+        settings,
+        conversation_id=conversation_id,
+        tags={"internal": "work_log", "name": "Work Log"},
+    )
+    logger.info("Created work log conversation: conversation_id={}", conversation_id)

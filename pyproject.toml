@@ -63,6 +63,7 @@ addopts = [
   "--cov=imbue.resource_guards",
   "--cov=imbue.mng_claude",
   "--cov=imbue.mng_opencode",
+  "--cov=imbue.mng_pi_coding",
   "--cov=imbue.mng_pair",
   "--cov=imbue.mng_schedule",
   "--cov=imbue.mng_ttyd",
@@ -73,8 +74,11 @@ addopts = [
   "--cov=imbue.mng_elena_code",
   "--cov=imbue.mng_kanpan",
   "--cov=imbue.mng_recursive",
+  "--cov=imbue.mng_notifications",
   "--cov=imbue.mng_mind_chat",
   "--cov=imbue.mng_test_coder",
+  "--cov=imbue.mng_tmr",
+  "--cov=imbue.skitwright",
   "--cov=imbue.minds",
   "--cov=imbue.slack_exporter",
   "--cov-report=term-missing",
@@ -184,6 +188,7 @@ layers = [
     "imbue.mng.utils",
     "imbue.mng.errors",
     "imbue.mng.primitives",
+    "imbue.mng.resources",
 ]
 
 [[tool.importlinter.contracts]]

@@ -17,7 +17,6 @@ from imbue.concurrency_group.errors import ProcessSetupError
 from imbue.concurrency_group.subprocess_utils import FinishedProcess
 from imbue.mng.agents.base_agent import BaseAgent
 from imbue.mng.api.testing import FakeHost
-from imbue.mng.config.data_types import AgentTypeConfig
 from imbue.mng.config.data_types import EnvVar
 from imbue.mng.config.data_types import MngConfig
 from imbue.mng.config.data_types import MngContext
@@ -47,6 +46,7 @@ from imbue.mng_claude.claude_config import ClaudeEffortCalloutNotDismissedError
 from imbue.mng_claude.claude_config import build_readiness_hooks_config
 from imbue.mng_claude.plugin import ClaudeAgent
 from imbue.mng_claude.plugin import ClaudeAgentConfig
+from imbue.mng_claude.plugin import CostThresholdDialogIndicator
 from imbue.mng_claude.plugin import WaitingReason
 from imbue.mng_claude.plugin import _build_install_command_hint
 from imbue.mng_claude.plugin import _claude_json_has_primary_api_key
@@ -69,7 +69,7 @@ def make_claude_agent(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
     mng_ctx: MngContext,
-    agent_config: ClaudeAgentConfig | AgentTypeConfig | None = None,
+    agent_config: ClaudeAgentConfig | None = None,
     agent_type: AgentTypeName | None = None,
     work_dir: Path | None = None,
 ) -> tuple[ClaudeAgent, Host]:
@@ -149,6 +149,7 @@ _ALL_DIALOGS_DISMISSED = {
     "effortCalloutDismissed": True,
     "hasCompletedOnboarding": True,
     "bypassPermissionsModeAccepted": True,
+    "hasAcknowledgedCostThreshold": True,
 }
 
 
@@ -386,7 +387,7 @@ def test_claude_agent_assemble_command_raises_when_no_command(
         local_provider,
         tmp_path,
         temp_mng_ctx,
-        agent_config=AgentTypeConfig(),
+        agent_config=ClaudeAgentConfig.model_construct(command=None, check_installation=False),
         agent_type=AgentTypeName("custom"),
     )
 
@@ -442,41 +443,6 @@ def test_build_background_tasks_command(
 
     # Should pass the session name as argument
     assert session_name in cmd
-
-
-# =============================================================================
-# _get_claude_config Tests
-# =============================================================================
-
-
-def test_get_claude_config_returns_config_when_claude_agent_config(
-    local_provider: LocalProviderInstance, tmp_path: Path, temp_mng_ctx: MngContext
-) -> None:
-    """_get_claude_config should return the config when it is a ClaudeAgentConfig."""
-    config = ClaudeAgentConfig(cli_args=("--verbose",), check_installation=False)
-    agent, _ = make_claude_agent(local_provider, tmp_path, temp_mng_ctx, agent_config=config)
-
-    result = agent._get_claude_config()
-
-    assert result is config
-    assert result.cli_args == ("--verbose",)
-
-
-def test_get_claude_config_returns_default_when_not_claude_agent_config(
-    local_provider: LocalProviderInstance, tmp_path: Path, temp_mng_ctx: MngContext
-) -> None:
-    """_get_claude_config should return default ClaudeAgentConfig when config is not ClaudeAgentConfig."""
-    agent, _ = make_claude_agent(
-        local_provider,
-        tmp_path,
-        temp_mng_ctx,
-        agent_config=AgentTypeConfig(),
-    )
-
-    result = agent._get_claude_config()
-
-    assert isinstance(result, ClaudeAgentConfig)
-    assert result.command == CommandString("claude")
 
 
 # =============================================================================
@@ -642,6 +608,19 @@ def test_build_readiness_hooks_config_has_notification_idle_hook() -> None:
     assert "MNG_AGENT_STATE_DIR" in hook["command"]
     assert "active" in hook["command"]
     assert "permissions_waiting" in hook["command"]
+
+
+def test_build_readiness_hooks_config_all_commands_guard_on_main_session() -> None:
+    """Every command in readiness hooks should exit early when MAIN_CLAUDE_SESSION_ID is unset."""
+    config = build_readiness_hooks_config()
+    guard = '[ -z "$MAIN_CLAUDE_SESSION_ID" ] && exit 0; '
+
+    for event_name, event_hooks in config["hooks"].items():
+        for hook_group in event_hooks:
+            for hook in hook_group["hooks"]:
+                assert hook["command"].startswith(guard), (
+                    f"{event_name} hook command does not start with session guard: {hook['command'][:80]}"
+                )
 
 
 def test_get_lifecycle_state_returns_waiting_when_permissions_waiting(
@@ -1533,6 +1512,43 @@ def test_on_before_provisioning_succeeds_with_credentials(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
     agent.on_before_provisioning(host=host, options=_DEFAULT_CREDENTIAL_CHECK_OPTIONS, mng_ctx=temp_mng_ctx)
+
+
+# =============================================================================
+# CostThresholdDialogIndicator Tests
+# =============================================================================
+
+
+def test_cost_threshold_indicator_matches_when_both_strings_present() -> None:
+    """CostThresholdDialogIndicator.matches should return True when both strings are present."""
+    indicator = CostThresholdDialogIndicator()
+    content = (
+        "You've spent $5 on the Anthropic API this session.\n\n"
+        "Learn more about how to monitor your spending:\n"
+        "https://code.claude.com/docs/en/costs"
+    )
+    assert indicator.matches(content) is True
+
+
+def test_cost_threshold_indicator_no_match_with_only_spending_text() -> None:
+    """CostThresholdDialogIndicator.matches should return False with only the spending text."""
+    indicator = CostThresholdDialogIndicator()
+    content = "Learn more about how to monitor your spending:\nhttps://example.com"
+    assert indicator.matches(content) is False
+
+
+def test_cost_threshold_indicator_no_match_with_only_url() -> None:
+    """CostThresholdDialogIndicator.matches should return False with only the docs URL."""
+    indicator = CostThresholdDialogIndicator()
+    content = "Visit https://code.claude.com/docs for help"
+    assert indicator.matches(content) is False
+
+
+def test_cost_threshold_indicator_no_match_with_neither_string() -> None:
+    """CostThresholdDialogIndicator.matches should return False with unrelated content."""
+    indicator = CostThresholdDialogIndicator()
+    content = "Claude Code is running normally"
+    assert indicator.matches(content) is False
 
 
 # =============================================================================

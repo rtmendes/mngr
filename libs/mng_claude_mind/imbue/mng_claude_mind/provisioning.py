@@ -1,12 +1,3 @@
-"""Claude-specific provisioning functions for the claude-mind agent type.
-
-Provides Claude Code-specific provisioning: settings.json injection,
-.claude/skills symlink, memory directory setup, and hook configuration.
-
-Generic mind provisioning (default content, prompts, skills) is provided
-by the mng_mind plugin.
-"""
-
 from __future__ import annotations
 
 import json
@@ -15,13 +6,14 @@ from pathlib import Path
 from typing import Any
 from typing import Final
 
+import tomlkit
 from loguru import logger
 
 from imbue.imbue_common.logging import log_span
 from imbue.mng.interfaces.host import OnlineHostInterface
-from imbue.mng_claude.claude_config import encode_claude_project_dir_name
 from imbue.mng_llm.data_types import ProvisioningSettings
 from imbue.mng_llm.provisioning import execute_with_timing
+from imbue.mng_llm.settings import SETTINGS_FILENAME
 
 # Claude Code settings.json content, inlined because it is Claude-specific
 # and does not belong in the generic mng_mind plugin.
@@ -161,83 +153,216 @@ def setup_memory_directory(
     host: OnlineHostInterface,
     work_dir: Path,
     active_role: str,
-    role_dir_abs: str,
     settings: ProvisioningSettings,
 ) -> None:
-    """Set up the per-role memory directory and initial sync into Claude project memory.
+    """Create the per-role memory directory if it doesn't exist.
 
-    Creates:
-    - <work_dir>/<active_role>/memory/ (if it doesn't exist)
-    - ~/.claude/projects/<project_name>/memory/ (real directory, not symlink)
-    - Initial rsync of contents from role memory/ to claude project memory/
+    Creates <work_dir>/<active_role>/memory/. Claude Code reads from and
+    writes to this directory directly via the autoMemoryDirectory setting
+    (configured in settings.local.json during provisioning).
     """
     memory_dir = work_dir / active_role / "memory"
-    # Use .parent because Claude Code's project dir is named after the git repo
-    # root (the mind dir), not the role subdirectory within it. This must
-    # match the path used by build_memory_sync_hooks_config.
-    project_dir_name = encode_claude_project_dir_name(Path(role_dir_abs).parent)
-
-    quoted_project_dir_name = shlex.quote(project_dir_name)
-    project_memory_shell = f'"$HOME/.claude/projects/"{quoted_project_dir_name}/memory'
-    cmd = f"mkdir -p {shlex.quote(str(memory_dir))} && rm -f {project_memory_shell} && mkdir -p {project_memory_shell}"
-    execute_with_timing(
-        host,
-        cmd,
-        hard_timeout=settings.fs_hard_timeout_seconds,
-        warn_threshold=settings.fs_warn_threshold_seconds,
-        label="mkdir memory dirs",
-    )
-
-    sync_cmd = f"rsync -a --delete {shlex.quote(str(memory_dir))}/ {project_memory_shell}/"
-    with log_span("Initial memory sync: {} -> $HOME/.claude/projects/{}/memory", memory_dir, project_dir_name):
+    with log_span("Creating memory directory: {}", memory_dir):
         result = execute_with_timing(
             host,
-            sync_cmd,
+            f"mkdir -p {shlex.quote(str(memory_dir))}",
             hard_timeout=settings.fs_hard_timeout_seconds,
             warn_threshold=settings.fs_warn_threshold_seconds,
-            label="initial memory sync",
+            label="mkdir memory dir",
         )
         if not result.success:
             raise RuntimeError(f"Failed to sync memory directory: {result.stderr}")
 
 
-def build_memory_sync_hooks_config(role_dir_abs: str) -> dict[str, Any]:
-    """Build Claude hooks config for syncing per-role memory with Claude project memory.
+def run_link_skills_script(
+    host: OnlineHostInterface,
+    work_dir: Path,
+    active_role: str,
+    settings: ProvisioningSettings,
+) -> None:
+    """Make link_skills.sh executable and run it for the active role.
 
-    Returns a hooks config dict with PreToolUse and PostToolUse entries that
-    rsync the memory directory in the appropriate direction.
+    The script symlinks each top-level skill into the role's skills
+    directory. If a skill already exists in the role folder, the script
+    emits a warning and skips it.
     """
-    project_dir_name = encode_claude_project_dir_name(Path(role_dir_abs).parent)
-    quoted_work_memory = shlex.quote(f"{role_dir_abs}/memory")
-    quoted_project_dir_name = shlex.quote(project_dir_name)
-    project_memory_shell = f'"$HOME/.claude/projects/"{quoted_project_dir_name}/memory'
+    script_path = work_dir / "link_skills.sh"
+    check = execute_with_timing(
+        host,
+        f"test -f {shlex.quote(str(script_path))}",
+        hard_timeout=settings.fs_hard_timeout_seconds,
+        warn_threshold=settings.fs_warn_threshold_seconds,
+        label="link_skills check",
+    )
+    if not check.success:
+        logger.debug("link_skills.sh not found at {}, skipping", script_path)
+        return
 
-    pre_cmd = f"rsync -a --delete {quoted_work_memory}/ {project_memory_shell}/"
-    post_cmd = f"rsync -a --delete {project_memory_shell}/ {quoted_work_memory}/"
+    with log_span("Running link_skills.sh for role '{}'", active_role):
+        chmod_result = execute_with_timing(
+            host,
+            f"chmod +x {shlex.quote(str(script_path))}",
+            hard_timeout=settings.fs_hard_timeout_seconds,
+            warn_threshold=settings.fs_warn_threshold_seconds,
+            label="chmod link_skills",
+        )
+        if not chmod_result.success:
+            raise RuntimeError(f"Failed to chmod link_skills.sh: {chmod_result.stderr}")
 
+        result = execute_with_timing(
+            host,
+            f"{shlex.quote(str(script_path))} {shlex.quote(active_role)}",
+            hard_timeout=settings.fs_hard_timeout_seconds,
+            warn_threshold=settings.fs_warn_threshold_seconds,
+            label="run link_skills",
+        )
+        if not result.success:
+            raise RuntimeError(f"link_skills.sh failed: {result.stderr}")
+        elif result.stdout:
+            logger.info("link_skills.sh output: {}", result.stdout.strip())
+
+
+_STOP_HOOK_SCRIPT: Final[str] = """\
+#!/usr/bin/env bash
+# Prevent Claude from stopping if there are unhandled events.
+#
+# Reads all event IDs from $MNG_AGENT_STATE_DIR/mind/event_batches/*.jsonl,
+# compares them against handled event IDs extracted from
+# $MNG_AGENT_STATE_DIR/events/handled_events/events.jsonl (and .jsonl.1),
+# and exits with code 2 if any are unhandled (which tells Claude Code to
+# block the stop).
+
+set -euo pipefail
+
+batches_dir="$MNG_AGENT_STATE_DIR/mind/event_batches"
+handled_dir="$MNG_AGENT_STATE_DIR/events/handled_events"
+
+if ! ls "$batches_dir"/*.jsonl >/dev/null 2>&1; then
+    exit 0
+fi
+
+all_ids=$(cat "$batches_dir"/*.jsonl | jq -r '.event_id // empty' | sort -u)
+
+handled_ids=""
+for f in "$handled_dir/events.jsonl" "$handled_dir/events.jsonl.1"; do
+    if [ -f "$f" ]; then
+        handled_ids="$handled_ids
+$(tail -n 1000 "$f" | jq -r '.handled_event_id // empty')"
+    fi
+done
+handled_ids=$(echo "$handled_ids" | { grep -v '^$' || true; } | sort -u)
+
+unhandled=$(comm -23 <(echo "$all_ids") <(echo "$handled_ids"))
+
+if [ -n "$unhandled" ]; then
+    echo "Unhandled events:" >&2
+    echo "$unhandled" >&2
+    exit 2
+fi
+"""
+
+_STOP_HOOK_SCRIPT_NAME: Final[str] = "on_stop_prevent_unhandled_events.sh"
+
+
+def provision_stop_hook_script(
+    host: OnlineHostInterface,
+    work_dir: Path,
+    active_role: str,
+    settings: ProvisioningSettings,
+) -> Path:
+    """Write the stop hook script to <work_dir>/<role>/.claude/hooks/ and make it executable.
+
+    Returns the path to the script file.
+    """
+    hooks_dir = work_dir / active_role / ".claude" / "hooks"
+    script_path = hooks_dir / _STOP_HOOK_SCRIPT_NAME
+
+    execute_with_timing(
+        host,
+        f"mkdir -p {shlex.quote(str(hooks_dir))}",
+        hard_timeout=settings.fs_hard_timeout_seconds,
+        warn_threshold=settings.fs_warn_threshold_seconds,
+        label="mkdir hooks dir",
+    )
+
+    with log_span("Writing stop hook script: {}", script_path):
+        host.write_text_file(script_path, _STOP_HOOK_SCRIPT)
+
+    chmod_result = execute_with_timing(
+        host,
+        f"chmod +x {shlex.quote(str(script_path))}",
+        hard_timeout=settings.fs_hard_timeout_seconds,
+        warn_threshold=settings.fs_warn_threshold_seconds,
+        label="chmod stop hook",
+    )
+    if not chmod_result.success:
+        raise RuntimeError(f"Failed to chmod stop hook script: {chmod_result.stderr}")
+
+    return script_path
+
+
+def build_stop_hook_config(script_path: Path) -> dict[str, Any]:
+    """Build Claude hooks config for checking unhandled events on stop.
+
+    Returns a hooks config dict with a Stop entry that runs the given
+    script. The script prevents Claude from stopping if there are
+    unhandled event IDs in the event batch files.
+
+    Exit code 2 from a Stop hook tells Claude Code to block the stop.
+    """
     return {
         "hooks": {
-            "PreToolUse": [
+            "Stop": [
                 {
-                    "matcher": "Read",
                     "hooks": [
                         {
                             "type": "command",
-                            "command": pre_cmd,
-                        }
-                    ],
-                }
-            ],
-            "PostToolUse": [
-                {
-                    "matcher": "Write|Edit",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": post_cmd,
+                            "command": str(script_path),
                         }
                     ],
                 }
             ],
         }
     }
+
+
+def provision_event_exclude_sources(
+    host: OnlineHostInterface,
+    work_dir: Path,
+    exclude_sources: tuple[str, ...],
+) -> None:
+    """Ensure the given sources are listed in event_exclude_sources in minds.toml.
+
+    Reads the existing minds.toml (if any), merges the requested
+    exclude_sources into ``[watchers].event_exclude_sources``, and
+    writes the file back. Existing settings and formatting are preserved
+    via tomlkit.
+    """
+    settings_path = work_dir / SETTINGS_FILENAME
+
+    doc = tomlkit.document()
+    try:
+        content = host.read_text_file(settings_path)
+        doc = tomlkit.parse(content)
+    except FileNotFoundError:
+        logger.debug("No existing {} found, will create", settings_path)
+    except (tomlkit.exceptions.ParseError, OSError) as exc:
+        logger.warning("Could not read existing {}: {}", settings_path, exc)
+
+    watchers = doc.get("watchers")
+    if watchers is None:
+        watchers = tomlkit.table()
+        doc.add("watchers", watchers)
+
+    current_excludes = set(watchers.get("event_exclude_sources", []))
+    needed = set(exclude_sources)
+
+    if needed <= current_excludes:
+        logger.debug("event_exclude_sources already contains {}, skipping", needed)
+        return
+
+    current_excludes.update(needed)
+    watchers["event_exclude_sources"] = sorted(current_excludes)
+
+    with log_span("Writing event_exclude_sources to {}", settings_path):
+        host.write_text_file(settings_path, tomlkit.dumps(doc))
