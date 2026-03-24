@@ -1137,3 +1137,36 @@ def test_transfer_git_worktree_rejected_for_non_git(
 
     assert result.exit_code != 0
     assert "git repository" in result.output.lower()
+
+
+def test_transfer_none_with_different_target_path_rejected(
+    cli_runner: CliRunner,
+    temp_work_dir: Path,
+    tmp_path: Path,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """--transfer=none with --target-path pointing to a different directory should be rejected."""
+    different_dir = tmp_path / "different_target"
+    different_dir.mkdir()
+
+    result = cli_runner.invoke(
+        create,
+        [
+            "--name",
+            "test-none-diff-target",
+            "--command",
+            "sleep 1",
+            "--source",
+            str(temp_work_dir),
+            "--transfer",
+            "none",
+            "--target-path",
+            str(different_dir),
+            "--no-connect",
+            "--no-ensure-clean",
+        ],
+        obj=plugin_manager,
+    )
+
+    assert result.exit_code != 0
+    assert "incompatible" in result.output.lower()

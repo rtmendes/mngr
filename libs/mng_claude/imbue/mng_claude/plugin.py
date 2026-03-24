@@ -1131,8 +1131,8 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         mode, prompts the user for each undismissed dialog. For non-interactive
         mode, raises the appropriate error.
 
-        source_path is the trusted source directory (for worktree/copy modes).
-        When None (clone mode), trust is prompted for work_dir instead.
+        source_path is the trusted source directory (for git-worktree/git-mirror modes).
+        When None (rsync/none mode), trust is prompted for work_dir instead.
         """
         global_config_path = get_claude_config_path()
         trust_path = source_path if source_path is not None else self.work_dir
@@ -1162,7 +1162,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         # skipDangerousModePermissionPrompt in settings.json instead.
 
     def _find_git_source_path(self, concurrency_group: ConcurrencyGroup) -> Path | None:
-        """Find the source repo path for the agent's work_dir, if it's a git worktree/copy.
+        """Find the source repo path for the agent's work_dir, if it's a git worktree or mirror.
 
         Returns the parent of the git common dir (the source repo root),
         or None if work_dir is not inside a git repo.
@@ -1287,9 +1287,9 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         dialog. Falls back to generated defaults if no global config exists.
 
         Trust for work_dir is added by extending from the source directory
-        (for worktree/copy modes), by trust_working_directory config, or
-        inherited from the global config (for clone mode where the user was
-        already prompted). Falls back to generated defaults if no global
+        (for git-worktree/git-mirror modes), by trust_working_directory config,
+        or inherited from the global config (for rsync/none modes where the
+        user was already prompted). Falls back to generated defaults if no global
         config exists.
         """
         global_config = read_claude_config(get_claude_config_path())
@@ -1336,9 +1336,9 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
 
         For local hosts, ensures all known Claude startup dialogs are dismissed
         in the global config so they don't intercept tmux input. Trust handling
-        depends on the copy mode:
-        - worktree/copy: trust is extended from the source directory
-        - clone: trust is prompted for the work_dir
+        depends on the transfer mode:
+        - git-worktree/git-mirror: trust is extended from the source directory
+        - rsync/none: trust is prompted for the work_dir
         - trust_working_directory=True: trust is auto-added for work_dir
         """
         config = self.agent_config

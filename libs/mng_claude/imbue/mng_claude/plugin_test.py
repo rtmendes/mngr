@@ -974,7 +974,7 @@ def test_provision_does_not_extend_trust_for_non_worktree(
     agent.provision(host=host, options=options, mng_ctx=temp_mng_ctx)
 
     # Trust was written by _write_all_dialogs_dismissed, but the provision should NOT
-    # have extended trust from a source directory since we're using COPY mode.
+    # have extended trust from a source directory since we're using GIT_MIRROR mode.
     # The global config should only contain what _write_all_dialogs_dismissed wrote.
     config_path = Path.home() / ".claude.json"
     config = json.loads(config_path.read_text())

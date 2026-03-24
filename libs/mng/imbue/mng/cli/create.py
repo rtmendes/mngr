@@ -1068,6 +1068,12 @@ def _resolve_transfer_mode(
             "--transfer=git-worktree only works for local agents. Use --transfer=git-mirror for remote agents."
         )
 
+    if transfer_mode == TransferMode.NONE and opts.target_path is not None and not is_same_path:
+        raise UserInputError(
+            "--transfer=none is incompatible with --target-path pointing to a different directory. "
+            "Use a different --transfer mode, or omit --target-path."
+        )
+
     return transfer_mode
 
 
