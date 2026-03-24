@@ -197,122 +197,70 @@ fi
 export TMUX_SESSION SCRIPT_DIR CURRENT_BRANCH BASE_BRANCH
 export RED GREEN YELLOW NC
 
-_log_to_file "INFO" "Launching child scripts in parallel..."
+# ---------------------------------------------------------------------------
+# Gate checks: autofix and conversation review must both pass before we
+# bother launching the (slow) CI check.
+# ---------------------------------------------------------------------------
+source "$SCRIPT_DIR/config_utils.sh"
 
-# Launch all gate checks in parallel
+AUTOFIX_NEEDED=false
+CONVO_NEEDED=false
+
+# Autofix gate (inlined from check_autofix_ran.sh)
+AUTOFIX_CONFIG=".autofix/config/stop-hook.json"
+AUTOFIX_ENABLED=$(read_json_config "$AUTOFIX_CONFIG" "enabled" "true")
+if [[ "$AUTOFIX_ENABLED" == "true" ]] && [[ ! -f ".autofix/plans/${HASH}_verified.md" ]]; then
+    AUTOFIX_NEEDED=true
+fi
+
+# Conversation review gate (inlined from check_conversation_reviewed.sh)
+if [[ ! -f ".reviews/conversation/${HASH}.json" ]]; then
+    CONVO_NEEDED=true
+fi
+
+# Build the autofix command string (may include extra args from config)
+AUTOFIX_EXTRA_ARGS=$(read_json_config "$AUTOFIX_CONFIG" "append_to_autofix_prompt" "")
+if [[ -n "$AUTOFIX_EXTRA_ARGS" ]]; then
+    AUTOFIX_CMD="/autofix ${AUTOFIX_EXTRA_ARGS}"
+else
+    AUTOFIX_CMD="/autofix"
+fi
+
+if [[ "$AUTOFIX_NEEDED" == "true" && "$CONVO_NEEDED" == "true" ]]; then
+    log_error "Neither autofix nor conversation review have been run."
+    log_error "Run /verify-conversation up to and including Step 4 (Spawn Agent). Spawn that agent in the background, then run \"${AUTOFIX_CMD}\" to verify your changes before finishing. Be sure to report the results from the background agent before attempting to stop again."
+    _log_to_file "INFO" "main_stop_hook exiting with code 2 (both autofix and conversation review missing)"
+    exit 2
+elif [[ "$AUTOFIX_NEEDED" == "true" ]]; then
+    log_error "Autofix has not been run yet. Run \"${AUTOFIX_CMD}\" to verify your changes."
+    _log_to_file "INFO" "main_stop_hook exiting with code 2 (autofix missing)"
+    exit 2
+elif [[ "$CONVO_NEEDED" == "true" ]]; then
+    log_error "Conversation has not been reviewed. Run /verify-conversation before finishing."
+    _log_to_file "INFO" "main_stop_hook exiting with code 2 (conversation review missing)"
+    exit 2
+fi
+
+_log_to_file "INFO" "Autofix and conversation review gates passed, launching CI check..."
+
+# Launch the PR/CI check (the only remaining async child)
 "$SCRIPT_DIR/stop_hook_pr_and_ci.sh" &
 PR_CI_PID=$!
 _log_to_file "INFO" "Launched stop_hook_pr_and_ci.sh (pid=$PR_CI_PID)"
 
-"$SCRIPT_DIR/check_autofix_ran.sh" &
-AUTOFIX_PID=$!
-_log_to_file "INFO" "Launched check_autofix_ran.sh (pid=$AUTOFIX_PID)"
+wait "$PR_CI_PID" && PR_CI_EXIT=0 || PR_CI_EXIT=$?
+_log_to_file "INFO" "PR/CI process (pid=$PR_CI_PID) exited with code $PR_CI_EXIT"
 
-"$SCRIPT_DIR/check_conversation_reviewed.sh" &
-CONVO_PID=$!
-_log_to_file "INFO" "Launched check_conversation_reviewed.sh (pid=$CONVO_PID)"
-
-ALL_PIDS=("$PR_CI_PID" "$AUTOFIX_PID" "$CONVO_PID")
-
-# Kill a process and all its descendants (depth-first).
-_kill_tree() {
-    local pid="$1"
-    local child_pids
-    child_pids=$(pgrep -P "$pid" 2>/dev/null || true)
-    for cpid in $child_pids; do
-        _kill_tree "$cpid"
-    done
-    kill -9 "$pid" 2>/dev/null || true
-}
-
-# Kill all children except the one that just exited.
-_kill_others() {
-    local except_pid="$1"
-    for pid in "${ALL_PIDS[@]}"; do
-        if [[ "$pid" != "$except_pid" ]]; then
-            disown "$pid" 2>/dev/null || true
-            _kill_tree "$pid"
-        fi
-    done
-}
-
-# Poll until any process exits with code 2 (actionable failure) or all finish.
-# Exit code 2 means the agent needs to fix something, so we return immediately
-# to let it start working rather than waiting for the other checks.
-PR_CI_EXIT=""
-AUTOFIX_EXIT=""
-CONVO_EXIT=""
-
-_log_to_file "INFO" "Entering poll loop (waiting for children to finish)..."
-
-while true; do
-    # Check PR/CI process
-    if [[ -z "$PR_CI_EXIT" ]] && ! kill -0 "$PR_CI_PID" 2>/dev/null; then
-        wait "$PR_CI_PID" && PR_CI_EXIT=0 || PR_CI_EXIT=$?
-        _log_to_file "INFO" "PR/CI process (pid=$PR_CI_PID) exited with code $PR_CI_EXIT"
-        if [[ $PR_CI_EXIT -eq 2 ]]; then
-            log_error "PR/CI hook failed -- go fix the CI failures first."
-            log_error "If autofix has run, check .autofix/issues/*.jsonl for identified issues."
-            _kill_others "$PR_CI_PID"
-            _log_to_file "INFO" "main_stop_hook exiting with code 2 (PR/CI failure)"
-            exit 2
-        elif [[ $PR_CI_EXIT -ne 0 ]]; then
-            log_error "PR/CI hook failed (exit code $PR_CI_EXIT)"
-        fi
-    fi
-
-    # Check autofix process
-    if [[ -z "$AUTOFIX_EXIT" ]] && ! kill -0 "$AUTOFIX_PID" 2>/dev/null; then
-        wait "$AUTOFIX_PID" && AUTOFIX_EXIT=0 || AUTOFIX_EXIT=$?
-        _log_to_file "INFO" "Autofix process (pid=$AUTOFIX_PID) exited with code $AUTOFIX_EXIT"
-        if [[ $AUTOFIX_EXIT -eq 2 ]]; then
-            log_error "Autofix has not been run yet. Run /autofix to verify your changes."
-            _kill_others "$AUTOFIX_PID"
-            _log_to_file "INFO" "main_stop_hook exiting with code 2 (autofix failure)"
-            exit 2
-        elif [[ $AUTOFIX_EXIT -ne 0 ]]; then
-            log_error "Autofix hook failed (exit code $AUTOFIX_EXIT)"
-        fi
-    fi
-
-    # Check conversation review process
-    if [[ -z "$CONVO_EXIT" ]] && ! kill -0 "$CONVO_PID" 2>/dev/null; then
-        wait "$CONVO_PID" && CONVO_EXIT=0 || CONVO_EXIT=$?
-        _log_to_file "INFO" "Conversation review process (pid=$CONVO_PID) exited with code $CONVO_EXIT"
-        if [[ $CONVO_EXIT -eq 2 ]]; then
-            log_error "Conversation has not been reviewed. Run /verify-conversation before finishing."
-            _kill_others "$CONVO_PID"
-            _log_to_file "INFO" "main_stop_hook exiting with code 2 (conversation review missing)"
-            exit 2
-        elif [[ $CONVO_EXIT -ne 0 ]]; then
-            log_error "Conversation review hook failed (exit code $CONVO_EXIT)"
-        fi
-    fi
-
-    # All finished
-    if [[ -n "$PR_CI_EXIT" && -n "$AUTOFIX_EXIT" && -n "$CONVO_EXIT" ]]; then
-        _log_to_file "INFO" "All children finished: PR_CI_EXIT=$PR_CI_EXIT, AUTOFIX_EXIT=$AUTOFIX_EXIT, CONVO_EXIT=$CONVO_EXIT"
-        break
-    fi
-
-    sleep 1
-done
-
-# If any had a non-2 failure, propagate the first one
-if [[ $PR_CI_EXIT -ne 0 ]]; then
+if [[ $PR_CI_EXIT -eq 2 ]]; then
+    log_error "PR/CI hook failed -- go fix the CI failures first."
+    log_error "If autofix has run, check .autofix/issues/*.jsonl for identified issues."
+    _log_to_file "INFO" "main_stop_hook exiting with code 2 (PR/CI failure)"
+    exit 2
+elif [[ $PR_CI_EXIT -ne 0 ]]; then
+    log_error "PR/CI hook failed (exit code $PR_CI_EXIT)"
     _log_to_file "ERROR" "main_stop_hook exiting with PR/CI exit code $PR_CI_EXIT"
     notify_user || echo "No notify_user function defined, skipping."
     exit "$PR_CI_EXIT"
-fi
-if [[ $AUTOFIX_EXIT -ne 0 ]]; then
-    _log_to_file "ERROR" "main_stop_hook exiting with autofix exit code $AUTOFIX_EXIT"
-    notify_user || echo "No notify_user function defined, skipping."
-    exit "$AUTOFIX_EXIT"
-fi
-if [[ $CONVO_EXIT -ne 0 ]]; then
-    _log_to_file "ERROR" "main_stop_hook exiting with conversation review exit code $CONVO_EXIT"
-    notify_user || echo "No notify_user function defined, skipping."
-    exit "$CONVO_EXIT"
 fi
 
 # Success -- clear stuck tracking and upload issue data
