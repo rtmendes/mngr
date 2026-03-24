@@ -1542,7 +1542,7 @@ class Host(BaseHost, OnlineHostInterface):
                 raise UserInputError(f"work_dir_extra_paths: target already exists and is not a symlink: {target_abs}")
 
             self.execute_command(f"mkdir -p {shlex.quote(str(target_abs.parent))}")
-            self.execute_command(f"ln -s {shlex.quote(str(source_abs))} {shlex.quote(str(target_abs))}")
+            self.execute_command(f"ln -snf {shlex.quote(str(source_abs))} {shlex.quote(str(target_abs))}")
             logger.debug("work_dir_extra_paths: created symlink {} -> {}", target_abs, source_abs)
 
         # Rsync all copy paths in a single batch
