@@ -43,6 +43,7 @@ from imbue.imbue_common.pure import pure
 from imbue.mng import resources as mng_resources
 from imbue.mng.config.agent_config_registry import resolve_agent_type
 from imbue.mng.config.data_types import MngContext
+from imbue.mng.config.data_types import WorkDirExtraPathMode
 from imbue.mng.errors import AgentNotFoundOnHostError
 from imbue.mng.errors import AgentStartError
 from imbue.mng.errors import HostAuthenticationError
@@ -91,6 +92,19 @@ def _try_acquire_flock(lock_file: io.TextIOWrapper) -> bool:
         return True
     except BlockingIOError:
         return False
+
+
+@pure
+def _check_local_symlink_state(source_abs: Path, target_abs: Path) -> tuple[bool, bool]:
+    """Check symlink state for a local target path.
+
+    Returns (is_correct_symlink, is_non_symlink_target).
+    """
+    if target_abs.is_symlink():
+        return (target_abs.resolve() == source_abs.resolve(), False)
+    if target_abs.exists():
+        return (False, True)
+    return (False, False)
 
 
 @pure
@@ -1139,6 +1153,10 @@ class Host(BaseHost, OnlineHostInterface):
                 exclude_git=has_git_options,
             )
 
+        extra_paths = self.mng_ctx.config.work_dir_extra_paths
+        if extra_paths:
+            self._apply_work_dir_extra_paths(source_host, source_path, target_path, extra_paths)
+
         return CreateWorkDirResult(path=target_path, created_branch_name=created_branch_name)
 
     def _transfer_git_repo(
@@ -1432,16 +1450,105 @@ class Host(BaseHost, OnlineHostInterface):
             return
 
         with log_span("Transferring extra files", count=len(files_to_include)):
-            # Write files to a temp file to avoid command line length limits
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-                files_from_path = Path(f.name)
-                for file_path in files_to_include:
-                    f.write(file_path + "\n")
+            self._rsync_paths(source_host, source_path, target_path, files_to_include, exclude_git=True)
 
-            try:
-                self._rsync_files(source_host, source_path, target_path, files_from=files_from_path, exclude_git=True)
-            finally:
-                files_from_path.unlink(missing_ok=True)
+    def _rsync_paths(
+        self,
+        source_host: OnlineHostInterface,
+        source_path: Path,
+        target_path: Path,
+        paths: list[str],
+        *,
+        exclude_git: bool = False,
+    ) -> None:
+        """Rsync specific paths from source to target using a files-from list."""
+        if not paths:
+            return
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            files_from_path = Path(f.name)
+            for file_path in paths:
+                f.write(file_path + "\n")
+        try:
+            self._rsync_files(
+                source_host, source_path, target_path, files_from=files_from_path, exclude_git=exclude_git
+            )
+        finally:
+            files_from_path.unlink(missing_ok=True)
+
+    def _check_remote_symlink_state(self, source_abs: Path, target_abs: Path) -> tuple[bool, bool]:
+        """Check symlink state for a remote target path.
+
+        Returns (is_correct_symlink, is_non_symlink_target).
+        """
+        check = self.execute_command(f"test -L {shlex.quote(str(target_abs))}")
+        if check.success:
+            current = self.execute_command(f"readlink -f {shlex.quote(str(target_abs))}")
+            expected = self.execute_command(f"readlink -f {shlex.quote(str(source_abs))}")
+            return (current.stdout.strip() == expected.stdout.strip(), False)
+        check_exists = self.execute_command(f"test -e {shlex.quote(str(target_abs))}")
+        if check_exists.success:
+            return (False, True)
+        return (False, False)
+
+    def _apply_work_dir_extra_paths(
+        self,
+        source_host: OnlineHostInterface,
+        source_path: Path,
+        work_dir_path: Path,
+        extra_paths: dict[str, WorkDirExtraPathMode],
+    ) -> None:
+        """Apply work_dir_extra_paths config: symlink or copy paths into the work directory."""
+        same_host = source_host.id == self.id
+        rsync_paths: list[str] = []
+        # Each entry is (source_absolute_path, target_absolute_path)
+        symlink_specs: list[tuple[Path, Path]] = []
+
+        for rel_path_str, mode in extra_paths.items():
+            rel_path = Path(rel_path_str)
+            if rel_path.is_absolute():
+                raise UserInputError(f"work_dir_extra_paths: absolute paths are not allowed: {rel_path_str}")
+            if ".." in rel_path.parts:
+                raise UserInputError(f"work_dir_extra_paths: '..' path components are not allowed: {rel_path_str}")
+
+            source_abs = source_path / rel_path
+            # Check source exists
+            if source_host.is_local:
+                source_exists = source_abs.exists() or source_abs.is_symlink()
+            else:
+                result = source_host.execute_command(
+                    f"test -e {shlex.quote(str(source_abs))} || test -L {shlex.quote(str(source_abs))}"
+                )
+                source_exists = result.success
+            if not source_exists:
+                logger.warning("work_dir_extra_paths: source path does not exist, skipping: {}", source_abs)
+                continue
+
+            if mode == WorkDirExtraPathMode.SHARE and same_host:
+                symlink_specs.append((source_abs, work_dir_path / rel_path))
+            else:
+                rsync_paths.append(rel_path_str)
+
+        # Create symlinks
+        for source_abs, target_abs in symlink_specs:
+            if self.is_local:
+                is_correct_symlink, is_non_symlink_target = _check_local_symlink_state(source_abs, target_abs)
+            else:
+                is_correct_symlink, is_non_symlink_target = self._check_remote_symlink_state(source_abs, target_abs)
+
+            if is_correct_symlink:
+                logger.debug("work_dir_extra_paths: symlink already correct, skipping: {}", target_abs)
+                continue
+            if is_non_symlink_target:
+                raise UserInputError(f"work_dir_extra_paths: target already exists and is not a symlink: {target_abs}")
+
+            self.execute_command(f"mkdir -p {shlex.quote(str(target_abs.parent))}")
+            self.execute_command(f"ln -s {shlex.quote(str(source_abs))} {shlex.quote(str(target_abs))}")
+            logger.debug("work_dir_extra_paths: created symlink {} -> {}", target_abs, source_abs)
+
+        # Rsync all copy paths in a single batch
+        if rsync_paths:
+            with log_span("Copying work_dir_extra_paths", count=len(rsync_paths)):
+                self._rsync_paths(source_host, source_path, work_dir_path, rsync_paths)
 
     def copy_directory(
         self,
@@ -1609,6 +1716,10 @@ class Host(BaseHost, OnlineHostInterface):
 
             # Track generated work directories at the host level
             self._add_generated_work_dir(work_dir_path)
+
+            extra_paths = self.mng_ctx.config.work_dir_extra_paths
+            if extra_paths:
+                self._apply_work_dir_extra_paths(host, source_path, work_dir_path, extra_paths)
 
             return CreateWorkDirResult(path=work_dir_path, created_branch_name=branch_name)
 
