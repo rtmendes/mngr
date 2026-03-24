@@ -252,7 +252,7 @@ def render_landing_page(
 _DEFAULT_GIT_URL: Final[str] = "https://github.com/imbue-ai/simple_mind.git"
 
 
-_DEFAULT_AGENT_NAME: Final[str] = "selene"
+_DEFAULT_AGENT_NAME: Final[str] = os.getenv("MIND_NAME", "selene")
 
 
 _DEFAULT_BRANCH: Final[str] = os.getenv("MIND_BRANCH", "main")
