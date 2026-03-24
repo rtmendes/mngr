@@ -354,7 +354,7 @@ class DockerProviderInstance(BaseProviderInstance):
                     self._exec_in_container(container, add_authorized_keys_cmd)
 
         with log_span("Starting sshd in container"):
-            self._exec_in_container(container, "/usr/sbin/sshd -D", detach=True)
+            self._exec_in_container(container, "/usr/sbin/sshd -D -o MaxSessions=100", detach=True)
 
     def _get_container_ssh_port(self, container: docker.models.containers.Container) -> int:
         """Get the host-mapped SSH port for a container."""

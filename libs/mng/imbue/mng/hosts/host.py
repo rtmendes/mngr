@@ -21,6 +21,7 @@ from typing import cast
 from uuid import uuid4
 
 from loguru import logger
+from paramiko import ChannelException
 from paramiko import SFTPClient
 from paramiko import SSHException
 from pydantic import Field
@@ -337,6 +338,13 @@ class Host(BaseHost, OnlineHostInterface):
                 raise
             else:
                 raise
+        except ChannelException as e:
+            # ChannelException means the server refused to open a new channel
+            # (e.g. MaxSessions limit reached), but the transport is still alive.
+            # Do NOT disconnect -- that would kill other threads' in-flight SFTP
+            # operations on the shared transport, causing hangs.
+            logger.debug("Channel open refused while reading {}: {}, retrying without disconnect", remote_filename, e)
+            raise
         except (SSHException, EOFError) as e:
             logger.debug("SSH error while reading {}: {}, disconnecting for retry", remote_filename, e)
             self.connector.host.disconnect()
@@ -423,6 +431,13 @@ class Host(BaseHost, OnlineHostInterface):
                 raise
             else:
                 raise
+        except ChannelException as e:
+            # ChannelException means the server refused to open a new channel
+            # (e.g. MaxSessions limit reached), but the transport is still alive.
+            # Do NOT disconnect -- that would kill other threads' in-flight SFTP
+            # operations on the shared transport, causing hangs.
+            logger.debug("Channel open refused while writing {}: {}, retrying without disconnect", remote_filename, e)
+            raise
         except (SSHException, EOFError) as e:
             logger.debug("SSH error while writing {}: {}, disconnecting for retry", remote_filename, e)
             self.connector.host.disconnect()
