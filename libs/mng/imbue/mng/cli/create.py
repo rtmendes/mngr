@@ -653,12 +653,13 @@ def _create_agent(
     if isinstance(resolved_target_host, OnlineHostInterface):
         _apply_host_labels(resolved_target_host, opts.host_label)
 
-    # Set auto-derived labels (project, remote) on the agent (labels are agent-level, not host-level)
+    # Set auto-derived labels (project, remote) on the agent (labels are agent-level, not host-level).
+    # User-specified --label values take precedence over auto-derived ones.
     auto_labels = setup.auto_labels.model_dump(exclude_none=True)
     agent_opts = agent_opts.model_copy_update(
         to_update(
             agent_opts.field_ref().label_options,
-            AgentLabelOptions(labels={**agent_opts.label_options.labels, **auto_labels}),
+            AgentLabelOptions(labels={**auto_labels, **agent_opts.label_options.labels}),
         ),
     )
 
