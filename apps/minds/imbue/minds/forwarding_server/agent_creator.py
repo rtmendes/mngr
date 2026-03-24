@@ -227,6 +227,7 @@ def run_mng_create(
                 [
                     "--provider",
                     "docker",
+                    "-vv",
                     "--source-path",
                     str(mind_dir),
                     "-s",
