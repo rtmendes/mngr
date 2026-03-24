@@ -4,6 +4,7 @@
         "append_to_autofix_prompt": ""
     },
     "verify_conversation": {
+        "is_enabled": true,
         "include_tracked_sessions": true,
         "include_current_session": true,
         "include_all_agent_sessions": true,

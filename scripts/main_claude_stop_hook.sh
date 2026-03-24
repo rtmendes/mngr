@@ -214,7 +214,8 @@ if [[ "$AUTOFIX_ENABLED" == "true" ]] && [[ ! -f ".reviewer/autofix/plans/${HASH
 fi
 
 # Conversation review gate (inlined from check_conversation_reviewed.sh)
-if [[ ! -f ".reviewer/outputs/conversation/${HASH}.json" ]]; then
+CONVO_ENABLED=$(read_json_config "$REVIEWER_SETTINGS" "verify_conversation.is_enabled" "true")
+if [[ "$CONVO_ENABLED" == "true" ]] && [[ ! -f ".reviewer/outputs/conversation/${HASH}.json" ]]; then
     CONVO_NEEDED=true
 fi
 
