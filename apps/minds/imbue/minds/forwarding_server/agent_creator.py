@@ -237,6 +237,8 @@ def run_mng_create(
             dockerfile_path = mind_dir / "Dockerfile"
             if dockerfile_path.is_file():
                 mng_command.extend(["-b", "--file={}".format(dockerfile_path), "-b", str(mind_dir)])
+            else:
+                raise Exception("Hmmm, idk about that")
         case _ as unreachable:
             assert_never(unreachable)
 
