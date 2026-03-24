@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -264,7 +265,7 @@ def test_mng_cli_resolver_update_servers_replaces_state() -> None:
 # -- parse_agents_from_json tests --
 
 
-def _make_agents_json_with_ssh(*agents: tuple[str, dict[str, object] | None]) -> str:
+def _make_agents_json_with_ssh(*agents: tuple[str, Mapping[str, object] | None]) -> str:
     """Build mng list --format json output with optional SSH info per agent."""
     agent_list = []
     for agent_id, ssh in agents:
@@ -288,7 +289,7 @@ def test_parse_agents_from_json_extracts_agent_ids() -> None:
 
 
 def test_parse_agents_from_json_extracts_ssh_info() -> None:
-    ssh_data: dict[str, object] = {
+    ssh_data = {
         "user": "root",
         "host": "remote.example.com",
         "port": 12345,
@@ -313,7 +314,7 @@ def test_parse_agents_from_json_returns_none_ssh_for_local_agents() -> None:
 
 
 def test_parse_agents_from_json_handles_mixed_local_and_remote() -> None:
-    ssh_data: dict[str, object] = {
+    ssh_data = {
         "user": "root",
         "host": "remote.example.com",
         "port": 12345,
@@ -361,7 +362,7 @@ def test_parse_agents_from_json_skips_agents_with_invalid_ssh() -> None:
 
 
 def test_mng_cli_resolver_get_ssh_info_returns_info_for_remote_agent() -> None:
-    ssh_data: dict[str, object] = {
+    ssh_data = {
         "user": "root",
         "host": "remote.example.com",
         "port": 12345,
@@ -546,7 +547,7 @@ def _make_discovery_full_line(
     )
 
 
-def _make_host_ssh_info_line(host_id: str, ssh_data: dict[str, object]) -> str:
+def _make_host_ssh_info_line(host_id: str, ssh_data: Mapping[str, object]) -> str:
     """Build a HOST_SSH_INFO event JSON line."""
     return json.dumps(
         {
@@ -580,7 +581,7 @@ def test_stream_manager_host_ssh_info_populates_resolver() -> None:
     """HOST_SSH_INFO events followed by agent mappings populate SSH info."""
     manager = _make_stream_manager()
     host_id = "host-00000000000000000000000000000001"
-    ssh_data: dict[str, object] = {
+    ssh_data = {
         "user": "root",
         "host": "remote.example.com",
         "port": 2222,
@@ -628,7 +629,7 @@ def test_stream_manager_mixed_local_and_remote() -> None:
     manager = _make_stream_manager()
     local_host_id = "host-00000000000000000000000000000001"
     remote_host_id = "host-00000000000000000000000000000002"
-    ssh_data: dict[str, object] = {
+    ssh_data = {
         "user": "root",
         "host": "remote.example.com",
         "port": 2222,
@@ -656,7 +657,7 @@ def test_stream_manager_ssh_info_before_full_snapshot() -> None:
     """SSH info received before DISCOVERY_FULL is retained and used."""
     manager = _make_stream_manager()
     host_id = "host-00000000000000000000000000000001"
-    ssh_data: dict[str, object] = {
+    ssh_data = {
         "user": "root",
         "host": "remote.example.com",
         "port": 2222,
