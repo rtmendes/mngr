@@ -815,8 +815,8 @@ def _parse_project_name(
         if project_name is not None:
             return project_name
 
-    # Fall back to the source directory name
-    return resolved_source.location.path.name
+    # Fall back to the source directory name (resolve to normalize symlinks / '..' components)
+    return resolved_source.location.path.resolve().name
 
 
 def _try_reuse_existing_agent(
