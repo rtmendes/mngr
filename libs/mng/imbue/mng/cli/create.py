@@ -471,12 +471,11 @@ class _AutoLabels(FrozenModel):
 
 
 class _Source(FrozenModel):
-    """Resolved source: location, optional agent, and auto-derived labels."""
+    """Resolved source (location + optional agent) paired with auto-derived labels."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    location: HostLocation = Field(description="Resolved source location")
-    agent: DiscoveredAgent | None = Field(default=None, description="Source agent, if creating from one")
+    resolved: ResolvedSource = Field(description="Resolved source location and optional source agent")
     auto_labels: _AutoLabels = Field(description="Auto-derived labels for the new agent")
 
 
@@ -546,8 +545,7 @@ def _setup_create(
     # derive auto-labels from the source location
     remote_url = _get_source_remote_url(resolved_source.location)
     source = _Source(
-        location=resolved_source.location,
-        agent=resolved_source.agent,
+        resolved=resolved_source,
         auto_labels=_AutoLabels(
             project=_parse_project_name(resolved_source, opts, remote_url),
             remote=remote_url,
@@ -587,9 +585,9 @@ def _create_agent(
 
     # Compute source agent state dir from the resolved agent ID
     source_agent_state_dir: Path | None = None
-    if setup.source.agent is not None:
+    if setup.source.resolved.agent is not None:
         source_agent_state_dir = get_agent_state_dir_path(
-            setup.source.location.host.host_dir, setup.source.agent.agent_id
+            setup.source.resolved.location.host.host_dir, setup.source.resolved.agent.agent_id
         )
 
     # Parse agent options
@@ -597,7 +595,7 @@ def _create_agent(
         opts=opts,
         address=address,
         initial_message=setup.initial_message,
-        source_location=setup.source.location,
+        source_location=setup.source.resolved.location,
         source_agent_state_dir=source_agent_state_dir,
         mng_ctx=mng_ctx,
     )
@@ -655,7 +653,7 @@ def _create_agent(
     # are irrelevant (regardless of copy mode: worktree, clone, or copy).
     is_from_explicit_base = agent_opts.git is not None and has_explicit_base
     if opts.ensure_clean and not is_from_explicit_base:
-        _ensure_clean_work_dir(setup.source.location)
+        _ensure_clean_work_dir(setup.source.resolved.location)
 
     # figure out the target host (if we just have a reference)
     resolved_target_host = _resolve_target_host(target_host, mng_ctx, is_start_desired=opts.start_host)
@@ -678,7 +676,7 @@ def _create_agent(
     # Call the API create function
     with _editor_cleanup_scope(setup.editor_session):
         create_result = api_create(
-            source_location=setup.source.location,
+            source_location=setup.source.resolved.location,
             target_host=resolved_target_host,
             agent_options=agent_opts,
             mng_ctx=mng_ctx,
