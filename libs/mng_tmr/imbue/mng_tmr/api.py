@@ -695,6 +695,7 @@ def read_integrator_result(
         raw = host.read_text_file(result_path)
         data = json.loads(raw)
         return IntegratorResult(
+            agent_name=agent_detail.name,
             merged=tuple(data.get("merged", ())),
             failed=tuple(data.get("failed", ())),
             branch_name=branch_name,
@@ -703,6 +704,7 @@ def read_integrator_result(
     except (HostError, OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
         logger.warning("Failed to read integrator result: {}", exc)
         return IntegratorResult(
+            agent_name=agent_detail.name,
             branch_name=branch_name,
             summary_markdown=f"Failed to read integrator result: {exc}",
         )

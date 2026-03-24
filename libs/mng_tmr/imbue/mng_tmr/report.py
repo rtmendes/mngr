@@ -63,12 +63,10 @@ def generate_html_report(
         cat = display_category_of(r)
         counts[cat] = counts.get(cat, 0) + 1
 
-    summary_parts = [f"{cat.value}: {count}" for cat, count in sorted(counts.items(), key=lambda x: x[0].value)]
-    summary_text = ", ".join(summary_parts)
-
-    bar_html = _build_stacked_bar(counts, len(results))
+    nav_html = _build_category_nav(counts, len(results))
     tables_html = _build_grouped_tables(results)
     integrator_html = _build_integrator_section(integrator)
+    integrator_nav = _build_integrator_nav(integrator)
 
     css = _html_report_css()
     report_html = f"""<!DOCTYPE html>
@@ -82,8 +80,9 @@ def generate_html_report(
 </head>
 <body>
   <h1>Test Map-Reduce Report</h1>
-  <p class="summary">{len(results)} test(s) -- {summary_text}</p>
-{bar_html}
+  <p class="summary">{len(results)} test(s)</p>
+{nav_html}
+{integrator_nav}
 {tables_html}
 {integrator_html}
 </body>
@@ -95,26 +94,49 @@ def generate_html_report(
     return output_path
 
 
-def _build_stacked_bar(counts: dict[DisplayCategory, int], total: int) -> str:
-    """Build an HTML stacked bar showing display category distribution."""
+def _build_category_nav(counts: dict[DisplayCategory, int], total: int) -> str:
+    """Build a list of horizontal bars, one per category, each linking to its section."""
     if total == 0:
         return ""
-    segments = ""
+    max_count = max(counts.values()) if counts else 1
+    rows = ""
     for cat in _DISPLAY_GROUP_ORDER:
         count = counts.get(cat, 0)
         if count == 0:
             continue
-        pct = count / total * 100
+        pct = count / max_count * 100
         color = _DISPLAY_COLORS.get(cat, "rgb(158, 158, 158)")
-        segments += f'    <div style="width: {pct:.1f}%; background: {color};" title="{cat.value}: {count}"></div>\n'
-    return f'  <div class="bar">\n{segments}  </div>'
+        anchor = f"cat-{cat.value}"
+        rows += (
+            f'  <a href="#{anchor}" class="nav-row">'
+            f'<span class="nav-label">{cat.value} ({count})</span>'
+            f'<span class="nav-bar" style="width: {pct:.1f}%; background: {color};"></span>'
+            f"</a>\n"
+        )
+    return f'  <div class="nav">\n{rows}  </div>'
+
+
+def _build_integrator_nav(integrator: IntegratorResult | None) -> str:
+    """Build an anchor link to the integrator section, showing agent name and branch."""
+    if integrator is None:
+        return ""
+    details: list[str] = []
+    if integrator.agent_name is not None:
+        details.append(f"<code>{html.escape(str(integrator.agent_name))}</code>")
+    if integrator.branch_name is not None:
+        details.append(f"<code>{html.escape(integrator.branch_name)}</code>")
+    suffix = f" -- {' '.join(details)}" if details else ""
+    return f'  <p class="integrator-nav"><a href="#integrator">Integrator{suffix}</a></p>\n'
 
 
 def _build_integrator_section(integrator: IntegratorResult | None) -> str:
     """Build the HTML section for the integrator agent results."""
     if integrator is None:
         return ""
-    section = '  <h2 class="integrator-header">Integrator</h2>\n'
+    section = '  <h2 id="integrator" class="integrator-header">Integrator</h2>\n'
+    if integrator.agent_name is not None:
+        escaped_name = html.escape(str(integrator.agent_name))
+        section += f"  <p>Agent: <code>{escaped_name}</code></p>\n"
     if integrator.branch_name is not None:
         escaped = html.escape(integrator.branch_name)
         section += f'  <p class="integrator">Integrated branch: <code>{escaped}</code></p>\n'
@@ -151,7 +173,8 @@ def _build_grouped_tables(results: list[TestMapReduceResult]) -> str:
         if not group:
             continue
         color = _DISPLAY_COLORS.get(cat, "rgb(158, 158, 158)")
-        sections += f'  <h2 style="color: {color};">{cat.value} ({len(group)})</h2>\n'
+        anchor = f"cat-{cat.value}"
+        sections += f'  <h2 id="{anchor}" style="color: {color};">{cat.value} ({len(group)})</h2>\n'
         sections += "  <table>\n    <thead>\n      <tr>"
         sections += "<th>Test</th><th>Changes</th><th>Summary</th><th>Agent</th><th>Branch</th>"
         sections += "</tr>\n    </thead>\n    <tbody>\n"
@@ -186,9 +209,17 @@ def _html_report_css() -> str:
         "    h1 { color: rgb(51, 51, 51); }\n"
         "    h2 { margin-top: 1.5rem; font-size: 1.1rem; }\n"
         "    .summary { margin-bottom: 0.5rem; color: rgb(102, 102, 102); }\n"
-        "    .bar { display: flex; height: 24px; border-radius: 4px; overflow: hidden;"
-        " margin-bottom: 1.5rem; }\n"
-        "    .bar > div { min-width: 2px; }\n"
+        "    .nav { margin-bottom: 1.5rem; }\n"
+        "    .nav-row { display: flex; align-items: center; text-decoration: none;"
+        " margin-bottom: 4px; gap: 8px; }\n"
+        "    .nav-row:hover { opacity: 0.8; }\n"
+        "    .nav-label { font-weight: 600; font-size: 0.9rem; min-width: 180px;"
+        " color: rgb(51, 51, 51); }\n"
+        "    .nav-bar { height: 20px; border-radius: 3px; min-width: 4px; }\n"
+        "    .integrator-nav { margin-bottom: 1rem; }\n"
+        "    .integrator-nav a { color: rgb(33, 150, 243); font-weight: 600;"
+        " text-decoration: none; }\n"
+        "    .integrator-nav a:hover { text-decoration: underline; }\n"
         "    table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }\n"
         "    th, td { border: 1px solid rgb(221, 221, 221); padding: 8px 12px; text-align: left; }\n"
         "    th { background: rgb(245, 245, 245); font-weight: 600; }\n"

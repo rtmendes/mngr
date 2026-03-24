@@ -9,8 +9,8 @@ from imbue.mng_tmr.data_types import ChangeStatus
 from imbue.mng_tmr.data_types import DisplayCategory
 from imbue.mng_tmr.data_types import IntegratorResult
 from imbue.mng_tmr.data_types import TestMapReduceResult
+from imbue.mng_tmr.report import _build_category_nav
 from imbue.mng_tmr.report import _build_grouped_tables
-from imbue.mng_tmr.report import _build_stacked_bar
 from imbue.mng_tmr.report import _render_markdown
 from imbue.mng_tmr.report import display_category_of
 from imbue.mng_tmr.report import generate_html_report
@@ -72,26 +72,29 @@ def test_render_markdown_plain_text() -> None:
 # --- HTML report tests ---
 
 
-def test_build_stacked_bar_empty() -> None:
-    assert _build_stacked_bar({}, 0) == ""
+def test_build_category_nav_empty() -> None:
+    assert _build_category_nav({}, 0) == ""
 
 
-def test_build_stacked_bar_single_category() -> None:
-    bar_html = _build_stacked_bar({DisplayCategory.CLEAN_PASS: 5}, 5)
-    assert "width: 100.0%" in bar_html
-    assert "CLEAN_PASS: 5" in bar_html
+def test_build_category_nav_single_category() -> None:
+    nav = _build_category_nav({DisplayCategory.CLEAN_PASS: 5}, 5)
+    assert "CLEAN_PASS (5)" in nav
+    assert 'href="#cat-CLEAN_PASS"' in nav
+    assert "width: 100.0%" in nav
 
 
-def test_build_stacked_bar_multiple_categories() -> None:
-    bar_html = _build_stacked_bar({DisplayCategory.CLEAN_PASS: 3, DisplayCategory.STUCK: 2}, 5)
-    assert "CLEAN_PASS: 3" in bar_html
-    assert "STUCK: 2" in bar_html
+def test_build_category_nav_multiple_categories() -> None:
+    nav = _build_category_nav({DisplayCategory.CLEAN_PASS: 3, DisplayCategory.STUCK: 2}, 5)
+    assert "CLEAN_PASS (3)" in nav
+    assert "STUCK (2)" in nav
+    assert 'href="#cat-CLEAN_PASS"' in nav
+    assert 'href="#cat-STUCK"' in nav
 
 
-def test_build_stacked_bar_pending_category() -> None:
-    bar_html = _build_stacked_bar({DisplayCategory.PENDING: 3}, 3)
-    assert "PENDING: 3" in bar_html
-    assert "rgb(3, 169, 244)" in bar_html
+def test_build_category_nav_pending_category() -> None:
+    nav = _build_category_nav({DisplayCategory.PENDING: 3}, 3)
+    assert "PENDING (3)" in nav
+    assert "rgb(3, 169, 244)" in nav
 
 
 def test_build_grouped_tables_groups_by_category() -> None:
@@ -180,7 +183,7 @@ def test_generate_html_report(tmp_path: Path) -> None:
     assert "Test Map-Reduce Report" in content
     assert "CLEAN_PASS" in content
     assert "FIXED" in content
-    assert 'class="bar"' in content
+    assert 'class="nav"' in content
 
 
 def test_generate_html_report_groups_clean_pass_last(tmp_path: Path) -> None:
