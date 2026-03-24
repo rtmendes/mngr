@@ -22,7 +22,7 @@ if [ -f ".autofix/plans/${HASH}_verified.md" ]; then
     exit 0
 fi
 
-EXTRA_ARGS=$(read_json_config "$CONFIG_FILE" "extra_args" "")
+EXTRA_ARGS=$(read_json_config "$CONFIG_FILE" "append_to_autofix_prompt" "")
 
 if [ -n "$EXTRA_ARGS" ]; then
     echo "To verify your changes, run: \"/autofix ${EXTRA_ARGS}\"" >&2

@@ -71,3 +71,11 @@ After the loop ends:
 - Get the current HEAD hash: `git rev-parse HEAD`
 - Get the current timestamp: `date -u +%Y-%m-%dT%H:%M:%SZ`
 - Use the Write tool, without checking if the directory exists, to create `.autofix/plans/{hash}_verified.md` with content `Verified clean at {timestamp}`.
+
+# RUN TIME OVERRIDE
+
+For *this particular run* of the `autofix` command, follow these adjustments from the user to the normal process:
+
+```
+$ARGUMENTS
+```
