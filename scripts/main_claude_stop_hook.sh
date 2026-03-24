@@ -207,9 +207,9 @@ AUTOFIX_NEEDED=false
 CONVO_NEEDED=false
 
 # Autofix gate (inlined from check_autofix_ran.sh)
-AUTOFIX_CONFIG=".autofix/config/stop-hook.json"
+AUTOFIX_CONFIG=".reviewer/config/stop-hook.json"
 AUTOFIX_ENABLED=$(read_json_config "$AUTOFIX_CONFIG" "enabled" "true")
-if [[ "$AUTOFIX_ENABLED" == "true" ]] && [[ ! -f ".autofix/plans/${HASH}_verified.md" ]]; then
+if [[ "$AUTOFIX_ENABLED" == "true" ]] && [[ ! -f ".reviewer/plans/${HASH}_verified.md" ]]; then
     AUTOFIX_NEEDED=true
 fi
 
@@ -243,12 +243,12 @@ fi
 
 _log_to_file "INFO" "Autofix and conversation review gates passed"
 
-# PR/CI gate (can be disabled via .autofix/settings.json)
-CI_ENABLED=$(read_json_config ".autofix/settings.json" "is_ci_required" "true")
+# PR/CI gate (can be disabled via .reviewer/settings.json)
+CI_ENABLED=$(read_json_config ".reviewer/settings.json" "is_ci_required" "true")
 
 if [[ "$CI_ENABLED" != "true" ]]; then
-    _log_to_file "INFO" "PR/CI check disabled via .autofix/settings.json, skipping"
-    log_info "PR/CI check disabled (is_ci_required=false in .autofix/settings.json), skipping."
+    _log_to_file "INFO" "PR/CI check disabled via .reviewer/settings.json, skipping"
+    log_info "PR/CI check disabled (is_ci_required=false in .reviewer/settings.json), skipping."
 else
     _log_to_file "INFO" "Launching CI check..."
 
@@ -262,7 +262,7 @@ else
 
     if [[ $PR_CI_EXIT -eq 2 ]]; then
         log_error "PR/CI hook failed -- go fix the CI failures first."
-        log_error "If autofix has run, check .autofix/issues/*.jsonl for identified issues."
+        log_error "If autofix has run, check .reviewer/issues/*.jsonl for identified issues."
         _log_to_file "INFO" "main_stop_hook exiting with code 2 (PR/CI failure)"
         exit 2
     elif [[ $PR_CI_EXIT -ne 0 ]]; then
@@ -278,7 +278,7 @@ rm -f "$STUCK_FILE"
 
 # Upload autofix issue data to Modal volume for data collection (best-effort).
 _upload_autofix_issues() {
-    local issues_dir=".autofix/issues"
+    local issues_dir=".reviewer/issues"
     if [[ ! -d "$issues_dir" ]] || ! ls "$issues_dir"/*.jsonl >/dev/null 2>&1; then
         _log_to_file "INFO" "No autofix issue files to upload"
         return

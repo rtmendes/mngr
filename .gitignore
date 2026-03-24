@@ -259,10 +259,10 @@ current.tar.gz
 .minds/
 
 # Autofix session artifacts (plans, verification markers, issue logs)
-.autofix/plans/
-.autofix/issues/
-.autofix/config/stop-hook.local.json
-.autofix/settings.local.json
+.reviewer/plans/
+.reviewer/issues/
+.reviewer/config/stop-hook.local.json
+.reviewer/settings.local.json
 
 # Stuck agent tracking (stop hook escape valve)
 .claude/blocked_stop_commits
