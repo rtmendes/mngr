@@ -248,6 +248,7 @@ tmr_*/
 
 # Offload caches and local files
 .offload/**
+test-results
 test-results/**
 current.tar.gz
 
@@ -255,6 +256,7 @@ current.tar.gz
 .minds/
 
 # Autofix session artifacts
+.autofix/
 .reviewer/outputs/
 .reviewer/settings.local.json
 
