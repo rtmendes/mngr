@@ -1,3 +1,4 @@
+import dataclasses
 import os
 import shutil
 import subprocess
@@ -234,6 +235,7 @@ def make_pending_idle_wait(agent_id: str) -> FakeWaitProcess:
     return _create_fake_wait_process(is_complete=False, returncode=None)
 
 
+@dataclasses.dataclass
 class TrackingIdleWait:
     """A start_idle_wait callback that records every process it creates.
 
@@ -242,8 +244,7 @@ class TrackingIdleWait:
     allowing tests to inspect and control individual wait processes.
     """
 
-    def __init__(self) -> None:
-        self.processes: list[FakeWaitProcess] = []
+    processes: list[FakeWaitProcess] = dataclasses.field(default_factory=list)
 
     def __call__(self, agent_id: str) -> FakeWaitProcess:
         process = _create_fake_wait_process(is_complete=False, returncode=None)
