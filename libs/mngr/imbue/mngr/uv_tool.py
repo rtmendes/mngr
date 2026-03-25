@@ -1,6 +1,6 @@
 """Read and manipulate the ``uv tool`` receipt for mngr.
 
-When mngr is installed via ``uv tool install mngr``, uv stores a receipt
+When mngr is installed via ``uv tool install imbue-mngr``, uv stores a receipt
 at ``<venv>/uv-receipt.toml`` that records the base package and any
 extra ``--with`` dependencies.  This module reads that receipt and
 builds ``uv tool install`` commands that preserve existing dependencies
@@ -110,7 +110,7 @@ def read_receipt(receipt_path: Path) -> ToolReceipt:
 def build_base_specifier(base: ToolRequirement) -> str:
     """Build the positional specifier for ``uv tool install <specifier>``.
 
-    Examples: ``"mngr"``, ``"mngr>=0.1.0"``.
+    Examples: ``"imbue-mngr"``, ``"imbue-mngr>=0.1.0"``.
     """
     if base.specifier is not None:
         return f"{base.name}{base.specifier}"
