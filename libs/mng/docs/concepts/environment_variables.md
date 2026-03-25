@@ -27,9 +27,12 @@ The following environment variables are special because they control both the be
   - Explicit `MNG_PREFIX` or `MNG_HOST_DIR` values override the derived defaults
 - `MNG_PREFIX` - Prefix for naming resources (default: `mng-`). Affects tmux session names, Docker container names, etc.
 - `MNG_HOST_DIR` - Base directory for all mng data on a host (default: `~/.mng`)
-- `MNG_PROJECT_DIR` - Directory containing project-level config files (`settings.toml` and `settings.local.toml`). When set, overrides the default `.{root_name}/` directory at the git root. This only affects where project settings are loaded from; it does not affect `MNG_HOST_DIR`.
 
 Changing those variables after creating a host is not supported.
+
+Additionally, the following variable controls where project-level config files are loaded from:
+
+- `MNG_PROJECT_DIR` - Directory containing project-level config files (`settings.toml` and `settings.local.toml`). When set, overrides the default `.{root_name}/` directory at the git root. This only affects where project settings are loaded from; it does not affect `MNG_HOST_DIR`. Unlike the variables above, this can be changed freely at any time.
 
 ## Command-Specific Variables
 
