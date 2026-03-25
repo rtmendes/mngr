@@ -41,15 +41,14 @@ class Change(FrozenModel):
     summary_markdown: str = Field(description="Markdown description of what was done or attempted")
 
 
-class DisplayCategory(UpperCaseStrEnum):
-    """Derived display category for HTML report grouping and coloring."""
+class ReportSection(UpperCaseStrEnum):
+    """Derived section for HTML report grouping and coloring."""
 
-    PENDING = auto()
-    FIXED = auto()
-    REGRESSED = auto()
-    STUCK = auto()
-    ERRORED = auto()
+    NON_IMPL_FIXES = auto()
+    IMPL_FIXES = auto()
+    BLOCKED = auto()
     CLEAN_PASS = auto()
+    RUNNING = auto()
 
 
 class TestRunInfo(FrozenModel):
@@ -112,10 +111,10 @@ class IntegratorResult(FrozenModel):
     """Result from the integrator agent that cherry-picks fix branches."""
 
     agent_name: AgentName | None = Field(default=None, description="Name of the integrator agent")
-    merged: tuple[str, ...] = Field(default=(), description="Branch names successfully integrated")
+    squashed_branches: tuple[str, ...] = Field(default=(), description="Branches in the squashed non-impl commit")
+    impl_priority: tuple[str, ...] = Field(default=(), description="Impl branches in priority order, highest first")
     failed: tuple[str, ...] = Field(default=(), description="Branch names that could not be integrated")
     branch_name: str | None = Field(default=None, description="Integrated branch name, if any merges succeeded")
-    summary_markdown: str = Field(default="", description="Markdown summary from the integrator agent")
 
 
 class TestMapReduceResult(FrozenModel):

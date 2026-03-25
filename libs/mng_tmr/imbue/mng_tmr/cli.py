@@ -187,7 +187,6 @@ def _run_integrator_phase(
         integrator_result = IntegratorResult(
             agent_name=integrator.agent_name,
             branch_name=integrator_branch,
-            summary_markdown="Integrator timed out or could not be reached",
         )
 
     return integrator_result

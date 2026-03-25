@@ -1,7 +1,7 @@
 """HTML report generation for the test-mapreduce plugin.
 
-Builds a self-contained HTML page with category navigation bars, per-category
-tables, an optional integrator section, and embedded test artifacts.
+Builds a self-contained HTML page with a TOC sidebar, per-section
+tables, and embedded test artifacts.
 """
 
 import html
@@ -15,47 +15,57 @@ from imbue.mng.utils.detail_renderer import ASCIINEMA_PLAYER_CSS
 from imbue.mng.utils.detail_renderer import ASCIINEMA_PLAYER_JS
 from imbue.mng.utils.detail_renderer import DETAIL_CSS
 from imbue.mng.utils.detail_renderer import render_test_detail
+from imbue.mng_tmr.data_types import ChangeKind
 from imbue.mng_tmr.data_types import ChangeStatus
-from imbue.mng_tmr.data_types import DisplayCategory
 from imbue.mng_tmr.data_types import IntegratorResult
+from imbue.mng_tmr.data_types import ReportSection
 from imbue.mng_tmr.data_types import TestMapReduceResult
 from imbue.mng_tmr.data_types import TestRunInfo
 
-_DISPLAY_COLORS: dict[DisplayCategory, str] = {
-    DisplayCategory.PENDING: "rgb(3, 169, 244)",
-    DisplayCategory.FIXED: "rgb(33, 150, 243)",
-    DisplayCategory.REGRESSED: "rgb(255, 152, 0)",
-    DisplayCategory.STUCK: "rgb(244, 67, 54)",
-    DisplayCategory.ERRORED: "rgb(158, 158, 158)",
-    DisplayCategory.CLEAN_PASS: "rgb(76, 175, 80)",
+_SECTION_ORDER: list[ReportSection] = [
+    ReportSection.NON_IMPL_FIXES,
+    ReportSection.IMPL_FIXES,
+    ReportSection.BLOCKED,
+    ReportSection.CLEAN_PASS,
+    ReportSection.RUNNING,
+]
+
+_SECTION_LABELS: dict[ReportSection, str] = {
+    ReportSection.NON_IMPL_FIXES: "Non-implementation fixes",
+    ReportSection.IMPL_FIXES: "Implementation fixes",
+    ReportSection.BLOCKED: "Blocked",
+    ReportSection.CLEAN_PASS: "Clean pass",
+    ReportSection.RUNNING: "Running",
 }
 
-_DISPLAY_GROUP_ORDER: list[DisplayCategory] = [
-    DisplayCategory.PENDING,
-    DisplayCategory.FIXED,
-    DisplayCategory.REGRESSED,
-    DisplayCategory.STUCK,
-    DisplayCategory.ERRORED,
-    DisplayCategory.CLEAN_PASS,
-]
+_SECTION_COLORS: dict[ReportSection, str] = {
+    ReportSection.NON_IMPL_FIXES: "rgb(33, 150, 243)",
+    ReportSection.IMPL_FIXES: "rgb(76, 175, 80)",
+    ReportSection.BLOCKED: "rgb(244, 67, 54)",
+    ReportSection.CLEAN_PASS: "rgb(158, 158, 158)",
+    ReportSection.RUNNING: "rgb(3, 169, 244)",
+}
 
 _md = MarkdownIt()
 
+_NON_IMPL_CHANGE_KINDS = frozenset({ChangeKind.FIX_TEST, ChangeKind.IMPROVE_TEST, ChangeKind.FIX_TUTORIAL})
 
-def display_category_of(result: TestMapReduceResult) -> DisplayCategory:
-    """Derive a display category from a result for report grouping/coloring."""
+
+def report_section_of(result: TestMapReduceResult) -> ReportSection:
+    """Derive a report section from a result for report grouping/coloring."""
     if result.errored:
-        return DisplayCategory.ERRORED
+        return ReportSection.BLOCKED
     if result.tests_passing_before is None and result.tests_passing_after is None and not result.changes:
-        return DisplayCategory.PENDING
-    has_succeeded = any(c.status == ChangeStatus.SUCCEEDED for c in result.changes.values())
-    if has_succeeded:
-        if result.tests_passing_before is True and result.tests_passing_after is not True:
-            return DisplayCategory.REGRESSED
-        return DisplayCategory.FIXED
+        return ReportSection.RUNNING
+    if result.changes and all(c.status == ChangeStatus.BLOCKED for c in result.changes.values()):
+        return ReportSection.BLOCKED
+    if any(kind in _NON_IMPL_CHANGE_KINDS for kind in result.changes):
+        return ReportSection.NON_IMPL_FIXES
+    if ChangeKind.FIX_IMPL in result.changes:
+        return ReportSection.IMPL_FIXES
     if not result.changes and result.tests_passing_after is True:
-        return DisplayCategory.CLEAN_PASS
-    return DisplayCategory.STUCK
+        return ReportSection.CLEAN_PASS
+    return ReportSection.BLOCKED
 
 
 def generate_html_report(
@@ -65,12 +75,11 @@ def generate_html_report(
     test_artifacts_dir: Path | None = None,
 ) -> Path:
     """Generate an HTML report summarizing test-mapreduce results."""
-    counts: dict[DisplayCategory, int] = {}
+    counts: dict[ReportSection, int] = {}
     for r in results:
-        cat = display_category_of(r)
-        counts[cat] = counts.get(cat, 0) + 1
+        sec = report_section_of(r)
+        counts[sec] = counts.get(sec, 0) + 1
 
-    # Find artifact directories per agent (may have multiple runs)
     agent_artifact_runs: dict[str, list[tuple[str, str, Path]]] = {}
     if test_artifacts_dir is not None:
         for r in results:
@@ -78,10 +87,8 @@ def generate_html_report(
             if runs:
                 agent_artifact_runs[str(r.agent_name)] = runs
 
-    nav_html = _build_category_nav(counts, len(results))
-    tables_html = _build_grouped_tables(results, agent_artifact_runs)
-    integrator_html = _build_integrator_section(integrator)
-    integrator_nav = _build_integrator_nav(integrator)
+    toc_html = _build_toc_sidebar(counts)
+    tables_html = _build_grouped_tables(results, agent_artifact_runs, integrator)
     panels_html = _build_artifact_panels(agent_artifact_runs)
 
     has_artifacts = bool(agent_artifact_runs)
@@ -107,12 +114,12 @@ def generate_html_report(
   </style>
 </head>
 <body>
-  <h1>Test Map-Reduce Report</h1>
-  <p class="summary">{len(results)} test(s)</p>
-{nav_html}
-{integrator_nav}
+{toc_html}
+  <div class="main-content">
+    <h1>Test Map-Reduce Report</h1>
+    <p class="summary">{len(results)} test(s)</p>
 {tables_html}
-{integrator_html}
+  </div>
 {panels_html}
 {artifact_js}
 </body>
@@ -124,96 +131,67 @@ def generate_html_report(
     return output_path
 
 
-def _build_category_nav(counts: dict[DisplayCategory, int], total: int) -> str:
-    """Build a list of horizontal bars, one per category, each linking to its section."""
-    if total == 0:
+def _build_toc_sidebar(counts: dict[ReportSection, int]) -> str:
+    """Build a sticky left sidebar with links to sections."""
+    if not counts:
         return ""
-    max_count = max(counts.values()) if counts else 1
-    rows = ""
-    for cat in _DISPLAY_GROUP_ORDER:
-        count = counts.get(cat, 0)
+    links = ""
+    for sec in _SECTION_ORDER:
+        count = counts.get(sec, 0)
         if count == 0:
             continue
-        pct = count / max_count * 100
-        color = _DISPLAY_COLORS.get(cat, "rgb(158, 158, 158)")
-        anchor = f"cat-{cat.value}"
-        rows += (
-            f'  <a href="#{anchor}" class="nav-row">'
-            f'<span class="nav-label">{cat.value} ({count})</span>'
-            f'<span class="nav-bar" style="width: {pct:.1f}%; background: {color};"></span>'
-            f"</a>\n"
-        )
-    return f'  <div class="nav">\n{rows}  </div>'
+        label = _SECTION_LABELS.get(sec, sec.value)
+        color = _SECTION_COLORS.get(sec, "rgb(158, 158, 158)")
+        anchor = f"sec-{sec.value}"
+        links += f'    <a href="#{anchor}" class="toc-link" style="color: {color};">{label} ({count})</a>\n'
+    return f'  <div class="toc-sidebar">\n{links}  </div>\n'
 
 
-def _build_integrator_nav(integrator: IntegratorResult | None) -> str:
-    """Build an anchor link to the integrator section, showing agent name and branch."""
-    if integrator is None:
+def _merged_status(result: TestMapReduceResult, integrator: IntegratorResult | None) -> str:
+    """Return a checkmark, X, or empty string for the merged column."""
+    if integrator is None or result.branch_name is None:
         return ""
-    details: list[str] = []
-    if integrator.agent_name is not None:
-        details.append(f"<code>{html.escape(str(integrator.agent_name))}</code>")
-    if integrator.branch_name is not None:
-        details.append(f"<code>{html.escape(integrator.branch_name)}</code>")
-    suffix = f" -- {' '.join(details)}" if details else ""
-    return f'  <p class="integrator-nav"><a href="#integrator">Integrator{suffix}</a></p>\n'
-
-
-def _build_integrator_section(integrator: IntegratorResult | None) -> str:
-    """Build the HTML section for the integrator agent results."""
-    if integrator is None:
-        return ""
-    section = '  <h2 id="integrator" class="integrator-header">Integrator</h2>\n'
-    if integrator.agent_name is not None:
-        escaped_name = html.escape(str(integrator.agent_name))
-        section += f"  <p>Agent: <code>{escaped_name}</code></p>\n"
-    if integrator.branch_name is not None:
-        escaped = html.escape(integrator.branch_name)
-        section += f'  <p class="integrator">Integrated branch: <code>{escaped}</code></p>\n'
-    if integrator.merged:
-        section += "  <p>Merged:</p>\n  <ul>\n"
-        for b in integrator.merged:
-            section += f"    <li><code>{html.escape(b)}</code></li>\n"
-        section += "  </ul>\n"
-    if integrator.failed:
-        section += '  <p style="color: rgb(244, 67, 54);">Failed to integrate:</p>\n  <ul>\n'
-        for b in integrator.failed:
-            section += f"    <li><code>{html.escape(b)}</code></li>\n"
-        section += "  </ul>\n"
-    if integrator.summary_markdown:
-        section += f'  <div class="md">{_render_markdown(integrator.summary_markdown)}</div>\n'
-    return section
-
-
-def _render_markdown(text: str) -> str:
-    """Render markdown text to HTML."""
-    return _md.render(text)
+    if result.branch_name in integrator.squashed_branches or result.branch_name in integrator.impl_priority:
+        return "&#10003;"
+    if result.branch_name in integrator.failed:
+        return "&#10007;"
+    return ""
 
 
 def _build_grouped_tables(
     results: list[TestMapReduceResult],
     agent_artifact_runs: dict[str, list[tuple[str, str, Path]]] | None = None,
+    integrator: IntegratorResult | None = None,
 ) -> str:
-    """Build HTML tables grouped by display category, with CLEAN_PASS last."""
+    """Build HTML tables grouped by report section."""
     agent_artifact_runs = agent_artifact_runs or {}
-    grouped: dict[DisplayCategory, list[TestMapReduceResult]] = {}
+    grouped: dict[ReportSection, list[TestMapReduceResult]] = {}
     for r in results:
-        cat = display_category_of(r)
-        grouped.setdefault(cat, []).append(r)
+        sec = report_section_of(r)
+        grouped.setdefault(sec, []).append(r)
 
     sections = ""
-    for cat in _DISPLAY_GROUP_ORDER:
-        group = grouped.get(cat)
+    for sec in _SECTION_ORDER:
+        group = grouped.get(sec)
         if not group:
             continue
-        color = _DISPLAY_COLORS.get(cat, "rgb(158, 158, 158)")
-        anchor = f"cat-{cat.value}"
-        sections += f'  <h2 id="{anchor}" style="color: {color};">{cat.value} ({len(group)})</h2>\n'
-        sections += "  <table>\n    <thead>\n      <tr>"
-        sections += "<th>Test</th><th>Changes</th><th>Summary</th><th>Agent</th><th>Branch</th>"
+        color = _SECTION_COLORS.get(sec, "rgb(158, 158, 158)")
+        label = _SECTION_LABELS.get(sec, sec.value)
+        anchor = f"sec-{sec.value}"
+
+        if sec == ReportSection.IMPL_FIXES and integrator is not None and integrator.impl_priority:
+            priority_order = {branch: i for i, branch in enumerate(integrator.impl_priority)}
+            group = sorted(
+                group,
+                key=lambda r: priority_order.get(r.branch_name or "", len(priority_order)),
+            )
+
+        sections += f'    <h2 id="{anchor}" style="color: {color};">{label} ({len(group)})</h2>\n'
+        sections += "    <table>\n      <thead>\n        <tr>"
+        sections += "<th>Test</th><th>Changes</th><th>Summary</th><th>Agent</th><th>Branch</th><th>Merged?</th>"
         if agent_artifact_runs:
             sections += "<th>Artifacts</th>"
-        sections += "</tr>\n    </thead>\n    <tbody>\n"
+        sections += "</tr>\n      </thead>\n      <tbody>\n"
         for r in group:
             branch_cell = r.branch_name if r.branch_name else "-"
             summary_html = _render_markdown(r.summary_markdown)
@@ -223,6 +201,7 @@ def _build_grouped_tables(
                 else "-"
             )
             agent_name_str = str(r.agent_name)
+            merged_cell = _merged_status(r, integrator)
             artifact_cell = ""
             if agent_artifact_runs:
                 if agent_name_str in agent_artifact_runs:
@@ -230,18 +209,24 @@ def _build_grouped_tables(
                     artifact_cell = f'<td><button class="artifacts-btn" data-agent="{escaped}">View</button></td>'
                 else:
                     artifact_cell = "<td>-</td>"
-            sections += f"""      <tr>
-        <td>{html.escape(r.test_node_id)}</td>
-        <td>{html.escape(changes_cell)}</td>
-        <td class="md">{summary_html}</td>
-        <td><code>{html.escape(agent_name_str)}</code></td>
-        <td><code>{html.escape(branch_cell)}</code></td>
-        {artifact_cell}
-      </tr>
+            sections += f"""        <tr>
+          <td>{html.escape(r.test_node_id)}</td>
+          <td>{html.escape(changes_cell)}</td>
+          <td class="md">{summary_html}</td>
+          <td><code>{html.escape(agent_name_str)}</code></td>
+          <td><code>{html.escape(branch_cell)}</code></td>
+          <td>{merged_cell}</td>
+          {artifact_cell}
+        </tr>
 """
-        sections += "    </tbody>\n  </table>\n"
+        sections += "      </tbody>\n    </table>\n"
 
     return sections
+
+
+def _render_markdown(text: str) -> str:
+    """Render markdown text to HTML."""
+    return _md.render(text)
 
 
 def _html_report_css() -> str:
@@ -254,17 +239,12 @@ def _html_report_css() -> str:
         "    h1 { color: rgb(51, 51, 51); }\n"
         "    h2 { margin-top: 1.5rem; font-size: 1.1rem; }\n"
         "    .summary { margin-bottom: 0.5rem; color: rgb(102, 102, 102); }\n"
-        "    .nav { margin-bottom: 1.5rem; }\n"
-        "    .nav-row { display: flex; align-items: center; text-decoration: none;"
-        " margin-bottom: 4px; gap: 8px; }\n"
-        "    .nav-row:hover { opacity: 0.8; }\n"
-        "    .nav-label { font-weight: 600; font-size: 0.9rem; min-width: 180px;"
-        " color: rgb(51, 51, 51); }\n"
-        "    .nav-bar { height: 20px; border-radius: 3px; min-width: 4px; }\n"
-        "    .integrator-nav { margin-bottom: 1rem; }\n"
-        "    .integrator-nav a { color: rgb(33, 150, 243); font-weight: 600;"
-        " text-decoration: none; }\n"
-        "    .integrator-nav a:hover { text-decoration: underline; }\n"
+        "    .toc-sidebar { position: sticky; top: 2rem; width: 200px; float: left;"
+        " padding-right: 1rem; }\n"
+        "    .toc-link { display: block; font-weight: 600; font-size: 0.9rem;"
+        " text-decoration: none; margin-bottom: 0.5rem; }\n"
+        "    .toc-link:hover { text-decoration: underline; }\n"
+        "    .main-content { margin-left: 220px; }\n"
         "    table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; }\n"
         "    th, td { border: 1px solid rgb(221, 221, 221); padding: 8px 12px; text-align: left; }\n"
         "    th { background: rgb(245, 245, 245); font-weight: 600; }\n"
@@ -273,7 +253,6 @@ def _html_report_css() -> str:
         "    td.md p:first-child { margin-top: 0; }\n"
         "    td.md p:last-child { margin-bottom: 0; }\n"
         "    code { background: rgb(240, 240, 240); padding: 2px 4px; border-radius: 3px; font-size: 0.9em; }\n"
-        "    .integrator { color: rgb(33, 150, 243); font-weight: 600; }\n"
         "    .artifacts-btn { cursor: pointer; padding: 2px 8px; font-size: 0.85em;"
         " border: 1px solid rgb(180, 180, 180); border-radius: 3px; background: rgb(250, 250, 250); }\n"
         "    .artifacts-btn:hover { background: rgb(235, 235, 235); }"

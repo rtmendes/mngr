@@ -880,17 +880,16 @@ def read_integrator_result(
         data = json.loads(raw)
         return IntegratorResult(
             agent_name=agent_detail.name,
-            merged=tuple(data.get("merged", ())),
+            squashed_branches=tuple(data.get("squashed_branches", ())),
+            impl_priority=tuple(data.get("impl_priority", ())),
             failed=tuple(data.get("failed", ())),
             branch_name=branch_name,
-            summary_markdown=data.get("summary_markdown", data.get("summary", "")),
         )
     except (HostError, OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
         logger.warning("Failed to read integrator result: {}", exc)
         return IntegratorResult(
             agent_name=agent_detail.name,
             branch_name=branch_name,
-            summary_markdown=f"Failed to read integrator result: {exc}",
         )
 
 
@@ -1126,11 +1125,11 @@ branch with a flat list of commits that is easy to review.
    a conflict for a particular branch, skip it and record it as failed.
 
 5. Write the result to $MNG_AGENT_STATE_DIR/plugin/{PLUGIN_NAME}/result.json with:
-{{"merged": ["branch1", "branch2"], "failed": ["branch3"], "summary_markdown": "Integrated 2 of 3 branches."}}
+{{"squashed_branches": ["branch1", "branch2"], "impl_priority": ["branch3"], "failed": ["branch4"]}}
 
-- merged: list of branch names that were successfully integrated
+- squashed_branches: list of branch names whose test/doc commits were squashed
+- impl_priority: list of impl branch names in priority order (highest first)
 - failed: list of branch names that could not be integrated
-- summary_markdown: overall markdown summary
 """
 
     logger.info("Launching integrator agent '{}' to merge {} branches", agent_name, len(fix_branches))

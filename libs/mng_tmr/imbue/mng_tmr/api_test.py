@@ -35,10 +35,10 @@ from imbue.mng_tmr.api import should_pull_changes
 from imbue.mng_tmr.data_types import Change
 from imbue.mng_tmr.data_types import ChangeKind
 from imbue.mng_tmr.data_types import ChangeStatus
-from imbue.mng_tmr.data_types import DisplayCategory
+from imbue.mng_tmr.data_types import ReportSection
 from imbue.mng_tmr.data_types import TestAgentInfo
 from imbue.mng_tmr.data_types import TmrLaunchConfig
-from imbue.mng_tmr.report import display_category_of
+from imbue.mng_tmr.report import report_section_of
 from imbue.mng_tmr.testing import BLOCKED_FIX
 from imbue.mng_tmr.testing import FAILED_FIX
 from imbue.mng_tmr.testing import SUCCEEDED_FIX
@@ -289,8 +289,8 @@ def test_build_current_results_pending_agents() -> None:
     ]
     results = build_current_results(agents=agents, final_details={}, timed_out_ids=set(), hosts={})
     assert len(results) == 2
-    assert display_category_of(results[0]) == DisplayCategory.PENDING
-    assert display_category_of(results[1]) == DisplayCategory.PENDING
+    assert report_section_of(results[0]) == ReportSection.RUNNING
+    assert report_section_of(results[1]) == ReportSection.RUNNING
     assert "still running" in results[0].summary_markdown
 
 
@@ -308,7 +308,7 @@ def test_build_current_results_timed_out_agents() -> None:
     results = build_current_results(agents=agents, final_details={}, timed_out_ids={str(agent_id)}, hosts={})
     assert len(results) == 1
     assert results[0].errored is True
-    assert display_category_of(results[0]) == DisplayCategory.ERRORED
+    assert report_section_of(results[0]) == ReportSection.BLOCKED
 
 
 # --- read_agent_result / read_integrator_result tests ---
@@ -394,14 +394,14 @@ def test_read_integrator_result_parses_merged_failed(localhost: OnlineHostInterf
     _write_result_json(
         localhost.host_dir,
         agent_id,
-        '{"merged": ["branch-a", "branch-b"], "failed": ["branch-c"], "summary_markdown": "Merged 2 of 3"}',
+        '{"squashed_branches": ["branch-a", "branch-b"], "impl_priority": ["branch-d"], "failed": ["branch-c"]}',
     )
     detail = _make_agent_detail(agent_id, localhost.host_dir)
     result = read_integrator_result(detail, localhost, "mng-tmr/integrated")
-    assert result.merged == ("branch-a", "branch-b")
+    assert result.squashed_branches == ("branch-a", "branch-b")
+    assert result.impl_priority == ("branch-d",)
     assert result.failed == ("branch-c",)
     assert result.branch_name == "mng-tmr/integrated"
-    assert result.summary_markdown == "Merged 2 of 3"
 
 
 def test_read_integrator_result_missing_file(localhost: OnlineHostInterface) -> None:
@@ -409,7 +409,9 @@ def test_read_integrator_result_missing_file(localhost: OnlineHostInterface) -> 
     detail = _make_agent_detail(agent_id, localhost.host_dir)
     result = read_integrator_result(detail, localhost, "mng-tmr/integrated")
     assert result.branch_name == "mng-tmr/integrated"
-    assert "Failed to read" in result.summary_markdown
+    assert result.squashed_branches == ()
+    assert result.impl_priority == ()
+    assert result.failed == ()
 
 
 # --- _launch_agents_up_to_limit tests ---

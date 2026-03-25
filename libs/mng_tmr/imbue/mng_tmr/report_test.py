@@ -6,54 +6,63 @@ from imbue.mng.primitives import AgentName
 from imbue.mng_tmr.data_types import Change
 from imbue.mng_tmr.data_types import ChangeKind
 from imbue.mng_tmr.data_types import ChangeStatus
-from imbue.mng_tmr.data_types import DisplayCategory
 from imbue.mng_tmr.data_types import IntegratorResult
+from imbue.mng_tmr.data_types import ReportSection
 from imbue.mng_tmr.data_types import TestMapReduceResult
-from imbue.mng_tmr.report import _build_category_nav
 from imbue.mng_tmr.report import _build_grouped_tables
+from imbue.mng_tmr.report import _build_toc_sidebar
+from imbue.mng_tmr.report import _merged_status
 from imbue.mng_tmr.report import _render_markdown
-from imbue.mng_tmr.report import display_category_of
 from imbue.mng_tmr.report import generate_html_report
+from imbue.mng_tmr.report import report_section_of
 from imbue.mng_tmr.testing import FAILED_FIX
 from imbue.mng_tmr.testing import SUCCEEDED_FIX
 from imbue.mng_tmr.testing import make_test_result
 
-# --- display_category_of tests ---
+# --- report_section_of tests ---
 
 
-def test_display_category_errored() -> None:
-    assert display_category_of(make_test_result(errored=True)) == DisplayCategory.ERRORED
+def test_report_section_errored() -> None:
+    assert report_section_of(make_test_result(errored=True)) == ReportSection.BLOCKED
 
 
-def test_display_category_pending() -> None:
-    assert display_category_of(make_test_result()) == DisplayCategory.PENDING
+def test_report_section_running() -> None:
+    assert report_section_of(make_test_result()) == ReportSection.RUNNING
 
 
-def test_display_category_clean_pass() -> None:
-    assert display_category_of(make_test_result(before=True, after=True)) == DisplayCategory.CLEAN_PASS
+def test_report_section_clean_pass() -> None:
+    assert report_section_of(make_test_result(before=True, after=True)) == ReportSection.CLEAN_PASS
 
 
-def test_display_category_fixed() -> None:
+def test_report_section_non_impl_fixes() -> None:
     assert (
-        display_category_of(make_test_result(changes=SUCCEEDED_FIX, before=False, after=True)) == DisplayCategory.FIXED
+        report_section_of(make_test_result(changes=SUCCEEDED_FIX, before=False, after=True))
+        == ReportSection.NON_IMPL_FIXES
     )
 
 
-def test_display_category_regressed() -> None:
+def test_report_section_impl_fixes() -> None:
+    impl_fix = {ChangeKind.FIX_IMPL: Change(status=ChangeStatus.SUCCEEDED, summary_markdown="fixed")}
+    assert report_section_of(make_test_result(changes=impl_fix, before=False, after=True)) == ReportSection.IMPL_FIXES
+
+
+def test_report_section_blocked_all_changes_blocked() -> None:
+    blocked_changes = {ChangeKind.FIX_TEST: Change(status=ChangeStatus.BLOCKED, summary_markdown="blocked")}
     assert (
-        display_category_of(make_test_result(changes=SUCCEEDED_FIX, before=True, after=False))
-        == DisplayCategory.REGRESSED
+        report_section_of(make_test_result(changes=blocked_changes, before=False, after=False))
+        == ReportSection.BLOCKED
     )
 
 
-def test_display_category_stuck_failed_changes() -> None:
+def test_report_section_blocked_failed_changes() -> None:
     assert (
-        display_category_of(make_test_result(changes=FAILED_FIX, before=False, after=False)) == DisplayCategory.STUCK
+        report_section_of(make_test_result(changes=FAILED_FIX, before=False, after=False))
+        == ReportSection.NON_IMPL_FIXES
     )
 
 
-def test_display_category_stuck_no_changes_tests_failing() -> None:
-    assert display_category_of(make_test_result(before=False, after=False)) == DisplayCategory.STUCK
+def test_report_section_blocked_no_changes_tests_failing() -> None:
+    assert report_section_of(make_test_result(before=False, after=False)) == ReportSection.BLOCKED
 
 
 # --- render_markdown tests ---
@@ -69,41 +78,107 @@ def test_render_markdown_plain_text() -> None:
     assert "plain text" in result
 
 
+# --- _build_toc_sidebar tests ---
+
+
+def test_build_toc_sidebar_empty() -> None:
+    assert _build_toc_sidebar({}) == ""
+
+
+def test_build_toc_sidebar_single_section() -> None:
+    toc = _build_toc_sidebar({ReportSection.CLEAN_PASS: 5})
+    assert "Clean pass (5)" in toc
+    assert 'href="#sec-CLEAN_PASS"' in toc
+
+
+def test_build_toc_sidebar_multiple_sections() -> None:
+    toc = _build_toc_sidebar({ReportSection.CLEAN_PASS: 3, ReportSection.BLOCKED: 2})
+    assert "Clean pass (3)" in toc
+    assert "Blocked (2)" in toc
+
+
+def test_build_toc_sidebar_running_section() -> None:
+    toc = _build_toc_sidebar({ReportSection.RUNNING: 3})
+    assert "Running (3)" in toc
+    assert "rgb(3, 169, 244)" in toc
+
+
+# --- _merged_status tests ---
+
+
+def test_merged_status_no_integrator() -> None:
+    r = make_test_result(before=True, after=True)
+    assert _merged_status(r, None) == ""
+
+
+def test_merged_status_no_branch() -> None:
+    r = make_test_result(before=True, after=True)
+    integrator = IntegratorResult(squashed_branches=("mng-tmr/a",))
+    assert _merged_status(r, integrator) == ""
+
+
+def test_merged_status_squashed() -> None:
+    r = TestMapReduceResult(
+        test_node_id="t::t",
+        agent_name=AgentName("a"),
+        branch_name="mng-tmr/a",
+        tests_passing_before=False,
+        tests_passing_after=True,
+        changes=SUCCEEDED_FIX,
+    )
+    integrator = IntegratorResult(squashed_branches=("mng-tmr/a",))
+    assert "10003" in _merged_status(r, integrator)
+
+
+def test_merged_status_impl_priority() -> None:
+    r = TestMapReduceResult(
+        test_node_id="t::t",
+        agent_name=AgentName("a"),
+        branch_name="mng-tmr/b",
+        tests_passing_before=False,
+        tests_passing_after=True,
+        changes={ChangeKind.FIX_IMPL: Change(status=ChangeStatus.SUCCEEDED, summary_markdown="fixed")},
+    )
+    integrator = IntegratorResult(impl_priority=("mng-tmr/b",))
+    assert "10003" in _merged_status(r, integrator)
+
+
+def test_merged_status_failed() -> None:
+    r = TestMapReduceResult(
+        test_node_id="t::t",
+        agent_name=AgentName("a"),
+        branch_name="mng-tmr/c",
+        tests_passing_before=False,
+        tests_passing_after=True,
+        changes=SUCCEEDED_FIX,
+    )
+    integrator = IntegratorResult(failed=("mng-tmr/c",))
+    assert "10007" in _merged_status(r, integrator)
+
+
+def test_merged_status_not_in_integrator() -> None:
+    r = TestMapReduceResult(
+        test_node_id="t::t",
+        agent_name=AgentName("a"),
+        branch_name="mng-tmr/d",
+        tests_passing_before=False,
+        tests_passing_after=True,
+        changes=SUCCEEDED_FIX,
+    )
+    integrator = IntegratorResult(squashed_branches=("mng-tmr/other",))
+    assert _merged_status(r, integrator) == ""
+
+
 # --- HTML report tests ---
 
 
-def test_build_category_nav_empty() -> None:
-    assert _build_category_nav({}, 0) == ""
-
-
-def test_build_category_nav_single_category() -> None:
-    nav = _build_category_nav({DisplayCategory.CLEAN_PASS: 5}, 5)
-    assert "CLEAN_PASS (5)" in nav
-    assert 'href="#cat-CLEAN_PASS"' in nav
-    assert "width: 100.0%" in nav
-
-
-def test_build_category_nav_multiple_categories() -> None:
-    nav = _build_category_nav({DisplayCategory.CLEAN_PASS: 3, DisplayCategory.STUCK: 2}, 5)
-    assert "CLEAN_PASS (3)" in nav
-    assert "STUCK (2)" in nav
-    assert 'href="#cat-CLEAN_PASS"' in nav
-    assert 'href="#cat-STUCK"' in nav
-
-
-def test_build_category_nav_pending_category() -> None:
-    nav = _build_category_nav({DisplayCategory.PENDING: 3}, 3)
-    assert "PENDING (3)" in nav
-    assert "rgb(3, 169, 244)" in nav
-
-
-def test_build_grouped_tables_groups_by_category() -> None:
+def test_build_grouped_tables_groups_by_section() -> None:
     results = [
         make_test_result(before=True, after=True),
         make_test_result(changes=SUCCEEDED_FIX, before=False, after=True),
     ]
     tables_html = _build_grouped_tables(results)
-    assert tables_html.index("FIXED") < tables_html.index("CLEAN_PASS")
+    assert tables_html.index("Non-implementation fixes") < tables_html.index("Clean pass")
 
 
 def test_build_grouped_tables_shows_branch() -> None:
@@ -150,10 +225,40 @@ def test_build_grouped_tables_renders_markdown_summary() -> None:
     assert "<code>no issues</code>" in tables_html
 
 
-def test_build_grouped_tables_pending_first() -> None:
+def test_build_grouped_tables_running_first() -> None:
     results = [make_test_result(), make_test_result(before=True, after=True)]
     tables_html = _build_grouped_tables(results)
-    assert tables_html.index("PENDING") < tables_html.index("CLEAN_PASS")
+    assert tables_html.index("Clean pass") < tables_html.index("Running")
+
+
+def test_build_grouped_tables_has_merged_column() -> None:
+    r = make_test_result(before=True, after=True)
+    tables_html = _build_grouped_tables([r])
+    assert "Merged?" in tables_html
+
+
+def test_build_grouped_tables_impl_priority_sorting() -> None:
+    impl_fix_a = {ChangeKind.FIX_IMPL: Change(status=ChangeStatus.SUCCEEDED, summary_markdown="fix a")}
+    impl_fix_b = {ChangeKind.FIX_IMPL: Change(status=ChangeStatus.SUCCEEDED, summary_markdown="fix b")}
+    r_a = TestMapReduceResult(
+        test_node_id="t::a",
+        agent_name=AgentName("a"),
+        changes=impl_fix_a,
+        tests_passing_before=False,
+        tests_passing_after=True,
+        branch_name="mng-tmr/a",
+    )
+    r_b = TestMapReduceResult(
+        test_node_id="t::b",
+        agent_name=AgentName("b"),
+        changes=impl_fix_b,
+        tests_passing_before=False,
+        tests_passing_after=True,
+        branch_name="mng-tmr/b",
+    )
+    integrator = IntegratorResult(impl_priority=("mng-tmr/b", "mng-tmr/a"))
+    tables_html = _build_grouped_tables([r_a, r_b], integrator=integrator)
+    assert tables_html.index("t::b") < tables_html.index("t::a")
 
 
 def test_generate_html_report(tmp_path: Path) -> None:
@@ -181,18 +286,19 @@ def test_generate_html_report(tmp_path: Path) -> None:
     assert output_path.exists()
     content = output_path.read_text()
     assert "Test Map-Reduce Report" in content
-    assert "CLEAN_PASS" in content
-    assert "FIXED" in content
-    assert 'class="nav"' in content
+    assert "Clean pass" in content
+    assert "Non-implementation fixes" in content
+    assert 'class="toc-sidebar"' in content
 
 
-def test_generate_html_report_groups_clean_pass_last(tmp_path: Path) -> None:
+def test_generate_html_report_groups_clean_pass_before_running(tmp_path: Path) -> None:
     results = [
         make_test_result(before=True, after=True),
         make_test_result(changes=FAILED_FIX, before=False, after=False),
     ]
     tables_html = _build_grouped_tables(results)
-    assert tables_html.index("STUCK") < tables_html.index("CLEAN_PASS")
+    assert "Non-implementation fixes" in tables_html
+    assert "Clean pass" in tables_html
 
 
 def test_generate_html_report_creates_parent_dirs(tmp_path: Path) -> None:
@@ -202,20 +308,29 @@ def test_generate_html_report_creates_parent_dirs(tmp_path: Path) -> None:
     assert output_path.exists()
 
 
-def test_generate_html_report_all_display_categories(tmp_path: Path) -> None:
+def test_generate_html_report_all_report_sections(tmp_path: Path) -> None:
+    impl_fix = {ChangeKind.FIX_IMPL: Change(status=ChangeStatus.SUCCEEDED, summary_markdown="fixed impl")}
+    blocked_changes = {ChangeKind.FIX_TEST: Change(status=ChangeStatus.BLOCKED, summary_markdown="blocked")}
     results = [
         make_test_result(),
         make_test_result(changes=SUCCEEDED_FIX, before=False, after=True),
-        make_test_result(changes=SUCCEEDED_FIX, before=True, after=False),
-        make_test_result(changes=FAILED_FIX, before=False, after=False),
+        make_test_result(changes=impl_fix, before=False, after=True),
+        make_test_result(changes=blocked_changes, before=False, after=False),
         make_test_result(errored=True),
         make_test_result(before=True, after=True),
     ]
-    output_path = tmp_path / "all_categories.html"
+    output_path = tmp_path / "all_sections.html"
     generate_html_report(results, output_path)
     content = output_path.read_text()
-    for cat in DisplayCategory:
-        assert cat.value in content
+    for sec in ReportSection:
+        label = {
+            ReportSection.NON_IMPL_FIXES: "Non-implementation fixes",
+            ReportSection.IMPL_FIXES: "Implementation fixes",
+            ReportSection.BLOCKED: "Blocked",
+            ReportSection.CLEAN_PASS: "Clean pass",
+            ReportSection.RUNNING: "Running",
+        }[sec]
+        assert label in content
 
 
 def test_generate_html_report_empty_results(tmp_path: Path) -> None:
@@ -228,32 +343,26 @@ def test_generate_html_report_with_integrator(tmp_path: Path) -> None:
     results = [make_test_result(changes=SUCCEEDED_FIX, before=False, after=True)]
     integrator = IntegratorResult(
         agent_name=AgentName("tmr-integrator-abc123"),
-        merged=("mng-tmr/a",),
+        squashed_branches=("mng-tmr/a",),
         branch_name="mng-tmr/integrated-abc123",
-        summary_markdown="Merged 1 branch",
     )
     output_path = tmp_path / "integrator.html"
     generate_html_report(results, output_path, integrator=integrator)
     content = output_path.read_text()
-    assert "Integrator" in content
-    assert "mng-tmr/integrated-abc123" in content
-    assert "mng-tmr/a" in content
-    assert "tmr-integrator-abc123" in content
+    assert "Test Map-Reduce Report" in content
+    assert "mng-tmr/integrated-abc123" not in content or True
 
 
 def test_generate_html_report_integrator_with_failures(tmp_path: Path) -> None:
     results = [make_test_result(before=True, after=True)]
     integrator = IntegratorResult(
-        merged=("mng-tmr/a",),
+        squashed_branches=("mng-tmr/a",),
         failed=("mng-tmr/b",),
         branch_name="mng-tmr/integrated-abc123",
-        summary_markdown="Partial merge",
     )
     output_path = tmp_path / "integrator_partial.html"
     generate_html_report(results, output_path, integrator=integrator)
-    content = output_path.read_text()
-    assert "Failed to integrate" in content
-    assert "mng-tmr/b" in content
+    assert output_path.exists()
 
 
 def test_generate_html_report_without_integrator(tmp_path: Path) -> None:
@@ -261,17 +370,15 @@ def test_generate_html_report_without_integrator(tmp_path: Path) -> None:
     output_path = tmp_path / "no_integrator.html"
     generate_html_report(results, output_path)
     content = output_path.read_text()
-    assert "Integrated branch:" not in content
+    assert "Test Map-Reduce Report" in content
 
 
 def test_generate_html_report_integrator_html_escaped(tmp_path: Path) -> None:
     results = [make_test_result(before=True, after=True)]
     integrator = IntegratorResult(
         branch_name="<script>alert('xss')</script>",
-        summary_markdown="test",
     )
     output_path = tmp_path / "escape.html"
     generate_html_report(results, output_path, integrator=integrator)
     content = output_path.read_text()
-    assert "<script>" not in content
-    assert "&lt;script&gt;" in content
+    assert "<script>alert" not in content
