@@ -757,7 +757,9 @@ def read_integrator_result(
         return IntegratorResult(
             agent_name=agent_detail.name,
             squashed_branches=tuple(data.get("squashed_branches", ())),
+            squashed_commit_hash=data.get("squashed_commit_hash"),
             impl_priority=tuple(data.get("impl_priority", ())),
+            impl_commit_hashes=data.get("impl_commit_hashes", {}),
             failed=tuple(data.get("failed", ())),
             branch_name=branch_name,
         )

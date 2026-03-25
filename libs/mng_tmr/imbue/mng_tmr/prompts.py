@@ -174,10 +174,15 @@ branch with a flat list of commits that is easy to review.
 4. If a cherry-pick has conflicts, try to resolve them. If you cannot resolve
    a conflict for a particular branch, skip it and record it as failed.
 
-5. Write the result to $MNG_AGENT_STATE_DIR/plugin/{PLUGIN_NAME}/result.json with:
-{{"squashed_branches": ["branch1", "branch2"], "impl_priority": ["branch3"], "failed": ["branch4"]}}
+5. After cherry-picking, record the commit hashes using `git rev-parse HEAD` after
+   each step (the squashed commit and each impl commit).
+
+6. Write the result to $MNG_AGENT_STATE_DIR/plugin/{PLUGIN_NAME}/result.json with:
+{{"squashed_branches": ["branch1", "branch2"], "squashed_commit_hash": "abc1234", "impl_priority": ["branch3"], "impl_commit_hashes": {{"branch3": "def5678"}}, "failed": ["branch4"]}}
 
 - squashed_branches: list of branch names whose test/doc commits were squashed
+- squashed_commit_hash: the commit hash of the squashed test/doc commit (short hash is fine)
 - impl_priority: list of impl branch names in priority order (highest first)
+- impl_commit_hashes: mapping of each impl branch name to its commit hash on the integrated branch
 - failed: list of branch names that could not be integrated
 """

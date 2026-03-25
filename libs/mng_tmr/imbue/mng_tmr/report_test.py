@@ -140,8 +140,10 @@ def test_merged_status_impl_priority() -> None:
         tests_passing_after=True,
         changes={ChangeKind.FIX_IMPL: Change(status=ChangeStatus.SUCCEEDED, summary_markdown="fixed")},
     )
-    integrator = IntegratorResult(impl_priority=("mng-tmr/b",))
-    assert "10003" in _merged_status(r, integrator)
+    integrator = IntegratorResult(impl_priority=("mng-tmr/b",), impl_commit_hashes={"mng-tmr/b": "abc123def"})
+    status = _merged_status(r, integrator)
+    assert "abc123def" in status
+    assert "<code>" in status
 
 
 def test_merged_status_failed() -> None:

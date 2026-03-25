@@ -112,7 +112,11 @@ class IntegratorResult(FrozenModel):
 
     agent_name: AgentName | None = Field(default=None, description="Name of the integrator agent")
     squashed_branches: tuple[str, ...] = Field(default=(), description="Branches in the squashed non-impl commit")
+    squashed_commit_hash: str | None = Field(default=None, description="Commit hash of the squashed non-impl commit")
     impl_priority: tuple[str, ...] = Field(default=(), description="Impl branches in priority order, highest first")
+    impl_commit_hashes: dict[str, str] = Field(
+        default_factory=dict, description="Mapping of impl branch name to its commit hash on the integrated branch"
+    )
     failed: tuple[str, ...] = Field(default=(), description="Branch names that could not be integrated")
     branch_name: str | None = Field(default=None, description="Integrated branch name, if any merges succeeded")
 

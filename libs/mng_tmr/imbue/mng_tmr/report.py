@@ -148,12 +148,18 @@ def _build_toc_sidebar(counts: dict[ReportSection, int]) -> str:
 
 
 def _merged_status(result: TestMapReduceResult, integrator: IntegratorResult | None) -> str:
-    """Return a checkmark, X, or empty string for the merged column."""
+    """Return merged status: commit hash for impl, checkmark for squashed, X for failed."""
     if integrator is None or result.branch_name is None:
         return ""
-    if result.branch_name in integrator.squashed_branches or result.branch_name in integrator.impl_priority:
+    branch = result.branch_name
+    if branch in integrator.impl_commit_hashes:
+        commit_hash = html.escape(integrator.impl_commit_hashes[branch][:10])
+        return f"<code>{commit_hash}</code>"
+    if branch in set(integrator.squashed_branches):
         return "&#10003;"
-    if result.branch_name in integrator.failed:
+    if branch in set(integrator.impl_priority) and branch not in integrator.impl_commit_hashes:
+        return "&#10003;"
+    if branch in set(integrator.failed):
         return "&#10007;"
     return ""
 
@@ -188,6 +194,11 @@ def _build_grouped_tables(
 
         is_running = sec == ReportSection.RUNNING
         sections += f'    <h2 id="{anchor}" style="color: {color};">{label} ({len(group)})</h2>\n'
+
+        # Show squashed commit hash for the non-impl fixes section
+        if sec == ReportSection.NON_IMPL_FIXES and integrator is not None and integrator.squashed_commit_hash:
+            escaped_hash = html.escape(integrator.squashed_commit_hash[:10])
+            sections += f'    <p class="squashed-hash">Squashed commit: <code>{escaped_hash}</code></p>\n'
         sections += "    <table>\n      <thead>\n        <tr>"
         if is_running:
             sections += "<th>Test</th><th>Agent</th>"

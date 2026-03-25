@@ -394,12 +394,15 @@ def test_read_integrator_result_parses_merged_failed(localhost: OnlineHostInterf
     _write_result_json(
         localhost.host_dir,
         agent_id,
-        '{"squashed_branches": ["branch-a", "branch-b"], "impl_priority": ["branch-d"], "failed": ["branch-c"]}',
+        '{"squashed_branches": ["branch-a", "branch-b"], "squashed_commit_hash": "abc1234",'
+        ' "impl_priority": ["branch-d"], "impl_commit_hashes": {"branch-d": "def5678"}, "failed": ["branch-c"]}',
     )
     detail = _make_agent_detail(agent_id, localhost.host_dir)
     result = read_integrator_result(detail, localhost, "mng-tmr/integrated")
     assert result.squashed_branches == ("branch-a", "branch-b")
+    assert result.squashed_commit_hash == "abc1234"
     assert result.impl_priority == ("branch-d",)
+    assert result.impl_commit_hashes == {"branch-d": "def5678"}
     assert result.failed == ("branch-c",)
     assert result.branch_name == "mng-tmr/integrated"
 
