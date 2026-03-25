@@ -190,6 +190,14 @@ If you make improvements, record a change under the key "IMPROVE_TEST". If you
 identify an improvement that needs a larger-scale intervention, use status
 "BLOCKED". If no improvements are needed, leave the changes object empty.
 
+# Examining the CLI transcript
+
+After each test run, examine the generated CLI transcript (in the test output
+directory). Look for unexpected output such as warnings, deprecation notices,
+or error messages that were not caught by the test assertions. If you find
+something concerning, consider whether the test should assert on it, or whether
+the implementation should be fixed to avoid the warning.
+
 # Inspecting tutorial blocks
 
 Each of those tests are also associated with a tutorial block in
@@ -1002,6 +1010,24 @@ def _collect_agent_results(
         detail = final_details.get(agent_id_str)
 
         if detail is None:
+            # Agent may have been detected as done via direct result file check
+            # (without going through list_agents). Try reading result directly.
+            if agent_id_str in hosts:
+                direct_result = try_read_agent_result(AgentId(agent_id_str), hosts[agent_id_str])
+                if direct_result is not None:
+                    results.append(
+                        TestMapReduceResult(
+                            test_node_id=agent_info.test_node_id,
+                            agent_name=agent_info.agent_name,
+                            changes=direct_result.changes,
+                            errored=direct_result.errored,
+                            tests_passing_before=direct_result.tests_passing_before,
+                            tests_passing_after=direct_result.tests_passing_after,
+                            summary_markdown=direct_result.summary_markdown,
+                            test_runs=direct_result.test_runs,
+                        )
+                    )
+                    continue
             results.append(
                 TestMapReduceResult(
                     test_node_id=agent_info.test_node_id,
