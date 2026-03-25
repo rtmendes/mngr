@@ -69,14 +69,6 @@ After the loop ends:
 6. Only after ALL answers have been collected, revert the rejected commits. Run `git revert --no-edit {hash}` for each, in reverse chronological order (newest first) to avoid conflicts.
 7. Report the final summary: how many fixes kept (noting which were auto-accepted), how many reverted. Note how many total issues were identified (from `.reviewer/outputs/autofix/issues/*.jsonl` files).
 
-### Phase 5: Create Verification Marker
-
-8. After all review and reverts are complete, create the verification marker so the stop hook knows this commit has been verified:
-
-- Get the current HEAD hash: `git rev-parse HEAD`
-- Get the current timestamp: `date -u +%Y-%m-%dT%H:%M:%SZ`
-- Use the Write tool, without checking if the directory exists, to create `.reviewer/outputs/autofix/verified.md` with content `Verified clean at {timestamp}`.
-
 # RUN TIME OVERRIDE
 
 For *this particular run* of the `autofix` command, follow these adjustments from the user to the normal process:
