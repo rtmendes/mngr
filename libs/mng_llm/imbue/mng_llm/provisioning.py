@@ -25,7 +25,7 @@ from imbue.mng_llm import resources as llm_resources
 from imbue.mng_llm.data_types import ProvisioningSettings
 
 # Supporting service shell scripts to provision to $MNG_AGENT_STATE_DIR/commands/.
-_SERVICE_SCRIPT_FILES: Final[tuple[str, ...]] = ("chat.sh",)
+_SERVICE_SCRIPT_FILES: Final[tuple[str, ...]] = ("chat.sh", "conversation_db.py")
 
 # Scripts provisioned to $MNG_AGENT_STATE_DIR/commands/ttyd/ for URL-arg dispatch.
 # Tuples of (resource filename, target filename under commands/ttyd/).

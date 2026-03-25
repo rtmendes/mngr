@@ -86,6 +86,10 @@ class ChatScriptEnv:
         self.chat_script.write_text(load_llm_resource("chat.sh"))
         os.chmod(self.chat_script, 0o755)
 
+        conv_db_path = commands_dir / "conversation_db.py"
+        conv_db_path.write_text(load_llm_resource("conversation_db.py"))
+        os.chmod(conv_db_path, 0o755)
+
         mng_log_path = commands_dir / "mng_log.sh"
         mng_log_path.write_text(load_resource_script("mng_log.sh"))
         os.chmod(mng_log_path, 0o755)
