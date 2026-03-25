@@ -350,7 +350,7 @@ def test_generate_html_report_with_integrator(tmp_path: Path) -> None:
     generate_html_report(results, output_path, integrator=integrator)
     content = output_path.read_text()
     assert "Test Map-Reduce Report" in content
-    assert "mng-tmr/integrated-abc123" not in content or True
+    assert "Merged?" in content
 
 
 def test_generate_html_report_integrator_with_failures(tmp_path: Path) -> None:

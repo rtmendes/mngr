@@ -344,7 +344,7 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
 
     # Step 5: Generate a shared run name prefix for e2e test output.
     # Agents append _try_1, _try_2 etc. for each test run.
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H:%M:%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
     e2e_run_prefix = f"{timestamp}_tmr"
     testing_flags = testing_flags + ("--mng-e2e-run-name", e2e_run_prefix)
 
