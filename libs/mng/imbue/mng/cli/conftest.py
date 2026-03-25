@@ -250,15 +250,15 @@ def create_test_agent(
 
 @pytest.fixture
 def editor_recovery_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Set up a fake home directory and EDITOR for editor recovery tests.
+    """Provide a temporary recovery directory and EDITOR for editor recovery tests.
 
-    Patches Path.home() to return tmp_path and sets EDITOR=true so
-    EditorSession.create() works without a real editor. Returns the
-    tmp_path so tests can locate recovery files under it.
+    Sets EDITOR=true so EditorSession.create() works without a real editor.
+    Returns a recovery directory under tmp_path that tests pass to
+    _rescue_editor_content / _editor_cleanup_scope via the recovery_dir parameter.
     """
     monkeypatch.setenv("EDITOR", "true")
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    return tmp_path
+    recovery_dir = tmp_path / ".mng"
+    return recovery_dir
 
 
 # =============================================================================

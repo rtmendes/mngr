@@ -726,7 +726,10 @@ def _on_editor_exit() -> None:
 
 
 @contextmanager
-def _editor_cleanup_scope(editor_session: EditorSession | None) -> Iterator[None]:
+def _editor_cleanup_scope(
+    editor_session: EditorSession | None,
+    recovery_dir: Path | None = None,
+) -> Iterator[None]:
     """Ensure editor session cleanup and logging suppressor restoration on exit.
 
     On failure, saves any editor content to a recovery file before cleanup so
@@ -742,13 +745,16 @@ def _editor_cleanup_scope(editor_session: EditorSession | None) -> Iterator[None
             # If exiting due to an exception, rescue the editor content before
             # cleanup deletes the temp file
             if sys.exc_info()[0] is not None:
-                _rescue_editor_content(editor_session)
+                _rescue_editor_content(editor_session, recovery_dir=recovery_dir)
             editor_session.cleanup()
         if LoggingSuppressor.is_suppressed():
             LoggingSuppressor.disable_and_replay(clear_screen=True)
 
 
-def _rescue_editor_content(editor_session: EditorSession) -> None:
+def _rescue_editor_content(
+    editor_session: EditorSession,
+    recovery_dir: Path | None = None,
+) -> None:
     """Save editor content to a recovery file so the user does not lose their work.
 
     Reads the content from the editor's temp file (which still exists before cleanup)
@@ -768,9 +774,9 @@ def _rescue_editor_content(editor_session: EditorSession) -> None:
         return
 
     # Save to ~/.mng/recovered-message.txt
-    recovery_dir = Path.home() / ".mng"
-    recovery_dir.mkdir(parents=True, exist_ok=True)
-    recovery_path = recovery_dir / _RECOVERED_MESSAGE_FILENAME
+    resolved_recovery_dir = recovery_dir if recovery_dir is not None else Path.home() / ".mng"
+    resolved_recovery_dir.mkdir(parents=True, exist_ok=True)
+    recovery_path = resolved_recovery_dir / _RECOVERED_MESSAGE_FILENAME
 
     try:
         recovery_path.write_text(content)
