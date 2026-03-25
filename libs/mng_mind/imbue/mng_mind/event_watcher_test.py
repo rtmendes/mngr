@@ -2491,6 +2491,15 @@ def test_load_settings_reads_event_batch_filter_command(tmp_path: Path) -> None:
     assert settings.event_batch_filter_command == "/usr/local/bin/my_filter.sh"
 
 
+def test_load_settings_reads_is_message_batching_enabled(tmp_path: Path) -> None:
+    write_minds_settings_toml(
+        tmp_path,
+        "[watchers]\nis_message_batching_enabled = false\n",
+    )
+    settings = _load_watcher_settings(tmp_path)
+    assert settings.is_message_batching_enabled is False
+
+
 @pytest.mark.timeout(15)
 def test_main_starts_synthetic_events_thread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """main() starts the synthetic events thread and delivers onboarding on first run."""
