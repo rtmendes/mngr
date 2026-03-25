@@ -927,10 +927,11 @@ def _maybe_send_onboarding(
 
     # FOLLOWUP: I'm not quite sure how to make this better, but we should
     # we wait a bit when starting because the onboarding event should come after the conversation events
-    while last_delivery_monotonic is None:
-        if stop_event.is_set():
-            return
-        time.sleep(0.1)
+    if last_delivery_monotonic is not None:
+        while len(last_delivery_monotonic) == 0 or last_delivery_monotonic[0] <= 0.0:
+            if stop_event.is_set():
+                return
+            time.sleep(0.1)
 
     logger.info("Sending mind/onboarding event (first run)")
     line = _make_synthetic_event_line("onboarding", _SOURCE_MIND_ONBOARDING)
