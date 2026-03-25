@@ -18,7 +18,6 @@
 #
 # What this does NOT do:
 #   - Migrate external state (~/.mng, env vars, etc.) -- see migrate_state_mng_to_mngr.sh
-#   - Regenerate uv.lock -- run 'uv lock' after this script
 
 set -euo pipefail
 
@@ -302,8 +301,17 @@ if [ -f "scripts/install.sh" ]; then
     ok "scripts/install.sh: tool references"
 fi
 
+# ── Regenerate uv.lock ────────────────────────────────────────────
+
+echo -e "\n${BOLD}Regenerating uv.lock...${NC}"
+if command -v uv &>/dev/null; then
+    uv lock
+    ok "uv.lock regenerated"
+else
+    skip "uv not found, skipping lock regeneration"
+fi
+
 echo -e "\n${GREEN}${BOLD}Code migration complete.${NC}"
 echo -e "Next steps:"
 echo -e "  1. Review changes: git diff --stat"
-echo -e "  2. Regenerate lock: uv lock"
-echo -e "  3. Commit: git add -A && git commit -m 'Rename mng -> mngr'"
+echo -e "  2. Commit: git add -A && git commit -m 'Rename mng -> mngr'"
