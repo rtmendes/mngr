@@ -179,7 +179,7 @@ When creating agents with `--worktree` or `--copy-source`, certain files outside
 - Paths are relative to the project root. Absolute paths and paths that escape the project root are rejected.
 - If a source path does not exist, it is skipped with a warning.
 - Symlinks are idempotent: if the correct symlink already exists, it is left in place.
-- If a non-symlink file or directory already exists at the target location when `"share"` mode would create a symlink, an error is raised.
+- If a non-symlink file or directory already exists at the target location when `"SHARE"` mode would create a symlink, an error is raised.
 - Config merging follows the same per-key override behavior as `pre_command_scripts`: project config overrides user config for each path independently.
 
 ## See Also
