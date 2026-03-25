@@ -72,9 +72,9 @@ def load_config(
 
     Precedence (lowest to highest):
     1. User config (~/.{root_name}/profiles/<profile_id>/settings.toml)
-    2. Project config (.{root_name}/settings.toml at context_dir or git root)
-    3. Local config (.{root_name}/settings.local.toml at context_dir or git root)
-    4. Environment variables (MNG_ROOT_NAME, MNG_PREFIX, MNG_HOST_DIR, MNG_PROJECT_DIR)
+    2. Project config (.{root_name}/settings.toml at context_dir, git root, or MNG_PROJECT_DIR)
+    3. Local config (.{root_name}/settings.local.toml at context_dir, git root, or MNG_PROJECT_DIR)
+    4. Environment variables (MNG_ROOT_NAME, MNG_PREFIX, MNG_HOST_DIR)
     5. CLI arguments (handled by caller)
 
     MNG_ROOT_NAME is used to derive:
