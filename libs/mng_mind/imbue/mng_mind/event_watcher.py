@@ -923,7 +923,12 @@ def _maybe_send_onboarding(
     stop_event: threading.Event,
     last_delivery_monotonic: list[float] | None = None,
 ) -> None:
-    """Send a mind/onboarding event if none has ever been sent (marker file absent)."""
+    """Send a mind/onboarding event if none has ever been sent (marker file absent).
+
+    When *last_delivery_monotonic* is provided, blocks until a delivery has
+    occurred (the value becomes positive) before sending, so that the
+    onboarding event arrives after initial conversation events.
+    """
     onboarding_marker = mind_state_dir / _ONBOARDING_MARKER_FILENAME
     if onboarding_marker.exists():
         return
