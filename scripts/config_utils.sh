@@ -39,7 +39,7 @@ read_json_config() {
         fi
     fi
     if [ -f "$config_path" ]; then
-        val=$(jq -r "if $jq_path == null then empty else $jq_path end" "$local_path" 2>/dev/null)
+        val=$(jq -r "if $jq_path == null then empty else $jq_path end" "$config_path" 2>/dev/null)
         if [ -n "$val" ]; then
             echo "$val"
             return
