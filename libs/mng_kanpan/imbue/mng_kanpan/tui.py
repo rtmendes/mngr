@@ -65,6 +65,7 @@ PALETTE = [
     ("section_cancelled", "dark gray", ""),
     ("section_in_review", "light cyan", ""),
     ("section_in_progress", "yellow", ""),
+    ("section_prs_failed", "light red", ""),
     # CI checks (only failing and pending get color; passing is default)
     ("check_failing", "light red", ""),
     ("check_failing_focus", "light red,standout", ""),
@@ -111,7 +112,7 @@ _SECTION_ATTR: dict[BoardSection, str] = {
     BoardSection.PR_CLOSED: "section_cancelled",
     BoardSection.PR_BEING_REVIEWED: "section_in_review",
     BoardSection.STILL_COOKING: "section_in_progress",
-    BoardSection.PRS_FAILED: "section_in_progress",
+    BoardSection.PRS_FAILED: "section_prs_failed",
     BoardSection.MUTED: "section_muted",
 }
 
