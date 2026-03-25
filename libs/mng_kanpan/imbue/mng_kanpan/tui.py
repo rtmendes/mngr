@@ -1427,8 +1427,9 @@ def run_kanpan(
     footer_left_text = Text("  Loading...")
     footer_left_attr = AttrMap(footer_left_text, "footer")
     footer_right = Text(keybindings, align="right")
-    pack: int = len(keybindings)
-    footer_columns = Columns([footer_left_attr, (pack, AttrMap(footer_right, "footer"))])
+    # Both sides get equal weight so the keybindings (which are longer) wrap
+    # in narrow terminals instead of the status text getting squeezed.
+    footer_columns = Columns([footer_left_attr, AttrMap(footer_right, "footer")])
     footer = Pile([Divider(), footer_columns])
 
     is_filtered = bool(include_filters or exclude_filters)
