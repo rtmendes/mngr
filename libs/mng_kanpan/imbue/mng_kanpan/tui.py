@@ -83,6 +83,7 @@ BOARD_SECTION_ORDER: tuple[BoardSection, ...] = (
     BoardSection.PR_CLOSED,
     BoardSection.PR_BEING_REVIEWED,
     BoardSection.STILL_COOKING,
+    BoardSection.PRS_FAILED,
     BoardSection.MUTED,
 )
 
@@ -92,6 +93,7 @@ _SECTION_PREFIX: dict[BoardSection, str] = {
     BoardSection.PR_CLOSED: "Cancelled",
     BoardSection.PR_BEING_REVIEWED: "In review",
     BoardSection.STILL_COOKING: "In progress",
+    BoardSection.PRS_FAILED: "In progress",
     BoardSection.MUTED: "Muted",
 }
 
@@ -100,6 +102,7 @@ _SECTION_SUFFIX: dict[BoardSection, str] = {
     BoardSection.PR_CLOSED: "PR closed",
     BoardSection.PR_BEING_REVIEWED: "PR pending",
     BoardSection.STILL_COOKING: "no PR yet",
+    BoardSection.PRS_FAILED: "PRs not loaded",
     BoardSection.MUTED: "",
 }
 
@@ -108,6 +111,7 @@ _SECTION_ATTR: dict[BoardSection, str] = {
     BoardSection.PR_CLOSED: "section_cancelled",
     BoardSection.PR_BEING_REVIEWED: "section_in_review",
     BoardSection.STILL_COOKING: "section_in_progress",
+    BoardSection.PRS_FAILED: "section_in_progress",
     BoardSection.MUTED: "section_muted",
 }
 
@@ -305,7 +309,8 @@ def _update_row_mark(state: _KanpanState, walker_idx: int, mark_key: str | None)
     entry = state.index_to_entry.get(walker_idx)
     if entry is None:
         return
-    section = _classify_entry(entry)
+    prs_loaded_repos = state.snapshot.prs_loaded_repos if state.snapshot is not None else frozenset()
+    section = _classify_entry(entry, prs_loaded_repos)
     name_markup: str | tuple[Hashable, str] | list[str | tuple[Hashable, str]] = _get_name_cell_markup(entry, mark_key)
     if section == BoardSection.MUTED:
         name_markup = _flatten_markup_to_muted(name_markup)
@@ -880,20 +885,25 @@ def _carry_forward_pr_data(old: BoardSnapshot, new: BoardSnapshot) -> BoardSnaps
     )
 
 
-def _classify_entry(entry: AgentBoardEntry) -> BoardSection:
+def _classify_entry(entry: AgentBoardEntry, prs_loaded_repos: frozenset[str]) -> BoardSection:
     """Determine which board section an agent belongs to based on its PR state.
 
     Muted agents are always placed in the MUTED section regardless of PR state.
+    Agents whose repo failed to load PRs go into PRS_FAILED (agents with no
+    remote label are not considered failed -- they just have no upstream).
     """
     if entry.is_muted:
         return BoardSection.MUTED
-    if entry.pr is None:
-        return BoardSection.STILL_COOKING
-    if entry.pr.state == PrState.MERGED:
-        return BoardSection.PR_MERGED
-    if entry.pr.state == PrState.CLOSED:
-        return BoardSection.PR_CLOSED
-    return BoardSection.PR_BEING_REVIEWED
+    if entry.pr is not None:
+        if entry.pr.state == PrState.MERGED:
+            return BoardSection.PR_MERGED
+        if entry.pr.state == PrState.CLOSED:
+            return BoardSection.PR_CLOSED
+        return BoardSection.PR_BEING_REVIEWED
+    agent_repo = repo_path_from_labels(entry.column_data.labels)
+    if agent_repo is not None and agent_repo not in prs_loaded_repos:
+        return BoardSection.PRS_FAILED
+    return BoardSection.STILL_COOKING
 
 
 def _get_state_attr(entry: AgentBoardEntry) -> str:
@@ -1251,7 +1261,7 @@ def _build_board_widgets(
     # Classify entries into sections
     by_section: dict[BoardSection, list[AgentBoardEntry]] = {}
     for entry in snapshot.entries:
-        section = _classify_entry(entry)
+        section = _classify_entry(entry, snapshot.prs_loaded_repos)
         by_section.setdefault(section, []).append(entry)
 
     has_content = False
@@ -1267,14 +1277,7 @@ def _build_board_widgets(
         else:
             walker.append(Divider())
 
-        if section == BoardSection.STILL_COOKING and not snapshot.prs_loaded:
-            section_attr = _SECTION_ATTR[section]
-            heading: list[str | tuple[Hashable, str]] = [
-                (section_attr, "In progress"),
-                f" - PRs not loaded ({len(entries)})",
-            ]
-        else:
-            heading = _format_section_heading(section, len(entries))
+        heading = _format_section_heading(section, len(entries))
         walker.append(Text(heading))
         has_content = True
 

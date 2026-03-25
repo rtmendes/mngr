@@ -244,23 +244,39 @@ def _text_contains(texts: list[str], substring: str) -> bool:
 
 def test_classify_entry_muted_always_goes_to_muted_section() -> None:
     entry = _make_entry(is_muted=True, pr=_make_pr(state=PrState.MERGED))
-    assert _classify_entry(entry) == BoardSection.MUTED
+    assert _classify_entry(entry, frozenset()) == BoardSection.MUTED
 
 
 def test_classify_entry_no_pr_is_still_cooking() -> None:
-    assert _classify_entry(_make_entry(pr=None)) == BoardSection.STILL_COOKING
+    assert _classify_entry(_make_entry(pr=None), frozenset()) == BoardSection.STILL_COOKING
 
 
 def test_classify_entry_merged_pr() -> None:
-    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.MERGED))) == BoardSection.PR_MERGED
+    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.MERGED)), frozenset()) == BoardSection.PR_MERGED
 
 
 def test_classify_entry_closed_pr() -> None:
-    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.CLOSED))) == BoardSection.PR_CLOSED
+    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.CLOSED)), frozenset()) == BoardSection.PR_CLOSED
 
 
 def test_classify_entry_open_pr() -> None:
-    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.OPEN))) == BoardSection.PR_BEING_REVIEWED
+    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.OPEN)), frozenset()) == BoardSection.PR_BEING_REVIEWED
+
+
+def test_classify_entry_failed_repo_goes_to_prs_failed() -> None:
+    entry = _make_entry(pr=None, labels={"remote": "git@github.com:org/repo.git"})
+    assert _classify_entry(entry, frozenset()) == BoardSection.PRS_FAILED
+
+
+def test_classify_entry_loaded_repo_stays_in_still_cooking() -> None:
+    entry = _make_entry(pr=None, labels={"remote": "git@github.com:org/repo.git"})
+    assert _classify_entry(entry, frozenset({"org/repo"})) == BoardSection.STILL_COOKING
+
+
+def test_classify_entry_no_remote_label_stays_in_still_cooking() -> None:
+    """Agents without a remote label are not considered failed -- they have no upstream."""
+    entry = _make_entry(pr=None)
+    assert _classify_entry(entry, frozenset()) == BoardSection.STILL_COOKING
 
 
 # =============================================================================
@@ -1076,6 +1092,7 @@ def test_carry_forward_pr_data_handles_new_agents() -> None:
 
 
 def test_first_load_pr_failure_shows_prs_not_loaded() -> None:
+    repo_labels = ColumnData(labels={"remote": "git@github.com:org/repo.git"})
     entry = AgentBoardEntry(
         name=AgentName("agent-1"),
         state=AgentLifecycleState.RUNNING,
@@ -1083,6 +1100,7 @@ def test_first_load_pr_failure_shows_prs_not_loaded() -> None:
         branch="mng/agent-1",
         pr=None,
         create_pr_url=None,
+        column_data=repo_labels,
     )
     snapshot = BoardSnapshot(
         entries=(entry,),
