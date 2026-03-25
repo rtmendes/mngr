@@ -555,7 +555,7 @@ def _drain_stderr(
             logger.debug("Stderr reader error: {}", exc)
 
 
-def _start_agent_idle_wait(agent_id: str) -> Any:
+def _start_agent_idle_wait(agent_id: str) -> subprocess.Popen[str]:
     """Start 'mng wait <agent_id> WAITING' as a background subprocess.
 
     Returns immediately. The caller should poll the process via .poll()
