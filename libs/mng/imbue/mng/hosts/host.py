@@ -94,18 +94,6 @@ def _try_acquire_flock(lock_file: io.TextIOWrapper) -> bool:
         return False
 
 
-def _check_local_symlink_state(source_abs: Path, target_abs: Path) -> tuple[bool, bool]:
-    """Check symlink state for a local target path.
-
-    Returns (is_correct_symlink, is_non_symlink_target).
-    """
-    if target_abs.is_symlink():
-        return (target_abs.resolve() == source_abs.resolve(), False)
-    if target_abs.exists():
-        return (False, True)
-    return (False, False)
-
-
 @pure
 def _is_transient_ssh_error(exception: BaseException) -> bool:
     """Check if the exception is a transient SSH connection error worth retrying.
@@ -1474,8 +1462,8 @@ class Host(BaseHost, OnlineHostInterface):
         finally:
             files_from_path.unlink(missing_ok=True)
 
-    def _check_remote_symlink_state(self, source_abs: Path, target_abs: Path) -> tuple[bool, bool]:
-        """Check symlink state for a remote target path.
+    def _check_symlink_state(self, source_abs: Path, target_abs: Path) -> tuple[bool, bool]:
+        """Check symlink state on this host via execute_command.
 
         Returns (is_correct_symlink, is_non_symlink_target).
         """
@@ -1503,36 +1491,28 @@ class Host(BaseHost, OnlineHostInterface):
         symlink_specs: list[tuple[Path, Path]] = []
 
         for rel_path_str, mode in extra_paths.items():
-            rel_path = Path(rel_path_str)
-            if rel_path.is_absolute():
+            normalized = os.path.normpath(rel_path_str)
+            if os.path.isabs(normalized):
                 raise UserInputError(f"work_dir_extra_paths: absolute paths are not allowed: {rel_path_str}")
-
-            source_abs = (source_path / rel_path).resolve()
-            if not source_abs.is_relative_to(source_path.resolve()):
+            if normalized.startswith(".."):
                 raise UserInputError(f"work_dir_extra_paths: path escapes project root: {rel_path_str}")
-            # Check source exists
-            if source_host.is_local:
-                source_exists = source_abs.exists() or source_abs.is_symlink()
-            else:
-                result = source_host.execute_command(
-                    f"test -e {shlex.quote(str(source_abs))} || test -L {shlex.quote(str(source_abs))}"
-                )
-                source_exists = result.success
-            if not source_exists:
+
+            source_abs = source_path / rel_path_str
+            result = source_host.execute_command(
+                f"test -e {shlex.quote(str(source_abs))} || test -L {shlex.quote(str(source_abs))}"
+            )
+            if not result.success:
                 logger.warning("work_dir_extra_paths: source path does not exist, skipping: {}", source_abs)
                 continue
 
             if mode == WorkDirExtraPathMode.SHARE and same_host:
-                symlink_specs.append((source_abs, work_dir_path / rel_path))
+                symlink_specs.append((source_abs, work_dir_path / rel_path_str))
             else:
                 rsync_paths.append(rel_path_str)
 
         # Create symlinks
         for source_abs, target_abs in symlink_specs:
-            if self.is_local:
-                is_correct_symlink, is_non_symlink_target = _check_local_symlink_state(source_abs, target_abs)
-            else:
-                is_correct_symlink, is_non_symlink_target = self._check_remote_symlink_state(source_abs, target_abs)
+            is_correct_symlink, is_non_symlink_target = self._check_symlink_state(source_abs, target_abs)
 
             if is_correct_symlink:
                 logger.debug("work_dir_extra_paths: symlink already correct, skipping: {}", target_abs)
