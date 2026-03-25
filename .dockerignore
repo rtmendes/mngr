@@ -1,0 +1,4 @@
+# Exclude git worktree state from Docker builds.
+# Worktree metadata files (e.g. FETCH_HEAD) are modified by active agents,
+# which causes Modal image builds to fail with "modified during build process".
+.git/worktrees/
