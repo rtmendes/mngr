@@ -21,9 +21,7 @@ from imbue.mng.primitives import ProviderInstanceName
 from imbue.mng.primitives import SnapshotName
 from imbue.mng.primitives import WorkDirCopyMode
 from imbue.mng_tmr.api import CollectTestsError
-from imbue.mng_tmr.api import PLUGIN_NAME
 from imbue.mng_tmr.api import _build_agent_options
-from imbue.mng_tmr.api import _build_agent_prompt
 from imbue.mng_tmr.api import _copy_mode_for_provider
 from imbue.mng_tmr.api import _sanitize_test_name_for_agent
 from imbue.mng_tmr.api import _short_random_id
@@ -38,6 +36,8 @@ from imbue.mng_tmr.data_types import ChangeStatus
 from imbue.mng_tmr.data_types import ReportSection
 from imbue.mng_tmr.data_types import TestAgentInfo
 from imbue.mng_tmr.data_types import TmrLaunchConfig
+from imbue.mng_tmr.prompts import PLUGIN_NAME
+from imbue.mng_tmr.prompts import build_test_agent_prompt
 from imbue.mng_tmr.report import report_section_of
 from imbue.mng_tmr.testing import BLOCKED_FIX
 from imbue.mng_tmr.testing import FAILED_FIX
@@ -167,7 +167,7 @@ def test_build_agent_options_sets_agent_name() -> None:
 
 
 def test_build_agent_prompt_contains_test_id() -> None:
-    prompt = _build_agent_prompt("tests/test_foo.py::test_bar", ())
+    prompt = build_test_agent_prompt("tests/test_foo.py::test_bar", ())
     assert "tests/test_foo.py::test_bar" in prompt
     assert "result.json" in prompt
     assert "IMPROVE_TEST" in prompt
@@ -179,33 +179,33 @@ def test_build_agent_prompt_contains_test_id() -> None:
 
 
 def test_build_agent_prompt_contains_plugin_name() -> None:
-    prompt = _build_agent_prompt("tests/test_x.py::test_y", ())
+    prompt = build_test_agent_prompt("tests/test_x.py::test_y", ())
     assert PLUGIN_NAME in prompt
 
 
 def test_build_agent_prompt_includes_pytest_flags() -> None:
-    prompt = _build_agent_prompt("tests/test_x.py::test_y", ("-m", "release"))
+    prompt = build_test_agent_prompt("tests/test_x.py::test_y", ("-m", "release"))
     assert "-m release" in prompt
 
 
 def test_build_agent_prompt_requests_markdown() -> None:
-    prompt = _build_agent_prompt("t::t", ())
+    prompt = build_test_agent_prompt("t::t", ())
     assert "markdown" in prompt.lower()
 
 
 def test_build_agent_prompt_instructs_one_entry_per_kind() -> None:
-    prompt = _build_agent_prompt("t::t", ())
+    prompt = build_test_agent_prompt("t::t", ())
     assert "do not duplicate kinds" in prompt.lower()
 
 
 def test_build_agent_prompt_with_suffix() -> None:
-    prompt = _build_agent_prompt("t::t", (), prompt_suffix="Always run with --verbose flag.")
+    prompt = build_test_agent_prompt("t::t", (), prompt_suffix="Always run with --verbose flag.")
     assert "Always run with --verbose flag." in prompt
 
 
 def test_build_agent_prompt_empty_suffix_ignored() -> None:
-    prompt_no_suffix = _build_agent_prompt("t::t", ())
-    prompt_empty_suffix = _build_agent_prompt("t::t", (), prompt_suffix="")
+    prompt_no_suffix = build_test_agent_prompt("t::t", ())
+    prompt_empty_suffix = build_test_agent_prompt("t::t", (), prompt_suffix="")
     assert prompt_no_suffix == prompt_empty_suffix
 
 

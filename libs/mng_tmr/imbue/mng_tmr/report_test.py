@@ -374,12 +374,21 @@ def test_generate_html_report_without_integrator(tmp_path: Path) -> None:
     assert "Test Map-Reduce Report" in content
 
 
-def test_generate_html_report_integrator_html_escaped(tmp_path: Path) -> None:
-    results = [make_test_result(before=True, after=True)]
-    integrator = IntegratorResult(
-        branch_name="<script>alert('xss')</script>",
-    )
+def test_generate_html_report_html_escaped(tmp_path: Path) -> None:
+    xss_branch = "<script>alert('xss')</script>"
+    results = [
+        TestMapReduceResult(
+            test_node_id="t::xss",
+            agent_name=AgentName("xss-agent"),
+            changes=SUCCEEDED_FIX,
+            tests_passing_before=False,
+            tests_passing_after=True,
+            summary_markdown="<img onerror=alert(1)>",
+            branch_name=xss_branch,
+        )
+    ]
     output_path = tmp_path / "escape.html"
-    generate_html_report(results, output_path, integrator=integrator)
+    generate_html_report(results, output_path)
     content = output_path.read_text()
     assert "<script>alert" not in content
+    assert "&lt;script&gt;" in content
