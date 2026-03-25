@@ -41,6 +41,20 @@ echo -e "${BOLD}mng -> mngr code migration${NC}"
 step "1/7" "Renaming .mng/ directory..."
 
 if [ -d ".mng" ] && [ ! -d ".mngr" ]; then
+    # Fix symlinks inside .mng/ BEFORE the directory rename, so git mv
+    # preserves them correctly (otherwise they become broken and git
+    # resolves them to regular files).
+    for file in .mng/*; do
+        [ -L "$file" ] || continue
+        target=$(readlink "$file")
+        if [[ "$target" == *mng* && "$target" != *mngr* ]]; then
+            newtarget="${target//mng/mngr}"
+            rm "$file"
+            ln -s "$newtarget" "$file"
+            git add "$file"
+            ok "fixed symlink $file -> $newtarget"
+        fi
+    done
     git mv ".mng" ".mngr"
     ok ".mng -> .mngr"
 elif [ -d ".mngr" ]; then
