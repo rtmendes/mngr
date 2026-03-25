@@ -1072,13 +1072,12 @@ class Host(BaseHost, OnlineHostInterface):
     ) -> CreateWorkDirResult:
         """Use the source directory directly as the work_dir (no transfer).
 
-        Also removes the path from generated_work_dirs if present: the directory
-        may have been previously created by mng (e.g., as a worktree for another
-        agent that was since destroyed). Without this, GC would treat the
-        directory as orphaned and delete it while the in-place agent is alive.
+        Does not modify generated_work_dirs. If the path was previously generated
+        by mng (e.g., as a worktree for another agent), GC already handles this
+        correctly: it only deletes directories that are in generated_work_dirs
+        AND have no living agent using them as work_dir.
         """
         target_path = options.target_path or source_path
-        self._remove_generated_work_dir(target_path)
         logger.debug("Skipped file transfer: transfer mode is none (in-place)")
         return CreateWorkDirResult(path=target_path)
 

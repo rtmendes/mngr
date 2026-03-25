@@ -449,19 +449,20 @@ def test_in_place_mode_sets_is_generated_work_dir_false(
 
 
 @pytest.mark.tmux
-def test_in_place_removes_previously_generated_work_dir(
+def test_in_place_preserves_generated_work_dir_entry(
     temp_mng_ctx: MngContext,
     temp_work_dir: Path,
     temp_host_dir: Path,
 ) -> None:
-    """Test that in-place mode removes a previously-generated work_dir from generated_work_dirs.
+    """Test that in-place mode does not remove a previously-generated work_dir from generated_work_dirs.
 
-    This is the critical scenario: if a directory was previously created by mng (e.g., as a
-    worktree for another agent) and is already tracked in generated_work_dirs, creating an
-    in-place agent in that directory must remove it from generated_work_dirs. Otherwise, GC
-    would delete the directory after the in-place agent is destroyed.
+    If a directory was previously created by mng (e.g., as a worktree for another agent),
+    creating an in-place agent should leave the generated_work_dirs entry intact. GC already
+    handles this correctly: it only deletes directories that are in generated_work_dirs AND
+    have no living agent using them as work_dir. Removing the entry would cause a leak --
+    after both agents are destroyed, the directory would never be cleaned up.
     """
-    agent_name = AgentName(f"test-in-place-remove-{int(time.time())}")
+    agent_name = AgentName(f"test-in-place-preserve-{int(time.time())}")
     session_name = f"{temp_mng_ctx.config.prefix}{agent_name}"
 
     with tmux_session_cleanup(session_name):
@@ -478,7 +479,7 @@ def test_in_place_removes_previously_generated_work_dir(
 
         # Create an in-place agent (transfer_mode=NONE means in-place, no transfer)
         agent_options = CreateAgentOptions(
-            agent_type=AgentTypeName("in-place-remove-test"),
+            agent_type=AgentTypeName("in-place-preserve-test"),
             name=agent_name,
             command=CommandString("sleep 60"),
             transfer_mode=TransferMode.NONE,
@@ -491,13 +492,14 @@ def test_in_place_removes_previously_generated_work_dir(
             mng_ctx=temp_mng_ctx,
         )
 
-        # After in-place creation, the path should be REMOVED from generated_work_dirs
+        # The path should still be in generated_work_dirs -- in-place mode does not
+        # modify this list. GC safety comes from checking active agent work_dirs.
         host_data_file = local_host.host_dir / "data.json"
         post_data = json.loads(host_data_file.read_text())
         generated_work_dirs = post_data.get("generated_work_dirs", [])
-        assert str(temp_work_dir) not in generated_work_dirs, (
-            "in-place mode should remove the path from generated_work_dirs "
-            "to prevent GC from deleting the directory after the agent is destroyed"
+        assert str(temp_work_dir) in generated_work_dirs, (
+            "in-place mode should preserve generated_work_dirs entries; "
+            "GC uses active agent work_dirs to avoid deleting directories still in use"
         )
 
 
