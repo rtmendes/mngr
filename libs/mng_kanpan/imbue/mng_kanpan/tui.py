@@ -548,7 +548,6 @@ def _update_snapshot_mute(state: _KanpanState, agent_name: AgentName, is_muted: 
     state.snapshot = BoardSnapshot(
         entries=new_entries,
         errors=state.snapshot.errors,
-        prs_loaded=state.snapshot.prs_loaded,
         prs_loaded_repos=state.snapshot.prs_loaded_repos,
         fetch_time_seconds=state.snapshot.fetch_time_seconds,
     )
@@ -816,7 +815,6 @@ def _finish_refresh(loop: MainLoop, state: _KanpanState) -> None:
             state.snapshot = BoardSnapshot(
                 entries=state.snapshot.entries,
                 errors=(*state.snapshot.errors, f"Refresh failed: {e}"),
-                prs_loaded=state.snapshot.prs_loaded,
                 prs_loaded_repos=state.snapshot.prs_loaded_repos,
                 fetch_time_seconds=state.snapshot.fetch_time_seconds,
             )
@@ -877,7 +875,6 @@ def _carry_forward_pr_data(old: BoardSnapshot, new: BoardSnapshot) -> BoardSnaps
     return BoardSnapshot(
         entries=tuple(updated_entries),
         errors=new.errors,
-        prs_loaded=bool(merged_repos),
         prs_loaded_repos=merged_repos,
         fetch_time_seconds=new.fetch_time_seconds,
     )

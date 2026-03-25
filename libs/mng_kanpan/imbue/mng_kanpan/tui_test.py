@@ -145,7 +145,7 @@ def _make_snapshot(
     entries: tuple[AgentBoardEntry, ...] = (),
     errors: tuple[str, ...] = (),
 ) -> BoardSnapshot:
-    return BoardSnapshot(entries=entries, errors=errors, fetch_time_seconds=1.5)
+    return BoardSnapshot(entries=entries, errors=errors, prs_loaded_repos=frozenset(), fetch_time_seconds=1.5)
 
 
 def _make_state(
@@ -923,7 +923,7 @@ def test_unmark_all_noop_when_empty() -> None:
 
 def test_build_board_widgets_shows_mark_indicator() -> None:
     entry = _make_entry()
-    snapshot = BoardSnapshot(entries=(entry,), fetch_time_seconds=0.1)
+    snapshot = BoardSnapshot(entries=(entry,), prs_loaded_repos=frozenset(), fetch_time_seconds=0.1)
     marks = {AgentName("test-agent"): "d"}
     walker, index_to_entry = _build_board_widgets(snapshot, _BOARD_COLUMN_DEFS, marks)
     agent_idx = min(index_to_entry.keys())
@@ -984,7 +984,6 @@ def test_carry_forward_pr_data_preserves_old_prs() -> None:
     )
     old = BoardSnapshot(
         entries=(old_entry,),
-        prs_loaded=True,
         prs_loaded_repos=frozenset({"org/repo"}),
         fetch_time_seconds=1.0,
     )
@@ -1001,7 +1000,6 @@ def test_carry_forward_pr_data_preserves_old_prs() -> None:
     new = BoardSnapshot(
         entries=(new_entry,),
         errors=("gh auth failed",),
-        prs_loaded=False,
         prs_loaded_repos=frozenset(),
         fetch_time_seconds=2.0,
     )
@@ -1027,7 +1025,6 @@ def test_carry_forward_pr_data_preserves_create_pr_url_without_pr() -> None:
     )
     old = BoardSnapshot(
         entries=(old_entry,),
-        prs_loaded=True,
         prs_loaded_repos=frozenset({"org/repo"}),
         fetch_time_seconds=1.0,
     )
@@ -1043,7 +1040,6 @@ def test_carry_forward_pr_data_preserves_create_pr_url_without_pr() -> None:
     )
     new = BoardSnapshot(
         entries=(new_entry,),
-        prs_loaded=False,
         prs_loaded_repos=frozenset(),
         fetch_time_seconds=2.0,
     )
@@ -1058,7 +1054,6 @@ def test_carry_forward_pr_data_handles_new_agents() -> None:
     repo_labels = ColumnData(labels={"remote": "git@github.com:org/repo.git"})
     old = BoardSnapshot(
         entries=(),
-        prs_loaded=True,
         prs_loaded_repos=frozenset({"org/repo"}),
         fetch_time_seconds=1.0,
     )
@@ -1072,7 +1067,6 @@ def test_carry_forward_pr_data_handles_new_agents() -> None:
     )
     new = BoardSnapshot(
         entries=(new_entry,),
-        prs_loaded=False,
         prs_loaded_repos=frozenset(),
         fetch_time_seconds=2.0,
     )
@@ -1093,7 +1087,7 @@ def test_first_load_pr_failure_shows_prs_not_loaded() -> None:
     snapshot = BoardSnapshot(
         entries=(entry,),
         errors=("gh pr list failed: auth required",),
-        prs_loaded=False,
+        prs_loaded_repos=frozenset(),
         fetch_time_seconds=1.0,
     )
     walker, _ = _build_board_widgets(snapshot, _BOARD_COLUMN_DEFS)
@@ -1116,7 +1110,7 @@ def test_first_load_pr_success_shows_normal_heading() -> None:
     )
     snapshot = BoardSnapshot(
         entries=(entry,),
-        prs_loaded=True,
+        prs_loaded_repos=frozenset({"org/repo"}),
         fetch_time_seconds=1.0,
     )
     walker, _ = _build_board_widgets(snapshot, _BOARD_COLUMN_DEFS)
@@ -1140,7 +1134,6 @@ def test_second_load_pr_failure_shows_carried_forward_prs() -> None:
     )
     old = BoardSnapshot(
         entries=(old_entry,),
-        prs_loaded=True,
         prs_loaded_repos=frozenset({"org/repo"}),
         fetch_time_seconds=1.0,
     )
@@ -1157,7 +1150,6 @@ def test_second_load_pr_failure_shows_carried_forward_prs() -> None:
     new = BoardSnapshot(
         entries=(new_entry,),
         errors=("gh pr list failed: network error",),
-        prs_loaded=False,
         prs_loaded_repos=frozenset(),
         fetch_time_seconds=2.0,
     )
@@ -1197,7 +1189,6 @@ def test_carry_forward_partial_failure_preserves_failed_repo_prs() -> None:
     )
     old = BoardSnapshot(
         entries=(old_good_entry, old_bad_entry),
-        prs_loaded=True,
         prs_loaded_repos=frozenset({"org/good", "org/bad"}),
         fetch_time_seconds=1.0,
     )
@@ -1221,7 +1212,6 @@ def test_carry_forward_partial_failure_preserves_failed_repo_prs() -> None:
     )
     new = BoardSnapshot(
         entries=(new_good_entry, new_bad_entry),
-        prs_loaded=True,
         prs_loaded_repos=frozenset({"org/good"}),
         fetch_time_seconds=2.0,
     )
@@ -1292,6 +1282,7 @@ def _make_dummy_snapshot(**overrides: Any) -> BoardSnapshot:
                 provider_name=ProviderInstanceName("modal"),
             ),
         ),
+        "prs_loaded_repos": frozenset(),
         "fetch_time_seconds": 0.1,
     }
     defaults.update(overrides)
@@ -1426,7 +1417,7 @@ def test_finish_refresh_uses_auto_cooldown_on_failure() -> None:
 def test_local_refresh_does_not_reset_last_refresh_time() -> None:
     """A local-only refresh should not update last_refresh_time."""
     loop = _TestableLoop()
-    snapshot = _make_dummy_snapshot(prs_loaded=False)
+    snapshot = _make_dummy_snapshot()
     future: Future[BoardSnapshot] = Future()
     future.set_result(snapshot)
     original_time = 1000.0
@@ -1446,7 +1437,7 @@ def test_local_refresh_does_not_reset_last_refresh_time() -> None:
 def test_local_refresh_does_not_schedule_next_auto_refresh() -> None:
     """A local-only refresh should not schedule the next periodic auto-refresh."""
     loop = _TestableLoop()
-    snapshot = _make_dummy_snapshot(prs_loaded=False)
+    snapshot = _make_dummy_snapshot()
     future: Future[BoardSnapshot] = Future()
     future.set_result(snapshot)
     state = _make_debounce_state(

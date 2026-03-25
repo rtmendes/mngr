@@ -80,12 +80,13 @@ class BoardSnapshot(FrozenModel):
 
     entries: tuple[AgentBoardEntry, ...] = Field(description="All agent board entries")
     errors: tuple[str, ...] = Field(default=(), description="Errors encountered during fetch")
-    prs_loaded: bool = Field(default=True, description="Whether PR data was successfully fetched from GitHub")
-    prs_loaded_repos: frozenset[str] = Field(
-        default_factory=frozenset,
-        description="Repo paths for which PRs were successfully loaded (for per-agent carry-forward)",
-    )
+    prs_loaded_repos: frozenset[str] = Field(description="Repo paths for which PRs were successfully loaded")
     fetch_time_seconds: float = Field(description="Time taken to fetch data")
+
+    @property
+    def prs_loaded(self) -> bool:
+        """Whether PR data was successfully fetched for at least one repo."""
+        return len(self.prs_loaded_repos) > 0
 
 
 class GitHubData(FrozenModel):
@@ -100,12 +101,13 @@ class GitHubData(FrozenModel):
         default_factory=dict,
         description="Nested mapping: repo_path -> branch -> most relevant PR",
     )
-    prs_loaded_repos: frozenset[str] = Field(
-        default_factory=frozenset,
-        description="Set of repo paths (e.g. 'owner/repo') for which PRs were successfully fetched",
-    )
-    prs_loaded: bool = Field(description="Whether PR data was successfully fetched for at least one repo")
+    prs_loaded_repos: frozenset[str] = Field(description="Repo paths for which PRs were successfully fetched")
     errors: tuple[str, ...] = Field(default=(), description="Errors encountered during remote fetch")
+
+    @property
+    def prs_loaded(self) -> bool:
+        """Whether PR data was successfully fetched for at least one repo."""
+        return len(self.prs_loaded_repos) > 0
 
 
 class CustomColumnConfig(FrozenModel):

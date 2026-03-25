@@ -82,7 +82,7 @@ def fetch_agent_snapshot(
     return BoardSnapshot(
         entries=tuple(entries),
         errors=tuple(errors),
-        prs_loaded=False,
+        prs_loaded_repos=frozenset(),
         fetch_time_seconds=elapsed,
     )
 
@@ -123,7 +123,6 @@ def fetch_github_data(mng_ctx: MngContext, agents: list[AgentDetails]) -> GitHub
     return GitHubData(
         pr_by_repo_branch=pr_by_repo_branch,
         prs_loaded_repos=frozenset(prs_loaded_repos),
-        prs_loaded=len(prs_loaded_repos) > 0,
         errors=tuple(errors),
     )
 
@@ -154,7 +153,6 @@ def enrich_snapshot_with_github_data(snapshot: BoardSnapshot, remote: GitHubData
     return BoardSnapshot(
         entries=tuple(enriched_entries),
         errors=(*snapshot.errors, *remote.errors),
-        prs_loaded=remote.prs_loaded,
         prs_loaded_repos=remote.prs_loaded_repos,
         fetch_time_seconds=snapshot.fetch_time_seconds,
     )
@@ -235,7 +233,6 @@ def fetch_board_snapshot(
     snapshot = BoardSnapshot(
         entries=tuple(entries),
         errors=(*errors, *remote.errors),
-        prs_loaded=remote.prs_loaded,
         prs_loaded_repos=remote.prs_loaded_repos,
         fetch_time_seconds=time.monotonic() - start_time,
     )
@@ -246,7 +243,6 @@ def fetch_board_snapshot(
             snapshot = BoardSnapshot(
                 entries=snapshot.entries,
                 errors=(*snapshot.errors, *after_errors),
-                prs_loaded=snapshot.prs_loaded,
                 prs_loaded_repos=snapshot.prs_loaded_repos,
                 fetch_time_seconds=snapshot.fetch_time_seconds,
             )

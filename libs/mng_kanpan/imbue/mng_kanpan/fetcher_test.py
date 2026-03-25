@@ -254,10 +254,9 @@ def test_enrich_uses_per_agent_repo_for_create_pr_url() -> None:
         branch="mng/feature",
         column_data=ColumnData(labels={"remote": "git@github.com:org/my-repo.git"}),
     )
-    snapshot = BoardSnapshot(entries=(entry,), fetch_time_seconds=1.0, prs_loaded=False)
+    snapshot = BoardSnapshot(entries=(entry,), prs_loaded_repos=frozenset(), fetch_time_seconds=1.0)
     remote = GitHubData(
         prs_loaded_repos=frozenset({"org/my-repo"}),
-        prs_loaded=True,
     )
     result = enrich_snapshot_with_github_data(snapshot, remote)
     assert result.entries[0].create_pr_url == "https://github.com/org/my-repo/compare/mng/feature?expand=1"
@@ -272,10 +271,9 @@ def test_enrich_suppresses_create_pr_url_when_repo_pr_fetch_failed() -> None:
         branch="mng/feature",
         column_data=ColumnData(labels={"remote": "git@github.com:org/my-repo.git"}),
     )
-    snapshot = BoardSnapshot(entries=(entry,), fetch_time_seconds=1.0, prs_loaded=False)
+    snapshot = BoardSnapshot(entries=(entry,), prs_loaded_repos=frozenset(), fetch_time_seconds=1.0)
     remote = GitHubData(
         prs_loaded_repos=frozenset(),
-        prs_loaded=False,
     )
     result = enrich_snapshot_with_github_data(snapshot, remote)
     assert result.entries[0].create_pr_url is None
@@ -308,7 +306,6 @@ def test_fetch_board_snapshot_integrates_agents_and_prs() -> None:
     remote = GitHubData(
         pr_by_repo_branch={"org/repo": {"mng/agent-1": pr1}},
         prs_loaded_repos=frozenset({"org/repo"}),
-        prs_loaded=True,
     )
 
     with (
@@ -337,7 +334,7 @@ def test_fetch_board_snapshot_with_list_errors() -> None:
     mock_list_result.agents = []
     mock_list_result.errors = [mock_error]
 
-    remote = GitHubData(prs_loaded=False)
+    remote = GitHubData(prs_loaded_repos=frozenset())
 
     mng_ctx = MagicMock()
     mng_ctx.concurrency_group = MagicMock()
@@ -382,7 +379,7 @@ def test_fetch_board_snapshot_passes_filters_to_list_agents() -> None:
     mock_list_result.agents = []
     mock_list_result.errors = []
 
-    remote = GitHubData(prs_loaded=False)
+    remote = GitHubData(prs_loaded_repos=frozenset())
 
     mng_ctx = MagicMock()
     mng_ctx.concurrency_group = MagicMock()
@@ -441,7 +438,7 @@ def test_fetch_board_snapshot_passes_labels_and_plugin_data() -> None:
     mock_list_result.agents = [agent]
     mock_list_result.errors = []
 
-    remote = GitHubData(prs_loaded=False)
+    remote = GitHubData(prs_loaded_repos=frozenset())
     mng_ctx = MagicMock()
     mng_ctx.concurrency_group = MagicMock()
 
@@ -493,7 +490,6 @@ def test_fetch_board_snapshot_surfaces_gh_errors_and_suppresses_create_pr_url(tm
     # Simulate fetch_github_data returning an error for this repo.
     remote = GitHubData(
         prs_loaded_repos=frozenset(),
-        prs_loaded=False,
         errors=("gh pr list failed: auth required",),
     )
 
@@ -654,7 +650,7 @@ def test_run_refresh_hooks_execute_in_order(tmp_path: Path) -> None:
 def test_fetch_board_snapshot_no_hooks() -> None:
     """With None hooks, no hook execution occurs."""
     agent = make_agent_details(name="agent-1", state=AgentLifecycleState.RUNNING, provider_name="modal")
-    remote = GitHubData(prs_loaded=False)
+    remote = GitHubData(prs_loaded_repos=frozenset())
     mock_list_result = MagicMock()
     mock_list_result.agents = [agent]
     mock_list_result.errors = []
@@ -674,7 +670,7 @@ def test_fetch_board_snapshot_no_hooks() -> None:
 def test_fetch_board_snapshot_after_hooks_run() -> None:
     """After-hooks run against the new snapshot entries."""
     agent = make_agent_details(name="agent-1", state=AgentLifecycleState.RUNNING, provider_name="modal")
-    remote = GitHubData(prs_loaded=False)
+    remote = GitHubData(prs_loaded_repos=frozenset())
     mock_list_result = MagicMock()
     mock_list_result.agents = [agent]
     mock_list_result.errors = []
@@ -700,7 +696,7 @@ def test_fetch_board_snapshot_after_hooks_run() -> None:
 def test_fetch_board_snapshot_before_hooks_skipped_on_first_refresh() -> None:
     """Before-hooks are skipped when there is no previous snapshot."""
     agent = make_agent_details(name="agent-1", state=AgentLifecycleState.RUNNING, provider_name="modal")
-    remote = GitHubData(prs_loaded=False)
+    remote = GitHubData(prs_loaded_repos=frozenset())
     mock_list_result = MagicMock()
     mock_list_result.agents = [agent]
     mock_list_result.errors = []
@@ -722,7 +718,7 @@ def test_fetch_board_snapshot_before_hooks_skipped_on_first_refresh() -> None:
 def test_fetch_board_snapshot_before_hooks_run_with_prev_snapshot() -> None:
     """Before-hooks run against previous snapshot entries when available."""
     agent = make_agent_details(name="agent-1", state=AgentLifecycleState.RUNNING, provider_name="modal")
-    remote = GitHubData(prs_loaded=False)
+    remote = GitHubData(prs_loaded_repos=frozenset())
     mock_list_result = MagicMock()
     mock_list_result.agents = [agent]
     mock_list_result.errors = []
@@ -730,6 +726,7 @@ def test_fetch_board_snapshot_before_hooks_run_with_prev_snapshot() -> None:
 
     prev_snapshot = BoardSnapshot(
         entries=(_make_entry(name="agent-1"),),
+        prs_loaded_repos=frozenset(),
         fetch_time_seconds=1.0,
     )
     before_hook = RefreshHook(name="Before hook", command="true")
