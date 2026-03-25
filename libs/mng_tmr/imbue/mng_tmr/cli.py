@@ -420,7 +420,7 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
     # Step 9: Write report with final results (artifacts already pulled during polling)
     generate_html_report(results, html_path, test_artifacts_dir=output_dir)
 
-    # Step 11: Build integrator config (defaults to local provider) and integrate
+    # Step 10: Build integrator config (defaults to local provider) and integrate
     integrator_config = TmrLaunchConfig(
         source_dir=source_dir,
         source_host=source_host,

@@ -805,67 +805,22 @@ def read_agent_result(
         )
 
 
-def pull_test_outputs(
-    agent_detail: AgentDetails,
-    host: OnlineHostInterface,
-    local_host: OnlineHostInterface,
-    destination_dir: Path,
-) -> None:
-    """Pull the .test_output directory from an agent's work_dir to a local directory."""
-    source_test_output = agent_detail.work_dir / ".test_output"
-    local_dest = destination_dir / str(agent_detail.name)
-
-    # For local agents, use filesystem copy instead of rsync
-    if source_test_output.exists():
-        local_dest.mkdir(parents=True, exist_ok=True)
-        try:
-            shutil.copytree(source_test_output, local_dest, dirs_exist_ok=True)
-            logger.info("Copied .test_output from agent '{}' to {}", agent_detail.name, local_dest)
-            return
-        except OSError as exc:
-            logger.warning("Failed to copy .test_output from agent '{}': {}", agent_detail.name, exc)
-            return
-
-    # For remote agents, use rsync via copy_directory
-    local_dest.mkdir(parents=True, exist_ok=True)
-    try:
-        local_host.copy_directory(
-            source_host=host,
-            source_path=source_test_output,
-            target_path=local_dest,
-        )
-        logger.info("Pulled .test_output from agent '{}' to {}", agent_detail.name, local_dest)
-    except (MngError, HostError, OSError) as exc:
-        logger.warning("Failed to pull .test_output from agent '{}': {}", agent_detail.name, exc)
-
-
-def pull_test_outputs_by_id(
-    agent_id: AgentId,
+def _copy_test_output(
+    source_test_output: Path,
     agent_name: AgentName,
     host: OnlineHostInterface,
     local_host: OnlineHostInterface,
     destination_dir: Path,
 ) -> None:
-    """Pull .test_output from an agent, looking up its work_dir from the host.
+    """Copy .test_output from an agent to a local directory.
 
-    This variant is used during polling when we may not have AgentDetails.
-    For local agents where the work_dir is directly accessible, uses filesystem
-    copy instead of rsync to avoid SSH hostname resolution issues.
+    Uses filesystem copy for local agents (where the path is directly
+    accessible) and rsync via copy_directory for remote agents.
     """
-    try:
-        agent = _get_agent_from_host(host, agent_id)
-        work_dir = agent.work_dir
-    except (MngError, HostError, AgentNotFoundOnHostError) as exc:
-        logger.warning("Could not find agent '{}' on host to pull artifacts: {}", agent_name, exc)
-        return
-
-    source_test_output = work_dir / ".test_output"
     local_dest = destination_dir / str(agent_name)
+    local_dest.mkdir(parents=True, exist_ok=True)
 
-    # For local agents, the work_dir is directly accessible on the filesystem.
-    # Use shutil.copytree instead of rsync to avoid SSH hostname issues.
     if source_test_output.exists():
-        local_dest.mkdir(parents=True, exist_ok=True)
         try:
             shutil.copytree(source_test_output, local_dest, dirs_exist_ok=True)
             logger.info("Copied .test_output from agent '{}' to {}", agent_name, local_dest)
@@ -874,8 +829,6 @@ def pull_test_outputs_by_id(
             logger.warning("Failed to copy .test_output from agent '{}': {}", agent_name, exc)
             return
 
-    # For remote agents, use rsync via copy_directory
-    local_dest.mkdir(parents=True, exist_ok=True)
     try:
         local_host.copy_directory(
             source_host=host,
@@ -885,6 +838,32 @@ def pull_test_outputs_by_id(
         logger.info("Pulled .test_output from agent '{}' to {}", agent_name, local_dest)
     except (MngError, HostError, OSError) as exc:
         logger.warning("Failed to pull .test_output from agent '{}': {}", agent_name, exc)
+
+
+def pull_test_outputs(
+    agent_detail: AgentDetails,
+    host: OnlineHostInterface,
+    local_host: OnlineHostInterface,
+    destination_dir: Path,
+) -> None:
+    """Pull the .test_output directory from an agent's work_dir to a local directory."""
+    _copy_test_output(agent_detail.work_dir / ".test_output", agent_detail.name, host, local_host, destination_dir)
+
+
+def pull_test_outputs_by_id(
+    agent_id: AgentId,
+    agent_name: AgentName,
+    host: OnlineHostInterface,
+    local_host: OnlineHostInterface,
+    destination_dir: Path,
+) -> None:
+    """Pull .test_output from an agent, looking up its work_dir from the host."""
+    try:
+        agent = _get_agent_from_host(host, agent_id)
+    except (MngError, HostError, AgentNotFoundOnHostError) as exc:
+        logger.warning("Could not find agent '{}' on host to pull artifacts: {}", agent_name, exc)
+        return
+    _copy_test_output(agent.work_dir / ".test_output", agent_name, host, local_host, destination_dir)
 
 
 def read_integrator_result(
