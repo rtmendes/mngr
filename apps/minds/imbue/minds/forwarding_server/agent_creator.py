@@ -179,7 +179,7 @@ def run_mng_create(
 
     Builds the appropriate command based on launch_mode:
     - DEV: runs in-place on the local provider.
-    - LOCAL: runs in a Docker container with a shared bind mount.
+    - LOCAL: runs in a Docker container.
     - CLOUD: raises NotImplementedError.
 
     Raises MngCommandError if the command fails.
