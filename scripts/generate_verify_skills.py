@@ -389,7 +389,7 @@ def main() -> None:
     ok = check_or_write(targets, check=args.check)
     if args.check and not ok:
         print(
-            "Run 'uv run python scripts/generate_verify_skills.py --vet-repo <path>' to regenerate.",
+            "Run /update-vet-categories to sync the override script with the category files.",
             file=sys.stderr,
         )
         raise SystemExit(1)
