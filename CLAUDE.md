@@ -72,7 +72,7 @@ Only after doing all of the above should you begin writing code.
 # Local/remote portability
 
 - When implementing or modifying any feature, consider whether it will work correctly for remote agents (not just local ones). Agents may be running on remote hosts where assumptions like local filesystem access, localhost networking, or same-machine process management do not hold.
-- Prefer making code naturally portable rather than branching on `is_local` (or similar implementation-discriminating checks). If calling code needs to behave differently for local vs remote hosts, that is a sign the host interface is missing a method. Add the method to the interface, implement it in each host class, and let the caller use it uniformly. Everything that can naturally be done via host methods alone should be.
+- Prefer making code naturally portable rather than branching on `is_local` (or similar implementation-discriminating checks). Everything that can naturally be done via existing host methods alone should be -- use them so that calling code works uniformly across local and remote hosts.
 
 # Ratchets
 
