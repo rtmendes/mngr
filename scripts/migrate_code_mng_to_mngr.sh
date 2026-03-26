@@ -2,19 +2,26 @@
 # Migrate code from mng -> mngr naming within the git checkout.
 #
 # Run from the repo root (or it will cd there automatically).
-# This script is idempotent -- safe to run multiple times.
+# This script is idempotent -- safe to run multiple times, including
+# after merging main into a rename branch (to fix incoming code).
+#
+# Usage:
+#   scripts/migrate_code_mng_to_mngr.sh          # full migration
+#   scripts/migrate_code_mng_to_mngr.sh --content-only  # skip dir renames, just fix file contents
 #
 # For open MRs: run this script on your branch, then merge in the new main.
-# After running, review changes and commit.
+# After a merge with main: run with --content-only to rename incoming code.
 #
 # What this does:
-#   1. Renames .mng/ -> .mngr/ in the repo root
-#   2. Renames lib directories (libs/mng -> libs/mngr, libs/mng_* -> libs/mngr_*)
-#   3. Renames Python package directories within libs
-#   4. Fixes symlinks with stale targets (before file renames, since dir renames break them)
-#   5. Renames individual files with 'mng' in their basename
-#   6. Replaces mng -> mngr in all tracked file contents
-#   7. Fixes the main package PyPI name to imbue-mngr (not just mngr)
+#   1. Moves orphaned files from old paths (libs/mng/*) to new paths (libs/mngr/*)
+#   2. Renames .mng/ -> .mngr/ in the repo root
+#   3. Renames lib directories (libs/mng -> libs/mngr, libs/mng_* -> libs/mngr_*)
+#   4. Renames Python package directories within libs
+#   5. Fixes symlinks with stale targets
+#   6. Renames individual files with 'mng' in their basename
+#   7. Replaces mng -> mngr in all tracked file contents
+#   8. Adds imbue- prefix to all PyPI package names
+#   9. Regenerates uv.lock
 #
 # What this does NOT do:
 #   - Migrate external state (~/.mng, env vars, etc.) -- see migrate_state_mng_to_mngr.sh
@@ -33,16 +40,125 @@ step() { echo -e "\n${BOLD}[$1] $2${NC}"; }
 ok()   { echo -e "  ${GREEN}$*${NC}"; }
 skip() { echo -e "  ${YELLOW}skip: $*${NC}"; }
 
+CONTENT_ONLY=false
+if [[ "${1:-}" == "--content-only" ]]; then
+    CONTENT_ONLY=true
+fi
+
 echo -e "${BOLD}mng -> mngr code migration${NC}"
 
-# ── 1. Rename .mng/ directory ─────────────────────────────────────
+# ── Helper: perl script for content replacement ───────────────────
+# Written to a temp file to avoid shell escaping issues with negative
+# lookahead (zsh eats ! in command-line perl -e).
 
-step "1/7" "Renaming .mng/ directory..."
+RENAME_PL=$(mktemp)
+trap 'rm -f "$RENAME_PL"' EXIT
+cat > "$RENAME_PL" << 'PERL_SCRIPT'
+use strict;
+use warnings;
+for my $file (@ARGV) {
+    open my $fh, '<', $file or next;
+    my $content = do { local $/; <$fh> };
+    close $fh;
+    my $orig = $content;
+    $content =~ s/MNG(?!R)/MNGR/g;
+    $content =~ s/Mng(?!r)/Mngr/g;
+    $content =~ s/mng(?!r)/mngr/g;
+    if ($content ne $orig) {
+        open my $out, '>', $file or next;
+        print $out $content;
+        close $out;
+    }
+}
+PERL_SCRIPT
+
+# ── Helper: perl script for imbue- prefix on PyPI names ──────────
+# Idempotent: won't double-prefix imbue-mngr -> imbue-imbue-mngr.
+
+PYPI_PL=$(mktemp)
+trap 'rm -f "$RENAME_PL" "$PYPI_PL"' EXIT
+cat > "$PYPI_PL" << 'PERL_SCRIPT'
+use strict;
+use warnings;
+for my $file (@ARGV) {
+    open my $fh, '<', $file or next;
+    my $content = do { local $/; <$fh> };
+    close $fh;
+    my $orig = $content;
+    # "mngr==" or "mngr-X==" in dep strings (but not already "imbue-mngr")
+    $content =~ s/(?<!imbue-)"mngr(?=[-=])/"imbue-mngr/g;
+    # "mngr" as a standalone quoted name (but not already "imbue-mngr")
+    $content =~ s/(?<!imbue-)"mngr"/"imbue-mngr"/g;
+    # uv sources keys at start of line: mngr = {, mngr-X = {
+    $content =~ s/^mngr(?=-| = \{)/imbue-mngr/mg;
+    # importlib.metadata.distribution("mngr...") lookups
+    $content =~ s/distribution\("mngr/distribution("imbue-mngr/g;
+    # Package metadata name comparisons
+    $content =~ s/name == "mngr"/name == "imbue-mngr"/g;
+    $content =~ s/name != "mngr"/name != "imbue-mngr"/g;
+    $content =~ s/name="mngr"/name="imbue-mngr"/g;
+    $content =~ s/startswith\("mngr-"\)/startswith("imbue-mngr-")/g;
+    # PyPI URL slugs
+    $content =~ s|pypi/mngr/|pypi/imbue-mngr/|g;
+    # uv tool install/run (but not already imbue-mngr)
+    $content =~ s/uv tool install mngr$/uv tool install imbue-mngr/mg;
+    $content =~ s/uv tool run --from mngr /uv tool run --from imbue-mngr /g;
+    # Fix false positives: dir_name must stay as "mngr", not "imbue-mngr"
+    $content =~ s/dir_name="imbue-mngr"/dir_name="mngr"/g;
+    # CLI binary entry point must stay "mngr", not "imbue-mngr"
+    $content =~ s/^imbue-mngr = "imbue\.mngr\./mngr = "imbue.mngr./mg;
+    if ($content ne $orig) {
+        open my $out, '>', $file or next;
+        print $out $content;
+        close $out;
+    }
+}
+PERL_SCRIPT
+
+# ── 1. Move orphaned files from old paths ─────────────────────────
+# After merging main, git may leave new files at old paths like
+# libs/mng/imbue/mng/... with "file location" conflict suggestions.
+
+step "1/9" "Moving orphaned files from old paths..."
+
+moved=0
+for old_root in libs/mng/imbue/mng libs/mng_*/imbue/mng_*; do
+    [ -d "$old_root" ] || continue
+    # Compute the new root by replacing mng with mngr
+    new_root="${old_root//mng_/mngr_}"
+    new_root="${new_root//\/mng\//\/mngr\/}"
+    new_root="${new_root//libs\/mng\//libs\/mngr\/}"
+    find "$old_root" -type f | while IFS= read -r f; do
+        rel="${f#"$old_root"/}"
+        newf="$new_root/$rel"
+        mkdir -p "$(dirname "$newf")"
+        mv "$f" "$newf"
+        git add "$newf" 2>/dev/null || true
+        git rm --cached "$f" 2>/dev/null || true
+        moved=$((moved + 1))
+    done
+done
+# Clean up empty old directories
+for d in libs/mng libs/mng_*; do
+    [ -d "$d" ] && find "$d" -depth -type d -empty -delete 2>/dev/null
+    [ -d "$d" ] && rmdir "$d" 2>/dev/null || true
+done
+if [ "$moved" -gt 0 ]; then
+    ok "Moved $moved files from old paths"
+else
+    ok "No orphaned files at old paths"
+fi
+
+if [ "$CONTENT_ONLY" = true ]; then
+    echo -e "\n  ${YELLOW}--content-only: skipping directory/file renames (steps 2-6)${NC}"
+else
+
+# ── 2. Rename .mng/ directory ─────────────────────────────────────
+
+step "2/9" "Renaming .mng/ directory..."
 
 if [ -d ".mng" ] && [ ! -d ".mngr" ]; then
-    # Fix symlinks inside .mng/ BEFORE the directory rename, so git mv
-    # preserves them correctly (otherwise they become broken and git
-    # resolves them to regular files).
+    # Fix symlinks inside .mng/ BEFORE the directory rename
     for file in .mng/*; do
         [ -L "$file" ] || continue
         target=$(readlink "$file")
@@ -62,14 +178,13 @@ else
     skip "no .mng directory found"
 fi
 
-# ── 2. Rename lib directories (top level) ─────────────────────────
+# ── 3. Rename lib directories (top level) ─────────────────────────
 
-step "2/7" "Renaming lib directories..."
+step "3/9" "Renaming lib directories..."
 
 for dir in libs/mng libs/mng_*; do
     [ -d "$dir" ] || continue
     base=$(basename "$dir")
-    # Only process dirs starting with mng (not mngr)
     case "$base" in
         mng|mng_*) ;;
         *) continue ;;
@@ -84,11 +199,10 @@ for dir in libs/mng libs/mng_*; do
     fi
 done
 
-# ── 3. Rename Python package directories inside libs ──────────────
+# ── 4. Rename Python package directories inside libs ──────────────
 
-step "3/7" "Renaming Python package directories..."
+step "4/9" "Renaming Python package directories..."
 
-# Main package: libs/mngr/imbue/mng -> libs/mngr/imbue/mngr
 if [ -d "libs/mngr/imbue/mng" ] && [ ! -d "libs/mngr/imbue/mngr" ]; then
     git mv "libs/mngr/imbue/mng" "libs/mngr/imbue/mngr"
     ok "libs/mngr/imbue/mng -> libs/mngr/imbue/mngr"
@@ -96,7 +210,6 @@ elif [ -d "libs/mngr/imbue/mngr" ]; then
     skip "libs/mngr/imbue/mngr already exists"
 fi
 
-# Plugins: libs/mngr_X/imbue/mng_X -> libs/mngr_X/imbue/mngr_X
 for dir in libs/mngr_*/imbue/mng_*; do
     [ -d "$dir" ] || continue
     base=$(basename "$dir")
@@ -109,15 +222,10 @@ for dir in libs/mngr_*/imbue/mng_*; do
     fi
 done
 
-# ── 4. Fix symlinks with stale targets ───────────────────────────
-#
-# Directory renames (steps 1-3) break symlinks whose targets referenced
-# old paths. Fix these BEFORE file renames (step 5), because broken
-# symlinks cause -f tests to fail and skip the rename.
+# ── 5. Fix symlinks with stale targets ───────────────────────────
 
-step "4/7" "Fixing symlinks..."
+step "5/9" "Fixing symlinks..."
 
-# Collect symlinks first to avoid modifying the list while iterating
 mapfile -t symlinks < <(git ls-files | while IFS= read -r file; do
     [ -L "$file" ] && echo "$file"
 done)
@@ -130,16 +238,13 @@ for file in "${symlinks[@]+"${symlinks[@]}"}"; do
         newbase=$(basename "$file")
         newbase="${newbase//mng/mngr}"
         newfile="$(dirname "$file")/$newbase"
-        # Remove old symlink
         rm "$file"
         git rm --cached "$file" 2>/dev/null || true
-        # Create new symlink (possibly with renamed basename)
         ln -s "$newtarget" "$newfile"
         git add "$newfile"
         ok "$file -> $newfile (target: $newtarget)"
         fixed_links=$((fixed_links + 1))
     elif [[ "$(basename "$file")" == *mng* && "$(basename "$file")" != *mngr* ]]; then
-        # Symlink target is fine but filename needs renaming
         newbase=$(basename "$file")
         newbase="${newbase//mng/mngr}"
         newfile="$(dirname "$file")/$newbase"
@@ -155,17 +260,13 @@ if [ "$fixed_links" -eq 0 ]; then
     ok "No symlinks needed fixing"
 fi
 
-# ── 5. Rename individual files with mng in their basename ─────────
+# ── 6. Rename individual files with mng in their basename ─────────
 
-step "5/7" "Renaming files with 'mng' in their name..."
+step "6/9" "Renaming files with 'mng' in their name..."
 
-# Collect files first (can't rename while iterating)
 mapfile -t files_to_rename < <(
     git ls-files | while IFS= read -r file; do
         base=$(basename "$file")
-        # Only process basenames containing mng but not mngr
-        # Skip migration scripts (they intentionally contain mng)
-        # Skip symlinks (already handled in step 4)
         if [[ "$base" == *mng* && "$base" != *mngr* && "$file" != scripts/migrate_* ]] && [ ! -L "$file" ]; then
             echo "$file"
         fi
@@ -184,118 +285,82 @@ for file in "${files_to_rename[@]+"${files_to_rename[@]}"}"; do
     fi
 done
 
-# ── 6. Replace file contents: mng -> mngr ────────────────────────
+fi  # end of non-content-only section
 
-step "6/7" "Replacing mng -> mngr in file contents..."
+# ── 7. Replace file contents: mng -> mngr ────────────────────────
+
+step "7/9" "Replacing mng -> mngr in file contents..."
 
 modified=0
 while IFS= read -r -d '' file; do
-    # Skip migration scripts (they contain mng patterns intentionally)
     case "$file" in
         scripts/migrate_*) continue ;;
     esac
-    # Skip symlinks (modify the target, not the link)
     [ -L "$file" ] && continue
-    # Skip binary files
     mime=$(file --brief --mime-encoding "$file" 2>/dev/null || echo "unknown")
     case "$mime" in
         binary|unknown) continue ;;
     esac
-    # Check if file contains mng not followed by r (any case)
-    if perl -ne 'exit 0 if /mng(?!r)/i' "$file" 2>/dev/null; then
-        perl -pi -e '
-            s/MNG(?!R)/MNGR/g;
-            s/Mng(?!r)/Mngr/g;
-            s/mng(?!r)/mngr/g;
-        ' "$file"
-        modified=$((modified + 1))
-    fi
+    perl "$RENAME_PL" "$file" && modified=$((modified + 1))
 done < <(git ls-files -z)
 
-ok "Modified $modified files"
+ok "Processed $modified files"
 
-# ── 7. Fix all PyPI names to use imbue- prefix ────────────────────
-#
-# After the general mng->mngr rename, PyPI names are "mngr", "mngr-claude", etc.
-# They should all be "imbue-mngr", "imbue-mngr-claude", etc.
-# The CLI binary stays "mngr". Directory/module names stay "mngr"/"mngr_*".
+# ── 8. Add imbue- prefix to all PyPI package names ────────────────
 
-step "7/7" "Adding imbue- prefix to all PyPI package names..."
+step "8/9" "Adding imbue- prefix to PyPI package names..."
 
-# Main package pyproject.toml: name field
-if [ -f "libs/mngr/pyproject.toml" ]; then
-    perl -pi -e 's/^name = "mngr"/name = "imbue-mngr"/' libs/mngr/pyproject.toml
-    ok "libs/mngr/pyproject.toml: name = imbue-mngr"
-fi
-
-# All pyproject.toml: "mngr" and "mngr-*" in quoted strings (names, deps)
-# This handles both name = "mngr-claude" and "mngr-claude==0.1.0" and "mngr==0.1.8"
+# pyproject.toml files
 for f in libs/*/pyproject.toml apps/*/pyproject.toml; do
     [ -f "$f" ] || continue
-    perl -pi -e 's/"mngr(?=[-=])/"imbue-mngr/g; s/"mngr"/"imbue-mngr"/g' "$f"
-    # Fix uv sources keys at start of line: mngr = {, mngr-claude = {
-    perl -pi -e 's/^mngr(?=-| = )/imbue-mngr/' "$f"
+    perl "$PYPI_PL" "$f"
 done
-ok "pyproject.toml: all PyPI names prefixed"
+ok "pyproject.toml files"
 
-# Fix [project.scripts]: the CLI binary should stay "mngr", not "imbue-mngr"
-if [ -f "libs/mngr/pyproject.toml" ]; then
-    perl -pi -e 's/^imbue-mngr = "imbue\.mngr\./mngr = "imbue.mngr./' libs/mngr/pyproject.toml
-    ok "libs/mngr/pyproject.toml: restored CLI name mngr"
-fi
-
-# Release scripts: replace "mngr" and "mngr-*" PyPI names with imbue- prefix
+# Release scripts
 for f in scripts/release.py scripts/verify_publish.py scripts/utils.py; do
     [ -f "$f" ] || continue
-    perl -pi -e 's/"mngr(?=-)"/"imbue-mngr/g; s/"mngr"/"imbue-mngr"/g' "$f"
+    perl "$PYPI_PL" "$f"
 done
-ok "Release scripts: PyPI names prefixed"
+ok "Release scripts"
 
-# Fix false positive: dir_name must be the actual directory name, not the PyPI name
-if [ -f "scripts/utils.py" ]; then
-    perl -pi -e 's/dir_name="imbue-mngr"/dir_name="mngr"/' scripts/utils.py
-    ok "scripts/utils.py: restored dir_name=\"mngr\""
-fi
+# install.sh
+[ -f "scripts/install.sh" ] && perl "$PYPI_PL" scripts/install.sh
+ok "install.sh"
 
-# Python source files: fix importlib.metadata lookups
-for f in $(grep -rl 'distribution("mngr' libs/ apps/ 2>/dev/null); do
-    perl -pi -e 's/distribution\("mngr/distribution("imbue-mngr/g' "$f"
-    ok "$f: distribution lookup"
+# Python source files with importlib.metadata or package name checks
+for f in $(grep -rl 'distribution("mngr' libs/ apps/ 2>/dev/null || true); do
+    perl "$PYPI_PL" "$f"
 done
-
-# Package metadata name checks in provisioning.py and uv_tool.py
 for f in libs/mngr_recursive/imbue/mngr_recursive/provisioning.py libs/mngr/imbue/mngr/uv_tool.py; do
-    [ -f "$f" ] || continue
-    perl -pi -e '
-        s/name == "mngr"/name == "imbue-mngr"/g;
-        s/name != "mngr"/name != "imbue-mngr"/g;
-        s/name="mngr"/name="imbue-mngr"/g;
-        s/startswith\("mngr-"\)/startswith("imbue-mngr-")/g;
-    ' "$f"
-    ok "$f: package name references"
+    [ -f "$f" ] && perl "$PYPI_PL" "$f"
 done
+ok "Python source files"
 
-# release.py: PyPI URL slug
-if [ -f "scripts/release.py" ]; then
-    perl -pi -e 's|pypi/mngr/|pypi/imbue-mngr/|g' scripts/release.py
-    ok "scripts/release.py: PyPI URL"
-fi
+# README docs
+for f in README.md libs/mngr/README.md; do
+    [ -f "$f" ] && perl "$PYPI_PL" "$f"
+done
+ok "Documentation"
 
-# install.sh: uv tool install/run references
-if [ -f "scripts/install.sh" ]; then
-    perl -pi -e 's/uv tool install mngr$/uv tool install imbue-mngr/' scripts/install.sh
-    perl -pi -e 's/uv tool run --from mngr /uv tool run --from imbue-mngr /' scripts/install.sh
-    ok "scripts/install.sh: tool references"
-fi
+# ── 9. Regenerate uv.lock ────────────────────────────────────────
 
-# ── Regenerate uv.lock ────────────────────────────────────────────
-
-echo -e "\n${BOLD}Regenerating uv.lock...${NC}"
+step "9/9" "Regenerating uv.lock..."
 if command -v uv &>/dev/null; then
     uv lock
     ok "uv.lock regenerated"
 else
     skip "uv not found, skipping lock regeneration"
+fi
+
+# ── Sanity check ─────────────────────────────────────────────────
+
+echo ""
+conflict_files=$(grep -rl '<<<<<<<' libs/ apps/ scripts/ test_meta_ratchets.py 2>/dev/null || true)
+if [ -n "$conflict_files" ]; then
+    echo -e "${YELLOW}WARNING: Conflict markers found in:${NC}"
+    echo "$conflict_files" | sed 's/^/  /'
+    echo -e "  These files need manual resolution."
 fi
 
 echo -e "\n${GREEN}${BOLD}Code migration complete.${NC}"
