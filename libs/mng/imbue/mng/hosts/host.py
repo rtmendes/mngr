@@ -1496,7 +1496,9 @@ class Host(BaseHost, OnlineHostInterface):
         for rel_path_str, _ in validated:
             source_abs = source_path / rel_path_str
             quoted = shlex.quote(str(source_abs))
-            check_parts.append(f"if [ -e {quoted} ] || [ -L {quoted} ]; then echo {shlex.quote(rel_path_str)}; fi")
+            check_parts.append(
+                f"if [ -e {quoted} ] || [ -L {quoted} ]; then printf '%s\\n' {shlex.quote(rel_path_str)}; fi"
+            )
         result = source_host.execute_command("; ".join(check_parts))
         if not result.success:
             logger.warning(
