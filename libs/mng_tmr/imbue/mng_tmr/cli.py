@@ -2,6 +2,7 @@
 
 import resource
 import time
+import traceback
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -538,7 +539,7 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
             env_options,
         )
     except KeyboardInterrupt:
-        write_human_line("\nInterrupted.")
+        traceback.print_exc()
         _print_run_commands(e2e_run_prefix, None)
         raise
 
