@@ -5,12 +5,8 @@
 # This script is idempotent -- safe to run multiple times, including
 # after merging main into a rename branch (to fix incoming code).
 #
-# Usage:
-#   scripts/migrate_code_mng_to_mngr.sh          # full migration
-#   scripts/migrate_code_mng_to_mngr.sh --content-only  # skip dir renames, just fix file contents
-#
 # For open MRs: run this script on your branch, then merge in the new main.
-# After a merge with main: run with --content-only to rename incoming code.
+# After a merge with main: just run this script again to rename incoming code.
 #
 # What this does:
 #   1. Moves orphaned files from old paths (libs/mng/*) to new paths (libs/mngr/*)
@@ -39,11 +35,6 @@ NC='\033[0m'
 step() { echo -e "\n${BOLD}[$1] $2${NC}"; }
 ok()   { echo -e "  ${GREEN}$*${NC}"; }
 skip() { echo -e "  ${YELLOW}skip: $*${NC}"; }
-
-CONTENT_ONLY=false
-if [[ "${1:-}" == "--content-only" ]]; then
-    CONTENT_ONLY=true
-fi
 
 echo -e "${BOLD}mng -> mngr code migration${NC}"
 
@@ -148,10 +139,6 @@ if [ "$moved" -gt 0 ]; then
 else
     ok "No orphaned files at old paths"
 fi
-
-if [ "$CONTENT_ONLY" = true ]; then
-    echo -e "\n  ${YELLOW}--content-only: skipping directory/file renames (steps 2-6)${NC}"
-else
 
 # ── 2. Rename .mng/ directory ─────────────────────────────────────
 
@@ -284,8 +271,6 @@ for file in "${files_to_rename[@]+"${files_to_rename[@]}"}"; do
         ok "$file -> $newfile"
     fi
 done
-
-fi  # end of non-content-only section
 
 # ── 7. Replace file contents: mng -> mngr ────────────────────────
 
