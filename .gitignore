@@ -255,8 +255,11 @@ current.tar.gz
 .minds/
 
 # Autofix session artifacts
+.autofix/
 .reviewer/outputs/
 .reviewer/settings.local.json
+.reviewer/.stop_hook_consecutive_blocks
+.reviews/
 
 # Stuck agent tracking (stop hook escape valve)
 .claude/blocked_stop_commits
@@ -270,3 +273,4 @@ current.tar.gz
 # ignore coverage files generated within subprojects
 cov.xml
 .autofix/
+.reviews/
