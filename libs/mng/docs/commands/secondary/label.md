@@ -28,7 +28,7 @@ mng label [OPTIONS] [AGENTS]...
 ```
 ## Arguments
 
-- `AGENTS`: Agent name(s) or ID(s) to label. Can also be read from stdin (one per line) when not provided as arguments.
+- `AGENTS`: Agent name(s) or ID(s) to label. Use '-' to read from stdin (one per line).
 
 **Options:**
 
@@ -96,7 +96,7 @@ $ mng label --all --label project=myproject
 **Read agent names from stdin**
 
 ```bash
-$ mng list --format '{name}' | mng label -l reviewed=true
+$ mng list --format '{name}' | mng label - -l reviewed=true
 ```
 
 **Preview changes**

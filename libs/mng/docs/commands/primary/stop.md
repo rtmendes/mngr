@@ -46,7 +46,6 @@ mng stop [OPTIONS] [AGENTS]...
 | `--session` | text | Tmux session name to stop (can be specified multiple times). The agent name is extracted by stripping the configured prefix from the session name. | None |
 | `--include` | text | Filter agents to stop by CEL expression (repeatable) [future] | None |
 | `--exclude` | text | Exclude agents matching CEL expression (repeatable) [future] | None |
-| `--stdin` | boolean | Read agent and host names/IDs from stdin, one per line [future] | `False` |
 
 ## Behavior
 

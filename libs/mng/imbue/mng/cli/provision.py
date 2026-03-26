@@ -15,6 +15,7 @@ from imbue.mng.cli.help_formatter import CommandHelpMetadata
 from imbue.mng.cli.help_formatter import add_pager_help_option
 from imbue.mng.cli.output_helpers import emit_event
 from imbue.mng.cli.output_helpers import emit_final_json
+from imbue.mng.cli.stdin_utils import resolve_stdin_placeholder
 from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.errors import UserInputError
@@ -170,7 +171,7 @@ def provision(ctx: click.Context, **kwargs: Any) -> None:
     if opts.agent is not None and opts.agent_option is not None:
         raise UserInputError("Cannot specify both positional agent and --agent option")
     elif opts.agent is not None:
-        agent_identifier = opts.agent
+        agent_identifier = resolve_stdin_placeholder(opts.agent)
     elif opts.agent_option is not None:
         agent_identifier = opts.agent_option
     else:

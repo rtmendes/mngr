@@ -28,6 +28,7 @@ from imbue.mng.cli.common_opts import add_common_options
 from imbue.mng.cli.common_opts import setup_command_context
 from imbue.mng.cli.help_formatter import CommandHelpMetadata
 from imbue.mng.cli.help_formatter import add_pager_help_option
+from imbue.mng.cli.stdin_utils import resolve_stdin_placeholder
 from imbue.mng.cli.urwid_utils import create_urwid_screen_preserving_terminal
 from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.errors import UserInputError
@@ -412,15 +413,17 @@ def connect(ctx: click.Context, **kwargs: Any) -> None:
     if not opts.reconnect:
         raise NotImplementedError("--no-reconnect is not implemented yet")
 
+    agent_identifier = resolve_stdin_placeholder(opts.agent)
+
     logger.info("Finding agent...")
     agents_by_host, providers = discover_all_hosts_and_agents(mng_ctx)
 
     agent: AgentInterface
     host: OnlineHostInterface
 
-    if opts.agent is not None:
+    if agent_identifier is not None:
         agent, host = find_agent_by_address(
-            opts.agent,
+            agent_identifier,
             agents_by_host,
             mng_ctx,
             "connect",

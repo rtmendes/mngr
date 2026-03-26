@@ -15,6 +15,7 @@ from imbue.mng.cli.help_formatter import add_pager_help_option
 from imbue.mng.cli.output_helpers import emit_event
 from imbue.mng.cli.output_helpers import emit_final_json
 from imbue.mng.cli.output_helpers import write_human_line
+from imbue.mng.cli.stdin_utils import resolve_stdin_placeholder
 from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import OutputOptions
 from imbue.mng.errors import UserInputError
@@ -95,10 +96,14 @@ def rename(ctx: click.Context, **kwargs: Any) -> None:
     except ValueError as e:
         raise UserInputError(f"Invalid new name: {e}") from None
 
+    current_identifier = resolve_stdin_placeholder(opts.current)
+    # current is a required click argument, so it's never None here
+    assert current_identifier is not None
+
     # Resolve the agent (without requiring the agent process to be running)
     agents_by_host, _ = discover_all_hosts_and_agents(mng_ctx)
     agent, host = find_agent_by_address(
-        opts.current,
+        current_identifier,
         agents_by_host,
         mng_ctx,
         "rename",

@@ -23,6 +23,7 @@ from imbue.mng.cli.output_helpers import emit_info
 from imbue.mng.cli.output_helpers import format_size
 from imbue.mng.cli.output_helpers import on_error
 from imbue.mng.cli.output_helpers import write_human_line
+from imbue.mng.cli.stdin_utils import expand_stdin_placeholder
 from imbue.mng.config.data_types import CommonCliOptions
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.config.data_types import OutputOptions
@@ -58,7 +59,6 @@ class SnapshotCreateCliOptions(CommonCliOptions):
     # Future options
     include: tuple[str, ...]
     exclude: tuple[str, ...]
-    stdin: bool
     tag: tuple[str, ...]
     description: str | None
     restart_if_larger_than: str | None
@@ -93,7 +93,6 @@ class SnapshotDestroyCliOptions(CommonCliOptions):
     # Future options
     include: tuple[str, ...]
     exclude: tuple[str, ...]
-    stdin: bool
 
 
 # =============================================================================
@@ -217,8 +216,6 @@ def _check_create_future_options(opts: SnapshotCreateCliOptions) -> None:
         raise NotImplementedError("--include is not implemented yet")
     if opts.exclude:
         raise NotImplementedError("--exclude is not implemented yet")
-    if opts.stdin:
-        raise NotImplementedError("--stdin is not implemented yet")
     if opts.tag:
         raise NotImplementedError("--tag is not implemented yet")
     if opts.description is not None:
@@ -249,8 +246,6 @@ def _check_destroy_future_options(opts: SnapshotDestroyCliOptions) -> None:
         raise NotImplementedError("--include is not implemented yet")
     if opts.exclude:
         raise NotImplementedError("--exclude is not implemented yet")
-    if opts.stdin:
-        raise NotImplementedError("--stdin is not implemented yet")
 
 
 # =============================================================================
@@ -460,11 +455,6 @@ def snapshot(ctx: click.Context, **kwargs: Any) -> None:
     help="Exclude agents matching CEL expression (repeatable) [future]",
 )
 @optgroup.option(
-    "--stdin",
-    is_flag=True,
-    help="Read agent/host names from stdin [future]",
-)
-@optgroup.option(
     "--tag",
     multiple=True,
     help="Metadata tag for the snapshot (KEY=VALUE) [future]",
@@ -521,7 +511,8 @@ def _snapshot_create_impl(ctx: click.Context, **kwargs: Any) -> None:
     _check_create_future_options(opts)
 
     # Classify mixed positional identifiers as agents or hosts
-    mixed_agent_ids, mixed_host_ids = _classify_mixed_identifiers(list(opts.identifiers), mng_ctx)
+    expanded_identifiers = expand_stdin_placeholder(opts.identifiers)
+    mixed_agent_ids, mixed_host_ids = _classify_mixed_identifiers(expanded_identifiers, mng_ctx)
 
     # Combine with explicit --agent and --host options
     agent_identifiers = mixed_agent_ids + list(opts.agent_list)
@@ -668,7 +659,8 @@ def snapshot_list(ctx: click.Context, **kwargs: Any) -> None:
     _check_list_future_options(opts)
 
     # Classify mixed positional identifiers as agents or hosts
-    mixed_agent_ids, mixed_host_ids = _classify_mixed_identifiers(list(opts.identifiers), mng_ctx)
+    expanded_identifiers = expand_stdin_placeholder(opts.identifiers)
+    mixed_agent_ids, mixed_host_ids = _classify_mixed_identifiers(expanded_identifiers, mng_ctx)
 
     # Combine with explicit --agent and --host options
     agent_identifiers = mixed_agent_ids + list(opts.agent_list)
@@ -758,11 +750,6 @@ def snapshot_list(ctx: click.Context, **kwargs: Any) -> None:
     multiple=True,
     help="Exclude snapshots matching CEL expression (repeatable) [future]",
 )
-@optgroup.option(
-    "--stdin",
-    is_flag=True,
-    help="Read agent/host names from stdin [future]",
-)
 @add_common_options
 @click.pass_context
 def snapshot_destroy(ctx: click.Context, **kwargs: Any) -> None:
@@ -777,7 +764,7 @@ def snapshot_destroy(ctx: click.Context, **kwargs: Any) -> None:
     _check_destroy_future_options(opts)
 
     # Validate inputs
-    agent_identifiers = list(opts.agents) + list(opts.agent_list)
+    agent_identifiers = expand_stdin_placeholder(opts.agents) + list(opts.agent_list)
 
     if not agent_identifiers:
         raise click.UsageError("Must specify at least one agent")
