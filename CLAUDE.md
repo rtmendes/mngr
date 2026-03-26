@@ -71,9 +71,9 @@ Only after doing all of the above should you begin writing code.
 
 # Remote hosts
 
-- When implementing or modifying any feature, consider whether it will work correctly for remote agents (not just local ones). Agents may be running on remote hosts where assumptions like local filesystem access, localhost networking, or same-machine process management do not hold.
-- Prefer making code naturally portable rather than branching on `is_local` (or similar implementation-discriminating checks). Everything that can naturally be done via existing `HostInterface`/`OnlineHostInterface` methods (e.g. `execute_command`, `read_file`, `write_file`, `copy_directory`) should be -- use them so that calling code works uniformly across local and remote hosts.
-- Execution on remote hosts is slow because each operation goes over the network. Batch work into as few remote operations as possible rather than making many small calls.
+- Always consider whether code will work on remote hosts, not just local ones. Don't assume local filesystem access, localhost networking, or same-machine process management.
+- Use `HostInterface`/`OnlineHostInterface` methods (e.g. `execute_command`, `read_file`, `write_file`, `copy_directory`) instead of branching on `is_local`. Code should be naturally portable.
+- Remote operations go over the network and are slow. Batch into as few calls as possible.
 
 # Ratchets
 
