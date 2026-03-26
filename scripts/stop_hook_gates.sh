@@ -59,7 +59,11 @@ if _check_stuck; then
     echo "SAFETY HATCH: Stop hook has blocked ${MAX_CONSECUTIVE_BLOCKS} consecutive times at the same commit ($HASH)." >&2
     echo "Letting the agent through to prevent an infinite loop." >&2
     echo "The review gates are still unsatisfied -- please investigate manually." >&2
-    rm -f "$BLOCK_TRACKER"
+    # Do NOT delete the tracker here. If we delete it, the next stop
+    # attempt would start fresh and block again, creating a 3-block
+    # cycle. Keep the tracker so all subsequent attempts at the same
+    # commit also pass through the safety hatch. The tracker is only
+    # cleared when the gates actually pass (exit 0 below).
     exit 0
 fi
 
