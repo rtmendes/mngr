@@ -1,3 +1,4 @@
+import os
 import subprocess
 import time
 from io import BytesIO
@@ -12,6 +13,7 @@ from imbue.concurrency_group.subprocess_utils import OutputGatherer
 from imbue.concurrency_group.subprocess_utils import PartialOutputContainer
 from imbue.concurrency_group.subprocess_utils import _is_timeout
 from imbue.concurrency_group.subprocess_utils import _shutdown_popen
+from imbue.concurrency_group.subprocess_utils import run_local_command_modern_version
 
 
 def test_check_raises_process_timeout_error_when_timed_out() -> None:
@@ -352,3 +354,28 @@ def test_gather_output_handles_none_reads() -> None:
     stdout_output, stderr_output = gatherer.get_output()
     assert stdout_output == b""
     assert stderr_output == b""
+
+
+def test_run_local_command_does_not_leak_file_descriptors() -> None:
+    """Verify stdout/stderr pipes are closed after command completes to prevent FD leaks."""
+
+    def count_open_fds() -> int:
+        # Works on both macOS (/dev/fd) and Linux (/proc/self/fd)
+        for fd_dir in ("/dev/fd", f"/proc/{os.getpid()}/fd"):
+            if os.path.isdir(fd_dir):
+                return len(os.listdir(fd_dir))
+        pytest.skip("Cannot count open file descriptors on this platform")
+
+    # Warm up (first call may open cached resources)
+    run_local_command_modern_version(["echo", "warmup"])
+
+    baseline = count_open_fds()
+
+    for _ in range(50):
+        run_local_command_modern_version(["echo", "hello"])
+
+    after = count_open_fds()
+
+    # If pipes were leaking, we'd see ~100 extra FDs (2 per subprocess).
+    # Allow a small margin for transient FDs unrelated to our code.
+    assert after - baseline <= 5, f"FD leak detected: {baseline} -> {after} (delta {after - baseline})"
