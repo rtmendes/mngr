@@ -346,3 +346,13 @@ def test_fetch_all_prs_passes_cwd(tmp_path: MagicMock) -> None:
     assert cg.run_process_in_background.call_count == 2
     for call in cg.run_process_in_background.call_args_list:
         assert call.kwargs.get("cwd") == tmp_path or call[1].get("cwd") == tmp_path
+
+
+def test_fetch_all_prs_passes_repo() -> None:
+    cg = _make_mock_cg("[]", "[]")
+    fetch_all_prs(cg, repo="org/repo")
+    assert cg.run_process_in_background.call_count == 2
+    for call in cg.run_process_in_background.call_args_list:
+        cmd = call[0][0]
+        assert "--repo" in cmd
+        assert cmd[cmd.index("--repo") + 1] == "org/repo"

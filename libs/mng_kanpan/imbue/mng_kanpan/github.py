@@ -3,9 +3,11 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.errors import ProcessError
+from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.pure import pure
 from imbue.mng_kanpan.data_types import CheckStatus
 from imbue.mng_kanpan.data_types import PrInfo
@@ -15,16 +17,32 @@ _BASE_FIELDS = "number,title,state,headRefName,url,isDraft"
 _OPEN_FIELDS = f"{_BASE_FIELDS},statusCheckRollup"
 
 
-class FetchPrsResult:
+class FetchPrsResult(FrozenModel):
     """Result of fetching PRs from GitHub."""
 
-    def __init__(self, prs: tuple[PrInfo, ...], error: str | None) -> None:
-        self.prs = prs
-        self.error = error
+    prs: tuple[PrInfo, ...] = Field(description="Fetched PRs")
+    error: str | None = Field(default=None, description="Error message if fetch failed")
 
 
-def fetch_all_prs(cg: ConcurrencyGroup, cwd: Path | None = None) -> FetchPrsResult:
-    """Fetch PRs from the current repo using gh CLI, in two parallel passes.
+def _build_gh_pr_list_cmd(
+    state: str,
+    fields: str,
+    limit: int,
+    repo: str | None,
+) -> list[str]:
+    """Build a gh pr list command with the given parameters."""
+    cmd = ["gh", "pr", "list", "--author", "@me", "--state", state, "--json", fields, "--limit", str(limit)]
+    if repo is not None:
+        cmd.extend(["--repo", repo])
+    return cmd
+
+
+def fetch_all_prs(cg: ConcurrencyGroup, cwd: Path | None = None, repo: str | None = None) -> FetchPrsResult:
+    """Fetch PRs from a repo using gh CLI, in two parallel passes.
+
+    Repo is identified by repo ('owner/repo' string passed via --repo) or
+    by cwd (a directory inside the target git repository). Prefer repo
+    since it doesn't require a local checkout.
 
     Pass 1: open PRs with statusCheckRollup (CI check data). This is a small
     result set where CI status matters.
@@ -32,19 +50,16 @@ def fetch_all_prs(cg: ConcurrencyGroup, cwd: Path | None = None) -> FetchPrsResu
     Pass 2: all PRs without statusCheckRollup (lightweight metadata only). This
     provides branch matching for closed/merged PRs without the expensive CI
     status resolution that causes GitHub API 504 timeouts.
-
-    The cwd parameter should point to a directory inside the target git
-    repository so that gh can detect which GitHub repo to query.
     """
     try:
         open_proc = cg.run_process_in_background(
-            ["gh", "pr", "list", "--author", "@me", "--state", "open", "--json", _OPEN_FIELDS, "--limit", "100"],
+            _build_gh_pr_list_cmd("open", _OPEN_FIELDS, 100, repo),
             timeout=30,
             cwd=cwd,
             is_checked_by_group=False,
         )
         all_proc = cg.run_process_in_background(
-            ["gh", "pr", "list", "--author", "@me", "--state", "all", "--json", _BASE_FIELDS, "--limit", "500"],
+            _build_gh_pr_list_cmd("all", _BASE_FIELDS, 500, repo),
             timeout=30,
             cwd=cwd,
             is_checked_by_group=False,
