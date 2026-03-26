@@ -81,7 +81,9 @@ class BoardSnapshot(FrozenModel):
 
     entries: tuple[AgentBoardEntry, ...] = Field(description="All agent board entries")
     errors: tuple[str, ...] = Field(default=(), description="Errors encountered during fetch")
-    prs_loaded_repos: frozenset[str] = Field(description="Repo paths for which PRs were successfully loaded")
+    repo_pr_loaded: dict[str, bool] = Field(
+        description="Per-repo PR load status: repo_path -> True if PRs loaded successfully, False if failed"
+    )
     fetch_time_seconds: float = Field(description="Time taken to fetch data")
 
 
@@ -97,7 +99,9 @@ class GitHubData(FrozenModel):
         default_factory=dict,
         description="Nested mapping: repo_path -> branch -> most relevant PR",
     )
-    prs_loaded_repos: frozenset[str] = Field(description="Repo paths for which PRs were successfully fetched")
+    repo_pr_loaded: dict[str, bool] = Field(
+        description="Per-repo PR load status: repo_path -> True if PRs loaded successfully, False if failed"
+    )
     errors: tuple[str, ...] = Field(default=(), description="Errors encountered during remote fetch")
 
 

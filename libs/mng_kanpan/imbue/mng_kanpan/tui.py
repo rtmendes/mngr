@@ -310,8 +310,8 @@ def _update_row_mark(state: _KanpanState, walker_idx: int, mark_key: str | None)
     entry = state.index_to_entry.get(walker_idx)
     if entry is None:
         return
-    prs_loaded_repos = state.snapshot.prs_loaded_repos if state.snapshot is not None else frozenset()
-    section = _classify_entry(entry, prs_loaded_repos)
+    repo_pr_loaded = state.snapshot.repo_pr_loaded if state.snapshot is not None else {}
+    section = _classify_entry(entry, repo_pr_loaded)
     name_markup: str | tuple[Hashable, str] | list[str | tuple[Hashable, str]] = _get_name_cell_markup(entry, mark_key)
     if section == BoardSection.MUTED:
         name_markup = _flatten_markup_to_muted(name_markup)
@@ -804,7 +804,8 @@ def _finish_refresh(loop: MainLoop, state: _KanpanState) -> None:
     try:
         new_snapshot = state.refresh_future.result()
         should_carry_forward = was_local_only or (
-            state.snapshot is not None and state.snapshot.prs_loaded_repos - new_snapshot.prs_loaded_repos
+            state.snapshot is not None
+            and _has_regressed_repos(state.snapshot.repo_pr_loaded, new_snapshot.repo_pr_loaded)
         )
         if should_carry_forward and state.snapshot is not None:
             new_snapshot = _carry_forward_pr_data(state.snapshot, new_snapshot)
@@ -846,6 +847,12 @@ def _finish_refresh(loop: MainLoop, state: _KanpanState) -> None:
 
 
 @pure
+def _has_regressed_repos(old_status: dict[str, bool], new_status: dict[str, bool]) -> bool:
+    """Check if any repo that previously loaded successfully has now failed or is missing."""
+    return any(old_status.get(repo) is True and new_status.get(repo) is not True for repo in old_status)
+
+
+@pure
 def _carry_forward_pr_data(old: BoardSnapshot, new: BoardSnapshot) -> BoardSnapshot:
     """Carry forward PR data from a previous snapshot for agents whose repo failed to load.
 
@@ -853,14 +860,18 @@ def _carry_forward_pr_data(old: BoardSnapshot, new: BoardSnapshot) -> BoardSnaps
     copies pr and create_pr_url from the old entry. Agents whose repo loaded successfully
     in the new snapshot keep their fresh data.
     """
-    failed_repos = old.prs_loaded_repos - new.prs_loaded_repos
     old_by_name = {entry.name: entry for entry in old.entries}
     updated_entries = []
     for entry in new.entries:
         agent_repo = repo_path_from_labels(entry.column_data.labels)
+        repo_regressed = (
+            agent_repo is not None
+            and old.repo_pr_loaded.get(agent_repo) is True
+            and new.repo_pr_loaded.get(agent_repo) is not True
+        )
         old_entry = old_by_name.get(entry.name)
         if (
-            agent_repo in failed_repos
+            repo_regressed
             and old_entry is not None
             and (old_entry.pr is not None or old_entry.create_pr_url is not None)
         ):
@@ -872,16 +883,20 @@ def _carry_forward_pr_data(old: BoardSnapshot, new: BoardSnapshot) -> BoardSnaps
             updated_entries.append(updated)
         else:
             updated_entries.append(entry)
-    merged_repos = new.prs_loaded_repos | failed_repos
+    # Merge: for regressed repos, restore True from old; keep new status for everything else.
+    merged_status = {**new.repo_pr_loaded}
+    for repo, loaded in old.repo_pr_loaded.items():
+        if loaded and not merged_status.get(repo):
+            merged_status[repo] = True
     return BoardSnapshot(
         entries=tuple(updated_entries),
         errors=new.errors,
-        prs_loaded_repos=merged_repos,
+        repo_pr_loaded=merged_status,
         fetch_time_seconds=new.fetch_time_seconds,
     )
 
 
-def _classify_entry(entry: AgentBoardEntry, prs_loaded_repos: frozenset[str]) -> BoardSection:
+def _classify_entry(entry: AgentBoardEntry, repo_pr_loaded: dict[str, bool]) -> BoardSection:
     """Determine which board section an agent belongs to based on its PR state.
 
     Muted agents are always placed in the MUTED section regardless of PR state.
@@ -897,7 +912,7 @@ def _classify_entry(entry: AgentBoardEntry, prs_loaded_repos: frozenset[str]) ->
             return BoardSection.PR_CLOSED
         return BoardSection.PR_BEING_REVIEWED
     agent_repo = repo_path_from_labels(entry.column_data.labels)
-    if agent_repo is not None and agent_repo not in prs_loaded_repos:
+    if agent_repo is not None and repo_pr_loaded.get(agent_repo) is not True:
         return BoardSection.PRS_FAILED
     return BoardSection.STILL_COOKING
 
@@ -1257,7 +1272,7 @@ def _build_board_widgets(
     # Classify entries into sections
     by_section: dict[BoardSection, list[AgentBoardEntry]] = {}
     for entry in snapshot.entries:
-        section = _classify_entry(entry, snapshot.prs_loaded_repos)
+        section = _classify_entry(entry, snapshot.repo_pr_loaded)
         by_section.setdefault(section, []).append(entry)
 
     has_content = False

@@ -82,7 +82,7 @@ def fetch_agent_snapshot(
     return BoardSnapshot(
         entries=tuple(entries),
         errors=tuple(errors),
-        prs_loaded_repos=frozenset(),
+        repo_pr_loaded={},
         fetch_time_seconds=elapsed,
     )
 
@@ -108,7 +108,7 @@ def fetch_github_data(mng_ctx: MngContext, agents: list[AgentDetails]) -> GitHub
 
     # Fetch PRs once per unique repo.
     pr_by_repo_branch: dict[str, dict[str, PrInfo]] = {}
-    prs_loaded_repos: set[str] = set()
+    repo_pr_loaded: dict[str, bool] = {}
 
     for repo_path, cwd in cwd_by_repo.items():
         pr_result = fetch_all_prs(cg, cwd=cwd)
@@ -116,13 +116,14 @@ def fetch_github_data(mng_ctx: MngContext, agents: list[AgentDetails]) -> GitHub
             repo_index = _build_pr_branch_index(pr_result.prs)
             if repo_index:
                 pr_by_repo_branch[repo_path] = repo_index
-            prs_loaded_repos.add(repo_path)
+            repo_pr_loaded[repo_path] = True
         else:
+            repo_pr_loaded[repo_path] = False
             errors.append(pr_result.error)
 
     return GitHubData(
         pr_by_repo_branch=pr_by_repo_branch,
-        prs_loaded_repos=frozenset(prs_loaded_repos),
+        repo_pr_loaded=repo_pr_loaded,
         errors=tuple(errors),
     )
 
@@ -138,7 +139,7 @@ def enrich_snapshot_with_github_data(snapshot: BoardSnapshot, remote: GitHubData
     for entry in snapshot.entries:
         agent_repo = repo_path_from_labels(entry.column_data.labels)
         pr = _lookup_pr(remote, agent_repo, entry.branch)
-        agent_prs_loaded = agent_repo in remote.prs_loaded_repos if agent_repo else False
+        agent_prs_loaded = remote.repo_pr_loaded.get(agent_repo) is True if agent_repo else False
         create_pr_url = (
             _build_create_pr_url(agent_repo, entry.branch)
             if agent_prs_loaded and entry.branch and pr is None
@@ -153,7 +154,7 @@ def enrich_snapshot_with_github_data(snapshot: BoardSnapshot, remote: GitHubData
     return BoardSnapshot(
         entries=tuple(enriched_entries),
         errors=(*snapshot.errors, *remote.errors),
-        prs_loaded_repos=remote.prs_loaded_repos,
+        repo_pr_loaded=remote.repo_pr_loaded,
         fetch_time_seconds=snapshot.fetch_time_seconds,
     )
 
@@ -204,7 +205,7 @@ def fetch_board_snapshot(
         commits_ahead = _get_commits_ahead(local_work_dir, cg) if local_work_dir is not None else None
         agent_repo = _get_agent_repo_path(agent)
         pr = _lookup_pr(remote, agent_repo, branch)
-        agent_prs_loaded = agent_repo in remote.prs_loaded_repos if agent_repo else False
+        agent_prs_loaded = remote.repo_pr_loaded.get(agent_repo) is True if agent_repo else False
         create_pr_url = (
             _build_create_pr_url(agent_repo, branch) if agent_prs_loaded and branch and pr is None else None
         )
@@ -233,7 +234,7 @@ def fetch_board_snapshot(
     snapshot = BoardSnapshot(
         entries=tuple(entries),
         errors=(*errors, *remote.errors),
-        prs_loaded_repos=remote.prs_loaded_repos,
+        repo_pr_loaded=remote.repo_pr_loaded,
         fetch_time_seconds=time.monotonic() - start_time,
     )
 

@@ -145,7 +145,7 @@ def _make_snapshot(
     entries: tuple[AgentBoardEntry, ...] = (),
     errors: tuple[str, ...] = (),
 ) -> BoardSnapshot:
-    return BoardSnapshot(entries=entries, errors=errors, prs_loaded_repos=frozenset(), fetch_time_seconds=1.5)
+    return BoardSnapshot(entries=entries, errors=errors, repo_pr_loaded={}, fetch_time_seconds=1.5)
 
 
 def _make_state(
@@ -244,39 +244,39 @@ def _text_contains(texts: list[str], substring: str) -> bool:
 
 def test_classify_entry_muted_always_goes_to_muted_section() -> None:
     entry = _make_entry(is_muted=True, pr=_make_pr(state=PrState.MERGED))
-    assert _classify_entry(entry, frozenset()) == BoardSection.MUTED
+    assert _classify_entry(entry, {}) == BoardSection.MUTED
 
 
 def test_classify_entry_no_pr_is_still_cooking() -> None:
-    assert _classify_entry(_make_entry(pr=None), frozenset()) == BoardSection.STILL_COOKING
+    assert _classify_entry(_make_entry(pr=None), {}) == BoardSection.STILL_COOKING
 
 
 def test_classify_entry_merged_pr() -> None:
-    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.MERGED)), frozenset()) == BoardSection.PR_MERGED
+    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.MERGED)), {}) == BoardSection.PR_MERGED
 
 
 def test_classify_entry_closed_pr() -> None:
-    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.CLOSED)), frozenset()) == BoardSection.PR_CLOSED
+    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.CLOSED)), {}) == BoardSection.PR_CLOSED
 
 
 def test_classify_entry_open_pr() -> None:
-    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.OPEN)), frozenset()) == BoardSection.PR_BEING_REVIEWED
+    assert _classify_entry(_make_entry(pr=_make_pr(state=PrState.OPEN)), {}) == BoardSection.PR_BEING_REVIEWED
 
 
 def test_classify_entry_failed_repo_goes_to_prs_failed() -> None:
     entry = _make_entry(pr=None, labels={"remote": "git@github.com:org/repo.git"})
-    assert _classify_entry(entry, frozenset()) == BoardSection.PRS_FAILED
+    assert _classify_entry(entry, {"org/repo": False}) == BoardSection.PRS_FAILED
 
 
 def test_classify_entry_loaded_repo_stays_in_still_cooking() -> None:
     entry = _make_entry(pr=None, labels={"remote": "git@github.com:org/repo.git"})
-    assert _classify_entry(entry, frozenset({"org/repo"})) == BoardSection.STILL_COOKING
+    assert _classify_entry(entry, {"org/repo": True}) == BoardSection.STILL_COOKING
 
 
 def test_classify_entry_no_remote_label_stays_in_still_cooking() -> None:
     """Agents without a remote label are not considered failed -- they have no upstream."""
     entry = _make_entry(pr=None)
-    assert _classify_entry(entry, frozenset()) == BoardSection.STILL_COOKING
+    assert _classify_entry(entry, {}) == BoardSection.STILL_COOKING
 
 
 # =============================================================================
@@ -939,7 +939,7 @@ def test_unmark_all_noop_when_empty() -> None:
 
 def test_build_board_widgets_shows_mark_indicator() -> None:
     entry = _make_entry()
-    snapshot = BoardSnapshot(entries=(entry,), prs_loaded_repos=frozenset(), fetch_time_seconds=0.1)
+    snapshot = BoardSnapshot(entries=(entry,), repo_pr_loaded={}, fetch_time_seconds=0.1)
     marks = {AgentName("test-agent"): "d"}
     walker, index_to_entry = _build_board_widgets(snapshot, _BOARD_COLUMN_DEFS, marks)
     agent_idx = min(index_to_entry.keys())
@@ -1000,7 +1000,7 @@ def test_carry_forward_pr_data_preserves_old_prs() -> None:
     )
     old = BoardSnapshot(
         entries=(old_entry,),
-        prs_loaded_repos=frozenset({"org/repo"}),
+        repo_pr_loaded={"org/repo": True},
         fetch_time_seconds=1.0,
     )
 
@@ -1016,12 +1016,12 @@ def test_carry_forward_pr_data_preserves_old_prs() -> None:
     new = BoardSnapshot(
         entries=(new_entry,),
         errors=("gh auth failed",),
-        prs_loaded_repos=frozenset(),
+        repo_pr_loaded={},
         fetch_time_seconds=2.0,
     )
 
     result = _carry_forward_pr_data(old, new)
-    assert "org/repo" in result.prs_loaded_repos
+    assert result.repo_pr_loaded["org/repo"] is True
     assert result.entries[0].pr is not None
     assert result.entries[0].pr.number == 42
     assert "gh auth failed" in result.errors[0]
@@ -1041,7 +1041,7 @@ def test_carry_forward_pr_data_preserves_create_pr_url_without_pr() -> None:
     )
     old = BoardSnapshot(
         entries=(old_entry,),
-        prs_loaded_repos=frozenset({"org/repo"}),
+        repo_pr_loaded={"org/repo": True},
         fetch_time_seconds=1.0,
     )
 
@@ -1056,12 +1056,12 @@ def test_carry_forward_pr_data_preserves_create_pr_url_without_pr() -> None:
     )
     new = BoardSnapshot(
         entries=(new_entry,),
-        prs_loaded_repos=frozenset(),
+        repo_pr_loaded={},
         fetch_time_seconds=2.0,
     )
 
     result = _carry_forward_pr_data(old, new)
-    assert "org/repo" in result.prs_loaded_repos
+    assert result.repo_pr_loaded["org/repo"] is True
     assert result.entries[0].pr is None
     assert result.entries[0].create_pr_url == "https://github.com/org/repo/compare/mng/agent-1?expand=1"
 
@@ -1070,7 +1070,7 @@ def test_carry_forward_pr_data_handles_new_agents() -> None:
     repo_labels = ColumnData(labels={"remote": "git@github.com:org/repo.git"})
     old = BoardSnapshot(
         entries=(),
-        prs_loaded_repos=frozenset({"org/repo"}),
+        repo_pr_loaded={"org/repo": True},
         fetch_time_seconds=1.0,
     )
 
@@ -1083,7 +1083,7 @@ def test_carry_forward_pr_data_handles_new_agents() -> None:
     )
     new = BoardSnapshot(
         entries=(new_entry,),
-        prs_loaded_repos=frozenset(),
+        repo_pr_loaded={},
         fetch_time_seconds=2.0,
     )
 
@@ -1105,7 +1105,7 @@ def test_first_load_pr_failure_shows_prs_not_loaded() -> None:
     snapshot = BoardSnapshot(
         entries=(entry,),
         errors=("gh pr list failed: auth required",),
-        prs_loaded_repos=frozenset(),
+        repo_pr_loaded={},
         fetch_time_seconds=1.0,
     )
     walker, _ = _build_board_widgets(snapshot, _BOARD_COLUMN_DEFS)
@@ -1128,7 +1128,7 @@ def test_first_load_pr_success_shows_normal_heading() -> None:
     )
     snapshot = BoardSnapshot(
         entries=(entry,),
-        prs_loaded_repos=frozenset({"org/repo"}),
+        repo_pr_loaded={"org/repo": True},
         fetch_time_seconds=1.0,
     )
     walker, _ = _build_board_widgets(snapshot, _BOARD_COLUMN_DEFS)
@@ -1152,7 +1152,7 @@ def test_second_load_pr_failure_shows_carried_forward_prs() -> None:
     )
     old = BoardSnapshot(
         entries=(old_entry,),
-        prs_loaded_repos=frozenset({"org/repo"}),
+        repo_pr_loaded={"org/repo": True},
         fetch_time_seconds=1.0,
     )
 
@@ -1168,7 +1168,7 @@ def test_second_load_pr_failure_shows_carried_forward_prs() -> None:
     new = BoardSnapshot(
         entries=(new_entry,),
         errors=("gh pr list failed: network error",),
-        prs_loaded_repos=frozenset(),
+        repo_pr_loaded={},
         fetch_time_seconds=2.0,
     )
 
@@ -1207,7 +1207,7 @@ def test_carry_forward_partial_failure_preserves_failed_repo_prs() -> None:
     )
     old = BoardSnapshot(
         entries=(old_good_entry, old_bad_entry),
-        prs_loaded_repos=frozenset({"org/good", "org/bad"}),
+        repo_pr_loaded={"org/good": True, "org/bad": True},
         fetch_time_seconds=1.0,
     )
 
@@ -1230,7 +1230,7 @@ def test_carry_forward_partial_failure_preserves_failed_repo_prs() -> None:
     )
     new = BoardSnapshot(
         entries=(new_good_entry, new_bad_entry),
-        prs_loaded_repos=frozenset({"org/good"}),
+        repo_pr_loaded={"org/good": True, "org/bad": False},
         fetch_time_seconds=2.0,
     )
 
@@ -1244,8 +1244,8 @@ def test_carry_forward_partial_failure_preserves_failed_repo_prs() -> None:
     assert result.entries[1].pr is not None
     assert result.entries[1].pr.number == 20
 
-    assert "org/good" in result.prs_loaded_repos
-    assert "org/bad" in result.prs_loaded_repos
+    assert result.repo_pr_loaded["org/good"] is True
+    assert result.repo_pr_loaded["org/bad"] is True
 
 
 # === Debounce / refresh tests ===
@@ -1299,7 +1299,7 @@ def _make_dummy_snapshot(**overrides: Any) -> BoardSnapshot:
                 provider_name=ProviderInstanceName("modal"),
             ),
         ),
-        "prs_loaded_repos": frozenset(),
+        "repo_pr_loaded": {},
         "fetch_time_seconds": 0.1,
     }
     defaults.update(overrides)
