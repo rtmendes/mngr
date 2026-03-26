@@ -15,9 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import contextlib
 import os
-import subprocess
 import sys
 import textwrap
 from dataclasses import dataclass
@@ -30,7 +28,6 @@ from verify_skill_overrides import OverrideAction
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-VET_BASE_COMMIT_PATH = SCRIPT_DIR / "vet_base_commit"
 
 # Output paths (vet-generated, checked in)
 BRANCH_CATEGORIES_PATH = REPO_ROOT / ".claude" / "agents" / "categories" / "code-issue-categories.md"
@@ -136,7 +133,7 @@ def _vet_guide_to_section(guide) -> CategorySection:
 def _apply_overrides(sections: list[CategorySection]) -> list[CategorySection]:
     """Apply mng-specific overrides to the category sections.
 
-    Inserts new categories and extends or replaces existing ones with mng-specific guidance.
+    Inserts new categories and extends existing ones with additional guidance.
     """
     sections_by_code: dict[str, CategorySection] = {s.issue_code: s for s in sections}
 
@@ -167,12 +164,6 @@ def _apply_overrides(sections: list[CategorySection]) -> list[CategorySection]:
                 section.examples.extend(_split_list_items(override.content))
             case OverrideAction.APPEND_EXCEPTIONS:
                 section.exceptions.extend(_split_list_items(override.content))
-            case OverrideAction.REPLACE_GUIDE:
-                section.guide = override.content
-            case OverrideAction.REPLACE_EXAMPLES:
-                section.examples = _split_list_items(override.content)
-            case OverrideAction.REPLACE_EXCEPTIONS:
-                section.exceptions = _split_list_items(override.content)
             case OverrideAction.ADD_CATEGORY:
                 msg = "ADD_CATEGORY should use NEW_CATEGORIES, not CATEGORY_EXTENSIONS"
                 raise ValueError(msg)
@@ -226,87 +217,23 @@ def generate_conversation_categories(vet_modules) -> str:
     return "\n".join(sections)
 
 
-def _git(vet_repo: Path, *args: str, check: bool) -> subprocess.CompletedProcess[str]:
-    """Run a git command in the vet repo."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    return subprocess.run(
-        ["git", "-C", str(vet_repo), *args],
-        capture_output=True,
-        text=True,
-        check=check,
-        env=env,
-    )
-
-
-def _is_behind_origin(vet_repo: Path, base_commit: str) -> bool:
-    """Check if the pinned base commit is behind vet's origin/main."""
-    origin_result = _git(vet_repo, "rev-parse", "origin/main", check=False)
-    if origin_result.returncode != 0:
-        print("warning: could not resolve origin/main in vet repo", file=sys.stderr)
-        return False
-    origin_main = origin_result.stdout.strip()
-    if origin_main == base_commit:
-        return False
-    return _git(vet_repo, "merge-base", "--is-ancestor", base_commit, origin_main, check=False).returncode == 0
-
-
-@contextlib.contextmanager
-def _pinned_vet_checkout(vet_repo: Path):
-    """Context manager that checks out the pinned vet commit and restores the original HEAD after."""
-    base_commit = VET_BASE_COMMIT_PATH.read_text().strip()
-    original_commit = _git(vet_repo, "rev-parse", "HEAD", check=True).stdout.strip()
-
-    # Preserve the branch ref (if on a branch) so we restore to the branch, not
-    # a detached HEAD at the same commit.
-    symref_result = _git(vet_repo, "symbolic-ref", "-q", "HEAD", check=False)
-    original_ref = symref_result.stdout.strip() if symref_result.returncode == 0 else original_commit
-
-    if _is_behind_origin(vet_repo, base_commit):
-        print(
-            f"warning: pinned vet base ({base_commit[:12]}) is behind origin/main. "
-            f"To update:\n"
-            f"  git -C {vet_repo} rev-parse origin/main > {VET_BASE_COMMIT_PATH}",
-            file=sys.stderr,
-        )
-
-    needs_checkout = original_commit != base_commit
-    if needs_checkout:
-        print(
-            f"note: checking out pinned vet base ({base_commit[:12]}), "
-            f"will restore HEAD ({original_commit[:12]}) after.",
-            file=sys.stderr,
-        )
-        _git(vet_repo, "checkout", "--quiet", base_commit, check=True)
-
-    try:
-        yield
-    finally:
-        if needs_checkout:
-            # Use the short branch name so git attaches HEAD to the branch
-            # rather than leaving detached HEAD (git checkout refs/heads/main
-            # detaches, but git checkout main attaches).
-            restore_target = original_ref.removeprefix("refs/heads/")
-            _git(vet_repo, "checkout", "--quiet", restore_target, check=True)
-
-
 def load_vet(vet_repo: Path) -> dict:
-    """Import vet modules at the pinned base commit, restoring vet HEAD after."""
-    with _pinned_vet_checkout(vet_repo):
-        vet_str = str(vet_repo)
-        if vet_str not in sys.path:
-            sys.path.insert(0, vet_str)
+    """Import vet modules and return the symbols we need."""
+    vet_str = str(vet_repo)
+    if vet_str not in sys.path:
+        sys.path.insert(0, vet_str)
 
-        from vet.issue_identifiers.identification_guides import ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK
-        from vet.issue_identifiers.identification_guides import ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK
-        from vet.issue_identifiers.identification_guides import ISSUE_CODES_FOR_CORRECTNESS_CHECK
-        from vet.issue_identifiers.identification_guides import ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE
+    from vet.issue_identifiers.identification_guides import ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK
+    from vet.issue_identifiers.identification_guides import ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK
+    from vet.issue_identifiers.identification_guides import ISSUE_CODES_FOR_CORRECTNESS_CHECK
+    from vet.issue_identifiers.identification_guides import ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE
 
-        return {
-            "ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK": ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK,
-            "ISSUE_CODES_FOR_CORRECTNESS_CHECK": ISSUE_CODES_FOR_CORRECTNESS_CHECK,
-            "ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK": ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK,
-            "ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE": ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE,
-        }
+    return {
+        "ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK": ISSUE_CODES_FOR_BATCHED_COMMIT_CHECK,
+        "ISSUE_CODES_FOR_CORRECTNESS_CHECK": ISSUE_CODES_FOR_CORRECTNESS_CHECK,
+        "ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK": ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK,
+        "ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE": ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -397,9 +324,7 @@ def main() -> None:
     ok = check_or_write(targets, check=args.check)
     if args.check and not ok:
         print(
-            "To keep these changes, run /update-vet-categories to sync the override script.\n"
-            "To revert to the generated version, run:\n"
-            "  uv run python scripts/generate_verify_skills.py",
+            "Run 'uv run python scripts/generate_verify_skills.py --vet-repo <path>' to regenerate.",
             file=sys.stderr,
         )
         raise SystemExit(1)

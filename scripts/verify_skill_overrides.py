@@ -1,7 +1,7 @@
 """Mng-specific overrides for vet-generated code issue categories.
 
 These overrides are applied AFTER generating from vet, so the vet base is always
-the starting point. They add new categories and extend or replace existing ones with
+the starting point. They add new categories and extend existing ones with
 mng-specific guidance.
 """
 
@@ -16,9 +16,6 @@ class OverrideAction(Enum):
     APPEND_GUIDE = "append_guide"
     APPEND_EXAMPLES = "append_examples"
     APPEND_EXCEPTIONS = "append_exceptions"
-    REPLACE_GUIDE = "replace_guide"
-    REPLACE_EXAMPLES = "replace_examples"
-    REPLACE_EXCEPTIONS = "replace_exceptions"
 
 
 @dataclass(frozen=True)
@@ -57,7 +54,7 @@ Any tests added in the diff should be of high quality individually, and should c
     ),
 }
 
-# Overrides that extend or replace existing vet categories.
+# Overrides that extend existing vet categories.
 CATEGORY_EXTENSIONS: list[Override] = [
     Override(
         issue_code="incomplete_integration_with_existing_code",
@@ -65,12 +62,6 @@ CATEGORY_EXTENSIONS: list[Override] = [
         content="""\
 - Tests should be given the correct decorators (ex: @pytest.mark.acceptance for tests that require network access/credentials and @pytest.mark.release for end-to-end tests that are not "core", eg, test rarer cases)
 - Tests should be placed in the correctly named file (ex: *_test.py for unit tests, test_*.py for integration/acceptance/release tests)""",
-    ),
-    Override(
-        issue_code="poor_naming",
-        action=OverrideAction.REPLACE_EXCEPTIONS,
-        content="""\
-- Short names for local variables (especially as allowed for in a style guide) are usually okay.""",
     ),
     Override(
         issue_code="refactoring_needed",
@@ -82,13 +73,10 @@ CATEGORY_EXTENSIONS: list[Override] = [
     ),
     Override(
         issue_code="refactoring_needed",
-        action=OverrideAction.REPLACE_EXAMPLES,
+        action=OverrideAction.APPEND_EXAMPLES,
         content="""\
-- New functionality that is orthogonal to the existing functionality in a function is inserted into the existing function's body instead of being separated out into its own function.
-- A class mixes two different use cases that could be separated into two classes.
-- A function that returns a value that can be either a valid result or an error state (e.g. None, False, -1) instead of raising an exception for the error case. This is bad because the caller can forget to check for the error state.
-- A class that has a "name" attribute that is just a string, instead of having a proper Name class (eg, that inherits from NonEmptyString).
-- A class with a bare string or uuid as an "id" attribute, instead of having a proper ID class.
+- A function that returns a value that can be either a valid result or an error state (e.g. None, False, -1) instead of raising an exception for the error case.
+- A class that has a "name" attribute that is just a string, instead of having a proper Name class.
 - An if/elif/.../else construct that dispatches on the value of an enum, instead of using a match statement.""",
     ),
     Override(
@@ -105,29 +93,10 @@ CATEGORY_EXTENSIONS: list[Override] = [
     ),
     Override(
         issue_code="fails_silently",
-        action=OverrideAction.REPLACE_GUIDE,
+        action=OverrideAction.APPEND_GUIDE,
         content="""\
-Code that fails silently is code that ignores errors without reporting them or properly handling them.
-
-This includes behaviors like catching exceptions without logging them as warnings/errors (or re-raising them), returning inappropriate default values during an error condition, returning None instead of raising an error when there is a legitimate error, or otherwise allowing errors to occur without any indication to the user or developer.""",
-    ),
-    Override(
-        issue_code="fails_silently",
-        action=OverrideAction.REPLACE_EXAMPLES,
-        content="""\
-- The code indiscriminately captures exceptions of all types (e.g. Exception) or multiple types and continues execution without taking any action to handle the error
-- Overly broad "except" clauses that catch many different types of errors and simply continue execution (rather than raising it so that invalid states are not silently ignored)
-- Any "except" clause that does *not* log the error (at least at "trace" level) and/or report it to an error tracking system (e.g. Sentry). Real error conditions should be logged at *least* at warning level, and anything that violates a program invariant (eg, is an unexpected condition) should generally be raised.
-- Returning None or an inappropriate default value when an error occurs instead of raising an exception. This can lead to downstream errors that are harder to debug because the original error is obscured.
-- Any except clause *must* either log the error (if it is handling the error), or re-raise the error (if it is not handling the error). If an except clause does neither of these things, it is a silent failure (it's ok if the logging is at trace level, but it must be present).
-- The return value of a function that returns an error value in case of a failure is not checked by the caller""",
-    ),
-    Override(
-        issue_code="fails_silently",
-        action=OverrideAction.REPLACE_EXCEPTIONS,
-        content="""\
-- There are certain cases where broad exception handlers are acceptable, such as in an executor class or in a main loop that iterates over several tasks. Such cases should still properly log and report the errors
-- Do not raise issues related to potential program crashes""",
+- Any "except" clause that does *not* log the error (at least at "trace" level) and/or report it to an error tracking system. Real error conditions should be logged at least at warning level, and anything that violates a program invariant should generally be raised.
+- Any except clause must either log the error (if it is handling the error), or re-raise the error (if it is not handling the error).""",
     ),
     Override(
         issue_code="runtime_error_risk",
