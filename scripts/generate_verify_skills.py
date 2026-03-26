@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import subprocess
 import sys
@@ -249,8 +250,9 @@ def _is_behind_origin(vet_repo: Path, base_commit: str) -> bool:
     return _git(vet_repo, "merge-base", "--is-ancestor", base_commit, origin_main, check=False).returncode == 0
 
 
-def load_vet(vet_repo: Path) -> dict:
-    """Import vet modules at the pinned base commit, restoring vet HEAD after."""
+@contextlib.contextmanager
+def _pinned_vet_checkout(vet_repo: Path):
+    """Context manager that checks out the pinned vet commit and restores the original HEAD after."""
     base_commit = VET_BASE_COMMIT_PATH.read_text().strip()
     original_commit = _git(vet_repo, "rev-parse", "HEAD", check=True).stdout.strip()
 
@@ -277,6 +279,19 @@ def load_vet(vet_repo: Path) -> dict:
         _git(vet_repo, "checkout", "--quiet", base_commit, check=True)
 
     try:
+        yield
+    finally:
+        if needs_checkout:
+            # Use the short branch name so git attaches HEAD to the branch
+            # rather than leaving detached HEAD (git checkout refs/heads/main
+            # detaches, but git checkout main attaches).
+            restore_target = original_ref.removeprefix("refs/heads/")
+            _git(vet_repo, "checkout", "--quiet", restore_target, check=True)
+
+
+def load_vet(vet_repo: Path) -> dict:
+    """Import vet modules at the pinned base commit, restoring vet HEAD after."""
+    with _pinned_vet_checkout(vet_repo):
         vet_str = str(vet_repo)
         if vet_str not in sys.path:
             sys.path.insert(0, vet_str)
@@ -292,13 +307,6 @@ def load_vet(vet_repo: Path) -> dict:
             "ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK": ISSUE_CODES_FOR_CONVERSATION_HISTORY_CHECK,
             "ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE": ISSUE_IDENTIFICATION_GUIDES_BY_ISSUE_CODE,
         }
-    finally:
-        if needs_checkout:
-            # Use the short branch name so git attaches HEAD to the branch
-            # rather than leaving detached HEAD (git checkout refs/heads/main
-            # detaches, but git checkout main attaches).
-            restore_target = original_ref.removeprefix("refs/heads/")
-            _git(vet_repo, "checkout", "--quiet", restore_target, check=True)
 
 
 # ---------------------------------------------------------------------------
