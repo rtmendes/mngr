@@ -1011,6 +1011,7 @@ def _create_agent_with_stub_host(
     temp_mng_ctx: MngContext,
     stub: _StubHost,
     cls: type[BaseAgent] = BaseAgent,
+    name: AgentName = AgentName("stub-agent"),
     **kwargs: Any,
 ) -> BaseAgent:
     """Create an agent with a stub host for command recording.
@@ -1022,7 +1023,7 @@ def _create_agent_with_stub_host(
     """
     return cls.model_construct(
         id=AgentId.generate(),
-        name=AgentName("stub-agent"),
+        name=name,
         agent_type=AgentTypeName("test"),
         work_dir=Path("/tmp/stub-work"),
         create_time=datetime.now(timezone.utc),
@@ -1117,6 +1118,22 @@ def test_send_tmux_literal_keys_short_message_raises_on_send_keys_failure(
 
     with pytest.raises(SendMessageError, match="send-keys failed"):
         agent._send_tmux_literal_keys("mng-test:0", "hello")
+
+
+def test_send_tmux_literal_keys_long_message_sanitizes_slash_in_session_name(
+    temp_mng_ctx: MngContext,
+) -> None:
+    """Session names with '/' should produce flat temp file paths (no nested dirs)."""
+    stub = _StubHost()
+    agent = _create_agent_with_stub_host(temp_mng_ctx, stub, name=AgentName("foo/bar"))
+
+    long_message = "x" * 1024
+    agent._send_tmux_literal_keys("mng-test:0", long_message)
+
+    # The temp file path should use '-' instead of '/' to avoid nested directories
+    written_path = stub.written_files[0][0]
+    assert "/" not in written_path.name, f"Temp file name should not contain '/': {written_path}"
+    assert "foo-bar" in written_path.name
 
 
 # =========================================================================
