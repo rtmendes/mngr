@@ -225,50 +225,33 @@ def generate_conversation_categories(vet_modules) -> str:
     return "\n".join(sections)
 
 
-def _git(vet_repo: Path, *args: str) -> str:
-    """Run a git command in the vet repo and return stripped stdout."""
+def _git(vet_repo: Path, *args: str, check: bool) -> subprocess.CompletedProcess[str]:
+    """Run a git command in the vet repo."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    result = subprocess.run(
+    return subprocess.run(
         ["git", "-C", str(vet_repo), *args],
         capture_output=True,
         text=True,
-        check=True,
+        check=check,
         env=env,
     )
-    return result.stdout.strip()
 
 
 def _is_behind_origin(vet_repo: Path, base_commit: str) -> bool:
     """Check if the pinned base commit is behind vet's origin/main."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    vet = str(vet_repo)
-
-    origin_result = subprocess.run(
-        ["git", "-C", vet, "rev-parse", "origin/main"],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    origin_result = _git(vet_repo, "rev-parse", "origin/main", check=False)
     if origin_result.returncode != 0:
         return False
     origin_main = origin_result.stdout.strip()
     if origin_main == base_commit:
         return False
-
-    return (
-        subprocess.run(
-            ["git", "-C", vet, "merge-base", "--is-ancestor", base_commit, origin_main],
-            capture_output=True,
-            env=env,
-        ).returncode
-        == 0
-    )
+    return _git(vet_repo, "merge-base", "--is-ancestor", base_commit, origin_main, check=False).returncode == 0
 
 
 def load_vet(vet_repo: Path) -> dict:
     """Import vet modules at the pinned base commit, restoring vet HEAD after."""
     base_commit = VET_BASE_COMMIT_PATH.read_text().strip()
-    original_head = _git(vet_repo, "rev-parse", "HEAD")
+    original_head = _git(vet_repo, "rev-parse", "HEAD", check=True).stdout.strip()
 
     if _is_behind_origin(vet_repo, base_commit):
         print(
@@ -284,7 +267,7 @@ def load_vet(vet_repo: Path) -> dict:
             f"will restore HEAD ({original_head[:12]}) after.",
             file=sys.stderr,
         )
-        _git(vet_repo, "checkout", "--quiet", base_commit)
+        _git(vet_repo, "checkout", "--quiet", base_commit, check=True)
 
     try:
         vet_str = str(vet_repo)
@@ -304,7 +287,7 @@ def load_vet(vet_repo: Path) -> dict:
         }
     finally:
         if original_head != base_commit:
-            _git(vet_repo, "checkout", "--quiet", original_head)
+            _git(vet_repo, "checkout", "--quiet", original_head, check=True)
 
 
 # ---------------------------------------------------------------------------
