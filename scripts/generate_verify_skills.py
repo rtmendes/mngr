@@ -267,7 +267,8 @@ def _warn_if_behind_origin(vet_repo: Path, base_commit: str) -> None:
     if is_ancestor:
         print(
             f"warning: pinned vet base ({base_commit[:12]}) is behind origin/main ({origin_main[:12]}). "
-            f"Consider updating scripts/vet_base_commit.",
+            f"To update:\n"
+            f"  git -C {vet_repo} rev-parse origin/main > {VET_BASE_COMMIT_PATH}",
             file=sys.stderr,
         )
 
