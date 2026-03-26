@@ -1521,9 +1521,11 @@ class Host(BaseHost, OnlineHostInterface):
                 s = shlex.quote(source_str)
                 t = shlex.quote(target_str)
                 t_parent = shlex.quote(str(Path(target_str).parent))
+                # Use printf '%s' to safely embed the target path in the error message
+                # without shell interpretation of metacharacters ($, `, \, etc.)
                 script_parts.append(
                     f"if [ -e {t} ] && [ ! -L {t} ]; then "
-                    f'errors="${{errors}}CONFLICT: {target_str}\n"; '
+                    f"errors=\"${{errors}}$(printf 'CONFLICT: %s\\n' {t})\"; "
                     f"elif [ ! -L {t} ] || "
                     f'[ "$(readlink -f {t} 2>/dev/null)" != "$(readlink -f {s} 2>/dev/null)" ]; then '
                     f"mkdir -p {t_parent} && ln -snf {s} {t}; "
