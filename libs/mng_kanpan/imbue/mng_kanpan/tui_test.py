@@ -1125,6 +1125,7 @@ def test_first_load_pr_success_shows_normal_heading() -> None:
         branch="mng/agent-1",
         pr=None,
         create_pr_url="https://github.com/org/repo/compare/mng/agent-1?expand=1",
+        column_data=ColumnData(labels={"remote": "git@github.com:org/repo.git"}),
     )
     snapshot = BoardSnapshot(
         entries=(entry,),
