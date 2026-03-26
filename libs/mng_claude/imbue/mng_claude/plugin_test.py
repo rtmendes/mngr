@@ -2369,7 +2369,10 @@ def test_on_after_provisioning_adopts_session_by_id(
         plugin_data={"adopt_session": (target_session_id,)},
     )
 
-    with patch.object(Path, "home", return_value=fake_home):
+    with (
+        patch.object(Path, "home", return_value=fake_home),
+        patch.dict("os.environ", {"CLAUDE_CONFIG_DIR": ""}),
+    ):
         agent.provision(host=host, options=options, mng_ctx=temp_mng_ctx)
         agent.on_after_provisioning(host=host, options=options, mng_ctx=temp_mng_ctx)
 
@@ -2412,7 +2415,10 @@ def test_on_after_provisioning_raises_when_session_not_found(
         plugin_data={"adopt_session": ("nonexistent-session",)},
     )
 
-    with patch.object(Path, "home", return_value=fake_home):
+    with (
+        patch.object(Path, "home", return_value=fake_home),
+        patch.dict("os.environ", {"CLAUDE_CONFIG_DIR": ""}),
+    ):
         with pytest.raises(UserInputError, match="Session nonexistent-session not found"):
             agent.on_after_provisioning(host=host, options=options, mng_ctx=temp_mng_ctx)
 
