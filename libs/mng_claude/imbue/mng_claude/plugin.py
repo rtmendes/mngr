@@ -95,7 +95,7 @@ def _resolve_adopt_session(adopt_session_arg: str) -> tuple[str, Path]:
 
     Accepts either:
     - A path to a .jsonl file (e.g. ~/.claude/projects/foo/abc123.jsonl)
-    - A session ID string (searched in $CLAUDE_CONFIG_DIR/projects/ or ~/.claude/projects/)
+    - A session ID string (searched in both $CLAUDE_CONFIG_DIR/projects/ and ~/.claude/projects/)
 
     Returns (session_id, source_project_dir).
     """
@@ -105,16 +105,34 @@ def _resolve_adopt_session(adopt_session_arg: str) -> tuple[str, Path]:
             raise UserInputError(f"Session file not found: {session_file}")
         return session_file.stem, session_file.parent
 
-    # Search by session ID
-    source_config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
-    source_projects_dir = source_config_dir / "projects"
-    if not source_projects_dir.exists():
-        raise UserInputError(f"No projects directory found at {source_projects_dir}. Cannot find session to adopt.")
+    # Search by session ID in both $CLAUDE_CONFIG_DIR and ~/.claude/.
+    # We check both because when running inside an mng agent, CLAUDE_CONFIG_DIR
+    # points to the agent's isolated config dir, but the user's sessions are
+    # in ~/.claude/. In non-agent contexts, CLAUDE_CONFIG_DIR may point to a
+    # custom config dir that also has sessions.
+    default_config_dir = Path.home() / ".claude"
+    search_dirs: list[Path] = [default_config_dir / "projects"]
+    env_config_dir_str = os.environ.get("CLAUDE_CONFIG_DIR")
+    if env_config_dir_str:
+        env_config_dir = Path(env_config_dir_str)
+        env_projects_dir = env_config_dir / "projects"
+        if env_projects_dir != search_dirs[0]:
+            search_dirs.append(env_projects_dir)
 
-    matches = list(source_projects_dir.glob(f"*/{adopt_session_arg}.jsonl"))
+    matches: list[Path] = []
+    searched: list[Path] = []
+    for projects_dir in search_dirs:
+        if projects_dir.exists():
+            searched.append(projects_dir)
+            matches.extend(projects_dir.glob(f"*/{adopt_session_arg}.jsonl"))
+
+    if not searched:
+        dirs_str = " or ".join(str(d) for d in search_dirs)
+        raise UserInputError(f"No projects directory found at {dirs_str}. Cannot find session to adopt.")
     if not matches:
+        dirs_str = " or ".join(str(d) for d in searched)
         raise UserInputError(
-            f"Session {adopt_session_arg} not found in {source_projects_dir}. "
+            f"Session {adopt_session_arg} not found in {dirs_str}. "
             "Check that the session ID is correct, or pass a path to the .jsonl file."
         )
     if len(matches) > 1:
