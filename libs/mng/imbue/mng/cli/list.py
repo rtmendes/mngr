@@ -287,12 +287,15 @@ def _list_impl(ctx: click.Context, **kwargs) -> None:
     format_template = output_opts.format_template
 
     # --ids / --addrs: shorthand for format templates that print one value per line
-    if opts.ids and opts.addrs:
-        raise click.UsageError("--ids and --addrs are mutually exclusive")
-    if opts.ids:
-        format_template = "{id}"
-    elif opts.addrs:
-        format_template = "{name}@{host.name}.{host.provider_name}"
+    match (opts.ids, opts.addrs):
+        case (True, True):
+            raise click.UsageError("--ids and --addrs are mutually exclusive")
+        case (True, False):
+            format_template = "{id}"
+        case (False, True):
+            format_template = "{name}@{host.name}.{host.provider_name}"
+        case (False, False):
+            pass
 
     # Parse fields if provided
     fields = None
