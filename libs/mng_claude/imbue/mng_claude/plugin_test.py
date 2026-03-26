@@ -12,6 +12,7 @@ from uuid import UUID
 import pluggy
 import pytest
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.errors import ProcessSetupError
 from imbue.concurrency_group.subprocess_utils import FinishedProcess
@@ -888,6 +889,7 @@ def test_provision_configures_readiness_hooks(
     assert "SessionStart" in settings["hooks"]
 
 
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_provision_raises_when_remote_installation_disabled(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
@@ -918,13 +920,16 @@ def test_provision_raises_when_remote_installation_disabled(
             SimpleNamespace(
                 is_local=False,
                 execute_command=lambda *args, **kwargs: SimpleNamespace(success=False),
+                write_file=lambda *args, **kwargs: None,
             ),
         )
 
         options = CreateAgentOptions(agent_type=AgentTypeName("claude"))
 
-        with pytest.raises(PluginMngError, match="automatic remote installation is disabled"):
+        with pytest.raises(ConcurrencyExceptionGroup) as exc_info:
             agent.provision(host=non_local_host, options=options, mng_ctx=ctx)
+        assert isinstance(exc_info.value.main_exception, PluginMngError)
+        assert "automatic remote installation is disabled" in str(exc_info.value.main_exception)
 
 
 # =============================================================================
@@ -1203,8 +1208,9 @@ def test_provision_raises_when_non_interactive_and_untrusted(
         temp_mng_ctx,
     )
 
-    with pytest.raises(ClaudeDirectoryNotTrustedError):
+    with pytest.raises(ConcurrencyExceptionGroup) as exc_info:
         agent.provision(host=host, options=_WORKTREE_OPTIONS, mng_ctx=temp_mng_ctx)
+    assert exc_info.value.only_exception_is_instance_of(ClaudeDirectoryNotTrustedError)
 
 
 def test_provision_raises_when_user_declines_trust(
@@ -1221,8 +1227,9 @@ def test_provision_raises_when_user_declines_trust(
     )
 
     with _mock_all_dialog_prompts(trust_accepted=False):
-        with pytest.raises(ClaudeDirectoryNotTrustedError):
+        with pytest.raises(ConcurrencyExceptionGroup) as exc_info:
             agent.provision(host=host, options=_WORKTREE_OPTIONS, mng_ctx=interactive_mng_ctx)
+        assert exc_info.value.only_exception_is_instance_of(ClaudeDirectoryNotTrustedError)
 
 
 # =============================================================================
@@ -1672,8 +1679,9 @@ def test_provision_raises_when_user_declines_dialog_dismissal(
     _write_claude_trust_without_dialog_dismissed(source_path)
 
     with _mock_all_dialog_prompts(effort_accepted=False):
-        with pytest.raises(ClaudeEffortCalloutNotDismissedError):
+        with pytest.raises(ConcurrencyExceptionGroup) as exc_info:
             agent.provision(host=host, options=_WORKTREE_OPTIONS, mng_ctx=interactive_mng_ctx)
+        assert exc_info.value.only_exception_is_instance_of(ClaudeEffortCalloutNotDismissedError)
 
 
 def test_provision_raises_when_non_interactive_and_dialogs_not_dismissed(
@@ -1692,8 +1700,9 @@ def test_provision_raises_when_non_interactive_and_dialogs_not_dismissed(
     # Write trust but without effortCalloutDismissed
     _write_claude_trust_without_dialog_dismissed(source_path)
 
-    with pytest.raises(ClaudeEffortCalloutNotDismissedError):
+    with pytest.raises(ConcurrencyExceptionGroup) as exc_info:
         agent.provision(host=host, options=_WORKTREE_OPTIONS, mng_ctx=temp_mng_ctx)
+    assert exc_info.value.only_exception_is_instance_of(ClaudeEffortCalloutNotDismissedError)
 
 
 # =============================================================================
@@ -2182,6 +2191,7 @@ def test_get_claude_version_returns_none_on_failure() -> None:
     assert _get_claude_version(host) is None
 
 
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_provision_raises_on_version_mismatch(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
@@ -2214,14 +2224,17 @@ def test_provision_raises_on_version_mismatch(
                     stdout="2.1.50 (Claude Code)\n",
                     stderr="",
                 ),
+                write_file=lambda *args, **kwargs: None,
             ),
         )
 
         _write_all_dialogs_dismissed(agent.work_dir)
         options = CreateAgentOptions(agent_type=AgentTypeName("claude"))
 
-        with pytest.raises(PluginMngError, match="Claude version mismatch"):
+        with pytest.raises(ConcurrencyExceptionGroup) as exc_info:
             agent.provision(host=host_with_wrong_version, options=options, mng_ctx=ctx)
+        assert isinstance(exc_info.value.main_exception, PluginMngError)
+        assert "Claude version mismatch" in str(exc_info.value.main_exception)
 
 
 def test_install_claude_passes_version_to_command() -> None:
