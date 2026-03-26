@@ -11,8 +11,6 @@ mng schedule [add|remove|update|list|run] [OPTIONS]
 
 Schedule invocations of mng commands.
 
-Schedule invocations of mng commands.
-
 Manage cron-scheduled triggers that run mng commands (create, start, message,
 exec) on a specified provider at regular intervals. This is useful for setting
 up autonomous agents that run on a recurring schedule.
