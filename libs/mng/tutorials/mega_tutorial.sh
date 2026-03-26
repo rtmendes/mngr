@@ -32,7 +32,7 @@ mng c my-task
 
 # for the rest of this doc, we'll use the explicit form (specifying "create") just to be extra clear,
 # but you might want to use the short form in your day-to-day work for speed and convenience.
-# you can (and should) create aliases and templated as well (see TEMPLATES, ALIASES, AND SHORTCUTS below)
+# you can (and should) create aliases and templates as well (see TEMPLATES, ALIASES, AND SHORTCUTS below)
 
 # you can also specify a different agent (ex: codex)
 mng create my-task codex
