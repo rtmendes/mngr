@@ -27,15 +27,15 @@ Before doing any work:
 
 ## Instructions
 
-### 1. Save aside the desired category file content
+### 1. Verify the generator is a no-op on the committed content
 
-The user has edited `.claude/agents/categories/code-issue-categories.md` (or `conversation-issue-categories.md`) to contain the content they want. Save a copy or note the diff:
+Before making any edits, confirm the generator reproduces the current committed files exactly:
 
 ```bash
-git diff .claude/agents/categories/
+uv run python scripts/generate_verify_skills.py --check
 ```
 
-This diff is what you need the overrides to produce.
+If this fails, the overrides are out of sync. Fix them first before proceeding.
 
 ### 2. Understand the current overrides
 
