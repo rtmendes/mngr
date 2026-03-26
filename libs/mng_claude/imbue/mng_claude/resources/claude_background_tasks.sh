@@ -33,10 +33,9 @@ if [ -z "$SESSION_NAME" ]; then
     exit 1
 fi
 
-# Prevent duplicate instances using a pidfile
-# Sanitize session name: replace / with - so the pidfile path stays flat
-_SAFE_SESSION_NAME="${SESSION_NAME//\//-}"
-_MNG_ACT_LOCK="/tmp/mng_act_${_SAFE_SESSION_NAME}.pid"
+# Prevent duplicate instances using a pidfile stored in the agent's state dir
+# (avoids issues with session names containing / creating nested paths in /tmp)
+_MNG_ACT_LOCK="$MNG_AGENT_STATE_DIR/.background_tasks.pid"
 
 if [ -f "$_MNG_ACT_LOCK" ] && kill -0 "$(cat "$_MNG_ACT_LOCK" 2>/dev/null)" 2>/dev/null; then
     exit 0
