@@ -34,7 +34,9 @@ if [ -z "$SESSION_NAME" ]; then
 fi
 
 # Prevent duplicate instances using a pidfile
-_MNG_ACT_LOCK="/tmp/mng_act_${SESSION_NAME}.pid"
+# Sanitize session name: replace / with - so the pidfile path stays flat
+_SAFE_SESSION_NAME="${SESSION_NAME//\//-}"
+_MNG_ACT_LOCK="/tmp/mng_act_${_SAFE_SESSION_NAME}.pid"
 
 if [ -f "$_MNG_ACT_LOCK" ] && kill -0 "$(cat "$_MNG_ACT_LOCK" 2>/dev/null)" 2>/dev/null; then
     exit 0
