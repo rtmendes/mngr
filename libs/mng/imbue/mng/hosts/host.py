@@ -1175,20 +1175,26 @@ class Host(BaseHost, OnlineHostInterface):
     ) -> CreateWorkDirResult:
         """Create a work_dir by rsyncing files from source to target."""
         target_path = self._resolve_transfer_target(source_host, source_path, options)
-        self._mkdir(target_path)
-        self._add_generated_work_dir(target_path)
 
-        # Exclude .git if git options are present (the user is making an explicit
-        # choice about git handling, e.g. is_git_synced=False means "skip .git").
-        exclude_git = options.git is not None
+        with self.mng_ctx.concurrency_group.make_concurrency_group("_create_work_dir_via_rsync") as cg:
+            self._mkdir(target_path)
 
-        self._rsync_files(
-            source_host,
-            source_path,
-            target_path,
-            extra_args=options.data_options.rsync_args,
-            exclude_git=exclude_git,
-        )
+            # Track generated work dir in a thread to reduce latency
+            track_thread = cg.start_new_thread(self._add_generated_work_dir, (target_path,))
+
+            # Exclude .git if git options are present (the user is making an explicit
+            # choice about git handling, e.g. is_git_synced=False means "skip .git").
+            exclude_git = options.git is not None
+
+            self._rsync_files(
+                source_host,
+                source_path,
+                target_path,
+                extra_args=options.data_options.rsync_args,
+                exclude_git=exclude_git,
+            )
+
+            track_thread.join(60.0)
 
         return CreateWorkDirResult(path=target_path)
 
@@ -1200,28 +1206,34 @@ class Host(BaseHost, OnlineHostInterface):
     ) -> CreateWorkDirResult:
         """Create a work_dir by mirroring the git repo and optionally rsyncing extra files."""
         target_path = self._resolve_transfer_target(source_host, source_path, options)
-        self._mkdir(target_path)
-        self._add_generated_work_dir(target_path)
 
-        created_branch_name: str | None = None
+        with self.mng_ctx.concurrency_group.make_concurrency_group("_create_work_dir_via_git_mirror") as cg:
+            self._mkdir(target_path)
 
-        is_git_synced = options.git is not None and options.git.is_git_synced
-        if is_git_synced:
-            created_branch_name = self._transfer_git_repo(source_host, source_path, target_path, options)
-            self._transfer_extra_files(source_host, source_path, target_path, options)
+            # Track generated work dir in a thread to reduce latency
+            track_thread = cg.start_new_thread(self._add_generated_work_dir, (target_path,))
 
-        # Run rsync if enabled. This is designed for adding extra files (e.g., data files not in git),
-        # not for full directory sync. By default, rsync does NOT use --delete, so existing files
-        # in the target won't be removed. Users can add --delete to rsync_args if they want
-        # full sync behavior with file deletion.
-        if options.data_options.is_rsync_enabled:
-            self._rsync_files(
-                source_host,
-                source_path,
-                target_path,
-                extra_args=options.data_options.rsync_args,
-                exclude_git=True,
-            )
+            created_branch_name: str | None = None
+
+            is_git_synced = options.git is not None and options.git.is_git_synced
+            if is_git_synced:
+                created_branch_name = self._transfer_git_repo(source_host, source_path, target_path, options)
+                self._transfer_extra_files(source_host, source_path, target_path, options)
+
+            # Run rsync if enabled. This is designed for adding extra files (e.g., data files not in git),
+            # not for full directory sync. By default, rsync does NOT use --delete, so existing files
+            # in the target won't be removed. Users can add --delete to rsync_args if they want
+            # full sync behavior with file deletion.
+            if options.data_options.is_rsync_enabled:
+                self._rsync_files(
+                    source_host,
+                    source_path,
+                    target_path,
+                    extra_args=options.data_options.rsync_args,
+                    exclude_git=True,
+                )
+
+            track_thread.join(60.0)
 
         return CreateWorkDirResult(path=target_path, created_branch_name=created_branch_name)
 
