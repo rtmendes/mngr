@@ -2,12 +2,14 @@
 
 import resource
 import time
+import traceback
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from typing import assert_never
 
 import click
+from loguru import logger
 
 from imbue.mng.api.find import ensure_host_started
 from imbue.mng.api.list import list_agents
@@ -23,6 +25,8 @@ from imbue.mng.cli.output_helpers import emit_event
 from imbue.mng.cli.output_helpers import write_human_line
 from imbue.mng.config.data_types import MngContext
 from imbue.mng.config.data_types import OutputOptions
+from imbue.mng.errors import HostError
+from imbue.mng.errors import MngError
 from imbue.mng.interfaces.data_types import AgentDetails
 from imbue.mng.interfaces.host import AgentEnvironmentOptions
 from imbue.mng.interfaces.host import AgentLabelOptions
@@ -44,6 +48,7 @@ from imbue.mng_tmr.api import pull_agent_branch
 from imbue.mng_tmr.api import pull_test_outputs_by_id
 from imbue.mng_tmr.api import read_integrator_result
 from imbue.mng_tmr.api import should_pull_changes
+from imbue.mng_tmr.api import try_list_agents
 from imbue.mng_tmr.api import wait_for_integrator
 from imbue.mng_tmr.data_types import IntegratorResult
 from imbue.mng_tmr.data_types import TestAgentInfo
@@ -160,6 +165,7 @@ def _run_reintegrate(
     Discovers agents by the tmr_run_name label, reads their result files,
     re-runs the integrator, and generates a fresh report.
     """
+    assert opts.reintegrate is not None
     run_name = opts.reintegrate
     write_human_line("Reintegrating run: {}", run_name)
 
@@ -201,10 +207,17 @@ def _run_reintegrate(
         agent_infos.append(info)
         final_details[agent_id_str] = detail
         if detail.host is not None:
-            host_provider = get_provider_instance(detail.host.provider_name, mng_ctx)
-            host_ref = host_provider.get_host(HostName(detail.host.name))
-            host, _ = ensure_host_started(host_ref, is_start_desired=True, provider=host_provider)
-            agent_hosts[agent_id_str] = host
+            is_local = detail.host.provider_name == LOCAL_PROVIDER_NAME
+            if is_local:
+                agent_hosts[agent_id_str] = source_host
+            else:
+                try:
+                    host_provider = get_provider_instance(detail.host.provider_name, mng_ctx)
+                    host_ref = host_provider.get_host(HostName(detail.host.name))
+                    host, _ = ensure_host_started(host_ref, is_start_desired=True, provider=host_provider)
+                    agent_hosts[agent_id_str] = host
+                except (MngError, HostError, OSError, BaseExceptionGroup) as exc:
+                    logger.warning("Could not connect to host for agent '{}': {}", detail.name, exc)
 
     # Compute output directory
     if opts.output_html is not None:
@@ -237,7 +250,12 @@ def _run_reintegrate(
             pull_test_outputs_by_id(info.agent_id, info.agent_name, agent_hosts[agent_id_str], source_host, output_dir)
 
     # Write pre-integrator report
-    generate_html_report(results, html_path, test_artifacts_dir=output_dir)
+    generate_html_report(
+        results,
+        html_path,
+        test_artifacts_dir=output_dir,
+        run_commands=_build_run_commands(run_name),
+    )
 
     # Run integrator
     env_options = AgentEnvironmentOptions(env_vars=resolve_env_vars((), opts.env))
@@ -251,8 +269,16 @@ def _run_reintegrate(
         label_options=label_options,
     )
     integrator_result = _run_integrator_phase(results, integrator_config, mng_ctx, opts, base_commit=base_commit)
-    generate_html_report(results, html_path, integrator=integrator_result, test_artifacts_dir=output_dir)
+    integrated_branch = integrator_result.branch_name if integrator_result is not None else None
+    generate_html_report(
+        results,
+        html_path,
+        integrator=integrator_result,
+        test_artifacts_dir=output_dir,
+        run_commands=_build_run_commands(run_name, integrated_branch),
+    )
     _emit_report_path(html_path, output_opts)
+    _print_run_commands(run_name, integrated_branch)
 
 
 def _run_integrator_phase(
@@ -271,11 +297,15 @@ def _run_integrator_phase(
     if not fix_branches:
         return None
 
-    integrator, integrator_host = launch_integrator_agent(
-        fix_branches=fix_branches,
-        config=config,
-        mng_ctx=mng_ctx,
-    )
+    try:
+        integrator, integrator_host = launch_integrator_agent(
+            fix_branches=fix_branches,
+            config=config,
+            mng_ctx=mng_ctx,
+        )
+    except (MngError, HostError, OSError, BaseExceptionGroup) as exc:
+        logger.warning("Failed to launch integrator agent: {}", exc)
+        return None
 
     integrator_deadline = time.monotonic() + opts.integrator_timeout
     integrator_branch = wait_for_integrator(
@@ -289,12 +319,8 @@ def _run_integrator_phase(
     integrator_result: IntegratorResult | None = None
     if integrator_branch is not None:
         is_remote = config.provider_name.lower() != LOCAL_PROVIDER_NAME
-        list_result = list_agents(
-            mng_ctx=mng_ctx,
-            is_streaming=False,
-            error_behavior=ErrorBehavior.CONTINUE,
-        )
-        for agent_detail in list_result.agents:
+        list_result = try_list_agents(mng_ctx)
+        for agent_detail in list_result.agents if list_result is not None else []:
             if str(agent_detail.id) == str(integrator.agent_id):
                 integrator_result = read_integrator_result(agent_detail, integrator_host, integrator_branch)
                 # Only pull branches from remote providers; local worktree branches already exist
@@ -495,6 +521,46 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
         snapshot=provided_snapshot,
     )
 
+    try:
+        _run_tmr_pipeline(
+            opts,
+            mng_ctx,
+            output_opts,
+            source_dir,
+            config,
+            testing_flags,
+            timestamp,
+            e2e_run_prefix,
+            base_commit,
+            source_host,
+            label_options,
+            test_node_ids,
+            provided_snapshot,
+            env_options,
+        )
+    except KeyboardInterrupt:
+        traceback.print_exc()
+        _print_run_commands(e2e_run_prefix, None)
+        raise
+
+
+def _run_tmr_pipeline(
+    opts: TmrCliOptions,
+    mng_ctx: MngContext,
+    output_opts: OutputOptions,
+    source_dir: Path,
+    config: TmrLaunchConfig,
+    testing_flags: tuple[str, ...],
+    timestamp: str,
+    e2e_run_prefix: str,
+    base_commit: str,
+    source_host: OnlineHostInterface,
+    label_options: AgentLabelOptions,
+    test_node_ids: list[str],
+    provided_snapshot: SnapshotName | None,
+    env_options: AgentEnvironmentOptions,
+) -> None:
+    """Run the main TMR pipeline (launch, poll, gather, integrate, report)."""
     # Step 6: Compute output directory and html_path before launching
     if opts.output_html is not None:
         html_path = Path(opts.output_html)
@@ -530,7 +596,7 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
         _emit_agents_launched(len(agent_infos), output_opts)
         remaining_node_ids = []
 
-    final_details, timed_out_ids = launch_and_poll_agents(
+    final_details, timed_out_ids, cached_results = launch_and_poll_agents(
         test_node_ids=remaining_node_ids,
         config=config,
         mng_ctx=mng_ctx,
@@ -561,6 +627,7 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
         source_dir=source_dir,
         cg=mng_ctx.concurrency_group,
         base_commit=base_commit if is_remote_provider else None,
+        cached_results=cached_results,
     )
 
     # Step 9: Write report with final results (artifacts already pulled during polling)
@@ -576,15 +643,36 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
         label_options=label_options,
     )
     integrator_result = _run_integrator_phase(results, integrator_config, mng_ctx, opts, base_commit=base_commit)
-    generate_html_report(results, html_path, integrator=integrator_result, test_artifacts_dir=output_dir)
+    integrated_branch = integrator_result.branch_name if integrator_result is not None else None
+    generate_html_report(
+        results,
+        html_path,
+        integrator=integrator_result,
+        test_artifacts_dir=output_dir,
+        run_commands=_build_run_commands(e2e_run_prefix, integrated_branch),
+    )
     _emit_report_path(html_path, output_opts)
 
-    # Print useful commands for managing this run's agents
+    _print_run_commands(e2e_run_prefix, integrated_branch)
+
+
+def _build_run_commands(run_name: str, integrated_branch: str | None = None) -> list[tuple[str, str]]:
+    """Build a list of (label, command) pairs for the run."""
+    commands = [
+        ("List agents from this run", f"mng ls --include 'labels.tmr_run_name == \"{run_name}\"'"),
+        ("Reintegrate", f"mng tmr --reintegrate {run_name}"),
+    ]
+    if integrated_branch is not None:
+        commands.append(("Push integrated branch", f"git push origin {integrated_branch}"))
+    return commands
+
+
+def _print_run_commands(run_name: str, integrated_branch: str | None = None) -> None:
+    """Print useful commands for managing a TMR run's agents."""
     write_human_line("")
-    write_human_line("List agents from this run:")
-    write_human_line("  mng ls --include 'labels.tmr_run_name == \"{}\"'", e2e_run_prefix)
-    write_human_line("Reintegrate (after sending followup messages to agents):")
-    write_human_line("  mng tmr --reintegrate {}", e2e_run_prefix)
+    for label, cmd in _build_run_commands(run_name, integrated_branch):
+        write_human_line("{}:", label)
+        write_human_line("  {}", cmd)
 
 
 CommandHelpMetadata(

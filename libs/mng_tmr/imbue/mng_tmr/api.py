@@ -7,6 +7,7 @@ test, poll for completion, gather results, and pull code changes.
 import json
 import secrets
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -43,8 +44,8 @@ from imbue.mng.primitives import HostName
 from imbue.mng.primitives import LOCAL_PROVIDER_NAME
 from imbue.mng.primitives import ProviderInstanceName
 from imbue.mng.primitives import SnapshotName
+from imbue.mng.primitives import TransferMode
 from imbue.mng.primitives import UncommittedChangesMode
-from imbue.mng.primitives import WorkDirCopyMode
 from imbue.mng_tmr.data_types import Change
 from imbue.mng_tmr.data_types import ChangeKind
 from imbue.mng_tmr.data_types import ChangeStatus
@@ -72,20 +73,54 @@ _SHORT_ID_LENGTH = 6
 _MISSING_AGENT_MAX_ROUNDS = 30
 
 
-def _try_list_agents(mng_ctx: MngContext) -> ListResult | None:
-    """List agents, returning None on transient errors.
+_LIST_AGENTS_TIMEOUT_SECONDS = 60.0
 
-    Human-sanctioned broad catch: polling must survive transient provider errors.
-    """
+
+def _list_agents_thread_target(
+    mng_ctx: MngContext,
+    result_holder: list[ListResult | None],
+    error_holder: list[Exception | None],
+) -> None:
+    """Thread target for try_list_agents. Catches all exceptions."""
     try:
-        return list_agents(
+        result_holder[0] = list_agents(
             mng_ctx=mng_ctx,
             is_streaming=False,
             error_behavior=ErrorBehavior.CONTINUE,
         )
+    # Human-sanctioned broad catch: thread must not propagate exceptions
     except Exception as exc:
-        logger.warning("Polling failed (will retry next cycle): {}", exc)
+        error_holder[0] = exc
+
+
+def try_list_agents(mng_ctx: MngContext) -> ListResult | None:
+    """List agents, returning None on transient errors or timeout.
+
+    Runs list_agents in a daemon thread with a 60s timeout to work around
+    Modal API hangs where discover_hosts_and_agents never returns.
+
+    Human-sanctioned broad catch: polling must survive transient provider errors.
+    """
+    result_holder: list[ListResult | None] = [None]
+    error_holder: list[Exception | None] = [None]
+
+    thread = threading.Thread(
+        target=_list_agents_thread_target,
+        args=(mng_ctx, result_holder, error_holder),
+        daemon=True,
+    )
+    thread.start()
+    thread.join(timeout=_LIST_AGENTS_TIMEOUT_SECONDS)
+
+    if thread.is_alive():
+        logger.warning("list_agents timed out after {:.0f}s (will retry next cycle)", _LIST_AGENTS_TIMEOUT_SECONDS)
         return None
+
+    if error_holder[0] is not None:
+        logger.warning("Polling failed (will retry next cycle): {}", error_holder[0])
+        return None
+
+    return result_holder[0]
 
 
 def should_pull_changes(result: TestMapReduceResult) -> bool:
@@ -167,15 +202,15 @@ def _sanitize_test_name_for_agent(test_node_id: str) -> str:
     return sanitized.strip("-").lower()[:40]
 
 
-def _copy_mode_for_provider(provider_name: ProviderInstanceName) -> WorkDirCopyMode:
-    """Determine the git copy mode based on the provider.
+def _transfer_mode_for_provider(provider_name: ProviderInstanceName) -> TransferMode:
+    """Determine the transfer mode based on the provider.
 
-    WORKTREE only works when source and target are on the same host, so it is
+    GIT_WORKTREE only works when source and target are on the same host, so it is
     only usable with the local provider. Remote providers (docker, modal, etc.)
-    use CLONE to transfer git history efficiently.
+    use GIT_MIRROR to transfer git history efficiently.
     """
     is_local = provider_name.lower() == LOCAL_PROVIDER_NAME
-    return WorkDirCopyMode.WORKTREE if is_local else WorkDirCopyMode.CLONE
+    return TransferMode.GIT_WORKTREE if is_local else TransferMode.GIT_MIRROR
 
 
 def _build_agent_options(
@@ -185,14 +220,14 @@ def _build_agent_options(
     initial_message: str | None = None,
 ) -> CreateAgentOptions:
     """Build CreateAgentOptions for a tmr agent."""
-    copy_mode = _copy_mode_for_provider(config.provider_name)
+    transfer_mode = _transfer_mode_for_provider(config.provider_name)
     is_remote = config.provider_name.lower() != LOCAL_PROVIDER_NAME
     return CreateAgentOptions(
         agent_type=config.agent_type,
         name=agent_name,
         initial_message=initial_message,
+        transfer_mode=transfer_mode,
         git=AgentGitOptions(
-            copy_mode=copy_mode,
             new_branch_name=branch_name,
         ),
         data_options=AgentDataOptions(is_rsync_enabled=False),
@@ -252,11 +287,13 @@ def launch_test_agent(
         initial_message=build_test_agent_prompt(test_node_id, pytest_flags, prompt_suffix),
     )
 
+    branch = f"mng-tmr/{agent_name_suffix}-{short_id}"
     return (
         TestAgentInfo(
             test_node_id=test_node_id,
             agent_id=create_result.agent.id,
             agent_name=create_result.agent.name,
+            branch_name=branch,
             created_at=time.monotonic(),
         ),
         create_result.host,
@@ -326,8 +363,11 @@ def launch_all_test_agents(
     if use_snapshot:
         provider = get_provider_instance(config.provider_name, mng_ctx)
         if provider.supports_snapshots:
-            snapshot_name = _create_snapshot_host(config, mng_ctx)
-            launch_config = config.model_copy_update(to_update(config.field_ref().snapshot, snapshot_name))
+            try:
+                snapshot_name = _create_snapshot_host(config, mng_ctx)
+                launch_config = config.model_copy_update(to_update(config.field_ref().snapshot, snapshot_name))
+            except (MngError, HostError, OSError, BaseExceptionGroup) as exc:
+                logger.warning("Failed to create snapshot, launching agents without snapshot: {}", exc)
         else:
             logger.warning(
                 "Provider '{}' does not support snapshots, launching all agents without snapshot",
@@ -355,9 +395,12 @@ def launch_all_test_agents(
                 )
             )
         for future in futures:
-            info, host = future.result()
-            agents.append(info)
-            agent_hosts[str(info.agent_id)] = host
+            try:
+                info, host = future.result()
+                agents.append(info)
+                agent_hosts[str(info.agent_id)] = host
+            except (MngError, HostError, OSError, BaseExceptionGroup) as exc:
+                logger.warning("Failed to launch agent: {}", exc)
 
     logger.info("Launched {} agent(s)", len(agents))
     return agents, agent_hosts, launch_config.snapshot
@@ -382,7 +425,11 @@ def _launch_agents_up_to_limit(
     """
     while remaining_tests and (max_agents <= 0 or len(pending_ids) < max_agents):
         test_node_id = remaining_tests.pop(0)
-        info, host = launch_test_agent(test_node_id, config, mng_ctx, pytest_flags, prompt_suffix)
+        try:
+            info, host = launch_test_agent(test_node_id, config, mng_ctx, pytest_flags, prompt_suffix)
+        except (MngError, HostError, OSError, BaseExceptionGroup) as exc:
+            logger.warning("Failed to launch agent for {}: {}", test_node_id, exc)
+            continue
         all_agents.append(info)
         all_hosts[str(info.agent_id)] = host
         agent_id_to_info[str(info.agent_id)] = info
@@ -404,7 +451,7 @@ def launch_and_poll_agents(
     all_hosts: dict[str, OnlineHostInterface],
     artifact_output_dir: Path | None = None,
     local_host: OnlineHostInterface | None = None,
-) -> tuple[dict[str, AgentDetails], set[str]]:
+) -> tuple[dict[str, AgentDetails], set[str], dict[str, TestResult]]:
     """Launch agents incrementally and poll until all finish.
 
     Handles two modes depending on arguments:
@@ -428,6 +475,8 @@ def launch_and_poll_agents(
     final_details: dict[str, AgentDetails] = {}
     timed_out_ids: set[str] = set()
     missing_rounds: dict[str, int] = {}
+    # Results pre-read during finalization (before stopping) to avoid connection issues
+    cached_results: dict[str, TestResult] = {}
     # Track when we last attempted to read each agent's result file directly.
     # Initialized to created_at so the first check happens result_check_interval_seconds later.
     last_result_check: dict[str, float] = {}
@@ -503,7 +552,7 @@ def launch_and_poll_agents(
 
         pending_names = [agent_id_to_info[aid].agent_name for aid in pending_ids]
         logger.info("Polling {} pending agent(s): {}", len(pending_ids), ", ".join(str(n) for n in pending_names))
-        list_result = _try_list_agents(mng_ctx)
+        list_result = try_list_agents(mng_ctx)
         if list_result is None:
             time.sleep(poll_interval_seconds)
             continue
@@ -524,7 +573,7 @@ def launch_and_poll_agents(
             missing_rounds.pop(agent_id_str, None)
             changed = True
 
-            _finalize_agent(
+            pre_read = _finalize_agent(
                 agent_id=agent_detail.id,
                 agent_name=agent_detail.name,
                 host=all_hosts[agent_id_str],
@@ -532,6 +581,8 @@ def launch_and_poll_agents(
                 local_host=local_host,
                 should_stop=agent_detail.state == AgentLifecycleState.WAITING,
             )
+            if pre_read is not None:
+                cached_results[agent_id_str] = pre_read
 
         for agent_id_str in list(pending_ids):
             if agent_id_str not in seen_ids:
@@ -559,7 +610,7 @@ def launch_and_poll_agents(
                         "Agent '{}' has result file (detected via direct check), treating as done",
                         info.agent_name,
                     )
-                    _finalize_agent(
+                    pre_read = _finalize_agent(
                         agent_id=AgentId(agent_id_str),
                         agent_name=info.agent_name,
                         host=all_hosts[agent_id_str],
@@ -567,6 +618,8 @@ def launch_and_poll_agents(
                         local_host=local_host,
                         should_stop=True,
                     )
+                    if pre_read is not None:
+                        cached_results[agent_id_str] = pre_read
                     pending_ids.discard(agent_id_str)
                     changed = True
 
@@ -577,7 +630,7 @@ def launch_and_poll_agents(
         if pending_ids or remaining_tests:
             time.sleep(poll_interval_seconds)
 
-    return final_details, timed_out_ids
+    return final_details, timed_out_ids, cached_results
 
 
 def _parse_result_json(raw: str) -> TestResult:
@@ -645,40 +698,76 @@ def _finalize_agent(
     artifact_output_dir: Path | None,
     local_host: OnlineHostInterface | None,
     should_stop: bool,
-) -> None:
-    """Pull artifacts from a finished agent and optionally stop it.
+) -> TestResult | None:
+    """Pull artifacts and pre-read result from a finished agent, then optionally stop it.
 
-    Called when an agent is detected as done (via state transition or result
-    file check). Pulls .test_output if artifact_output_dir and local_host
-    are provided.
+    Returns the pre-read TestResult if successful, or None if the result
+    could not be read. The result is read BEFORE stopping the agent to avoid
+    connection issues with remote hosts that get torn down on stop.
     """
     if artifact_output_dir is not None and local_host is not None:
         pull_test_outputs_by_id(agent_id, agent_name, host, local_host, artifact_output_dir)
+    # Try reading the result a few times before stopping -- once stopped, remote
+    # hosts may be torn down and the result becomes unreachable.
+    pre_read = None
+    for attempt in range(3):
+        pre_read = try_read_agent_result(agent_id, host)
+        if pre_read is not None:
+            break
+        if attempt < 2:
+            time.sleep(2.0)
     if should_stop:
         _stop_agent_on_host(host, agent_id, agent_name)
+    return pre_read
+
+
+_RESULT_READ_MAX_RETRIES = 2
+_RESULT_READ_RETRY_DELAY_SECONDS = 3.0
 
 
 def read_agent_result(
     agent_detail: AgentDetails,
     host: OnlineHostInterface,
 ) -> TestResult:
-    """Read the result.json from a finished agent's state directory."""
+    """Read the result.json from a finished agent's state directory.
+
+    Retries up to 3 times on connection errors to handle transient host issues.
+    """
     result_path = host.host_dir / "agents" / str(agent_detail.id) / "plugin" / PLUGIN_NAME / "result.json"
-    try:
-        raw = host.read_text_file(result_path)
-        return _parse_result_json(raw)
-    except HostError as exc:
-        logger.warning("Lost connection to agent {} while fetching result file: {}", agent_detail.name, exc)
-        return TestResult(
-            errored=True,
-            summary_markdown=f"Connection lost while fetching result file from agent host: {exc}",
-        )
-    except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
-        logger.warning("Failed to read result from agent {}: {}", agent_detail.name, exc)
-        return TestResult(
-            errored=True,
-            summary_markdown=f"Failed to read agent result: {exc}",
-        )
+    last_exc: HostError | None = None
+    for attempt in range(_RESULT_READ_MAX_RETRIES):
+        try:
+            raw = host.read_text_file(result_path)
+            return _parse_result_json(raw)
+        except HostError as exc:
+            last_exc = exc
+            if attempt < _RESULT_READ_MAX_RETRIES - 1:
+                logger.warning(
+                    "Connection error reading result from agent {} (attempt {}/{}), retrying: {}",
+                    agent_detail.name,
+                    attempt + 1,
+                    _RESULT_READ_MAX_RETRIES,
+                    exc,
+                )
+                time.sleep(_RESULT_READ_RETRY_DELAY_SECONDS)
+                continue
+            logger.warning(
+                "Lost connection to agent {} after {} attempts: {}", agent_detail.name, _RESULT_READ_MAX_RETRIES, exc
+            )
+            return TestResult(
+                errored=True,
+                summary_markdown=f"Connection lost while fetching result file from agent host: {exc}",
+            )
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
+            logger.warning("Failed to read result from agent {}: {}", agent_detail.name, exc)
+            return TestResult(
+                errored=True,
+                summary_markdown=f"Failed to read agent result: {exc}",
+            )
+    return TestResult(
+        errored=True,
+        summary_markdown=f"Connection lost while fetching result file from agent host: {last_exc}",
+    )
 
 
 def _copy_test_output(
@@ -854,6 +943,7 @@ def _collect_agent_results(
     hosts: dict[str, OnlineHostInterface],
     missing_detail_errored: bool,
     missing_detail_summary: str,
+    cached_results: dict[str, TestResult] | None = None,
 ) -> list[TestMapReduceResult]:
     """Shared iteration over agents to build result list.
 
@@ -861,6 +951,7 @@ def _collect_agent_results(
     errored flag and summary), or finished (result read from the agent's state
     directory). The hosts dict maps agent_id strings to their respective hosts.
     """
+    cached_results = cached_results or {}
     results: list[TestMapReduceResult] = []
 
     for agent_info in agents:
@@ -883,7 +974,9 @@ def _collect_agent_results(
             # Agent may have been detected as done via direct result file check
             # (without going through list_agents). Try reading result directly.
             if agent_id_str in hosts:
-                direct_result = try_read_agent_result(AgentId(agent_id_str), hosts[agent_id_str])
+                direct_result = cached_results.get(agent_id_str) or try_read_agent_result(
+                    AgentId(agent_id_str), hosts[agent_id_str]
+                )
                 if direct_result is not None:
                     results.append(
                         TestMapReduceResult(
@@ -894,6 +987,7 @@ def _collect_agent_results(
                             tests_passing_before=direct_result.tests_passing_before,
                             tests_passing_after=direct_result.tests_passing_after,
                             summary_markdown=direct_result.summary_markdown,
+                            branch_name=agent_info.branch_name,
                             test_runs=direct_result.test_runs,
                         )
                     )
@@ -908,7 +1002,7 @@ def _collect_agent_results(
             )
             continue
 
-        test_result = read_agent_result(detail, hosts[agent_id_str])
+        test_result = cached_results.get(agent_id_str) or read_agent_result(detail, hosts[agent_id_str])
         results.append(
             TestMapReduceResult(
                 test_node_id=agent_info.test_node_id,
@@ -918,7 +1012,7 @@ def _collect_agent_results(
                 tests_passing_before=test_result.tests_passing_before,
                 tests_passing_after=test_result.tests_passing_after,
                 summary_markdown=test_result.summary_markdown,
-                branch_name=detail.initial_branch,
+                branch_name=detail.initial_branch or agent_info.branch_name,
                 test_runs=test_result.test_runs,
             )
         )
@@ -934,6 +1028,7 @@ def gather_results(
     source_dir: Path,
     cg: ConcurrencyGroup,
     base_commit: str | None = None,
+    cached_results: dict[str, TestResult] | None = None,
 ) -> list[TestMapReduceResult]:
     """Gather results from all finished agents, pulling branches where appropriate.
 
@@ -949,6 +1044,7 @@ def gather_results(
         hosts=hosts,
         missing_detail_errored=True,
         missing_detail_summary="Agent details not found after polling",
+        cached_results=cached_results,
     )
 
     # Pull branches from remote agents whose changes should be kept.
@@ -1005,6 +1101,7 @@ def launch_integrator_agent(
             test_node_id="integrator",
             agent_id=create_result.agent.id,
             agent_name=create_result.agent.name,
+            branch_name=f"mng-tmr/integrated-{short_id}",
             created_at=time.monotonic(),
         ),
         create_result.host,
@@ -1026,7 +1123,7 @@ def wait_for_integrator(
     agent_id_str = str(integrator.agent_id)
 
     while time.monotonic() < deadline:
-        list_result = _try_list_agents(mng_ctx)
+        list_result = try_list_agents(mng_ctx)
         if list_result is None:
             time.sleep(poll_interval_seconds)
             continue
