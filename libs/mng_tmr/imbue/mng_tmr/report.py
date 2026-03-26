@@ -74,6 +74,7 @@ def generate_html_report(
     output_path: Path,
     integrator: IntegratorResult | None = None,
     test_artifacts_dir: Path | None = None,
+    run_commands: list[tuple[str, str]] | None = None,
 ) -> Path:
     """Generate an HTML report summarizing test-mapreduce results."""
     counts: dict[ReportSection, int] = {}
@@ -119,6 +120,7 @@ def generate_html_report(
   <div class="main-content">
     <h1>Test Map-Reduce Report</h1>
     <p class="summary">{len(results)} test(s)</p>
+{_build_run_commands_html(run_commands)}
 {tables_html}
   </div>
 {panels_html}
@@ -130,6 +132,17 @@ def generate_html_report(
     output_path.write_text(report_html)
     logger.info("HTML report written to {}", output_path)
     return output_path
+
+
+def _build_run_commands_html(commands: list[tuple[str, str]] | None) -> str:
+    """Build an HTML block showing useful commands for the run."""
+    if not commands:
+        return ""
+    items = ""
+    for label, cmd in commands:
+        escaped_cmd = html.escape(cmd)
+        items += f'    <div class="run-cmd"><span class="run-cmd-label">{html.escape(label)}:</span> <code>{escaped_cmd}</code></div>\n'
+    return f'  <div class="run-commands">\n{items}  </div>\n'
 
 
 def _build_toc_sidebar(counts: dict[ReportSection, int]) -> str:
@@ -276,6 +289,10 @@ def _html_report_css() -> str:
         "    h1 { color: rgb(51, 51, 51); }\n"
         "    h2 { margin-top: 1.5rem; font-size: 1.1rem; }\n"
         "    .summary { margin-bottom: 0.5rem; color: rgb(102, 102, 102); }\n"
+        "    .run-commands { background: rgb(245, 245, 245); border-radius: 6px; padding: 0.75rem 1rem;"
+        " margin-bottom: 1.5rem; font-size: 0.85rem; }\n"
+        "    .run-cmd { margin: 0.3rem 0; }\n"
+        "    .run-cmd-label { color: rgb(80, 80, 80); }\n"
         "    .toc-sidebar { position: sticky; top: 2rem; width: 200px; float: left;"
         " padding-right: 1rem; }\n"
         "    .toc-link { display: block; font-weight: 600; font-size: 0.9rem;"

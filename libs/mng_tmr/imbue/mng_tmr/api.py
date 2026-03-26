@@ -672,14 +672,22 @@ def _finalize_agent(
     """
     if artifact_output_dir is not None and local_host is not None:
         pull_test_outputs_by_id(agent_id, agent_name, host, local_host, artifact_output_dir)
-    pre_read = try_read_agent_result(agent_id, host)
+    # Try reading the result a few times before stopping -- once stopped, remote
+    # hosts may be torn down and the result becomes unreachable.
+    pre_read = None
+    for attempt in range(3):
+        pre_read = try_read_agent_result(agent_id, host)
+        if pre_read is not None:
+            break
+        if attempt < 2:
+            time.sleep(2.0)
     if should_stop:
         _stop_agent_on_host(host, agent_id, agent_name)
     return pre_read
 
 
-_RESULT_READ_MAX_RETRIES = 3
-_RESULT_READ_RETRY_DELAY_SECONDS = 5.0
+_RESULT_READ_MAX_RETRIES = 2
+_RESULT_READ_RETRY_DELAY_SECONDS = 3.0
 
 
 def read_agent_result(

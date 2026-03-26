@@ -525,7 +525,7 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
         )
     except KeyboardInterrupt:
         write_human_line("\nInterrupted.")
-        _print_run_commands(e2e_run_prefix)
+        _print_run_commands(e2e_run_prefix, None)
         raise
 
 
@@ -628,19 +628,36 @@ def _run_tmr_pipeline(
         label_options=label_options,
     )
     integrator_result = _run_integrator_phase(results, integrator_config, mng_ctx, opts, base_commit=base_commit)
-    generate_html_report(results, html_path, integrator=integrator_result, test_artifacts_dir=output_dir)
+    integrated_branch = integrator_result.branch_name if integrator_result is not None else None
+    generate_html_report(
+        results,
+        html_path,
+        integrator=integrator_result,
+        test_artifacts_dir=output_dir,
+        run_commands=_build_run_commands(e2e_run_prefix, integrated_branch),
+    )
     _emit_report_path(html_path, output_opts)
 
-    _print_run_commands(e2e_run_prefix)
+    _print_run_commands(e2e_run_prefix, integrated_branch)
 
 
-def _print_run_commands(run_name: str) -> None:
+def _build_run_commands(run_name: str, integrated_branch: str | None = None) -> list[tuple[str, str]]:
+    """Build a list of (label, command) pairs for the run."""
+    commands = [
+        ("List agents from this run", f"mng ls --include 'labels.tmr_run_name == \"{run_name}\"'"),
+        ("Reintegrate", f"mng tmr --reintegrate {run_name}"),
+    ]
+    if integrated_branch is not None:
+        commands.append(("Push integrated branch", f"git push origin {integrated_branch}"))
+    return commands
+
+
+def _print_run_commands(run_name: str, integrated_branch: str | None = None) -> None:
     """Print useful commands for managing a TMR run's agents."""
     write_human_line("")
-    write_human_line("List agents from this run:")
-    write_human_line("  mng ls --include 'labels.tmr_run_name == \"{}\"'", run_name)
-    write_human_line("Reintegrate (after sending followup messages to agents):")
-    write_human_line("  mng tmr --reintegrate {}", run_name)
+    for label, cmd in _build_run_commands(run_name, integrated_branch):
+        write_human_line("{}:", label)
+        write_human_line("  {}", cmd)
 
 
 CommandHelpMetadata(
