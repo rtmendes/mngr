@@ -506,7 +506,7 @@ def _apply_plugin_option_overrides(
     )
 
 
-def _run_single_script(script: str, cg: ConcurrencyGroup, cwd: Path | None = None) -> tuple[str, int, str, str]:
+def _run_single_script(script: str, cg: ConcurrencyGroup, cwd: Path | None) -> tuple[str, int, str, str]:
     """Run a single script and return (script, exit_code, stdout, stderr)."""
     try:
         result = cg.run_process_to_completion(
@@ -518,9 +518,7 @@ def _run_single_script(script: str, cg: ConcurrencyGroup, cwd: Path | None = Non
         return (script, e.returncode if e.returncode is not None else -1, e.stdout, e.stderr)
 
 
-def _run_pre_command_scripts(
-    config: MngConfig, command_name: str, cg: ConcurrencyGroup, cwd: Path | None = None
-) -> None:
+def _run_pre_command_scripts(config: MngConfig, command_name: str, cg: ConcurrencyGroup, cwd: Path | None) -> None:
     """Run pre-command scripts configured for this command.
 
     Scripts are run in parallel and all must succeed (exit code 0).
