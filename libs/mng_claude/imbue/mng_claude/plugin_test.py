@@ -45,6 +45,7 @@ from imbue.mng.utils.testing import make_mng_ctx
 from imbue.mng_claude.claude_config import ClaudeDirectoryNotTrustedError
 from imbue.mng_claude.claude_config import ClaudeEffortCalloutNotDismissedError
 from imbue.mng_claude.claude_config import build_readiness_hooks_config
+from imbue.mng_claude.claude_config import encode_claude_project_dir_name
 from imbue.mng_claude.plugin import ClaudeAgent
 from imbue.mng_claude.plugin import ClaudeAgentConfig
 from imbue.mng_claude.plugin import CostThresholdDialogIndicator
@@ -2374,8 +2375,10 @@ def test_on_after_provisioning_adopts_session_by_id(
     # Session ID should be written
     assert (agent_state_dir / "claude_session_id").read_text() == target_session_id
 
-    # Project dir should be copied into per-agent config dir with correct content
-    dest_project_dir = agent.get_claude_config_dir() / "projects" / "test-project"
+    # Session should be placed in the project dir matching the agent's work_dir,
+    # not the source project dir name. This is how Claude Code finds sessions.
+    expected_project_name = encode_claude_project_dir_name(agent.work_dir)
+    dest_project_dir = agent.get_claude_config_dir() / "projects" / expected_project_name
     dest_session_file = dest_project_dir / f"{target_session_id}.jsonl"
     assert dest_session_file.exists(), f"Session file not found at {dest_session_file}"
     assert dest_session_file.read_text() == '{"type":"message"}\n'
@@ -2384,8 +2387,7 @@ def test_on_after_provisioning_adopts_session_by_id(
     assert dest_memory_file.read_text() == "# Memory\n"
 
     # Regression: verify the session file is discoverable the same way Claude Code
-    # finds it at runtime: `find "$CLAUDE_CONFIG_DIR" -name "$SESSION_ID"`.
-    # This was broken when rsync silently failed to copy the project directory.
+    # finds it at runtime: `find "$CLAUDE_CONFIG_DIR" -name "$SESSION_ID.jsonl"`.
     claude_config_dir = agent.get_claude_config_dir()
     matches = list(claude_config_dir.rglob(target_session_id + ".jsonl"))
     assert len(matches) == 1, (
@@ -2446,7 +2448,10 @@ def test_on_after_provisioning_finds_session_despite_claude_config_dir(
         agent.on_after_provisioning(host=host, options=options, mng_ctx=temp_mng_ctx)
 
     assert (agent_state_dir / "claude_session_id").read_text() == target_session_id
-    dest_session_file = agent.get_claude_config_dir() / "projects" / "test-project" / f"{target_session_id}.jsonl"
+    expected_project_name = encode_claude_project_dir_name(agent.work_dir)
+    dest_session_file = (
+        agent.get_claude_config_dir() / "projects" / expected_project_name / f"{target_session_id}.jsonl"
+    )
     assert dest_session_file.exists()
 
 
@@ -2479,8 +2484,9 @@ def test_on_after_provisioning_adopts_session_from_jsonl_path(
     # Session ID should be the stem of the file
     assert (agent_state_dir / "claude_session_id").read_text() == "abc123-def456"
 
-    # Project dir should be copied
-    dest_project_dir = agent.get_claude_config_dir() / "projects" / "some-project"
+    # Project dir should be copied into the agent's work_dir-based project dir
+    expected_project_name = encode_claude_project_dir_name(agent.work_dir)
+    dest_project_dir = agent.get_claude_config_dir() / "projects" / expected_project_name
     assert (dest_project_dir / "abc123-def456.jsonl").exists()
 
 

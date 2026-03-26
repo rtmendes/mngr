@@ -67,6 +67,7 @@ from imbue.mng_claude.claude_config import build_readiness_hooks_config
 from imbue.mng_claude.claude_config import check_claude_dialogs_dismissed
 from imbue.mng_claude.claude_config import complete_onboarding
 from imbue.mng_claude.claude_config import dismiss_effort_callout
+from imbue.mng_claude.claude_config import encode_claude_project_dir_name
 from imbue.mng_claude.claude_config import ensure_claude_dialogs_dismissed
 from imbue.mng_claude.claude_config import find_project_config
 from imbue.mng_claude.claude_config import get_claude_config_path
@@ -1492,18 +1493,31 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
 
         config_dir = self.get_claude_config_dir()
         copied_project_dirs: set[str] = set()
+        # Claude Code organizes sessions by encoded working directory path.
+        # Place adopted sessions under the project dir matching this agent's
+        # work_dir so that `claude --resume` can find them.
+        dest_project_name = encode_claude_project_dir_name(self.work_dir)
 
         for arg in adopt_session_args:
             session_id, source_project_dir = _resolve_adopt_session(arg)
             # Deduplicate project dir copies (multiple sessions may be in the same project)
             if source_project_dir.name not in copied_project_dirs:
-                dest_project_dir = config_dir / "projects" / source_project_dir.name
+                dest_project_dir = config_dir / "projects" / dest_project_name
                 with log_span("Adopting session {}", session_id):
                     host.copy_directory(host, source_project_dir, dest_project_dir)
                 copied_project_dirs.add(source_project_dir.name)
             last_session_id = session_id
 
         assert last_session_id is not None, "adopt_session_args was non-empty but no session ID was set"
+
+        # Remove the sessions-index.json copied from the source project dir.
+        # It contains stale entries pointing to the source paths and project,
+        # and its presence prevents Claude Code from discovering the adopted
+        # session files. Claude Code rebuilds the index on next startup.
+        dest_project_dir = config_dir / "projects" / dest_project_name
+        stale_index = dest_project_dir / "sessions-index.json"
+        host.execute_command(f"rm -f {shlex.quote(str(stale_index))}")
+
         host.write_text_file(self._get_agent_dir() / "claude_session_id", last_session_id)
         logger.info("Adopted {} session(s), active session: {}", len(adopt_session_args), last_session_id)
 
