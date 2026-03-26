@@ -41,7 +41,8 @@ if [[ "$CONVO_ENABLED" == "true" ]] && [[ ! -f ".reviewer/outputs/conversation/$
 fi
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-if [[ "$ARCH_ENABLED" == "true" ]] && [[ ! -f ".reviewer/outputs/architecture/${BRANCH}.md" ]]; then
+BRANCH_SANITIZED="${BRANCH//\//_}"
+if [[ "$ARCH_ENABLED" == "true" ]] && [[ ! -f ".reviewer/outputs/architecture/${BRANCH_SANITIZED}.md" ]]; then
     ARCH_NEEDED=true
 fi
 

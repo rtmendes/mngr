@@ -53,7 +53,7 @@ git rev-parse --abbrev-ref HEAD
 date -u +%Y-%m-%dT%H:%M:%SZ
 ```
 
-Use the Write tool (without checking if the directory exists) to create `.reviewer/outputs/architecture/{branch_name}.md` with the content `Verified at {timestamp}`.
+Replace any `/` in the branch name with `_` (e.g., `mng/my-feature` becomes `mng_my-feature`). Then use the Write tool (without checking if the directory exists) to create `.reviewer/outputs/architecture/{sanitized_branch_name}.md` with the content `Verified at {timestamp}`.
 
 ## Important: when to re-run
 
