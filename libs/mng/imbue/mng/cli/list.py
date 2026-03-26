@@ -291,7 +291,7 @@ def _list_impl(ctx: click.Context, **kwargs) -> None:
         raise click.UsageError("--ids and --addrs are mutually exclusive")
     if opts.ids:
         format_template = "{id}"
-    if opts.addrs:
+    elif opts.addrs:
         format_template = "{name}@{host.name}.{host.provider_name}"
 
     # Parse fields if provided
