@@ -258,12 +258,10 @@ current.tar.gz
 .autofix/
 .reviewer/outputs/
 .reviewer/settings.local.json
-.reviewer/.stop_hook_consecutive_blocks
 .reviews/
 
 # Stuck agent tracking (stop hook escape valve)
 .claude/blocked_stop_commits
-.reviewer/.stop_hook_consecutive_blocks
 
 # Demo recordings (asciinema .cast, .txt, and scripts)
 .demos/

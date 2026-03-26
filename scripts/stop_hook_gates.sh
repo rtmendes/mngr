@@ -48,12 +48,12 @@ HASH="${1:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 # ---------------------------------------------------------------------------
 # Safety hatch: prevent infinite stop-hook loops.
 #
-# Track consecutive blocks in .reviewer/.stop_hook_consecutive_blocks.
+# Track consecutive blocks in .reviewer/outputs/stop_hook_consecutive_blocks.
 # Each line is a commit hash from a blocked attempt. If the last 3
 # entries are all the same hash, the agent is stuck -- let it through.
 # ---------------------------------------------------------------------------
 MAX_CONSECUTIVE_BLOCKS=3
-BLOCK_TRACKER=".reviewer/.stop_hook_consecutive_blocks"
+BLOCK_TRACKER=".reviewer/outputs/stop_hook_consecutive_blocks"
 
 _count_consecutive_blocks() {
     if [[ ! -f "$BLOCK_TRACKER" ]]; then
