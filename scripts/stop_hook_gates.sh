@@ -39,31 +39,25 @@ REVIEWER_SETTINGS=".reviewer/settings.json"
 MAX_CONSECUTIVE_BLOCKS=3
 BLOCK_TRACKER=".reviewer/.stop_hook_consecutive_blocks"
 
-_check_stuck() {
+_count_consecutive_blocks() {
     if [[ ! -f "$BLOCK_TRACKER" ]]; then
-        return 1
+        echo 0
+        return
     fi
-    local last_n entry_count unique_count
-    last_n=$(tail -n "$MAX_CONSECUTIVE_BLOCKS" "$BLOCK_TRACKER")
-    entry_count=$(echo "$last_n" | wc -l | tr -d ' ')
-    if [[ $entry_count -ge $MAX_CONSECUTIVE_BLOCKS ]]; then
-        unique_count=$(echo "$last_n" | sort -u | wc -l | tr -d ' ')
-        if [[ $unique_count -eq 1 ]]; then
-            return 0
-        fi
-    fi
-    return 1
+    # Count how many of the last N entries match the CURRENT hash.
+    local match_count
+    match_count=$(tail -n "$MAX_CONSECUTIVE_BLOCKS" "$BLOCK_TRACKER" | grep -c "^${HASH}$" || true)
+    echo "$match_count"
 }
 
-if _check_stuck; then
+CONSECUTIVE_BLOCKS=$(_count_consecutive_blocks)
+if [[ $CONSECUTIVE_BLOCKS -ge $MAX_CONSECUTIVE_BLOCKS ]]; then
     echo "SAFETY HATCH: Stop hook has blocked ${MAX_CONSECUTIVE_BLOCKS} consecutive times at the same commit ($HASH)." >&2
     echo "Letting the agent through to prevent an infinite loop." >&2
     echo "The review gates are still unsatisfied -- please investigate manually." >&2
-    # Do NOT delete the tracker here. If we delete it, the next stop
-    # attempt would start fresh and block again, creating a 3-block
-    # cycle. Keep the tracker so all subsequent attempts at the same
-    # commit also pass through the safety hatch. The tracker is only
-    # cleared when the gates actually pass (exit 0 below).
+    # Clear the tracker so that if a NEW session starts at the same
+    # commit, the hooks re-engage from scratch.
+    rm -f "$BLOCK_TRACKER"
     exit 0
 fi
 
