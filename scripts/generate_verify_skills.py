@@ -297,7 +297,11 @@ def load_vet(vet_repo: Path) -> dict:
         }
     finally:
         if needs_checkout:
-            _git(vet_repo, "checkout", "--quiet", original_ref, check=True)
+            # Use the short branch name so git attaches HEAD to the branch
+            # rather than leaving detached HEAD (git checkout refs/heads/main
+            # detaches, but git checkout main attaches).
+            restore_target = original_ref.removeprefix("refs/heads/")
+            _git(vet_repo, "checkout", "--quiet", restore_target, check=True)
 
 
 # ---------------------------------------------------------------------------
