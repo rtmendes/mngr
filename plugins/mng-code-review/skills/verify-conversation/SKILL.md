@@ -77,7 +77,7 @@ Also provide the agent with:
    - `current` files: label as "The current session"
    - `mng_agent_dir` files: label as "All sessions found in this agent's directory"
    - Any source ending in `:subagent`: label as "Subagent transcripts" (grouped under their parent source)
-5. The output file path: `.reviewer/outputs/conversation/{hash}.json`
+6. The output file path: `.reviewer/outputs/conversation/{hash}.json`
 
 If the progress file exists:
 - Include the progress data in the prompt
