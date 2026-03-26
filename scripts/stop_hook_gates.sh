@@ -27,11 +27,11 @@ source "$SCRIPT_DIR/config_utils.sh"
 
 REVIEWER_SETTINGS=".reviewer/settings.json"
 
-# By default, only fire on mng-managed sessions (MAIN_CLAUDE_SESSION_ID is set
+# By default, only fire on mng-managed sessions (MNG_AGENT_STATE_DIR is set
 # by mng when it launches agents). Set enforce_on_all_sessions to true in
 # .reviewer/settings.json to enforce on standalone Claude Code sessions too.
 ENFORCE_ALL=$(read_json_config "$REVIEWER_SETTINGS" "enforce_on_all_sessions" "false")
-if [[ "$ENFORCE_ALL" != "true" ]] && [[ -z "${MAIN_CLAUDE_SESSION_ID:-}" ]]; then
+if [[ "$ENFORCE_ALL" != "true" ]] && [[ -z "${MNG_AGENT_STATE_DIR:-}" ]]; then
     exit 0
 fi
 
