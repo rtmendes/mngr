@@ -186,11 +186,25 @@ def determine_lifecycle_state(
     if pane_dead == "1":
         return AgentLifecycleState.DONE
 
+    # Parse the ps output once for all subsequent checks. We use ps as the
+    # authoritative source for process names because tmux's pane_current_command
+    # can disagree with ps -- some programs modify their process title (e.g.,
+    # Claude Code sets it to its version string like "2.1.73"), which tmux
+    # picks up while ps -o comm= still reports the original executable name.
+    children_by_ppid, comm_by_pid = _parse_ps_output(ps_output)
+
+    # Check tmux's report first (fast path for well-behaved processes)
     if current_command == expected_process_name:
         return AgentLifecycleState.RUNNING if is_active else AgentLifecycleState.WAITING
 
-    # Check descendant processes
-    descendant_names = get_descendant_process_names(pane_pid, ps_output)
+    # Check descendant processes via ps (authoritative for modified titles)
+    descendant_names: list[str] = []
+    queue = list(children_by_ppid.get(pane_pid, []))
+    while queue:
+        pid = queue.pop(0)
+        if pid in comm_by_pid:
+            descendant_names.append(comm_by_pid[pid])
+        queue.extend(children_by_ppid.get(pid, []))
 
     if expected_process_name in descendant_names:
         return AgentLifecycleState.RUNNING if is_active else AgentLifecycleState.WAITING
@@ -200,18 +214,12 @@ def determine_lifecycle_state(
     if non_shell_processes:
         return AgentLifecycleState.REPLACED
 
-    # Current command is a shell -> agent probably finished
-    if current_command in SHELL_COMMANDS:
-        return AgentLifecycleState.DONE
-
-    # Cross-reference with ps: tmux's pane_current_command can disagree with
-    # ps because some programs modify their process title (e.g., Claude Code
-    # sets it to its version string like "2.1.73"). When the agent exits and
-    # the shell prompt returns, tmux may briefly report the stale title while
-    # ps correctly shows the pane process as a shell. Use the pane PID's own
-    # comm from ps as the authoritative source.
-    pane_comm = get_pid_comm(pane_pid, ps_output)
-    if pane_comm is not None and pane_comm in SHELL_COMMANDS:
+    # Agent is not running. Determine DONE vs REPLACED by checking whether
+    # the pane process is a shell (agent exited normally) or something else
+    # (agent was replaced by another program). Use ps as authoritative source
+    # since tmux may report a stale modified title.
+    pane_comm = comm_by_pid.get(pane_pid)
+    if current_command in SHELL_COMMANDS or (pane_comm is not None and pane_comm in SHELL_COMMANDS):
         return AgentLifecycleState.DONE
 
     return AgentLifecycleState.REPLACED
