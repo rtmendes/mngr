@@ -164,6 +164,7 @@ def _run_reintegrate(
     Discovers agents by the tmr_run_name label, reads their result files,
     re-runs the integrator, and generates a fresh report.
     """
+    assert opts.reintegrate is not None
     run_name = opts.reintegrate
     write_human_line("Reintegrating run: {}", run_name)
 
@@ -248,7 +249,12 @@ def _run_reintegrate(
             pull_test_outputs_by_id(info.agent_id, info.agent_name, agent_hosts[agent_id_str], source_host, output_dir)
 
     # Write pre-integrator report
-    generate_html_report(results, html_path, test_artifacts_dir=output_dir)
+    generate_html_report(
+        results,
+        html_path,
+        test_artifacts_dir=output_dir,
+        run_commands=_build_run_commands(run_name),
+    )
 
     # Run integrator
     env_options = AgentEnvironmentOptions(env_vars=resolve_env_vars((), opts.env))
@@ -262,8 +268,16 @@ def _run_reintegrate(
         label_options=label_options,
     )
     integrator_result = _run_integrator_phase(results, integrator_config, mng_ctx, opts, base_commit=base_commit)
-    generate_html_report(results, html_path, integrator=integrator_result, test_artifacts_dir=output_dir)
+    integrated_branch = integrator_result.branch_name if integrator_result is not None else None
+    generate_html_report(
+        results,
+        html_path,
+        integrator=integrator_result,
+        test_artifacts_dir=output_dir,
+        run_commands=_build_run_commands(run_name, integrated_branch),
+    )
     _emit_report_path(html_path, output_opts)
+    _print_run_commands(run_name, integrated_branch)
 
 
 def _run_integrator_phase(
