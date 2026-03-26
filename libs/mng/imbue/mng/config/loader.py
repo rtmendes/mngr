@@ -218,13 +218,9 @@ def load_config(
             )
 
     # Resolve project root for use as cwd in pre-command scripts.
-    # Respect MNG_PROJECT_DIR (same precedence as resolve_project_config_dir).
-    env_project_dir = os.environ.get("MNG_PROJECT_DIR")
-    project_root = (
-        Path(env_project_dir)
-        if env_project_dir
-        else (context_dir or find_git_worktree_root(start=None, cg=concurrency_group))
-    )
+    # Note: MNG_PROJECT_DIR is NOT used here because it points to the config
+    # directory (containing settings.toml), not the project root.
+    project_root = context_dir or find_git_worktree_root(start=None, cg=concurrency_group)
 
     # Return MngContext containing both config and plugin manager
     return MngContext(
