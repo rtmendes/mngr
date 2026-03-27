@@ -27,7 +27,7 @@ from imbue.imbue_common.primitives import NonEmptyStr
 from imbue.minds.errors import DirtyRepoError
 from imbue.minds.errors import GitOperationError
 from imbue.minds.errors import VendorError
-from imbue.mng_claude_mind.data_types import VendorRepoConfig
+from imbue.mngr_claude_mind.data_types import VendorRepoConfig
 
 MNG_GITHUB_URL: Final[str] = "https://github.com/imbue-ai/mng.git"
 

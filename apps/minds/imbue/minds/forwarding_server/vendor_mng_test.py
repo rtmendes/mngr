@@ -17,7 +17,7 @@ from imbue.minds.forwarding_server.vendor_mng import vendor_repos
 from imbue.minds.testing import add_and_commit_git_repo
 from imbue.minds.testing import init_and_commit_git_repo
 from imbue.minds.testing import make_git_repo
-from imbue.mng_claude_mind.data_types import VendorRepoConfig
+from imbue.mngr_claude_mind.data_types import VendorRepoConfig
 
 
 def _make_mind_repo(tmp_path: Path) -> Path:
