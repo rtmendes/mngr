@@ -376,8 +376,7 @@ class BaseAgent(AgentInterface[AgentConfigT]):
             if not result.success:
                 raise SendMessageError(str(self.name), f"tmux send-keys failed: {result.stderr or result.stdout}")
         else:
-            safe_name = self.session_name.replace("/", "-")
-            tmp_path = Path(f"/tmp/mng-msg-buffer-{safe_name}.txt")
+            tmp_path = Path(f"/tmp/mng-msg-buffer-{self.session_name}.txt")
             quoted_buffer = shlex.quote(f"mng-{self.session_name}")
             quoted_path = shlex.quote(str(tmp_path))
             try:

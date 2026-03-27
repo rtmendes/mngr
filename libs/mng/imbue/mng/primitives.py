@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from enum import auto
 from pathlib import Path
@@ -255,15 +256,25 @@ class InvalidAgentName(ValueError):
     pass
 
 
-# FIXME: actually, there are more restrictions here, like: only alphanumeric and dashes, must not start or end with a dash, etc. We must enforce those.
-#  the same restrictions should apply to ProviderInstanceName, ProviderBackendName, HostName, AgentName, and AgentTypeName
+_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$")
+
+
+# FIXME: the same restrictions should apply to ProviderInstanceName, ProviderBackendName, HostName, and AgentTypeName
 class AgentName(NonEmptyStr):
-    """Human-readable name for an agent."""
+    """Human-readable name for an agent.
+
+    Must be alphanumeric with dashes, must not start or end with a dash.
+    This is enforced because agent names appear in filesystem paths and
+    tmux session names, where characters like ``/`` would break things.
+    """
 
     def __new__(cls, value: str) -> Self:
-        if value.startswith("-") or value.endswith("-"):
-            raise InvalidAgentName(f"{cls.__name__} cannot start or end with a dash: '{value}'")
-        return super().__new__(cls, value.strip())
+        value = value.strip()
+        if not _SAFE_NAME_RE.match(value):
+            raise InvalidAgentName(
+                f"{cls.__name__} must be alphanumeric (with dashes allowed in the middle): '{value}'"
+            )
+        return super().__new__(cls, value)
 
 
 class HostName(NonEmptyStr):

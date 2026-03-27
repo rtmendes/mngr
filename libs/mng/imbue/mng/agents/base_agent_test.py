@@ -25,6 +25,7 @@ from imbue.mng.primitives import AgentTypeName
 from imbue.mng.primitives import CommandString
 from imbue.mng.primitives import HostId
 from imbue.mng.primitives import HostName
+from imbue.mng.primitives import InvalidAgentName
 from imbue.mng.primitives import Permission
 from imbue.mng.providers.local.instance import LocalProviderInstance
 from imbue.mng.utils.polling import wait_for
@@ -1129,20 +1130,10 @@ def test_send_tmux_literal_keys_short_message_raises_on_send_keys_failure(
         agent._send_tmux_literal_keys("mng-test:0", "hello")
 
 
-def test_send_tmux_literal_keys_long_message_sanitizes_slash_in_session_name(
-    temp_mng_ctx: MngContext,
-) -> None:
-    """Session names with '/' should produce flat temp file paths (no nested dirs)."""
-    stub = _StubHost()
-    agent = _create_named_agent_with_stub_host(temp_mng_ctx, stub, AgentName("foo/bar"))
-
-    long_message = "x" * 1024
-    agent._send_tmux_literal_keys("mng-test:0", long_message)
-
-    # The temp file path should use '-' instead of '/' to avoid nested directories
-    written_path = stub.written_files[0][0]
-    assert "/" not in written_path.name, f"Temp file name should not contain '/': {written_path}"
-    assert "foo-bar" in written_path.name
+def test_agent_name_rejects_slash() -> None:
+    """AgentName must reject names containing '/' to prevent path issues."""
+    with pytest.raises(InvalidAgentName):
+        AgentName("foo/bar")
 
 
 # =========================================================================
