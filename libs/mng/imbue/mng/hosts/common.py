@@ -138,6 +138,7 @@ def _parse_ps_output(ps_output: str) -> tuple[dict[str, list[str]], dict[str, st
     return children_by_ppid, comm_by_pid
 
 
+@pure
 def _collect_descendant_names(
     root_pid: str,
     children_by_ppid: dict[str, list[str]],
