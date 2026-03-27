@@ -8,7 +8,7 @@
 **/.test_output/
 .venv/
 **/.ruff_cache/
-.mng/dev/
+.mngr/dev/
 test-results/
 tmr_*/
 node_modules/
