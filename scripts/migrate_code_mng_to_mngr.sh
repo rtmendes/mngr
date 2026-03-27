@@ -45,8 +45,10 @@ echo -e "${BOLD}mng -> mngr code migration${NC}"
 echo -e "\n${BOLD}Cleaning build artifacts...${NC}"
 find "$REPO_ROOT" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 find "$REPO_ROOT" -type d -name htmlcov -exec rm -rf {} + 2>/dev/null || true
+find "$REPO_ROOT" -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
+find "$REPO_ROOT" -type d -name .test_output -exec rm -rf {} + 2>/dev/null || true
 find "$REPO_ROOT" -name coverage.xml -delete 2>/dev/null || true
-ok "Cleaned __pycache__, htmlcov, coverage.xml"
+ok "Cleaned __pycache__, htmlcov, .pytest_cache, .test_output, coverage.xml"
 
 # Remove empty leftover directories from the old mng names
 for d in libs/mng libs/mng_*; do
