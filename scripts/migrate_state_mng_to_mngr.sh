@@ -191,12 +191,20 @@ fi
 step 1 "Cleaning build artifacts in old mng directories..."
 # Only clean artifacts under dirs with "mng" (not "mngr") in their path,
 # so we don't nuke valid caches in already-renamed directories.
-if [ "$DRY_RUN" = true ]; then
+# Collect matching dirs first to avoid glob-no-match errors with set -e.
+old_lib_dirs=()
+for d in "$REPO_ROOT"/libs/mng "$REPO_ROOT"/libs/mng_*; do
+    [ -d "$d" ] && old_lib_dirs+=("$d")
+done
+
+if [ ${#old_lib_dirs[@]} -eq 0 ]; then
+    ok "No old mng directories found"
+elif [ "$DRY_RUN" = true ]; then
     for pat in __pycache__ htmlcov .pytest_cache .test_output; do
-        count=$(find "$REPO_ROOT"/libs/mng "$REPO_ROOT"/libs/mng_* -type d -name "$pat" 2>/dev/null | wc -l | tr -d ' ')
+        count=$(find "${old_lib_dirs[@]}" -type d -name "$pat" 2>/dev/null | wc -l | tr -d ' ')
         [ "$count" -gt 0 ] && dry "would remove $count $pat directories under libs/mng*"
     done
-    count=$(find "$REPO_ROOT"/libs/mng "$REPO_ROOT"/libs/mng_* -name coverage.xml 2>/dev/null | wc -l | tr -d ' ')
+    count=$(find "${old_lib_dirs[@]}" -name coverage.xml 2>/dev/null | wc -l | tr -d ' ')
     [ "$count" -gt 0 ] && dry "would remove $count coverage.xml files under libs/mng*"
 else
     for d in "$REPO_ROOT"/libs/mng "$REPO_ROOT"/libs/mng_*; do
@@ -353,24 +361,27 @@ fi
 
 # ── 6. Fix agent data.json files ────────────────────────────────────
 
-step 7 "Fixing agent data.json files..."
+step 7 "Fixing agent data.json and env files..."
 
 agent_fixed=0
-for f in "$HOME/.mngr/agents"/*/data.json; do
-    [ -f "$f" ] || continue
-    if perl -ne 'if (/MNG(?!R)_|\.mng(?!r)/) { $f=1; last } END { exit($f ? 0 : 1) }' "$f" 2>/dev/null; then
-        if [ "$DRY_RUN" = true ]; then
-            dry "would fix stale references in $f"
-        else
-            perl -pi -e 's/MNG(?!R)/MNGR/g; s/\.mng(?!r)/.mngr/g' "$f"
+for agent_dir in "$HOME/.mngr/agents"/*/; do
+    [ -d "$agent_dir" ] || continue
+    for f in "$agent_dir"data.json "$agent_dir"env; do
+        [ -f "$f" ] || continue
+        if perl -ne 'if (/MNG(?!R)_|\.mng(?!r)/) { $f=1; last } END { exit($f ? 0 : 1) }' "$f" 2>/dev/null; then
+            if [ "$DRY_RUN" = true ]; then
+                dry "would fix stale references in $f"
+            else
+                perl "$RENAME_PL" "$f"
+            fi
+            agent_fixed=$((agent_fixed + 1))
         fi
-        agent_fixed=$((agent_fixed + 1))
-    fi
+    done
 done
 if [ "$agent_fixed" -gt 0 ]; then
-    ok "Fixed $agent_fixed agent data.json files"
+    ok "Fixed $agent_fixed agent files (data.json + env)"
 else
-    ok "No agent data.json files need fixing."
+    ok "No agent files need fixing."
 fi
 
 # Host data.json
