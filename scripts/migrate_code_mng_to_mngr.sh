@@ -182,6 +182,9 @@ for old_root in libs/mng/imbue/mng libs/mng_*/imbue/mng_*; do
     new_root="${old_root//mng_/mngr_}"
     new_root="${new_root//\/mng\//\/mngr\/}"
     new_root="${new_root//libs\/mng\//libs\/mngr\/}"
+    # Only move files if the destination already exists (post-merge case).
+    # If it doesn't exist, step 3 will handle the rename via git mv.
+    [ -d "$new_root" ] || continue
     count=$(find "$old_root" -type f | wc -l | tr -d ' ')
     if [ "$DRY_RUN" = true ]; then
         dry "would move $count files from $old_root -> $new_root"
@@ -192,7 +195,7 @@ for old_root in libs/mng/imbue/mng libs/mng_*/imbue/mng_*; do
             mkdir -p "$(dirname "$newf")"
             mv "$f" "$newf"
             git add "$newf" 2>/dev/null || true
-            git rm --cached "$f" 2>/dev/null || true
+            git rm --cached --quiet "$f" 2>/dev/null || true
         done
     fi
     moved=$((moved + count))
@@ -263,6 +266,7 @@ fi
 
 step "3/9" "Renaming lib directories..."
 
+renamed_libs=0
 for dir in libs/mng libs/mng_*; do
     [ -d "$dir" ] || continue
     base=$(basename "$dir")
@@ -279,15 +283,18 @@ for dir in libs/mng libs/mng_*; do
             git mv "$dir" "$newdir"
             ok "$dir -> $newdir"
         fi
-    else
-        skip "$newdir already exists"
+        renamed_libs=$((renamed_libs + 1))
     fi
 done
+if [ "$renamed_libs" -eq 0 ]; then
+    ok "All lib directories already renamed"
+fi
 
 # ── 4. Rename Python package directories inside libs ──────────────
 
 step "4/9" "Renaming Python package directories..."
 
+renamed_pkgs=0
 if [ -d "libs/mngr/imbue/mng" ] && [ ! -d "libs/mngr/imbue/mngr" ]; then
     if [ "$DRY_RUN" = true ]; then
         dry "would rename libs/mngr/imbue/mng -> libs/mngr/imbue/mngr"
@@ -295,8 +302,7 @@ if [ -d "libs/mngr/imbue/mng" ] && [ ! -d "libs/mngr/imbue/mngr" ]; then
         git mv "libs/mngr/imbue/mng" "libs/mngr/imbue/mngr"
         ok "libs/mngr/imbue/mng -> libs/mngr/imbue/mngr"
     fi
-elif [ -d "libs/mngr/imbue/mngr" ]; then
-    skip "libs/mngr/imbue/mngr already exists"
+    renamed_pkgs=$((renamed_pkgs + 1))
 fi
 
 for dir in libs/mngr_*/imbue/mng_*; do
@@ -312,8 +318,12 @@ for dir in libs/mngr_*/imbue/mng_*; do
             git mv "$dir" "$newdir"
             ok "$dir -> $newdir"
         fi
+        renamed_pkgs=$((renamed_pkgs + 1))
     fi
 done
+if [ "$renamed_pkgs" -eq 0 ]; then
+    ok "All package directories already renamed"
+fi
 
 # ── 5. Fix symlinks with stale targets ───────────────────────────
 
