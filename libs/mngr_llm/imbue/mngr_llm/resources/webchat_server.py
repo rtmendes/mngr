@@ -16,6 +16,7 @@ import hashlib
 import importlib.resources
 import json
 import os
+import socket
 import types
 from datetime import datetime
 from datetime import timezone
@@ -156,8 +157,8 @@ def _get_bound_port(server: uvicorn.Server) -> int:
     the real port from the underlying socket after the server has started.
     """
     for sock_server in server.servers:
-        for socket in sock_server.sockets:
-            address = socket.getsockname()
+        for socket_ in sock_server.sockets:
+            address = socket_.getsockname()
             return int(address[1])
     logger.warning("Could not determine bound port from uvicorn server")
     return 0
@@ -185,7 +186,7 @@ def main() -> None:
         # port when port=0).
         original_startup = server.startup
 
-        async def _startup_with_registration() -> None:
+        async def _startup_with_registration(sockets: list[socket.socket] | None = None) -> None:
             await original_startup()
             actual_port = _get_bound_port(server)
             logger.info(
