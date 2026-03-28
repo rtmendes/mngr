@@ -209,6 +209,16 @@ class ClaudeAgentConfig(AgentTypeConfig):
         "in ~/.claude.json before startup. This prevents the trust dialog from appearing. "
         "Also dismisses the effort callout dialog.",
     )
+    model: str | None = Field(
+        default=None,
+        description="Model to use for this agent (e.g. 'opus[1m]'). "
+        "Written to $CLAUDE_CONFIG_DIR/settings.json.",
+    )
+    fast_mode: bool = Field(
+        default=False,
+        description="Whether to enable fast mode for this agent. "
+        "Written to $CLAUDE_CONFIG_DIR/settings.json.",
+    )
     emit_common_transcript: bool = Field(
         default=True,
         description="Emit a common, agent-agnostic transcript alongside the raw Claude transcript. "
@@ -240,7 +250,11 @@ def _collect_claude_home_dir_files(claude_dir: Path) -> dict[Path, Path]:
     return files
 
 
-def _build_settings_json_content(sync_local: bool) -> str:
+def _build_settings_json_content(
+    sync_local: bool,
+    model: str | None = None,
+    fast_mode: bool = False,
+) -> str:
     """Build settings.json content for remote/deploy per-agent config dirs.
 
     Used for remote hosts and deploy only. Local hosts symlink settings.json
@@ -248,16 +262,21 @@ def _build_settings_json_content(sync_local: bool) -> str:
 
     Uses the local file as a base when sync_local is True and the file exists,
     otherwise uses generated defaults. Forces skipDangerousModePermissionPrompt=True
-    and disables fastMode (not supported via the API on remote hosts).
+    and disables fastMode from local settings (not supported via the API on
+    remote hosts) unless explicitly enabled via config.
     """
     local_path = Path.home() / ".claude" / "settings.json"
     if sync_local and local_path.exists():
         data: dict[str, Any] = json.loads(local_path.read_text())
-        if data.get("fastMode") is True:
+        if not fast_mode and data.get("fastMode") is True:
             logger.warning("Disabling fast mode for remote deployment because it is not yet supported via the API")
             data["fastMode"] = False
     else:
         data = _generate_claude_home_settings()
+    if model is not None:
+        data["model"] = model
+    if fast_mode:
+        data["fastMode"] = True
     data["skipDangerousModePermissionPrompt"] = True
     return json.dumps(data, indent=2) + "\n"
 
@@ -631,6 +650,40 @@ def _sync_local_user_resources(host: OnlineHostInterface, config_dir: Path, *, s
             host.execute_idempotent_command(
                 f"cp {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0
             )
+
+
+def _apply_settings_json_overrides(
+    host: OnlineHostInterface,
+    config_dir: Path,
+    config: ClaudeAgentConfig,
+) -> None:
+    """Apply per-agent settings overrides (model, fast_mode) to settings.json.
+
+    Only called for local hosts. When overrides are needed, reads existing
+    settings (following symlinks if present), then writes a regular file
+    with the overrides applied. Replaces any existing symlink to avoid
+    modifying the user's global settings.
+    """
+    if config.model is None and not config.fast_mode:
+        return
+
+    settings_path = config_dir / "settings.json"
+
+    data: dict[str, Any] = {}
+    try:
+        content = host.read_text_file(settings_path)
+        data = json.loads(content)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    if config.model is not None:
+        data["model"] = config.model
+    if config.fast_mode:
+        data["fastMode"] = True
+
+    # Remove existing file/symlink before writing a regular file
+    host.execute_idempotent_command(f"rm -f {shlex.quote(str(settings_path))}", timeout_seconds=5.0)
+    host.write_text_file(settings_path, json.dumps(data, indent=2) + "\n")
 
 
 def _load_claude_resource_script(filename: str) -> str:
@@ -1269,6 +1322,8 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         if config.sync_home_settings:
             _sync_local_user_resources(host, config_dir, symlink=config.symlink_user_resources)
 
+        _apply_settings_json_overrides(host, config_dir, config)
+
     def _setup_remote_config_dir(
         self,
         host: OnlineHostInterface,
@@ -1285,7 +1340,14 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         file_transfers: list[tuple[Path, bytes]] = []
         # 1. Always ship settings.json
         file_transfers.append(
-            (config_dir / "settings.json", _build_settings_json_content(config.sync_home_settings).encode("utf-8"))
+            (
+                config_dir / "settings.json",
+                _build_settings_json_content(
+                    config.sync_home_settings,
+                    model=config.model,
+                    fast_mode=config.fast_mode,
+                ).encode("utf-8"),
+            )
         )
 
         # 2. Transfer other home dir files (skills, agents, commands) if syncing is enabled
