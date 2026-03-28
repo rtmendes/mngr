@@ -39,8 +39,8 @@ from imbue.mngr.api.discovery_events import parse_discovery_event_line
 from imbue.mngr.api.discovery_events import resolve_provider_names_for_identifiers
 from imbue.mngr.api.discovery_events import write_full_discovery_snapshot
 from imbue.mngr.config.data_types import MngrConfig
-from imbue.mngr.utils.polling import poll_until
 from imbue.mngr.interfaces.host import OnlineHostInterface
+from imbue.mngr.utils.polling import poll_until
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import DiscoveredAgent
