@@ -672,9 +672,13 @@ def _apply_settings_json_overrides(
     data: dict[str, Any] = {}
     try:
         content = host.read_text_file(settings_path)
-        data = json.loads(content)
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
+    except FileNotFoundError:
+        content = None
+    else:
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            logger.warning("Existing settings.json at {} is corrupt; replacing with overrides only", settings_path)
 
     if config.model is not None:
         data["model"] = config.model
