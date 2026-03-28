@@ -7,6 +7,7 @@ from threading import Lock
 from typing import cast
 
 import pytest
+
 from imbue.imbue_common.event_envelope import EventType
 from imbue.mngr.api.discovery_events import AgentDestroyedEvent
 from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
@@ -40,7 +41,6 @@ from imbue.mngr.api.discovery_events import resolve_provider_names_for_identifie
 from imbue.mngr.api.discovery_events import write_full_discovery_snapshot
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.interfaces.host import OnlineHostInterface
-from imbue.mngr.utils.polling import poll_until
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import DiscoveredAgent
@@ -49,6 +49,7 @@ from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SSHInfo
+from imbue.mngr.utils.polling import poll_until
 from imbue.mngr.utils.testing import make_test_agent_details
 from imbue.mngr.utils.testing import make_test_discovered_agent
 from imbue.mngr.utils.testing import make_test_discovered_host
