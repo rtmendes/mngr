@@ -60,9 +60,8 @@ def observe(ctx: click.Context, **kwargs: Any) -> None:
     if events_base_dir is None:
         events_base_dir = get_default_events_base_dir(mngr_ctx.config)
 
-    error_behavior = ErrorBehavior(opts.on_error.upper())
-
     if opts.discovery_only:
+        error_behavior = ErrorBehavior(opts.on_error.upper())
         run_discovery_stream(
             mngr_ctx=mngr_ctx,
             error_behavior=error_behavior,
