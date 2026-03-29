@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# wait_for_stop_hooks.sh
+# wait_for_stop_hook.sh
 #
 # A Claude Code Stop hook that waits for all other stop hooks to finish
 # before proceeding. Exits when:
@@ -103,13 +103,13 @@ get_other_stop_hooks() {
 # =====================================================================
 
 CLAUDE_PID=$(find_claude_pid) || {
-    echo "wait_for_stop_hooks: could not find Claude ancestor process" >&2
+    echo "wait_for_stop_hook: could not find Claude ancestor process" >&2
     exit 1
 }
 
 OUR_WRAPPER=$(find_our_wrapper_pid "$CLAUDE_PID")
 
-echo "wait_for_stop_hooks: Claude PID=$CLAUDE_PID, our wrapper=$OUR_WRAPPER, grace=${GRACE_PERIOD}s"
+echo "wait_for_stop_hook: Claude PID=$CLAUDE_PID, our wrapper=$OUR_WRAPPER, grace=${GRACE_PERIOD}s"
 
 # Grace period: give Claude time to spawn all stop hooks
 sleep "$GRACE_PERIOD"
@@ -118,11 +118,11 @@ sleep "$GRACE_PERIOD"
 INITIAL_HOOKS=$(get_other_stop_hooks "$CLAUDE_PID" "$OUR_WRAPPER")
 
 if [ -z "$INITIAL_HOOKS" ]; then
-    echo "wait_for_stop_hooks: no other stop hooks found after grace period"
+    echo "wait_for_stop_hook: no other stop hooks found after grace period"
     exit 0
 fi
 
-echo "wait_for_stop_hooks: waiting for stop hooks: $INITIAL_HOOKS"
+echo "wait_for_stop_hook: waiting for stop hooks: $INITIAL_HOOKS"
 
 while true; do
     ALL_DONE=true
@@ -134,7 +134,7 @@ while true; do
     done
 
     if [ "$ALL_DONE" = true ]; then
-        echo "wait_for_stop_hooks: all other stop hooks have finished"
+        echo "wait_for_stop_hook: all other stop hooks have finished"
 
         # Mark agent as inactive (same as the idle_prompt Notification hook)
         rm -f "$MNGR_AGENT_STATE_DIR/active" "$MNGR_AGENT_STATE_DIR/permissions_waiting"
