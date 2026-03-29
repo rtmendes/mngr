@@ -100,12 +100,29 @@ get_other_stop_hooks() {
 }
 
 # --- Mark agent as inactive and emit activity event ---
+# $1 (optional): reason for marking inactive (e.g. "signal:SIGTERM")
 mark_inactive() {
+    local reason="${1:-}"
     rm -f "$MNGR_AGENT_STATE_DIR/active" "$MNGR_AGENT_STATE_DIR/permissions_waiting"
     mkdir -p "$MNGR_HOST_DIR/events/mngr/activity"
-    echo '{"source": "mngr/activity", "type": "activity", "event_id": "evt-'"$(head -c 16 /dev/urandom | xxd -p)"'", "timestamp": "'"$(date -u +"%Y-%m-%dT%H:%M:%S.000000000Z")"'"}' \
+    local extra=""
+    if [ -n "$reason" ]; then
+        extra=', "reason": "'"$reason"'"'
+    fi
+    echo '{"source": "mngr/activity", "type": "activity", "event_id": "evt-'"$(head -c 16 /dev/urandom | xxd -p)"'", "timestamp": "'"$(date -u +"%Y-%m-%dT%H:%M:%S.000000000Z")"'"'"$extra"'}' \
         >> "$MNGR_HOST_DIR/events/mngr/activity/events.jsonl"
 }
+
+# --- Signal handler: mark inactive and exit on SIGTERM/SIGINT ---
+on_signal() {
+    local sig="$1"
+    echo "wait_for_stop_hook: received SIG${sig}, marking inactive" >&2
+    mark_inactive "signal:SIG${sig}"
+    exit 0
+}
+
+trap 'on_signal TERM' TERM
+trap 'on_signal INT' INT
 
 # =====================================================================
 # Main
