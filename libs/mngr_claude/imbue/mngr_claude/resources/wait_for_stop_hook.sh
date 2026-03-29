@@ -111,8 +111,9 @@ mark_inactive() {
 # =====================================================================
 
 CLAUDE_PID=$(find_claude_pid) || {
-    echo "wait_for_stop_hook: could not find Claude ancestor process" >&2
-    exit 1
+    echo "wait_for_stop_hook: could not find Claude ancestor process (no /proc?), marking inactive immediately" >&2
+    mark_inactive
+    exit 0
 }
 
 OUR_WRAPPER=$(find_our_wrapper_pid "$CLAUDE_PID")
