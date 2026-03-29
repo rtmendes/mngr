@@ -148,9 +148,15 @@ def test_configure_mngr_settings_is_idempotent(tmp_path: Path) -> None:
 
     configure_mngr_settings(repo, AgentName("selene"), agent_id)
 
-    # Running again should not add duplicate exclude filters
+    first_parsed = _read_settings(repo)
+    first_events_filter = first_parsed["commands"]["events"]["filter"]
+
+    # Running again should not add duplicate filters
     configure_mngr_settings(repo, AgentName("selene"), agent_id)
 
     parsed = _read_settings(repo)
     excludes = list(parsed["commands"]["list"]["exclude"])
     assert len(excludes) == 1
+
+    events_filter = parsed["commands"]["events"]["filter"]
+    assert events_filter == first_events_filter
