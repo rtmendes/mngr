@@ -6,9 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](./LICENSE)
 [![Open Issues](https://img.shields.io/github/issues/imbue-ai/mngr?style=flat-square)](https://github.com/imbue-ai/mngr/issues)
 
-![mngr](docs/mngr_image.png)
-
-**Spin up isolated AI coding agents — locally or in the cloud — with a single CLI.**
+**Spin up isolated AI coding agents
 *Built on SSH, git, and tmux. Extensible via plugins. No managed service required.*
 
 > **Why mngr?** Most agent tooling is a managed cloud: opaque infrastructure, per-seat pricing, hard to script. mngr takes the opposite approach — agents run in isolated containers you own, over SSH you can inspect, on compute that shuts down when idle. It's built on primitives you already know (SSH, git, tmux, docker) and extensible via plugins for anything you need on top.
@@ -157,7 +155,27 @@ From the repo where you would like a Dockerfile created.
 
 `mngr` is built on open-source tools and standards (SSH, git, tmux, docker, etc.), and is extensible via [plugins](libs/mngr/docs/concepts/plugins.md) to enable the latest AI coding workflows.
 
-![mngr architecture](docs/mngr_style_light.png)
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#EFF6FF', 'primaryTextColor': '#1E3A5F', 'primaryBorderColor': '#3B82F6', 'lineColor': '#64748B', 'edgeLabelBackground': '#FFFFFF', 'fontSize': '15px'}}}%%
+flowchart LR
+    classDef user fill:#DBEAFE,stroke:#2563EB,stroke-width:2px,color:#1E3A5F,font-weight:bold
+    classDef cli fill:#1E3A5F,stroke:#1E3A5F,stroke-width:2px,color:#FFFFFF,font-weight:bold
+    classDef agent fill:#D1FAE5,stroke:#059669,stroke-width:2px,color:#064E3B
+    classDef host fill:#FEF3C7,stroke:#D97706,stroke-width:2px,color:#78350F
+    classDef repo fill:#EDE9FE,stroke:#7C3AED,stroke-width:2px,color:#4C1D95
+
+    user([You]):::user
+    cli[mngr CLI]:::cli
+    agent["Agent (Claude · Codex · OpenCode)"]:::agent
+    host["Isolated Host (local · Modal · Docker)"]:::host
+    codebase[(Your Codebase)]:::repo
+
+    user -->|"create / message / exec"| cli
+    cli -->|spawns| agent
+    agent -->|runs in| host
+    host <-->|"git · SSH · rsync"| codebase
+    cli <-->|"connect · transcript · pull"| host
+```
 
 ## Installation
 
