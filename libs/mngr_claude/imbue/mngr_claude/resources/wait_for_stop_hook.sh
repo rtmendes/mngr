@@ -18,6 +18,7 @@ set -euo pipefail
 # --- Configuration (override via environment) ---
 GRACE_PERIOD="${HOOK_GRACE_PERIOD:-3}"      # seconds before first check
 POLL_INTERVAL="${HOOK_POLL_INTERVAL:-1}"    # seconds between polls
+MAX_WAIT="${HOOK_MAX_WAIT:-120}"            # max seconds to wait for other hooks
 
 # Session guard: exit early if not a managed session
 [ -z "${MAIN_CLAUDE_SESSION_ID:-}" ] && exit 0
@@ -132,8 +133,9 @@ if [ -z "$INITIAL_HOOKS" ]; then
     exit 0
 fi
 
-echo "wait_for_stop_hook: waiting for stop hooks: $INITIAL_HOOKS"
+echo "wait_for_stop_hook: waiting for stop hooks: $INITIAL_HOOKS (max ${MAX_WAIT}s)"
 
+WAITED=0
 while true; do
     ALL_DONE=true
     for hook_pid in $INITIAL_HOOKS; do
@@ -149,5 +151,12 @@ while true; do
         exit 0
     fi
 
+    if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+        echo "wait_for_stop_hook: timed out after ${MAX_WAIT}s waiting for hooks, marking inactive" >&2
+        mark_inactive
+        exit 0
+    fi
+
     sleep "$POLL_INTERVAL"
+    WAITED=$((WAITED + POLL_INTERVAL))
 done
