@@ -31,6 +31,7 @@ from imbue.mngr_llm import resources as llm_resources
 from imbue.mngr_llm.resources.webchat_agents import AgentsPlugin
 from imbue.mngr_llm.resources.webchat_default_model import DefaultModelPlugin
 from imbue.mngr_llm.resources.webchat_injected_messages import InjectedMessagesPlugin
+from imbue.mngr_llm.resources.webchat_system_prompt import create_system_prompt_plugin
 from llm_webchat.config import Config
 from llm_webchat.config import load_config
 from llm_webchat.plugins import get_plugin_manager
@@ -40,6 +41,7 @@ _HOST_NAME: Final[str] = os.environ.get("MNG_HOST_NAME", "")
 _AGENT_STATE_DIR: Final[str] = os.environ.get("MNGR_AGENT_STATE_DIR", "")
 _AGENT_ID: Final[str] = os.environ.get("MNGR_AGENT_ID", "")
 _LLM_USER_PATH: Final[str] = os.environ.get("LLM_USER_PATH", "")
+_AGENT_WORK_DIR: Final[str] = os.environ.get("MNGR_AGENT_WORK_DIR", "")
 _WEB_SERVER_NAME: Final[str] = "web"
 
 
@@ -95,6 +97,15 @@ def _setup_agents_plugin() -> None:
     # Wrap in SimpleNamespace because pluggy's registration iterates all
     # attributes via getattr, which crashes on Pydantic v2 model instances.
     wrapped = types.SimpleNamespace(endpoint=agents_plugin.endpoint)
+    get_plugin_manager().register(wrapped)
+
+
+def _setup_system_prompt_plugin() -> None:
+    """Create and register the system prompt plugin with the llm-webchat plugin manager."""
+    plugin = create_system_prompt_plugin(_AGENT_WORK_DIR)
+    if plugin is None:
+        return
+    wrapped = types.SimpleNamespace(modify_llm_prompt_command=plugin.modify_llm_prompt_command)
     get_plugin_manager().register(wrapped)
 
 
@@ -201,6 +212,7 @@ def main() -> None:
         _setup_agents_plugin()
         _setup_default_model_plugin()
         _setup_injected_messages_plugin()
+        _setup_system_prompt_plugin()
         _inject_plugin_static_files()
         _bridge_web_server_port_env_var()
 
