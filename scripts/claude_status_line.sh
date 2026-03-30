@@ -17,13 +17,13 @@ fi
 
 # Get PR URL from .claude/pr_url (if exists)
 PR_URL=""
-if [[ -f "$MNGR_AGENT_WORK_DIR/.claude/pr_url" ]]; then
+if [[ -n "${MNGR_AGENT_WORK_DIR:-}" && -f "$MNGR_AGENT_WORK_DIR/.claude/pr_url" ]]; then
     PR_URL=$(cat "$MNGR_AGENT_WORK_DIR/.claude/pr_url" 2>/dev/null || echo "")
 fi
 
 # Get PR status from .claude/pr_status (if exists)
 PR_STATUS=""
-if [[ -f "$MNGR_AGENT_WORK_DIR/.claude/pr_status" ]]; then
+if [[ -n "${MNGR_AGENT_WORK_DIR:-}" && -f "$MNGR_AGENT_WORK_DIR/.claude/pr_status" ]]; then
     PR_STATUS=$(cat "$MNGR_AGENT_WORK_DIR/.claude/pr_status" 2>/dev/null || echo "")
 fi
 
