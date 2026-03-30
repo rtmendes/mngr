@@ -532,13 +532,8 @@ def _setup_create(
     editor_session: EditorSession | None = None
     if opts.edit_message:
         editor_session = EditorSession.create(initial_content=initial_message_content)
-        # Ensure logging suppression is active before starting the editor so that
-        # log messages don't interfere with the editor's terminal output.
-        # (Suppression is normally already enabled earlier in create(), but guard
-        # against callers that invoke _setup_create() directly.)
-        if not LoggingSuppressor.is_suppressed():
-            LoggingSuppressor.enable(logging_config.console_level)
         # Start editor with callback that restores logging when it exits
+        # (Logging suppression is already enabled by create() before calling us.)
         editor_session.start(on_exit=_on_editor_exit)
         # When using editor, don't pass message to api_create (we'll send it after editor finishes)
         initial_message = None

@@ -1112,9 +1112,9 @@ def test_create_edit_message_error_not_swallowed(
 ) -> None:
     """Early errors with --edit-message must still be visible.
 
-    Regression test: LoggingSuppressor is enabled early when --edit-message is
-    set to capture pre-editor output. If an error occurs before the editor
-    opens, the suppressor must be disabled so the error message is not lost.
+    LoggingSuppressor is enabled early when --edit-message is set. If an error
+    occurs before the editor opens, the suppressor must be cleaned up so the
+    error message is not swallowed and stdout/stderr are restored.
     """
     result = cli_runner.invoke(
         create,
