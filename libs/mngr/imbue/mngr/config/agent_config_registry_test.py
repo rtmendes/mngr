@@ -249,7 +249,6 @@ def test_resolve_agent_type_inherits_parent_user_config() -> None:
         result = resolve_agent_type(AgentTypeName("child-type"), config)
 
         assert result.agent_class is _FakeAgentClass
-        assert isinstance(result.agent_config, _SubclassAgentConfig)
         resolved_config = result.agent_config
         assert isinstance(resolved_config, _SubclassAgentConfig)
         # extra_bool should be inherited from the parent's user config
