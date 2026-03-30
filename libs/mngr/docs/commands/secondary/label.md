@@ -21,6 +21,8 @@ Works with both online and offline agents. For offline hosts, labels
 are updated directly in the provider's persisted data without requiring
 the host to be started.
 
+Use '-' in place of agent names to read them from stdin, one per line.
+
 **Usage:**
 
 ```text

@@ -219,6 +219,8 @@ This marks the agent as archived without destroying it, allowing it to
 be filtered out of listings while preserving its state. The 'mngr archive'
 command is a shorthand for 'mngr stop --archive'.
 
+Use '-' in place of agent names to read them from stdin, one per line.
+
 Supports custom format templates via --format. Available fields: name.""",
     aliases=(),
     examples=(

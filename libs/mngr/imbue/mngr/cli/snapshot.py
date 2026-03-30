@@ -763,7 +763,9 @@ agent's host is used; otherwise it is treated as a host identifier.
 When no subcommand is given, defaults to 'create'. For example,
 ``mngr snapshot my-agent`` is equivalent to ``mngr snapshot create my-agent``.
 
-Useful for checkpointing work, creating restore points, or managing disk space.""",
+Useful for checkpointing work, creating restore points, or managing disk space.
+
+Use '-' in place of agent/host names to read them from stdin, one per line.""",
     aliases=("snap",),
     examples=(
         ("Snapshot an agent's host (short form)", "mngr snapshot my-agent"),
@@ -794,6 +796,8 @@ identifier is automatically resolved: if it matches a known agent, that
 agent's host is snapshotted; otherwise it is treated as a host identifier.
 Multiple identifiers that resolve to the same host are deduplicated.
 
+Use '-' in place of identifiers to read them from stdin, one per line.
+
 Supports custom format templates via --format. Available fields:
 snapshot_id, host_id, provider, agent_names.""",
     examples=(
@@ -820,6 +824,8 @@ Positional arguments can be agent names/IDs or host names/IDs. Each
 identifier is automatically resolved: if it matches a known agent, that
 agent's host is used; otherwise it is treated as a host identifier.
 
+Use '-' in place of identifiers to read them from stdin, one per line.
+
 Supports custom format templates via --format. Available fields:
 id, name, created_at, size, size_bytes, host_id.""",
     examples=(
@@ -843,6 +849,8 @@ CommandHelpMetadata(
     description="""Requires either --snapshot (to delete specific snapshots) or --all-snapshots
 (to delete all snapshots for the resolved hosts). A confirmation prompt is
 shown unless --force is specified.
+
+Use '-' in place of agent names to read them from stdin, one per line.
 
 Supports custom format templates via --format. Available fields:
 snapshot_id, host_id, provider.""",

@@ -20,6 +20,8 @@ By default, running agents cannot be destroyed. Use --force to stop and destroy
 running agents. The command will prompt for confirmation before destroying
 agents unless --force is specified.
 
+Use '-' in place of agent names to read them from stdin, one per line.
+
 Supports custom format templates via --format. Available fields: name.
 
 Alias: rm

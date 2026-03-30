@@ -237,6 +237,8 @@ session.
 If multiple agents share a host, they will all be started together when
 the host starts.
 
+Use '-' in place of agent names to read them from stdin, one per line.
+
 Supports custom format templates via --format. Available fields: name.""",
     aliases=(),
     examples=(

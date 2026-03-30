@@ -289,7 +289,9 @@ CommandHelpMetadata(
 message is sent to the agent's stdin.
 
 If no message is specified with --message or --message-file, reads from stdin
-(if not a tty) or opens an editor (if interactive).""",
+(if not a tty) or opens an editor (if interactive).
+
+Use '-' in place of agent names to read them from stdin, one per line.""",
     aliases=("msg",),
     examples=(
         ("Send a message to an agent", 'mngr message my-agent --message "Hello"'),

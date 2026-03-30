@@ -283,6 +283,8 @@ the working directory.
 The command's stdout is printed to stdout and stderr to stderr. The exit
 code is 0 if all commands succeeded, 1 if any failed.
 
+Use '-' in place of agent names to read them from stdin, one per line.
+
 Supports custom format templates via --format. Available fields: agent, stdout, stderr, success.""",
     aliases=("x",),
     examples=(

@@ -274,7 +274,9 @@ keys are updated. To see current labels, use 'mngr list'.
 
 Works with both online and offline agents. For offline hosts, labels
 are updated directly in the provider's persisted data without requiring
-the host to be started.""",
+the host to be started.
+
+Use '-' in place of agent names to read them from stdin, one per line.""",
     examples=(
         ("Set a label on an agent", "mngr label my-agent --label archived_at=2026-03-15"),
         ("Set multiple labels on multiple agents", "mngr label agent1 agent2 -l env=prod -l team=backend"),
