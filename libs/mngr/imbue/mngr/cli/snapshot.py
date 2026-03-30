@@ -161,7 +161,6 @@ def _classify_mixed_identifiers(
 def _resolve_snapshot_hosts(
     agent_identifiers: list[str],
     host_identifiers: list[str],
-    all_agents: bool,
     mngr_ctx: MngrContext,
 ) -> list[tuple[str, ProviderInstanceName, list[str]]]:
     """Resolve agent and host identifiers to unique host targets.
@@ -172,10 +171,10 @@ def _resolve_snapshot_hosts(
     seen_hosts: dict[str, tuple[ProviderInstanceName, list[str]]] = {}
 
     # Resolve from agent identifiers
-    if agent_identifiers or all_agents:
+    if agent_identifiers:
         agents = find_agents_by_addresses(
             raw_identifiers=agent_identifiers,
-            filter_all=all_agents,
+            filter_all=False,
             target_state=AgentLifecycleState.RUNNING,
             mngr_ctx=mngr_ctx,
         )
@@ -483,7 +482,6 @@ def _snapshot_create_impl(ctx: click.Context, **kwargs: Any) -> None:
     targets = _resolve_snapshot_hosts(
         agent_identifiers=agent_identifiers,
         host_identifiers=host_identifiers,
-        all_agents=False,
         mngr_ctx=mngr_ctx,
     )
 
@@ -596,7 +594,6 @@ def snapshot_list(ctx: click.Context, **kwargs: Any) -> None:
     targets = _resolve_snapshot_hosts(
         agent_identifiers=agent_identifiers,
         host_identifiers=host_identifiers,
-        all_agents=False,
         mngr_ctx=mngr_ctx,
     )
 
@@ -682,7 +679,6 @@ def snapshot_destroy(ctx: click.Context, **kwargs: Any) -> None:
     targets = _resolve_snapshot_hosts(
         agent_identifiers=agent_identifiers,
         host_identifiers=[],
-        all_agents=False,
         mngr_ctx=mngr_ctx,
     )
 
