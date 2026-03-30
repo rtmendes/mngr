@@ -6,8 +6,8 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
-  font-size: 0.8rem;
+  padding: 4px 12px;
+  font-size: 13px;
   color: var(--color-text-secondary);
   text-decoration: none;
   border-radius: 0.4rem;
