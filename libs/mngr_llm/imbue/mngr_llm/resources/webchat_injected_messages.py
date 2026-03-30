@@ -1,0 +1,182 @@
+"""Injected-message watcher plugin for the webchat server.
+
+Polls the llm database for new responses that appear outside of the normal
+``llm prompt`` flow (e.g. via ``llm inject``) and broadcasts a lightweight
+notification event into the llm-webchat event stream so that connected
+frontends can refresh and display them.
+
+Injected messages are detected by their prompt column: ``llm inject`` creates
+responses with an empty prompt (``""``) or ``"..."``, whereas normal ``llm
+prompt`` always has a non-empty user prompt. Preliminary rows from ``llm
+live-chat`` (``response=""``) are ignored.
+
+Designed to be registered on the llm-webchat application via the pluggy
+``register_event_broadcaster`` hook.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+import threading
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+from typing import Final
+
+from loguru import logger
+
+from imbue.imbue_common.frozen_model import FrozenModel
+from llm_webchat.events import BufferBehavior
+from llm_webchat.hookspecs import hookimpl
+from pydantic import Field
+
+_POLL_INTERVAL_SECONDS: Final[float] = 2.0
+
+# Event type broadcast when an injected message is detected.
+# The frontend JS plugin listens for this and triggers a page refresh.
+_INJECTED_MESSAGE_EVENT_TYPE: Final[str] = "injected_message"
+
+
+def _is_injected_response(prompt: str | None, response: str | None) -> bool:
+    """Return True if a response row looks like it was created by ``llm inject``.
+
+    Heuristic: ``llm inject`` creates responses with an empty or ``"..."``
+    prompt and a non-empty response. Normal ``llm prompt`` always has a
+    non-empty user prompt. Preliminary rows from ``llm live-chat`` have
+    ``response=""``, so those are excluded.
+    """
+    is_prompt_empty = not prompt or prompt.strip() == "" or prompt.strip() == "..."
+    is_response_present = bool(response and response.strip())
+    return is_prompt_empty and is_response_present
+
+
+def _get_max_rowid(db_path: Path) -> int:
+    """Return the current max rowid in the responses table, or 0 if unavailable."""
+    if not db_path.is_file():
+        return 0
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        logger.debug("Cannot open database for max rowid: {}", exc)
+        return 0
+    try:
+        row = conn.execute("SELECT MAX(rowid) FROM responses").fetchone()
+        return row[0] or 0 if row else 0
+    except sqlite3.Error as exc:
+        logger.debug("Cannot query max rowid: {}", exc)
+        return 0
+    finally:
+        conn.close()
+
+
+def _get_tracked_conversation_ids(db_path: Path) -> set[str]:
+    """Read tracked conversation IDs from the mind_conversations table."""
+    if not db_path.is_file():
+        return set()
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        logger.debug("Cannot open database for tracked conversations: {}", exc)
+        return set()
+    try:
+        rows = conn.execute("SELECT conversation_id FROM mind_conversations").fetchall()
+        return {row[0] for row in rows}
+    except sqlite3.Error as exc:
+        logger.debug("mind_conversations table not available: {}", exc)
+        return set()
+    finally:
+        conn.close()
+
+
+def _poll_for_injected_messages(
+    db_path: Path,
+    after_rowid: int,
+    tracked_conversation_ids: set[str],
+) -> tuple[list[str], int]:
+    """Find conversation IDs that received injected messages after the given rowid.
+
+    Returns a list of conversation IDs (deduplicated) and the new max rowid.
+    """
+    if not db_path.is_file():
+        return [], after_rowid
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        logger.debug("Cannot open database for polling: {}", exc)
+        return [], after_rowid
+
+    new_max = after_rowid
+    affected_conversation_ids: list[str] = []
+    seen_ids: set[str] = set()
+    try:
+        rows = conn.execute(
+            "SELECT rowid, conversation_id, prompt, response FROM responses "
+            "WHERE rowid > ? ORDER BY rowid ASC",
+            (after_rowid,),
+        ).fetchall()
+        for rowid, conversation_id, prompt, response in rows:
+            new_max = max(new_max, rowid)
+            if conversation_id not in tracked_conversation_ids:
+                continue
+            if not _is_injected_response(prompt, response):
+                continue
+            if conversation_id not in seen_ids:
+                seen_ids.add(conversation_id)
+                affected_conversation_ids.append(conversation_id)
+    except sqlite3.Error as exc:
+        logger.debug("Error polling for injected messages: {}", exc)
+    finally:
+        conn.close()
+    return affected_conversation_ids, new_max
+
+
+def _run_poll_loop(
+    db_path: Path,
+    broadcaster: Callable[[str, dict[str, Any]], None],
+    stop_event: threading.Event,
+) -> None:
+    """Background thread: poll the DB for injected messages and broadcast notifications."""
+    last_rowid = _get_max_rowid(db_path)
+    logger.debug("Injected-message watcher started, initial rowid={}", last_rowid)
+
+    while not stop_event.is_set():
+        stop_event.wait(_POLL_INTERVAL_SECONDS)
+        if stop_event.is_set():
+            break
+
+        tracked_ids = _get_tracked_conversation_ids(db_path)
+        if not tracked_ids:
+            continue
+
+        affected_ids, new_max = _poll_for_injected_messages(db_path, last_rowid, tracked_ids)
+        for conversation_id in affected_ids:
+            logger.debug("Detected injected message in conversation {}", conversation_id)
+            broadcaster(
+                conversation_id,
+                {
+                    "type": _INJECTED_MESSAGE_EVENT_TYPE,
+                    "conversation_id": conversation_id,
+                    "buffer_behavior": BufferBehavior.IGNORE,
+                },
+            )
+
+        if new_max > last_rowid:
+            last_rowid = new_max
+
+    logger.debug("Injected-message watcher stopped")
+
+
+class InjectedMessagesPlugin(FrozenModel):
+    """Pluggy plugin that watches for injected messages and broadcasts notifications."""
+
+    db_path: Path = Field(description="Path to the llm logs.db database")
+
+    @hookimpl
+    def register_event_broadcaster(self, broadcaster: Callable[[str, dict[str, Any]], None]) -> None:
+        stop_event = threading.Event()
+        thread = threading.Thread(
+            target=_run_poll_loop,
+            args=(self.db_path, broadcaster, stop_event),
+            daemon=True,
+        )
+        thread.start()
