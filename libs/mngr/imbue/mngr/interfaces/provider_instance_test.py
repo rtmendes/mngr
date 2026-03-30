@@ -11,6 +11,7 @@ from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import HostConnectionError
 from imbue.mngr.hosts.offline_host import OfflineHost
 from imbue.mngr.interfaces.data_types import CertifiedHostData
+from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import ActivitySource
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentLifecycleState
@@ -19,6 +20,7 @@ from imbue.mngr.primitives import DiscoveredAgent
 from imbue.mngr.primitives import DiscoveredHost
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
+from imbue.mngr.primitives import HostState
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.providers.mock_provider_test import MockProviderInstance
 
@@ -63,6 +65,26 @@ def _make_offline_host(
     )
 
 
+def _make_mock_online_host(host_id: HostId) -> MagicMock:
+    """Create a MagicMock that passes isinstance(host, OnlineHostInterface) checks.
+
+    Sets up the minimum return values needed by _build_host_details_from_host.
+    """
+    host = MagicMock(spec=OnlineHostInterface)
+    host.id = host_id
+    host.get_name.return_value = "test-host"
+    host.get_state.return_value = HostState.RUNNING
+    host.get_ssh_connection_info.return_value = None
+    host.get_boot_time.return_value = None
+    host.get_uptime_seconds.return_value = 0.0
+    host.get_provider_resources.return_value = None
+    host.is_lock_held.return_value = False
+    host.get_certified_data.return_value = _make_certified_data(host_id)
+    host.get_snapshots.return_value = []
+    host.get_reported_activity_time.return_value = None
+    return host
+
+
 @pytest.fixture
 def host_id() -> HostId:
     return HostId.generate()
@@ -81,22 +103,9 @@ def test_connection_error_during_get_agents_falls_back_to_offline(
     host_id: HostId, provider: MockProviderInstance, temp_mngr_ctx: MngrContext
 ) -> None:
     """HostConnectionError during host.get_agents() should fall back to offline data."""
-    # Create a mock online host that raises HostConnectionError on get_agents()
-    online_host = MagicMock()
-    online_host.id = host_id
-    online_host.get_name.return_value = "test-host"
-    online_host.get_state.return_value = "RUNNING"
-    online_host.get_ssh_connection_info.return_value = None
-    online_host.get_boot_time.return_value = None
-    online_host.get_uptime_seconds.return_value = 0.0
-    online_host.get_provider_resources.return_value = None
-    online_host.is_lock_held.return_value = False
-    online_host.get_certified_data.return_value = _make_certified_data(host_id)
-    online_host.get_snapshots.return_value = []
-    online_host.get_reported_activity_time.return_value = None
+    online_host = _make_mock_online_host(host_id)
     online_host.get_agents.side_effect = HostConnectionError("SSH error (Error reading SSH protocol banner)")
 
-    # Make provider return the mock online host, and support offline fallback
     offline_host = _make_offline_host(host_id, provider, temp_mngr_ctx)
     provider.mock_hosts = [online_host, offline_host]
     provider.mock_offline_hosts = {str(host_id): offline_host}
@@ -123,25 +132,16 @@ def test_connection_error_during_agent_detail_building_falls_back_to_offline(
     """HostConnectionError during _build_agent_details_from_online_agent should fall back to offline data."""
     agent_id = AgentId.generate()
 
-    # Create a mock agent that raises HostConnectionError when get_reported_url is called
+    # Create a mock agent that raises HostConnectionError when get_reported_url is called.
+    # Earlier methods (get_reported_activity_time, get_command, etc.) must succeed
+    # so the error occurs mid-way through _build_agent_details_from_online_agent.
     mock_agent = MagicMock()
     mock_agent.id = agent_id
     mock_agent.name = AgentName("test-agent")
+    mock_agent.get_reported_activity_time.return_value = None
     mock_agent.get_reported_url.side_effect = HostConnectionError("SSH connection dropped")
 
-    # Create a mock online host that returns agents successfully but the agent details fail
-    online_host = MagicMock()
-    online_host.id = host_id
-    online_host.get_name.return_value = "test-host"
-    online_host.get_state.return_value = "RUNNING"
-    online_host.get_ssh_connection_info.return_value = None
-    online_host.get_boot_time.return_value = None
-    online_host.get_uptime_seconds.return_value = 0.0
-    online_host.get_provider_resources.return_value = None
-    online_host.is_lock_held.return_value = False
-    online_host.get_certified_data.return_value = _make_certified_data(host_id)
-    online_host.get_snapshots.return_value = []
-    online_host.get_reported_activity_time.return_value = None
+    online_host = _make_mock_online_host(host_id)
     online_host.get_agents.return_value = [mock_agent]
     online_host.get_activity_config.return_value = MagicMock(
         idle_mode=MagicMock(value="ssh"),
