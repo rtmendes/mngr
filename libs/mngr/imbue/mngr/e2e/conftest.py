@@ -2,6 +2,7 @@ import os
 import shutil
 import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -12,7 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.mngr.utils.polling import poll_until
+from imbue.mngr.utils.testing import init_git_repo
 from imbue.skitwright.runner import run_command
 from imbue.skitwright.session import Session
 
@@ -342,3 +345,62 @@ def e2e(
         timeout=10.0,
     )
     shutil.rmtree(tmux_tmpdir, ignore_errors=True)
+
+
+class MinimalInstallEnv(FrozenModel):
+    """An isolated venv with only core mngr (no plugins), plus subprocess env and git repo."""
+
+    venv_dir: Path
+    env: dict[str, str]
+    repo_dir: Path
+
+    def run_mngr(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+        """Run the venv's mngr binary with the given arguments."""
+        mngr_bin = str(self.venv_dir / "bin" / "mngr")
+        return subprocess.run(
+            [mngr_bin, *args],
+            capture_output=True,
+            text=True,
+            cwd=self.repo_dir,
+            env=self.env,
+            timeout=30,
+        )
+
+    def run_python(self, script: str) -> subprocess.CompletedProcess[str]:
+        """Run a Python script in the isolated venv."""
+        python_bin = str(self.venv_dir / "bin" / "python")
+        return subprocess.run(
+            [python_bin, "-c", script],
+            capture_output=True,
+            text=True,
+            cwd=self.repo_dir,
+            env=self.env,
+            timeout=30,
+        )
+
+
+@pytest.fixture
+def minimal_install_env(
+    isolated_mngr_venv: Path,
+    temp_host_dir: Path,
+    mngr_test_root_name: str,
+    tmp_path: Path,
+) -> MinimalInstallEnv:
+    """Provide an isolated venv with only core mngr (no plugin packages).
+
+    The venv has only the core mngr package and its direct dependencies -- no
+    plugin packages like mngr_modal, mngr_claude, etc. The env dict is configured
+    so mngr uses isolated directories and won't load project config.
+    """
+    env = {
+        "PATH": f"{isolated_mngr_venv / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "HOME": str(temp_host_dir.parent),
+        "MNGR_HOST_DIR": str(temp_host_dir),
+        "MNGR_ROOT_NAME": mngr_test_root_name,
+    }
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    init_git_repo(repo_dir)
+
+    return MinimalInstallEnv(venv_dir=isolated_mngr_venv, env=env, repo_dir=repo_dir)
