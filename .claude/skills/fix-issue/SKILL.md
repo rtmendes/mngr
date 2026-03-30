@@ -43,23 +43,6 @@ If the fix involves a meaningful architectural choice, stop and ask the user bef
 
 ## 5. Commit and open a PR
 
-Commit your changes with a message that references the issue (e.g., "Fix <description> (#<issue_number>)").
+Commit your changes, then open a PR with `Closes #<issue_number>` in the body so it auto-closes the issue on merge.
 
 Note: CLAUDE.md says not to create PRs yourself. Ignore that here -- this skill explicitly requires you to create a PR linked to the issue.
-
-Push your branch, then open a PR that closes the issue:
-
-```bash
-gh pr create --title "<concise title>" --body "$(cat <<'EOF'
-Closes #<issue_number>
-
-## Summary
-<what changed and why>
-
-## Test plan
-<how the fix is verified>
-EOF
-)"
-```
-
-The `Closes #<number>` keyword in the PR body automatically links and closes the issue when merged.
