@@ -43,6 +43,7 @@ window.addEventListener("load", function () {
 
   var agents = [];
   var loadError = null;
+  var agentName = null;
 
   // ── Helpers ──────────────────────────────────────────────────
 
@@ -88,6 +89,37 @@ window.addEventListener("load", function () {
         loadError = error.message;
         renderAgentsContent(container);
       });
+  }
+
+  // ── Agent name branding ───────────────────────────────────────
+
+  function fetchAgentName() {
+    fetch("/api/agent-info")
+      .then(function (response) {
+        if (!response.ok) return;
+        return response.json();
+      })
+      .then(function (data) {
+        if (!data || !data.name) return;
+        agentName = data.name;
+        applyAgentBranding();
+      })
+      .catch(function (error) {
+        console.error("[agents-plugin] Failed to fetch agent info:", error);
+      });
+  }
+
+  function applyAgentBranding() {
+    if (!agentName) return;
+
+    // Replace the sidebar branding title
+    var title = document.querySelector(".sidebar-branding-title");
+    if (title) {
+      title.textContent = agentName;
+    }
+
+    // Replace the document title
+    document.title = agentName;
   }
 
   // ── Rendering ────────────────────────────────────────────────
@@ -214,6 +246,7 @@ window.addEventListener("load", function () {
 
   $llm.on("ready", function () {
     injectSidebarLink();
+    fetchAgentName();
 
     // Re-inject after mithril re-renders (the sidebar may be re-created)
     var observer = new MutationObserver(function () {
@@ -221,6 +254,7 @@ window.addEventListener("load", function () {
         injectSidebarLink();
       }
       updateSidebarLinkState();
+      applyAgentBranding();
     });
     var sidebar = document.querySelector('[data-slot="sidebar"]');
     if (sidebar) {

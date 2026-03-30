@@ -76,3 +76,25 @@ def test_agents_plugin_registers_route() -> None:
     plugin.endpoint(app=app)
     routes = [r.path for r in app.routes if hasattr(r, "path")]
     assert "/api/agents" in routes
+
+
+def test_agents_plugin_registers_agent_info_route() -> None:
+    """AgentsPlugin.endpoint() adds the /api/agent-info route to the app."""
+    app = FastAPI()
+    plugin = AgentsPlugin(host_name="")
+    plugin.endpoint(app=app)
+    routes = [r.path for r in app.routes if hasattr(r, "path")]
+    assert "/api/agent-info" in routes
+
+
+def test_agent_info_endpoint_returns_name() -> None:
+    """The /api/agent-info endpoint returns the agent name."""
+    app = FastAPI()
+    plugin = AgentsPlugin(host_name="")
+    plugin.endpoint(app=app)
+    client = TestClient(app)
+    response = client.get("/api/agent-info")
+    assert response.status_code == 200
+    data = response.json()
+    assert "name" in data
+    assert isinstance(data["name"], str)

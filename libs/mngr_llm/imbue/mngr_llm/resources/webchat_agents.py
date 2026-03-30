@@ -1,8 +1,10 @@
-"""Agents endpoint for the webchat server.
+"""Agents and agent-info endpoints for the webchat server.
 
 Provides a ``/api/agents`` endpoint that runs ``mng list`` on demand and
-returns the current agent list. Designed to be registered on the
-llm-webchat FastAPI application via the pluggy ``endpoint`` hook.
+returns the current agent list, and a ``/api/agent-info`` endpoint that
+returns the current agent's name (from the ``MNGR_AGENT_NAME`` env var).
+Designed to be registered on the llm-webchat FastAPI application via the
+pluggy ``endpoint`` hook.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from llm_webchat.hookspecs import hookimpl
 
 _FETCH_TIMEOUT_SECONDS: Final[float] = 60.0
 _FETCH_WARN_THRESHOLD_SECONDS: Final[float] = 15.0
+_AGENT_NAME: Final[str] = os.environ.get("MNGR_AGENT_NAME", "")
 
 
 def _get_mng_command() -> list[str]:
@@ -89,6 +92,11 @@ def _list_agents_endpoint(request: Request) -> JSONResponse:
     return JSONResponse(content={"agents": agents})
 
 
+def _agent_info_endpoint() -> JSONResponse:
+    """Handler for GET /api/agent-info."""
+    return JSONResponse(content={"name": _AGENT_NAME})
+
+
 class AgentsPlugin(FrozenModel):
     """Pluggy plugin that registers the /api/agents endpoint."""
 
@@ -100,5 +108,10 @@ class AgentsPlugin(FrozenModel):
         app.add_api_route(
             "/api/agents",
             _list_agents_endpoint,
+            methods=["GET"],
+        )
+        app.add_api_route(
+            "/api/agent-info",
+            _agent_info_endpoint,
             methods=["GET"],
         )
