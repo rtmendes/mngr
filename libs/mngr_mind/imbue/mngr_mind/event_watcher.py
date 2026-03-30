@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Event watcher for mind agents.
 
-Streams events from ``mngr events --follow --filter`` and delivers them
+Streams events from ``mngr events --follow --include/--exclude`` and delivers them
 to the primary agent via ``mngr message`` with debouncing and rate limiting.
 
 Events are batched and written to JSONL files under
@@ -51,7 +51,8 @@ from zoneinfo import ZoneInfo
 
 from loguru import logger
 
-from imbue.mngr_recursive.watcher_common import DEFAULT_CEL_FILTER
+from imbue.mngr_recursive.watcher_common import DEFAULT_CEL_EXCLUDE_FILTERS
+from imbue.mngr_recursive.watcher_common import DEFAULT_CEL_INCLUDE_FILTERS
 from imbue.mngr_recursive.watcher_common import MngrNotInstalledError
 from imbue.mngr_recursive.watcher_common import get_mngr_command
 from imbue.mngr_recursive.watcher_common import load_watchers_section
@@ -114,7 +115,8 @@ _IDLE_WAIT_SLACK_SECONDS: Final[float] = 5.0
 class _EventWatcherSettings:
     """Parsed event watcher settings from settings.toml."""
 
-    cel_filter: str = DEFAULT_CEL_FILTER
+    cel_include_filters: tuple[str, ...] = DEFAULT_CEL_INCLUDE_FILTERS
+    cel_exclude_filters: tuple[str, ...] = DEFAULT_CEL_EXCLUDE_FILTERS
     event_exclude_sources: tuple[str, ...] = ()
     burst_size: int = _DEFAULT_BURST_SIZE
     max_messages_per_minute: int = _DEFAULT_MAX_MESSAGES_PER_MINUTE
@@ -135,7 +137,8 @@ def _load_watcher_settings(agent_work_dir: Path) -> _EventWatcherSettings:
         return _EventWatcherSettings()
     raw_scheduled = watchers.get("scheduled_events", {})
     return _EventWatcherSettings(
-        cel_filter=watchers.get("event_cel_filter", DEFAULT_CEL_FILTER),
+        cel_include_filters=tuple(watchers.get("event_cel_include_filters", DEFAULT_CEL_INCLUDE_FILTERS)),
+        cel_exclude_filters=tuple(watchers.get("event_cel_exclude_filters", DEFAULT_CEL_EXCLUDE_FILTERS)),
         event_exclude_sources=tuple(watchers.get("event_exclude_sources", ())),
         burst_size=watchers.get("event_burst_size", _DEFAULT_BURST_SIZE),
         max_messages_per_minute=watchers.get("max_event_messages_per_minute", _DEFAULT_MAX_MESSAGES_PER_MINUTE),
@@ -502,11 +505,17 @@ def _compute_backoff_seconds(
 # -- Subprocess management --
 
 
-def _start_events_subprocess(agent_id: str, cel_filter: str) -> subprocess.Popen[str]:
-    """Start ``mngr events <agent_id> --follow --filter <cel_filter>`` as a subprocess."""
+def _start_events_subprocess(
+    agent_id: str,
+    cel_include_filters: tuple[str, ...],
+    cel_exclude_filters: tuple[str, ...],
+) -> subprocess.Popen[str]:
+    """Start ``mngr events <agent_id> --follow --include/--exclude`` as a subprocess."""
     cmd = [*get_mngr_command(), "events", agent_id, "--follow"]
-    if cel_filter:
-        cmd.extend(["--filter", cel_filter])
+    for include_filter in cel_include_filters:
+        cmd.extend(["--include", include_filter])
+    for exclude_filter in cel_exclude_filters:
+        cmd.extend(["--exclude", exclude_filter])
     logger.info("Starting events subprocess: {}", " ".join(cmd))
     return subprocess.Popen(
         cmd,
@@ -1645,7 +1654,7 @@ def _run_delivery_loop(
 
 
 def main(
-    start_subprocess: Callable[[str, str], Any] = _start_events_subprocess,
+    start_subprocess: Callable[[str, tuple[str, ...], tuple[str, ...]], Any] = _start_events_subprocess,
     stop_event: threading.Event | None = None,
     send_message: Callable[[str, str], bool] = _send_message,
     subprocess_restart_delay_seconds: float = _SUBPROCESS_RESTART_DELAY_SECONDS,
@@ -1679,7 +1688,8 @@ def main(
 
     logger.info("Event watcher started")
     logger.info("  Agent ID: {}", agent_id)
-    logger.info("  CEL filter: {}", settings.cel_filter)
+    logger.info("  CEL include filters: {}", settings.cel_include_filters)
+    logger.info("  CEL exclude filters: {}", settings.cel_exclude_filters)
     logger.info("  Exclude sources: {}", settings.event_exclude_sources)
     logger.info("  Burst size: {}", settings.burst_size)
     logger.info("  Max messages/min: {}", settings.max_messages_per_minute)
@@ -1769,7 +1779,7 @@ def main(
 
     try:
         while not stop_event.is_set():
-            active_process = start_subprocess(agent_id, settings.cel_filter)
+            active_process = start_subprocess(agent_id, settings.cel_include_filters, settings.cel_exclude_filters)
 
             # Reader thread feeds subprocess stdout into the shared buffer
             reader_thread = threading.Thread(

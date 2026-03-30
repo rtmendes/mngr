@@ -27,7 +27,8 @@ from imbue.mngr_mind.conftest import create_executable_command
 from imbue.mngr_mind.conftest import create_tracking_idle_wait
 from imbue.mngr_mind.conftest import make_pending_idle_wait
 from imbue.mngr_mind.data_types import WatcherSettings
-from imbue.mngr_mind.event_watcher import DEFAULT_CEL_FILTER
+from imbue.mngr_mind.event_watcher import DEFAULT_CEL_EXCLUDE_FILTERS
+from imbue.mngr_mind.event_watcher import DEFAULT_CEL_INCLUDE_FILTERS
 from imbue.mngr_mind.event_watcher import InvalidTimeFormatError
 from imbue.mngr_mind.event_watcher import _CHAT_PAIR_TIMEOUT_SECONDS
 from imbue.mngr_mind.event_watcher import _DEFAULT_BURST_SIZE
@@ -93,7 +94,8 @@ def test_defaults_match_between_data_types_and_event_watcher() -> None:
     """Verify that event_watcher.py constants stay in sync with WatcherSettings defaults."""
     model_defaults = WatcherSettings()
     watcher_defaults = _EventWatcherSettings()
-    assert model_defaults.event_cel_filter == DEFAULT_CEL_FILTER
+    assert model_defaults.event_cel_include_filters == DEFAULT_CEL_INCLUDE_FILTERS
+    assert model_defaults.event_cel_exclude_filters == DEFAULT_CEL_EXCLUDE_FILTERS
     assert model_defaults.event_exclude_sources == watcher_defaults.event_exclude_sources
     assert model_defaults.event_burst_size == _DEFAULT_BURST_SIZE
     assert model_defaults.max_event_messages_per_minute == _DEFAULT_MAX_MESSAGES_PER_MINUTE
@@ -111,7 +113,8 @@ def test_defaults_match_between_data_types_and_event_watcher() -> None:
 
 def test_load_settings_defaults_when_no_file(tmp_path: Path) -> None:
     settings = _load_watcher_settings(tmp_path)
-    assert settings.cel_filter == _EventWatcherSettings().cel_filter
+    assert settings.cel_include_filters == _EventWatcherSettings().cel_include_filters
+    assert settings.cel_exclude_filters == _EventWatcherSettings().cel_exclude_filters
     assert settings.burst_size == 5
     assert settings.max_messages_per_minute == 10
 
@@ -120,12 +123,14 @@ def test_load_settings_reads_custom_values(tmp_path: Path) -> None:
     write_minds_settings_toml(
         tmp_path,
         "[watchers]\n"
-        'event_cel_filter = "source == \\"messages\\""\n'
+        'event_cel_include_filters = ["source == \\"messages\\""]\n'
+        'event_cel_exclude_filters = ["source == \\"logs\\""]\n'
         "event_burst_size = 3\n"
         "max_event_messages_per_minute = 20\n",
     )
     settings = _load_watcher_settings(tmp_path)
-    assert settings.cel_filter == 'source == "messages"'
+    assert settings.cel_include_filters == ('source == "messages"',)
+    assert settings.cel_exclude_filters == ('source == "logs"',)
     assert settings.burst_size == 3
     assert settings.max_messages_per_minute == 20
 
@@ -135,7 +140,8 @@ def test_load_settings_handles_partial_config(tmp_path: Path) -> None:
     settings = _load_watcher_settings(tmp_path)
     assert settings.burst_size == 7
     assert settings.max_messages_per_minute == 10
-    assert settings.cel_filter == _EventWatcherSettings().cel_filter
+    assert settings.cel_include_filters == _EventWatcherSettings().cel_include_filters
+    assert settings.cel_exclude_filters == _EventWatcherSettings().cel_exclude_filters
 
 
 def test_load_settings_handles_corrupt_file(tmp_path: Path) -> None:
@@ -1661,7 +1667,7 @@ def test_main_delivers_events_from_subprocess(tmp_path: Path, monkeypatch: pytes
 
     call_count = 0
 
-    def fake_start_subprocess(agent_id: str, cel_filter: str) -> Any:
+    def fake_start_subprocess(agent_id: str, cel_include_filters: tuple[str, ...], cel_exclude_filters: tuple[str, ...]) -> Any:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -1728,7 +1734,7 @@ def test_main_restarts_subprocess_on_exit(tmp_path: Path, monkeypatch: pytest.Mo
 
     call_count = 0
 
-    def counting_factory(agent_id: str, cel_filter: str) -> Any:
+    def counting_factory(agent_id: str, cel_include_filters: tuple[str, ...], cel_exclude_filters: tuple[str, ...]) -> Any:
         nonlocal call_count
         call_count += 1
         if call_count >= 2:
@@ -1760,7 +1766,7 @@ def test_main_stops_cleanly_via_stop_event(tmp_path: Path, monkeypatch: pytest.M
 
     started = threading.Event()
 
-    def factory_with_signal(agent_id: str, cel_filter: str) -> Any:
+    def factory_with_signal(agent_id: str, cel_include_filters: tuple[str, ...], cel_exclude_filters: tuple[str, ...]) -> Any:
         started.set()
         return _FakeEventsProcess([])
 
@@ -1787,7 +1793,7 @@ def test_main_creates_required_directories(tmp_path: Path, monkeypatch: pytest.M
     agent_state_dir = _setup_main_env(tmp_path, monkeypatch)
     stop_event = threading.Event()
 
-    def immediate_stop_factory(agent_id: str, cel_filter: str) -> Any:
+    def immediate_stop_factory(agent_id: str, cel_include_filters: tuple[str, ...], cel_exclude_filters: tuple[str, ...]) -> Any:
         stop_event.set()
         return _FakeEventsProcess([])
 
@@ -2871,7 +2877,7 @@ def test_main_starts_synthetic_events_thread(tmp_path: Path, monkeypatch: pytest
     events = [_make_event_line("evt-trigger", timestamp="2026-03-01T12:00:00Z")]
     call_count = 0
 
-    def fake_start_subprocess(agent_id: str, cel_filter: str) -> Any:
+    def fake_start_subprocess(agent_id: str, cel_include_filters: tuple[str, ...], cel_exclude_filters: tuple[str, ...]) -> Any:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -2918,7 +2924,7 @@ def test_main_delivers_subprocess_events_through_reader_thread(
 
     call_count = 0
 
-    def fake_start_subprocess(agent_id: str, cel_filter: str) -> Any:
+    def fake_start_subprocess(agent_id: str, cel_include_filters: tuple[str, ...], cel_exclude_filters: tuple[str, ...]) -> Any:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
