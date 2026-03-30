@@ -953,6 +953,55 @@ def test_parse_branch_flag_new_without_wildcard() -> None:
 
 
 # =============================================================================
+# Tests for _parse_source_string
+# =============================================================================
+
+
+def test_parse_source_string_plain_path() -> None:
+    """A plain path without @ or : is treated as a filesystem path."""
+    from imbue.mngr.cli.create import _parse_source_string
+
+    result = _parse_source_string("./some/dir")
+
+    assert result.path == Path("./some/dir")
+    assert result.agent_name is None
+    assert result.host_name is None
+
+
+def test_parse_source_string_agent_at_host_without_colon() -> None:
+    """AGENT@HOST without a colon parses as an address with no path."""
+    from imbue.mngr.cli.create import _parse_source_string
+
+    result = _parse_source_string("my-agent@my-host")
+
+    assert result.agent_name == "my-agent"
+    assert result.host_name == "my-host"
+    assert result.path is None
+
+
+def test_parse_source_string_agent_at_host_with_provider_without_colon() -> None:
+    """AGENT@HOST.PROVIDER without a colon parses as an address with no path."""
+    from imbue.mngr.cli.create import _parse_source_string
+
+    result = _parse_source_string("my-agent@my-host.modal")
+
+    assert result.agent_name == "my-agent"
+    assert result.host_name == "my-host.modal"
+    assert result.path is None
+
+
+def test_parse_source_string_agent_at_host_with_colon_path() -> None:
+    """AGENT@HOST:PATH parses all three components."""
+    from imbue.mngr.cli.create import _parse_source_string
+
+    result = _parse_source_string("my-agent@my-host:/path/to/dir")
+
+    assert result.agent_name == "my-agent"
+    assert result.host_name == "my-host"
+    assert result.path == Path("/path/to/dir")
+
+
+# =============================================================================
 # Tests for parse_agent_address
 # =============================================================================
 
