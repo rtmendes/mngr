@@ -89,6 +89,9 @@ window.addEventListener("load", function () {
   // ── Data fetching ────────────────────────────────────────────
 
   function fetchAgents(container) {
+    // Show a loading spinner immediately while the fetch is in flight.
+    renderAgentsLoading(container);
+
     fetch(basePath + "/api/agents")
       .then(function (response) {
         if (!response.ok)
@@ -183,6 +186,30 @@ window.addEventListener("load", function () {
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
+  function renderAgentsLoading(container) {
+    container.innerHTML =
+      '<div class="agents-page">' +
+      '<div class="agents-page-header">' +
+      '<a class="agents-back-link" href="' + basePath + '/">' +
+      BACK_ARROW_SVG +
+      "Conversations" +
+      "</a>" +
+      '<span class="agents-page-title">Agents</span>' +
+      "</div>" +
+      '<div class="agents-loading">' +
+      '<div class="agents-spinner"></div>' +
+      "</div>" +
+      "</div>";
+
+    var backLink = container.querySelector(".agents-back-link");
+    if (backLink) {
+      backLink.addEventListener("click", function (event) {
+        event.preventDefault();
+        navigateHome();
+      });
+    }
+  }
+
   function renderAgentsContent(container) {
     // Find or create the list container within the page wrapper
     var listContainer = container.querySelector(".agents-list-container");
@@ -252,11 +279,11 @@ window.addEventListener("load", function () {
     // Avoid duplicate injection
     if (document.querySelector(".agents-sidebar-link")) return true;
 
-    // Insert inside the sidebar header, between the branding row
-    // and the "New conversation" row.  This puts "Agents" above
-    // "New conversation" while keeping both in the header area.
-    var newConvRow = document.querySelector(".sidebar-new-conversation-row");
-    if (!newConvRow) return false;
+    // Insert at the bottom of the sidebar, after the conversation
+    // list.  We look for the expanded content wrapper and append
+    // the link there so it sits below everything else.
+    var expandedContent = document.querySelector(".sidebar-expanded-content");
+    if (!expandedContent) return false;
 
     var link = document.createElement("a");
     link.className = "agents-sidebar-link";
@@ -267,7 +294,7 @@ window.addEventListener("load", function () {
       navigateToAgents();
     });
 
-    newConvRow.parentNode.insertBefore(link, newConvRow);
+    expandedContent.appendChild(link);
     updateSidebarLinkState();
     return true;
   }

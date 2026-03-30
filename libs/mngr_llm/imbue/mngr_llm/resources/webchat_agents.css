@@ -6,12 +6,15 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 4px 12px;
+  padding: 8px 12px;
+  margin-top: auto;
   font-size: 13px;
   color: var(--color-text-secondary);
   text-decoration: none;
   border-radius: 0.4rem;
+  border-top: 1px solid var(--color-border, #e5e5e5);
   cursor: pointer;
+  flex-shrink: 0;
   transition: background-color 150ms, color 150ms;
 }
 
@@ -143,4 +146,28 @@
 .agents-error {
   color: #721c24;
   font-size: 0.85rem;
+}
+
+/* ── Loading spinner ──────────────────────────────────────── */
+
+.agents-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 0;
+}
+
+.agents-spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 2px solid var(--color-border, #e5e5e5);
+  border-top-color: var(--color-text-secondary, #666);
+  border-radius: 50%;
+  animation: agents-spin 0.6s linear infinite;
+}
+
+@keyframes agents-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
