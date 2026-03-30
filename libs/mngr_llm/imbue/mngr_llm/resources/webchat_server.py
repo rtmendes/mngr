@@ -29,6 +29,7 @@ from loguru import logger
 from imbue.imbue_common.logging import log_span
 from imbue.mngr_llm import resources as llm_resources
 from imbue.mngr_llm.resources.webchat_agents import AgentsPlugin
+from imbue.mngr_llm.resources.webchat_injected_messages import InjectedMessagesPlugin
 from llm_webchat.config import Config
 from llm_webchat.config import load_config
 from llm_webchat.plugins import get_plugin_manager
@@ -37,6 +38,7 @@ from llm_webchat.server import create_application
 _HOST_NAME: Final[str] = os.environ.get("MNG_HOST_NAME", "")
 _AGENT_STATE_DIR: Final[str] = os.environ.get("MNGR_AGENT_STATE_DIR", "")
 _AGENT_ID: Final[str] = os.environ.get("MNGR_AGENT_ID", "")
+_LLM_USER_PATH: Final[str] = os.environ.get("LLM_USER_PATH", "")
 _WEB_SERVER_NAME: Final[str] = "web"
 
 
@@ -86,21 +88,23 @@ def _build_config() -> Config:
     return load_config()
 
 
-def _wrap_pydantic_plugin_for_pluggy(plugin: AgentsPlugin) -> types.SimpleNamespace:
-    """Wrap a Pydantic model plugin so pluggy can safely register it.
-
-    Pluggy iterates over all attributes via getattr during registration.
-    Pydantic v2 raises AttributeError for class-only descriptors like
-    __signature__ on model instances, which crashes pluggy. This wrapper
-    creates a plain SimpleNamespace that exposes only the hookimpl methods.
-    """
-    return types.SimpleNamespace(endpoint=plugin.endpoint)
-
-
 def _setup_agents_plugin() -> None:
     """Create and register the agents plugin with the llm-webchat plugin manager."""
     agents_plugin = AgentsPlugin(host_name=_HOST_NAME)
-    wrapped = _wrap_pydantic_plugin_for_pluggy(agents_plugin)
+    # Wrap in SimpleNamespace because pluggy's registration iterates all
+    # attributes via getattr, which crashes on Pydantic v2 model instances.
+    wrapped = types.SimpleNamespace(endpoint=agents_plugin.endpoint)
+    get_plugin_manager().register(wrapped)
+
+
+def _setup_injected_messages_plugin() -> None:
+    """Create and register the injected-messages watcher plugin."""
+    if not _LLM_USER_PATH:
+        logger.warning("LLM_USER_PATH not set, injected-message watcher will not start")
+        return
+    db_path = Path(_LLM_USER_PATH) / "logs.db"
+    plugin = InjectedMessagesPlugin(db_path=db_path)
+    wrapped = types.SimpleNamespace(register_event_broadcaster=plugin.register_event_broadcaster)
     get_plugin_manager().register(wrapped)
 
 
@@ -112,7 +116,8 @@ def _inject_plugin_static_files() -> None:
     """
     agents_js = _resolve_resource_path("webchat_agents.js")
     agents_css = _resolve_resource_path("webchat_agents.css")
-    _prepend_to_env_list("LLM_WEBCHAT_JAVASCRIPT_PLUGINS", [agents_js])
+    injected_messages_js = _resolve_resource_path("webchat_injected_messages.js")
+    _prepend_to_env_list("LLM_WEBCHAT_JAVASCRIPT_PLUGINS", [agents_js, injected_messages_js])
     _prepend_to_env_list("LLM_WEBCHAT_STATIC_PATHS", [agents_css])
 
 
@@ -185,6 +190,7 @@ def main() -> None:
     """Entry point for the llmweb CLI command."""
     with log_span("Starting webchat server (llm-webchat)"):
         _setup_agents_plugin()
+        _setup_injected_messages_plugin()
         _inject_plugin_static_files()
         _bridge_web_server_port_env_var()
 
