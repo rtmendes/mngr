@@ -11,6 +11,7 @@ from imbue.skitwright.expect import expect
 
 @pytest.mark.release
 @pytest.mark.tmux
+@pytest.mark.rsync
 def test_create_with_source_path(e2e: E2eSession, tmp_path: Path) -> None:
     e2e.write_tutorial_block("""
     # by default, the agent uses the data from its current git repo (if any) or folder, but you can specify a different source:
@@ -57,6 +58,7 @@ def test_create_with_project_label(e2e: E2eSession) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
+@pytest.mark.rsync
 def test_create_with_source_path_no_git(e2e: E2eSession, tmp_path: Path) -> None:
     e2e.write_tutorial_block("""
     # mngr doesn't require git at all--if there's no git repo, it will just use the files from the folder as the source data
