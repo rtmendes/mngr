@@ -288,6 +288,12 @@ class CertifiedHostData(FrozenModel):
                 data["created_at"] = now - timedelta(weeks=1)
             if "updated_at" not in data:
                 data["updated_at"] = now - timedelta(days=1)
+            # Strip the '@' prefix that pyinfra uses internally for local
+            # execution.  Older data.json files stored the raw pyinfra name
+            # (e.g. "@local"); normalize it to the human-readable form.
+            host_name = data.get("host_name")
+            if isinstance(host_name, str) and host_name.startswith("@"):
+                data["host_name"] = host_name[1:]
         return data
 
     @computed_field
