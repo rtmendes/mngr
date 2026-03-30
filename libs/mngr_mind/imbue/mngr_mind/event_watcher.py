@@ -103,9 +103,11 @@ _SOURCE_MIND_FILTER_ERROR: Final[str] = "mind/filter_error"
 # Poll interval for the 'mngr wait' subprocess used to detect agent idle state
 _IDLE_WAIT_POLL_INTERVAL: Final[str] = "2s"
 
-# Seconds to wait after event delivery before starting 'mngr wait', to avoid
-# a race where the agent hasn't received the events yet and appears idle.
-_IDLE_WAIT_SLACK_SECONDS: Final[float] = 5.0
+# Seconds to wait after idle state is cleared (by a real event or idle event
+# send) before restarting the 'mngr wait' subprocess.  This delay gives the
+# agent time to receive and begin processing the event so that 'mngr wait'
+# does not immediately detect the previous WAITING state.
+_IDLE_WAIT_RESTART_DELAY_SECONDS: Final[float] = 15.0
 
 
 # -- Settings --
@@ -615,93 +617,64 @@ def _terminate_process_gracefully(process: Any) -> None:
 class _IdleWaitTracker:
     """Manages the 'mngr wait' subprocess used to detect when the agent enters WAITING.
 
-    Encapsulates process lifecycle (start, poll, restart on failure, cleanup)
+    Encapsulates process lifecycle (start, tick, restart on failure, cleanup)
     and tracks the monotonic timestamp when the agent became idle.
+
+    After idle state is cleared (by a real event arriving while idle, or by
+    sending an idle event), the wait process is restarted after a fixed delay
+    to give the agent time to receive and process the event before we begin
+    watching for the next WAITING transition.
     """
 
     _agent_id: str
     _start_idle_wait: Callable[[str], Any]
-    _slack_seconds: float = _IDLE_WAIT_SLACK_SECONDS
+    _restart_delay_seconds: float = _IDLE_WAIT_RESTART_DELAY_SECONDS
     _process: Any = dataclasses.field(default=None, init=False)
     _idle_since: float | None = dataclasses.field(default=None, init=False)
-    # Whether we're waiting for events to be delivered before starting
-    # the next 'mngr wait'. Set True by on_real_event() or
-    # notify_idle_event_sent(), cleared when maybe_start_after_delivery()
-    # successfully starts the wait.
-    _awaiting_delivery: bool = dataclasses.field(default=False, init=False)
+    _restart_at: float | None = dataclasses.field(default=None, init=False)
 
     def start(self) -> None:
         """Launch the initial 'mngr wait' subprocess."""
         self._process = self._start_idle_wait(self._agent_id)
         logger.info("Started idle wait for agent {}", self._agent_id)
 
-    def on_real_event(self) -> None:
-        """Reset idle state when a real event arrives.
+    def on_real_event(self, now_monotonic: float) -> None:
+        """Reset idle state when a real event arrives while the agent is idle.
 
-        Does NOT immediately start a new wait -- the event hasn't been
-        delivered to the agent yet. Call maybe_start_after_delivery()
-        once delivery is confirmed to start the next wait.
+        Only acts when the agent was detected as idle (idle_since is set).
+        When the agent is not idle, real events are expected and the running
+        wait process will detect the next WAITING transition on its own.
         """
-        self._reset_idle_state("Reset idle state after real event, awaiting delivery")
+        if self._idle_since is None:
+            return
+        self._idle_since = None
+        self._schedule_restart(now_monotonic)
+        logger.debug("Reset idle state after real event")
 
-    def notify_idle_event_sent(self) -> None:
+    def notify_idle_event_sent(self, now_monotonic: float) -> None:
         """Clear idle state after sending an idle event to the agent.
 
         The agent will wake up to process it, so it is no longer idle.
-        The wait process is killed and a new one will be started after
-        the idle event is delivered (via maybe_start_after_delivery).
-        """
-        self._reset_idle_state("Idle event sent, awaiting delivery before restarting wait")
-
-    def _reset_idle_state(self, log_message: str) -> None:
-        """Clear idle tracking and prepare to restart after delivery.
-
-        Shared by on_real_event() and notify_idle_event_sent(): both
-        need to mark the agent as no longer idle and wait for delivery
-        confirmation before starting a new 'mngr wait'.
+        Schedules a restart of the wait process after a delay.
         """
         self._idle_since = None
-        self._awaiting_delivery = True
+        self._schedule_restart(now_monotonic)
+        logger.debug("Idle event sent, will restart wait in {:.0f}s", self._restart_delay_seconds)
+
+    def _schedule_restart(self, now_monotonic: float) -> None:
+        """Kill any running wait process and schedule a restart after a delay."""
         if self._process is not None:
             _terminate_process_gracefully(self._process)
             self._process = None
-        logger.debug(log_message)
+        self._restart_at = now_monotonic + self._restart_delay_seconds
 
-    def maybe_start_after_delivery(
-        self,
-        last_delivery_monotonic: float,
-        last_real_event_time: float,
-        now_monotonic: float,
-    ) -> None:
-        """Start 'mngr wait' if events have been delivered and slack time has elapsed.
+    def tick(self, now_monotonic: float) -> None:
+        """Called every poll cycle. Handles scheduled restarts and polls the wait process."""
+        if self._restart_at is not None and self._process is None and now_monotonic >= self._restart_at:
+            self._restart_at = None
+            self._process = self._start_idle_wait(self._agent_id)
+            logger.debug("Restarted idle wait after delay")
 
-        Only acts when we are awaiting delivery (on_real_event or
-        notify_idle_event_sent was called) and the delivery loop has
-        delivered events that arrived after the last real event we saw,
-        plus a slack period to ensure the agent has had time to receive
-        and begin processing them.
-        """
-        if not self._awaiting_delivery:
-            return
-        if self._process is not None:
-            return
-        # Delivery must have happened after the real event arrived
-        if last_delivery_monotonic <= last_real_event_time:
-            return
-        # Wait for slack time after delivery
-        if now_monotonic - last_delivery_monotonic < self._slack_seconds:
-            return
-        self._awaiting_delivery = False
-        self._process = self._start_idle_wait(self._agent_id)
-        logger.debug("Started idle wait after delivery + {:.0f}s slack", self._slack_seconds)
-
-    def poll(self, now_monotonic: float) -> None:
-        """Check whether the wait subprocess has completed.
-
-        If the process exited with code 0, records the current time as the
-        moment the agent became idle. If it exited with a non-zero code,
-        restarts the wait.
-        """
         if self._process is None:
             return
         poll_result = self._process.poll()
@@ -714,7 +687,6 @@ class _IdleWaitTracker:
             logger.warning("mngr wait exited with code {}, restarting", poll_result)
             self._process = self._start_idle_wait(self._agent_id)
         else:
-            # Process already reported idle; stop polling it
             self._process = None
 
     @property
@@ -1086,9 +1058,9 @@ def _run_synthetic_events_loop(
     When agent_id is non-empty and idle events are configured, uses
     'mngr wait' to detect when the agent enters WAITING state. Idle time
     is counted from the moment the agent becomes idle, not from the last
-    real event time. The wait is only started after events have been
-    delivered (via last_delivery_monotonic) plus a slack period, to avoid
-    a race where the agent appears idle before it receives the events.
+    real event time. After idle state is cleared (by a real event while
+    idle, or by sending an idle event), the wait process is restarted
+    after a fixed delay to allow the agent to receive and process events.
 
     The idle event counter (idle_events_sent) is reset only when a
     non-messages event arrives (via last_non_messages_event_monotonic).
@@ -1132,7 +1104,7 @@ def _run_synthetic_events_loop(
             if current_real_event_time > last_seen_real_event_time:
                 last_seen_real_event_time = current_real_event_time
                 if idle_wait_tracker is not None:
-                    idle_wait_tracker.on_real_event()
+                    idle_wait_tracker.on_real_event(now_monotonic)
 
             # Reset the idle counter only when a non-messages event arrives.
             # Events from the "messages" source include the agent's own
@@ -1146,14 +1118,7 @@ def _run_synthetic_events_loop(
                     last_seen_non_messages_event_time = current_non_messages_time
 
             if idle_wait_tracker is not None:
-                # Start the wait only after events have been delivered + slack
-                if last_delivery_monotonic is not None:
-                    idle_wait_tracker.maybe_start_after_delivery(
-                        last_delivery_monotonic[0],
-                        last_seen_real_event_time,
-                        now_monotonic,
-                    )
-                idle_wait_tracker.poll(now_monotonic)
+                idle_wait_tracker.tick(now_monotonic)
 
             if settings.idle_event_delay_minutes_schedule and idle_wait_tracker is not None:
                 elapsed_minutes = _compute_idle_elapsed_minutes(
@@ -1172,7 +1137,7 @@ def _run_synthetic_events_loop(
                         buffer_lock,
                     )
                     if idle_events_sent > previous_idle_events_sent:
-                        idle_wait_tracker.notify_idle_event_sent()
+                        idle_wait_tracker.notify_idle_event_sent(now_monotonic)
 
             if settings.scheduled_events:
                 saved_date, fired_today = _check_scheduled_events(
