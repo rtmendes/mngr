@@ -335,6 +335,10 @@ def setup_test_mngr_env(
     monkeypatch.setenv("MNGR_ROOT_NAME", mngr_test_root_name)
     monkeypatch.delenv("MNGR_PROJECT_DIR", raising=False)
 
+    # Prevent uv from hitting the network during tests (e.g. uv tool run
+    # checking for updates). This was causing ~10s delays on Modal.
+    monkeypatch.setenv("UV_OFFLINE", "1")
+
     # Unison derives its config directory from $HOME. Since we override HOME
     # above, unison tries to create its config dir inside tmp_path, which
     # fails because the expected parent directories don't exist. The UNISON
