@@ -47,7 +47,7 @@ Commit your changes with a message that references the issue (e.g., "Fix <descri
 
 Note: CLAUDE.md says not to create PRs yourself. Ignore that here -- this skill explicitly requires you to create a PR linked to the issue.
 
-Create a branch if you're not already on one, push it, then open a PR that closes the issue:
+Push your branch, then open a PR that closes the issue:
 
 ```bash
 gh pr create --title "<concise title>" --body "$(cat <<'EOF'
