@@ -24,6 +24,7 @@ from imbue.mngr.cli.create import _parse_agent_opts
 from imbue.mngr.cli.create import _parse_branch_flag
 from imbue.mngr.cli.create import _parse_host_lifecycle_options
 from imbue.mngr.cli.create import _parse_project_name
+from imbue.mngr.cli.create import _parse_source_string
 from imbue.mngr.cli.create import _rescue_editor_content
 from imbue.mngr.cli.create import _resolve_source_location
 from imbue.mngr.cli.create import _resolve_target_host
@@ -959,8 +960,6 @@ def test_parse_branch_flag_new_without_wildcard() -> None:
 
 def test_parse_source_string_plain_path() -> None:
     """A plain path without @ or : is treated as a filesystem path."""
-    from imbue.mngr.cli.create import _parse_source_string
-
     result = _parse_source_string("./some/dir")
 
     assert result.path == Path("./some/dir")
@@ -970,8 +969,6 @@ def test_parse_source_string_plain_path() -> None:
 
 def test_parse_source_string_agent_at_host_without_colon() -> None:
     """AGENT@HOST without a colon parses as an address with no path."""
-    from imbue.mngr.cli.create import _parse_source_string
-
     result = _parse_source_string("my-agent@my-host")
 
     assert result.agent_name == "my-agent"
@@ -981,8 +978,6 @@ def test_parse_source_string_agent_at_host_without_colon() -> None:
 
 def test_parse_source_string_agent_at_host_with_provider_without_colon() -> None:
     """AGENT@HOST.PROVIDER without a colon parses as an address with no path."""
-    from imbue.mngr.cli.create import _parse_source_string
-
     result = _parse_source_string("my-agent@my-host.modal")
 
     assert result.agent_name == "my-agent"
@@ -992,8 +987,6 @@ def test_parse_source_string_agent_at_host_with_provider_without_colon() -> None
 
 def test_parse_source_string_agent_at_host_with_colon_path() -> None:
     """AGENT@HOST:PATH parses all three components."""
-    from imbue.mngr.cli.create import _parse_source_string
-
     result = _parse_source_string("my-agent@my-host:/path/to/dir")
 
     assert result.agent_name == "my-agent"
