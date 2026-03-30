@@ -1,10 +1,10 @@
 from collections.abc import Callable
 
 from imbue.imbue_common.pure import pure
+from imbue.mngr.api.agent_addr import find_agent_by_address
 from imbue.mngr.api.discover import discover_hosts_and_agents
 from imbue.mngr.api.find import find_and_maybe_start_agent_by_name_or_id
 from imbue.mngr.api.list import list_agents
-from imbue.mngr.cli.agent_addr import find_agent_by_address
 from imbue.mngr.cli.connect import select_agent_interactively
 from imbue.mngr.cli.output_helpers import emit_info
 from imbue.mngr.config.data_types import MngrContext

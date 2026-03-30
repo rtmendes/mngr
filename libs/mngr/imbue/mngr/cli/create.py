@@ -21,6 +21,8 @@ from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.pure import pure
+from imbue.mngr.api.agent_addr import AgentAddress
+from imbue.mngr.api.agent_addr import parse_agent_address
 from imbue.mngr.api.connect import connect_to_agent
 from imbue.mngr.api.connect import resolve_connect_command
 from imbue.mngr.api.connect import run_connect_command
@@ -35,8 +37,6 @@ from imbue.mngr.api.find import ensure_host_started
 from imbue.mngr.api.find import get_host_from_list_by_id
 from imbue.mngr.api.find import resolve_source_location
 from imbue.mngr.api.providers import get_provider_instance
-from imbue.mngr.cli.agent_addr import AgentAddress
-from imbue.mngr.cli.agent_addr import parse_agent_address
 from imbue.mngr.cli.common_opts import add_common_options
 from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.cli.env_utils import resolve_env_vars
@@ -1464,7 +1464,7 @@ def _parse_source_string(source_str: str) -> ParsedSourceString:
 
     The host_name field may include a .PROVIDER suffix (e.g. "myhost.modal").
     """
-    from imbue.mngr.cli.agent_addr import parse_agent_address
+    from imbue.mngr.api.agent_addr import parse_agent_address
 
     if ":" not in source_str:
         # No colon -- treat as a plain path (most common case: --source ./dir)

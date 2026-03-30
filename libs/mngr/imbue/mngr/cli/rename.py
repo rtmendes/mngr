@@ -5,9 +5,9 @@ import click
 from click_option_group import optgroup
 from loguru import logger
 
+from imbue.mngr.api.agent_addr import find_agent_by_address
 from imbue.mngr.api.discover import discover_hosts_and_agents
 from imbue.mngr.api.discovery_events import emit_discovery_events_for_host
-from imbue.mngr.cli.agent_addr import find_agent_by_address
 from imbue.mngr.cli.common_opts import add_common_options
 from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.cli.help_formatter import CommandHelpMetadata

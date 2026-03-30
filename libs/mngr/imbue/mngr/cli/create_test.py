@@ -11,9 +11,9 @@ import pytest
 from click.testing import CliRunner
 
 from imbue.imbue_common.model_update import to_update
+from imbue.mngr.api.agent_addr import AgentAddress
+from imbue.mngr.api.agent_addr import parse_agent_address
 from imbue.mngr.api.find import ResolvedSource
-from imbue.mngr.cli.agent_addr import AgentAddress
-from imbue.mngr.cli.agent_addr import parse_agent_address
 from imbue.mngr.cli.create import _AutoLabels
 from imbue.mngr.cli.create import _CreateCommand
 from imbue.mngr.cli.create import _RECOVERED_MESSAGE_FILENAME

@@ -24,12 +24,12 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.pure import pure
+from imbue.mngr.api.agent_addr import filter_agents_by_host_constraint
+from imbue.mngr.api.agent_addr import parse_identifier_as_address
 from imbue.mngr.api.discover import discover_hosts_and_agents
 from imbue.mngr.api.find import resolve_agent_reference
 from imbue.mngr.api.find import resolve_host_reference
 from imbue.mngr.api.providers import get_provider_instance
-from imbue.mngr.cli.agent_addr import filter_agents_by_host_constraint
-from imbue.mngr.cli.agent_addr import parse_identifier_as_address
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import UserInputError
