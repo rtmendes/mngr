@@ -270,7 +270,7 @@ class _CreateCommand(click.Command):
     "--from",
     "--source",
     "source",
-    help="Directory to use as work_dir root [AGENT | AGENT.HOST | AGENT.HOST:PATH | HOST:PATH]. Defaults to current dir if no other source args are given",
+    help="Directory to use as work_dir root [AGENT | AGENT@HOST | AGENT@HOST.PROVIDER:PATH | @HOST:PATH]. Defaults to current dir if no other source args are given",
 )
 @optgroup.option("--source-agent", "--from-agent", "source_agent", help="Source agent for cloning work_dir")
 @optgroup.option("--source-host", help="Source host")
@@ -1025,7 +1025,7 @@ def _find_source_location(
     parsed_source_host = source_host
 
     if source:
-        # Parse [AGENT[.HOST]]:PATH format
+        # Parse [AGENT[@HOST[.PROVIDER]]]:PATH format
         parsed = _parse_source_string(source)
         parsed_source_path = parsed.path
         parsed_source_agent = parsed.agent_name
@@ -1447,28 +1447,56 @@ def _parse_branch_flag(branch: str, agent_name: AgentName) -> tuple[str | None, 
 
 
 class ParsedSourceString(FrozenModel):
-    """Result of parsing a source string in [AGENT[.HOST]]:PATH format."""
+    """Result of parsing a source string in [AGENT[@HOST[.PROVIDER]]]:PATH format."""
 
     path: Path | None = Field(description="Path component")
     agent_name: str | None = Field(description="Agent name component")
-    host_name: str | None = Field(description="Host name component")
+    host_name: str | None = Field(description="Host name component (may include .PROVIDER suffix)")
 
 
 @pure
 def _parse_source_string(source_str: str) -> ParsedSourceString:
-    """Parse [AGENT[.HOST]]:PATH format into components."""
+    """Parse [AGENT[@[HOST][.PROVIDER]]]:PATH format into components.
+
+    Without a colon, the string is treated as a plain path (the common case for
+    --source ./some/dir). With a colon, the part before the colon is parsed as
+    an agent address (NAME@HOST.PROVIDER) and the part after is the path.
+
+    The host_name field may include a .PROVIDER suffix (e.g. "myhost.modal").
+    """
+    from imbue.mngr.cli.agent_addr import parse_agent_address
+
     if ":" not in source_str:
-        # Just a path
+        # No colon -- treat as a plain path (most common case: --source ./dir)
         return ParsedSourceString(path=Path(source_str), agent_name=None, host_name=None)
 
     prefix, path_str = source_str.rsplit(":", 1)
     path = Path(path_str) if path_str else None
 
-    if "." in prefix:
-        agent, host = prefix.split(".", 1)
-        return ParsedSourceString(path=path, agent_name=agent or None, host_name=host or None)
+    if not prefix:
+        return ParsedSourceString(path=path, agent_name=None, host_name=None)
 
-    return ParsedSourceString(path=path, agent_name=prefix or None, host_name=None)
+    address = parse_agent_address(prefix)
+    host_str = _host_str_from_address_components(address.host_name, address.provider_name)
+    return ParsedSourceString(
+        path=path,
+        agent_name=str(address.agent_name) if address.agent_name else None,
+        host_name=host_str,
+    )
+
+
+@pure
+def _host_str_from_address_components(
+    host_name: HostName | None, provider_name: ProviderInstanceName | None
+) -> str | None:
+    """Combine host and provider name components into a single host string."""
+    if host_name is not None and provider_name is not None:
+        return f"{host_name}.{provider_name}"
+    if host_name is not None:
+        return str(host_name)
+    if provider_name is not None:
+        return f".{provider_name}"
+    return None
 
 
 # === Helper Functions (stubs) ===

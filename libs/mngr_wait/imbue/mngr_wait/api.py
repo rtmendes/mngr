@@ -1,5 +1,7 @@
 import time
 from collections.abc import Callable
+from collections.abc import Mapping
+from collections.abc import Sequence
 
 from loguru import logger
 from pydantic import Field
@@ -10,6 +12,8 @@ from imbue.mngr.api.discover import discover_hosts_and_agents
 from imbue.mngr.api.find import resolve_agent_reference
 from imbue.mngr.api.find import resolve_host_reference
 from imbue.mngr.api.providers import get_provider_instance
+from imbue.mngr.cli.agent_addr import filter_agents_by_host_constraint
+from imbue.mngr.cli.agent_addr import parse_identifier_as_address
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import HostConnectionError
 from imbue.mngr.errors import UserInputError
@@ -45,32 +49,38 @@ def resolve_wait_target(
 ) -> ResolvedTarget:
     """Resolve a target identifier to provider, host, and optional agent references.
 
+    Supports agent address syntax: NAME[@[HOST][.PROVIDER]].
+
     Uses the existing find.py resolution functions for agent/host lookup.
     """
+    plain_id, address = parse_identifier_as_address(identifier)
+
     with log_span("Discovering hosts and agents"):
         agents_by_host, _providers = discover_hosts_and_agents(
             mngr_ctx,
             provider_names=None,
-            agent_identifiers=(identifier,),
+            agent_identifiers=(plain_id,),
             include_destroyed=False,
             reset_caches=False,
         )
 
+    # Filter by host/provider constraints from the address
+    filtered_agents_by_host = filter_agents_by_host_constraint(agents_by_host, address)
     all_hosts = list(agents_by_host.keys())
 
     # Determine target type from identifier format
-    if identifier.startswith("agent-"):
-        return _build_agent_resolved_target(identifier, agents_by_host, mngr_ctx)
-    elif identifier.startswith("host-"):
-        return _build_host_resolved_target(identifier, all_hosts, mngr_ctx)
+    if plain_id.startswith("agent-"):
+        return _build_agent_resolved_target(plain_id, filtered_agents_by_host, mngr_ctx)
+    elif plain_id.startswith("host-"):
+        return _build_host_resolved_target(plain_id, all_hosts, mngr_ctx)
     else:
         # Ambiguous name -- try agent first, then host, error on ambiguity
-        return _resolve_by_name(identifier, agents_by_host, all_hosts, mngr_ctx)
+        return _resolve_by_name(plain_id, filtered_agents_by_host, all_hosts, mngr_ctx)
 
 
 def _build_agent_resolved_target(
     identifier: str,
-    agents_by_host: dict[DiscoveredHost, list[DiscoveredAgent]],
+    agents_by_host: Mapping[DiscoveredHost, Sequence[DiscoveredAgent]],
     mngr_ctx: MngrContext,
 ) -> ResolvedTarget:
     """Build a ResolvedTarget for an agent identifier using find.py's resolve_agent_reference.
@@ -113,7 +123,7 @@ def _build_host_resolved_target(
 
 def _resolve_by_name(
     identifier: str,
-    agents_by_host: dict[DiscoveredHost, list[DiscoveredAgent]],
+    agents_by_host: Mapping[DiscoveredHost, Sequence[DiscoveredAgent]],
     all_hosts: list[DiscoveredHost],
     mngr_ctx: MngrContext,
 ) -> ResolvedTarget:

@@ -9,7 +9,6 @@ from loguru import logger
 from imbue.mngr.api.exec import ExecResult
 from imbue.mngr.api.exec import MultiExecResult
 from imbue.mngr.api.exec import exec_command_on_agents
-from imbue.mngr.cli.agent_addr import find_agents_by_addresses
 from imbue.mngr.cli.common_opts import add_common_options
 from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.cli.help_formatter import CommandHelpMetadata
@@ -124,25 +123,11 @@ def _exec_impl(ctx: click.Context, **kwargs: Any) -> None:
 
     error_behavior = ErrorBehavior(opts.on_error.upper())
 
-    # Resolve agent addresses (NAME@HOST.PROVIDER) to agent IDs for the API layer.
-    # This ensures host/provider filtering works correctly for disambiguation.
-    resolved_identifiers: list[str]
-    if agent_identifiers:
-        matches = find_agents_by_addresses(
-            raw_identifiers=agent_identifiers,
-            filter_all=False,
-            target_state=None,
-            mngr_ctx=mngr_ctx,
-        )
-        resolved_identifiers = [str(m.agent_id) for m in matches]
-    else:
-        resolved_identifiers = agent_identifiers
-
     # For JSONL format, use streaming callbacks
     if output_opts.output_format == OutputFormat.JSONL:
         result = exec_command_on_agents(
             mngr_ctx=mngr_ctx,
-            agent_identifiers=resolved_identifiers,
+            agent_identifiers=agent_identifiers,
             command=opts.command_arg,
             is_all=opts.exec_all,
             user=opts.user,
@@ -160,7 +145,7 @@ def _exec_impl(ctx: click.Context, **kwargs: Any) -> None:
     # For other formats, collect all results first
     result = exec_command_on_agents(
         mngr_ctx=mngr_ctx,
-        agent_identifiers=resolved_identifiers,
+        agent_identifiers=agent_identifiers,
         command=opts.command_arg,
         is_all=opts.exec_all,
         user=opts.user,

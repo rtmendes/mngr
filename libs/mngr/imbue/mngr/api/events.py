@@ -28,6 +28,8 @@ from imbue.mngr.api.discover import discover_hosts_and_agents
 from imbue.mngr.api.find import resolve_agent_reference
 from imbue.mngr.api.find import resolve_host_reference
 from imbue.mngr.api.providers import get_provider_instance
+from imbue.mngr.cli.agent_addr import filter_agents_by_host_constraint
+from imbue.mngr.cli.agent_addr import parse_identifier_as_address
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import UserInputError
@@ -129,6 +131,8 @@ def resolve_events_target(
 ) -> EventsTarget:
     """Resolve a target identifier (agent or host name/ID) to an EventsTarget.
 
+    Supports agent address syntax: NAME[@[HOST][.PROVIDER]].
+
     First tries to find an agent with the given identifier.
     If no agent is found, tries to find a host.
     Uses resolve_agent_reference and resolve_host_reference from api/find.py.
@@ -136,21 +140,25 @@ def resolve_events_target(
     When the target host is online, the returned EventsTarget includes the
     online host and events path for direct command execution (e.g., tail -f).
     """
+    plain_id, address = parse_identifier_as_address(identifier)
+
     with log_span("Loading agents and hosts"):
         agents_by_host, _providers = discover_hosts_and_agents(
             mngr_ctx,
             provider_names=None,
-            agent_identifiers=(identifier,),
+            agent_identifiers=(plain_id,),
             include_destroyed=False,
             reset_caches=False,
         )
 
+    # Filter by host/provider constraints from the address
+    filtered_agents_by_host = filter_agents_by_host_constraint(agents_by_host, address)
     all_hosts = list(agents_by_host.keys())
 
     # Try finding as an agent first
     # Only suppress "not found" errors; re-raise ambiguity ("Multiple") errors
     try:
-        agent_result = resolve_agent_reference(identifier, None, agents_by_host)
+        agent_result = resolve_agent_reference(plain_id, None, filtered_agents_by_host)
     except UserInputError as e:
         if "Multiple" in str(e):
             raise
