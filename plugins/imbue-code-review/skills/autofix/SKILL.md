@@ -33,7 +33,7 @@ Spawn a `validate-diff` Agent. Provide the base branch name and the problem desc
 
 Based on the agent's response:
 - If the diff is empty, STOP and ask the user whether the work has been committed yet or whether the base branch is wrong.
-- If it reports changes that don't belong to this branch (i.e., changes you didn't make -- even seemingly minor ones like import reordering or config tweaks), STOP and ask the user what the correct base branch is. These indicate the base branch is wrong. Do not dismiss them as "from a merge" or "not our doing" -- that is exactly the problem.
+- If it reports changes that don't belong to this branch (i.e., changes you didn't make / the implementer agent wouldn't have made), STOP and ask the user which changes should be in scope for review. The fix agent reviews the entire diff and will make unwanted changes to code outside the task's scope. This applies regardless of how the extra changes got there -- wrong base branch, a merge, or incidental edits.
 - If it reports the work looks incomplete, note this but proceed -- autofix works on whatever is there.
 
 ### Phase 3: Fix Loop
