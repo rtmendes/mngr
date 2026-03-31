@@ -81,6 +81,12 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
         tier=PluginTier.BASIC,
         signal="modal",
     ),
+    CatalogEntry(
+        entry_point_name="tutor",
+        package_name="imbue-mngr-tutor",
+        description="Interactive tutorial plugin for mngr",
+        tier=PluginTier.BASIC,
+    ),
     # --- EXTRA tier with signal ---
     CatalogEntry(
         entry_point_name="code_guardian",
@@ -184,12 +190,6 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
         package_name="imbue-mngr-tmr",
         description="Test map-reduce plugin for mngr - launch agents to run and fix tests in parallel",
         tier=PluginTier.EXTRA,
-    ),
-    CatalogEntry(
-        entry_point_name="tutor",
-        package_name="imbue-mngr-tutor",
-        description="Interactive tutorial plugin for mngr",
-        tier=PluginTier.BASIC,
     ),
     CatalogEntry(
         entry_point_name="wait",
