@@ -11,8 +11,10 @@ from collections.abc import Generator
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
+from loguru import logger
 
 from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.consts import ROOT_CONFIG_FILENAME
@@ -192,6 +194,40 @@ def _stop_asciinema_processes(test_output_dir: Path) -> None:
         pid_file.unlink(missing_ok=True)
 
 
+def _setup_test_profile(host_dir: Path) -> str:
+    """Create a mngr profile in the test's host directory.
+
+    Sets up config.toml, profile directory, user_id, and tmux_onboarding_shown
+    so that the subprocess mngr uses a predictable profile with a user_id that
+    follows the mngr_test-YYYY-MM-DD-HH-MM-SS convention (parseable by the
+    Modal environment cleanup script).
+
+    Returns the user_id that was written.
+    """
+    profile_id = uuid4().hex
+    profile_dir = host_dir / PROFILES_DIRNAME / profile_id
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write config.toml pointing to this profile
+    config_path = host_dir / ROOT_CONFIG_FILENAME
+    config_path.write_text(f'profile = "{profile_id}"\n')
+
+    # Build a user_id that produces a Modal environment name matching the
+    # mngr_test-YYYY-MM-DD-HH-MM-SS-{identifier} pattern (recognized by
+    # cleanup_old_modal_test_environments).
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")
+    identifier = os.environ.get("MNGR_AGENT_NAME") or uuid4().hex[:8]
+    user_id = f"{timestamp}-{identifier}"
+    # Write without trailing newline (matching the format used by get_or_create_user_id)
+    user_id_path = profile_dir / USER_ID_FILENAME
+    user_id_path.write_text(user_id)
+
+    # Suppress tmux onboarding screen in test transcripts
+    (profile_dir / "tmux_onboarding_shown").write_text("")
+
+    return user_id
+
+
 def _delete_modal_environment(env: dict[str, str]) -> None:
     """Delete the Modal environment created by this test, if any.
 
@@ -201,35 +237,40 @@ def _delete_modal_environment(env: dict[str, str]) -> None:
     host_dir = env.get("MNGR_HOST_DIR")
     prefix = env.get("MNGR_PREFIX")
     if not host_dir or not prefix:
+        logger.debug("Skipping Modal environment cleanup: MNGR_HOST_DIR or MNGR_PREFIX not set")
         return
 
-    # Find the profile directory and read user_id
     host_dir_path = Path(host_dir)
-    config_path = host_dir_path / ROOT_CONFIG_FILENAME
-    if not config_path.exists():
-        return
+    user_id_file: Path | None = None
     try:
+        config_path = host_dir_path / ROOT_CONFIG_FILENAME
         with open(config_path, "rb") as f:
             root_config = tomllib.load(f)
         profile_id = root_config.get("profile")
         if not profile_id:
+            logger.warning("No profile ID found in {}", config_path)
             return
         user_id_file = host_dir_path / PROFILES_DIRNAME / profile_id / USER_ID_FILENAME
-        if not user_id_file.exists():
-            return
         user_id = user_id_file.read_text().strip()
-    except (OSError, ValueError):
+    except (OSError, ValueError) as exc:
+        logger.warning("Failed to read user_id from {}: {}", user_id_file or host_dir_path, exc)
         return
 
     environment_name = f"{prefix}{user_id}"
+    logger.info("Deleting Modal environment: {}", environment_name)
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["uv", "run", "modal", "environment", "delete", environment_name, "--yes"],
             capture_output=True,
+            text=True,
             timeout=30,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
-        pass
+        if result.returncode != 0:
+            logger.warning("Failed to delete Modal environment {}: {}", environment_name, result.stderr.strip())
+        else:
+            logger.info("Deleted Modal environment: {}", environment_name)
+    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
+        logger.warning("Error deleting Modal environment {}: {}", environment_name, exc)
 
 
 def _write_destroy_script(
@@ -308,6 +349,11 @@ def e2e(
     # limits. Test isolation comes from MNGR_HOST_DIR, not the prefix.
     # The mngr_test- prefix is required by the Modal backend guard.
     env["MNGR_PREFIX"] = "mngr_test-"
+
+    # Create the mngr profile proactively so that:
+    # 1. The user_id follows the timestamp convention for Modal cleanup
+    # 2. The tmux onboarding screen is suppressed in test transcripts
+    _setup_test_profile(temp_host_dir)
 
     # Add the e2e bin directory to PATH so the connect script is available
     env["PATH"] = f"{_BIN_DIR}:{env.get('PATH', '')}"
