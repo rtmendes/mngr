@@ -35,6 +35,7 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.pure import pure
 from imbue.mngr.agents.base_agent import BaseAgent
+from imbue.mngr.api.providers import get_provider_instance
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import AgentStartError
@@ -53,6 +54,8 @@ from imbue.mngr.plugins.hookspecs import OnBeforeCreateArgs
 from imbue.mngr.plugins.hookspecs import OptionStackItem
 from imbue.mngr.primitives import AgentLifecycleState
 from imbue.mngr.primitives import CommandString
+from imbue.mngr.primitives import HostName
+from imbue.mngr.primitives import LOCAL_PROVIDER_NAME
 from imbue.mngr.primitives import TransferMode
 from imbue.mngr.utils.git_utils import find_git_common_dir
 from imbue.mngr.utils.polling import poll_until
@@ -631,6 +634,29 @@ def _sync_local_user_resources(host: OnlineHostInterface, config_dir: Path, *, s
             host.execute_idempotent_command(
                 f"cp {shlex.quote(str(source))} {shlex.quote(str(dest))}", timeout_seconds=5.0
             )
+
+
+def _rsync_claude_home_directories(
+    host: OnlineHostInterface,
+    local_claude_dir: Path,
+    config_dir: Path,
+    mngr_ctx: MngrContext,
+) -> None:
+    """Transfer directory items from ~/.claude/ to a remote config dir using rsync.
+
+    Uses host.copy_directory (rsync) for bulk transfer of directories like
+    skills/, agents/, commands/, plugins/. Individual files like settings.json
+    are handled separately by the caller since they require generation/merging.
+    """
+    local_host_ref = get_provider_instance(LOCAL_PROVIDER_NAME, mngr_ctx).get_host(HostName("localhost"))
+    if not isinstance(local_host_ref, OnlineHostInterface):
+        raise MngrError("Local host is not online")
+    for item_name in _CLAUDE_HOME_SYNC_ITEMS:
+        item_path = local_claude_dir / item_name
+        if not item_path.exists() or not item_path.is_dir():
+            continue
+        with log_span("Rsyncing {} to per-agent config dir", item_name):
+            host.copy_directory(local_host_ref, item_path, config_dir / item_name)
 
 
 def _load_claude_resource_script(filename: str) -> str:
@@ -1283,22 +1309,18 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
             _warn_about_version_consistency(config, mngr_ctx.concurrency_group)
 
         file_transfers: list[tuple[Path, bytes]] = []
-        # 1. Always ship settings.json
+        # 1. Always ship settings.json (generated content, not a direct copy)
         file_transfers.append(
             (config_dir / "settings.json", _build_settings_json_content(config.sync_home_settings).encode("utf-8"))
         )
 
-        # 2. Transfer other home dir files (skills, agents, commands) if syncing is enabled
+        # 2. Rsync directory items (skills, agents, commands, plugins) in bulk
         if config.sync_home_settings:
             logger.info("Transferring claude home directory settings to per-agent config dir...")
             local_claude_dir = Path.home() / ".claude"
-            for relative_path, source_path in _collect_claude_home_dir_files(local_claude_dir).items():
-                # settings.json is handled separately above
-                if relative_path == Path("settings.json"):
-                    continue
-                file_transfers.append((config_dir / relative_path, source_path.read_bytes()))
+            _rsync_claude_home_directories(host, local_claude_dir, config_dir, mngr_ctx)
 
-        # 3. Always ship .claude.json
+        # 3. Always ship .claude.json (generated content, not a direct copy)
         # Resolve the work_dir on the remote host so the trust entry matches
         # the path Claude Code sees (e.g., Modal symlinks /mngr/... to /__modal/volumes/...)
         resolved_work_dir = self.work_dir
@@ -1313,7 +1335,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
             (config_dir / ".claude.json", (json.dumps(claude_json_data, indent=2) + "\n").encode("utf-8"))
         )
 
-        # Ship the files we were supposed to ship (all at once, in parallel):
+        # Ship the generated files (settings.json, .claude.json):
         _parallel_file_transfer(file_transfers, host, mngr_ctx)
 
         # 4. Ship credentials (API key via .claude.json, OAuth via .credentials.json)
