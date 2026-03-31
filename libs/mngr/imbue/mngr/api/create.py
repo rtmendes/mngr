@@ -226,7 +226,8 @@ def _generate_unique_host_name(
     mngr_ctx: MngrContext,
 ) -> HostName:
     """Generate a host name that does not collide with existing hosts on the provider."""
-    existing_hosts = provider.discover_hosts(cg=mngr_ctx.concurrency_group)
+    with log_span("Discovering existing hosts for name uniqueness check"):
+        existing_hosts = provider.discover_hosts(cg=mngr_ctx.concurrency_group)
     existing_names: set[HostName] = {h.host_name for h in existing_hosts}
     for _ in range(_MAX_HOST_NAME_GENERATION_ATTEMPTS):
         candidate = provider.get_host_name(target_host.name_style)
