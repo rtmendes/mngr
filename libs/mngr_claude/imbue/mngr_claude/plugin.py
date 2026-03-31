@@ -722,13 +722,29 @@ def _rsync_claude_home_directories(
             host.copy_directory(local_host, item_path, config_dir / item_name)
 
 
-def _fixup_installed_plugins_json(host: OnlineHostInterface, config_dir: Path) -> None:
-    """Rewrite installPath values in the per-agent installed_plugins.json.
+def _fixup_remote_installed_plugins_json(host: OnlineHostInterface, local_claude_dir: Path, config_dir: Path) -> None:
+    """Rewrite installPath values in installed_plugins.json after rsync to a remote host.
 
-    Called after _sync_local_user_resources or _rsync_claude_home_directories
-    to ensure every per-agent config dir has a self-contained
-    installed_plugins.json with paths pointing to config_dir/plugins/cache/...
-    (rather than the source ~/.claude/ directory).
+    Reads the file locally (avoiding a remote roundtrip), rewrites paths from
+    local_claude_dir to config_dir, and writes the rewritten version to the
+    remote host (overwriting the as-rsynced copy).
+    """
+    local_plugins_json = local_claude_dir / _INSTALLED_PLUGINS_RELATIVE_PATH
+    if not local_plugins_json.exists():
+        return
+    content = local_plugins_json.read_text()
+    rewritten = _rewrite_installed_plugins_paths(content, local_claude_dir, config_dir)
+    if rewritten == content:
+        return
+    host.write_text_file(config_dir / _INSTALLED_PLUGINS_RELATIVE_PATH, rewritten)
+
+
+def _fixup_local_installed_plugins_json(host: OnlineHostInterface, config_dir: Path) -> None:
+    """Rewrite installPath values in the per-agent installed_plugins.json on a local host.
+
+    Called after _sync_local_user_resources to ensure every per-agent config dir
+    has a self-contained installed_plugins.json with paths pointing to
+    config_dir/plugins/cache/... (rather than the source ~/.claude/ directory).
 
     Determines the original claude dir prefix from either a deploy marker file
     (written by get_files_for_deploy) or the current machine's ~/.claude/.
@@ -1473,7 +1489,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
 
         if config.sync_home_settings:
             _sync_local_user_resources(host, config_dir, symlink=config.symlink_user_resources)
-            _fixup_installed_plugins_json(host, config_dir)
+            _fixup_local_installed_plugins_json(host, config_dir)
 
         _apply_settings_json_overrides(host, config_dir, config)
 
@@ -1513,7 +1529,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
             if not isinstance(local_host_ref, OnlineHostInterface):
                 raise MngrError("Local host is not online")
             _rsync_claude_home_directories(host, local_host_ref, local_claude_dir, config_dir)
-            _fixup_installed_plugins_json(host, config_dir)
+            _fixup_remote_installed_plugins_json(host, local_claude_dir, config_dir)
 
         # 3. Always ship .claude.json (generated content, not a direct copy)
         # Resolve the work_dir on the remote host so the trust entry matches

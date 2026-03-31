@@ -55,7 +55,8 @@ from imbue.mngr_claude.plugin import _build_install_command_hint
 from imbue.mngr_claude.plugin import _build_settings_json_content
 from imbue.mngr_claude.plugin import _claude_json_has_primary_api_key
 from imbue.mngr_claude.plugin import _collect_claude_home_files_content
-from imbue.mngr_claude.plugin import _fixup_installed_plugins_json
+from imbue.mngr_claude.plugin import _fixup_local_installed_plugins_json
+from imbue.mngr_claude.plugin import _fixup_remote_installed_plugins_json
 from imbue.mngr_claude.plugin import _get_claude_version
 from imbue.mngr_claude.plugin import _has_api_credentials_available
 from imbue.mngr_claude.plugin import _install_claude
@@ -2825,8 +2826,54 @@ def test_collect_claude_home_files_content_generated_defaults_when_no_settings(t
 # =============================================================================
 
 
-def test_fixup_installed_plugins_json_rewrites_paths_on_local_host(tmp_path: Path) -> None:
-    """Fixup rewrites installPaths from ~/.claude/ to config_dir/ on a local host."""
+def test_fixup_remote_installed_plugins_json_rewrites_paths(tmp_path: Path) -> None:
+    """Remote fixup reads locally, rewrites paths, and writes to remote host."""
+    host = cast(OnlineHostInterface, FakeHost())
+    local_claude_dir = tmp_path / "local_claude"
+    plugins_dir = local_claude_dir / "plugins"
+    plugins_dir.mkdir(parents=True)
+    (plugins_dir / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "plugins": {
+                    "test@org": [
+                        {
+                            "installPath": f"{local_claude_dir}/plugins/cache/org/test/1.0.0",
+                            "version": "1.0.0",
+                        }
+                    ]
+                },
+            }
+        )
+    )
+
+    config_dir = tmp_path / "remote_config"
+    remote_plugins_dir = config_dir / "plugins"
+    remote_plugins_dir.mkdir(parents=True)
+
+    _fixup_remote_installed_plugins_json(host, local_claude_dir, config_dir)
+
+    result = json.loads((remote_plugins_dir / "installed_plugins.json").read_text())
+    assert result["plugins"]["test@org"][0]["installPath"] == str(
+        config_dir / "plugins" / "cache" / "org" / "test" / "1.0.0"
+    )
+
+
+def test_fixup_remote_installed_plugins_json_noop_when_no_file(tmp_path: Path) -> None:
+    """Remote fixup is a no-op when local installed_plugins.json does not exist."""
+    host = cast(OnlineHostInterface, FakeHost())
+    local_claude_dir = tmp_path / "local_claude"
+    local_claude_dir.mkdir()
+    config_dir = tmp_path / "remote_config"
+    config_dir.mkdir()
+
+    # Should not raise
+    _fixup_remote_installed_plugins_json(host, local_claude_dir, config_dir)
+
+
+def test_fixup_local_installed_plugins_json_rewrites_paths(tmp_path: Path) -> None:
+    """Local fixup rewrites installPaths from ~/.claude/ to config_dir/."""
     host = cast(OnlineHostInterface, FakeHost())
     config_dir = tmp_path / "config"
     plugins_dir = config_dir / "plugins"
@@ -2850,7 +2897,7 @@ def test_fixup_installed_plugins_json_rewrites_paths_on_local_host(tmp_path: Pat
         )
     )
 
-    _fixup_installed_plugins_json(host, config_dir)
+    _fixup_local_installed_plugins_json(host, config_dir)
 
     result = json.loads(installed_plugins.read_text())
     assert result["plugins"]["test@org"][0]["installPath"] == str(
@@ -2858,18 +2905,18 @@ def test_fixup_installed_plugins_json_rewrites_paths_on_local_host(tmp_path: Pat
     )
 
 
-def test_fixup_installed_plugins_json_noop_when_no_file(tmp_path: Path) -> None:
-    """Fixup is a no-op when installed_plugins.json does not exist."""
+def test_fixup_local_installed_plugins_json_noop_when_no_file(tmp_path: Path) -> None:
+    """Local fixup is a no-op when installed_plugins.json does not exist."""
     host = cast(OnlineHostInterface, FakeHost())
     config_dir = tmp_path / "config"
     config_dir.mkdir()
 
     # Should not raise
-    _fixup_installed_plugins_json(host, config_dir)
+    _fixup_local_installed_plugins_json(host, config_dir)
 
 
-def test_fixup_installed_plugins_json_uses_marker_for_deploy(tmp_path: Path) -> None:
-    """Fixup reads source dir from marker file (deploy case) and removes it after."""
+def test_fixup_local_installed_plugins_json_uses_marker_for_deploy(tmp_path: Path) -> None:
+    """Local fixup reads source dir from marker file (deploy case) and removes it after."""
     host = cast(OnlineHostInterface, FakeHost())
     config_dir = tmp_path / "config"
     plugins_dir = config_dir / "plugins"
@@ -2898,7 +2945,7 @@ def test_fixup_installed_plugins_json_uses_marker_for_deploy(tmp_path: Path) -> 
     marker = plugins_dir / ".installed_plugins_source_dir"
     marker.write_text(str(build_machine_claude_dir))
 
-    _fixup_installed_plugins_json(host, config_dir)
+    _fixup_local_installed_plugins_json(host, config_dir)
 
     result = json.loads(installed_plugins.read_text())
     assert result["plugins"]["test@org"][0]["installPath"] == str(
@@ -2908,8 +2955,8 @@ def test_fixup_installed_plugins_json_uses_marker_for_deploy(tmp_path: Path) -> 
     assert not marker.exists()
 
 
-def test_fixup_installed_plugins_json_breaks_symlink(tmp_path: Path) -> None:
-    """When plugins/ is a symlink, fixup breaks it into a real dir with file-level symlinks."""
+def test_fixup_local_installed_plugins_json_breaks_symlink(tmp_path: Path) -> None:
+    """When plugins/ is a symlink, local fixup breaks it into a real dir with file-level symlinks."""
     host = cast(OnlineHostInterface, FakeHost())
     config_dir = tmp_path / "config"
     config_dir.mkdir()
@@ -2943,7 +2990,7 @@ def test_fixup_installed_plugins_json_breaks_symlink(tmp_path: Path) -> None:
     plugins_symlink.symlink_to(source_plugins)
     assert plugins_symlink.is_symlink()
 
-    _fixup_installed_plugins_json(host, config_dir)
+    _fixup_local_installed_plugins_json(host, config_dir)
 
     # Should no longer be a symlink
     assert not plugins_symlink.is_symlink()
