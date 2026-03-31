@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -289,7 +290,6 @@ def test_poll_returns_each_injected_message_separately(tmp_path: Path) -> None:
 
 
 # -- _run_poll_loop tests --
-
 def test_poll_loop_does_not_broadcast_for_normal_messages(tmp_path: Path) -> None:
     db_path = tmp_path / "logs.db"
     _create_test_db(db_path)
