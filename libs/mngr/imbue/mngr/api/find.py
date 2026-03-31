@@ -30,6 +30,7 @@ from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import LOCAL_PROVIDER_NAME
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.providers.base_provider import BaseProviderInstance
+from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 
 
 class ParsedSourceLocation(FrozenModel):
@@ -268,7 +269,7 @@ def resolve_source_location(
     with log_span("Getting host interface from provider"):
         if resolved_host is None:
             provider = get_provider_instance(ProviderInstanceName(LOCAL_PROVIDER_NAME), mngr_ctx)
-            host_interface = provider.get_host(HostName("localhost"))
+            host_interface = provider.get_host(HostName(LOCAL_HOST_NAME))
         else:
             provider = get_provider_instance(resolved_host.provider_name, mngr_ctx)
             host_interface = provider.get_host(resolved_host.host_id)
@@ -358,7 +359,12 @@ def ensure_agent_started(agent: AgentInterface, host: OnlineHostInterface, is_st
     """
     # Check if the agent's tmux session exists and start it if needed
     lifecycle_state = agent.get_lifecycle_state()
-    if lifecycle_state not in (AgentLifecycleState.RUNNING, AgentLifecycleState.REPLACED, AgentLifecycleState.WAITING):
+    if lifecycle_state not in (
+        AgentLifecycleState.RUNNING,
+        AgentLifecycleState.REPLACED,
+        AgentLifecycleState.RUNNING_UNKNOWN_AGENT_TYPE,
+        AgentLifecycleState.WAITING,
+    ):
         if is_start_desired:
             logger.info("Agent {} is stopped, starting it", agent.name)
             agent.wait_for_ready_signal(
@@ -441,7 +447,7 @@ def find_and_maybe_start_agent_by_name_or_id(
 
     if len(matching) > 1:
         # Build helpful error message showing the matching agents
-        agent_list = "\n".join([f"  - {agent.id} (on {host.connector.name})" for agent, host in matching])
+        agent_list = "\n".join([f"  - {agent.id} (on {host.get_name()})" for agent, host in matching])
         raise UserInputError(
             f"Multiple agents found with name '{agent_str}':\n{agent_list}\n\n"
             f"Please use the agent ID instead:\n"
