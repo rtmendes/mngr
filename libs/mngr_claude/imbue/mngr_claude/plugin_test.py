@@ -2955,61 +2955,6 @@ def test_fixup_local_installed_plugins_json_uses_marker_for_deploy(tmp_path: Pat
     assert not marker.exists()
 
 
-def test_fixup_local_installed_plugins_json_breaks_symlink(tmp_path: Path) -> None:
-    """When plugins/ is a symlink, local fixup breaks it into a real dir with file-level symlinks."""
-    host = cast(OnlineHostInterface, FakeHost())
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-
-    # Create the source plugins directory
-    source_plugins = tmp_path / "source_plugins"
-    source_plugins.mkdir()
-    cache_dir = source_plugins / "cache" / "org" / "test" / "1.0.0"
-    cache_dir.mkdir(parents=True)
-    (cache_dir / "manifest.json").write_text("{}")
-
-    local_claude_dir = Path.home() / ".claude"
-    (source_plugins / "installed_plugins.json").write_text(
-        json.dumps(
-            {
-                "version": 2,
-                "plugins": {
-                    "test@org": [
-                        {
-                            "installPath": f"{local_claude_dir}/plugins/cache/org/test/1.0.0",
-                            "version": "1.0.0",
-                        }
-                    ]
-                },
-            }
-        )
-    )
-
-    # Symlink config_dir/plugins -> source_plugins
-    plugins_symlink = config_dir / "plugins"
-    plugins_symlink.symlink_to(source_plugins)
-    assert plugins_symlink.is_symlink()
-
-    _fixup_local_installed_plugins_json(host, config_dir)
-
-    # Should no longer be a symlink
-    assert not plugins_symlink.is_symlink()
-    assert plugins_symlink.is_dir()
-
-    # installed_plugins.json should have rewritten paths
-    result = json.loads((plugins_symlink / "installed_plugins.json").read_text())
-    assert result["plugins"]["test@org"][0]["installPath"] == str(
-        config_dir / "plugins" / "cache" / "org" / "test" / "1.0.0"
-    )
-
-    # Cache dir should still be accessible (via symlink to source)
-    assert (plugins_symlink / "cache" / "org" / "test" / "1.0.0" / "manifest.json").exists()
-
-    # Original source should NOT be modified
-    original = json.loads((source_plugins / "installed_plugins.json").read_text())
-    assert original["plugins"]["test@org"][0]["installPath"] == f"{local_claude_dir}/plugins/cache/org/test/1.0.0"
-
-
 # =============================================================================
 # get_files_for_deploy marker file Tests
 # =============================================================================

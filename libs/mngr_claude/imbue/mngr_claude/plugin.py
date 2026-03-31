@@ -742,15 +742,11 @@ def _fixup_remote_installed_plugins_json(host: OnlineHostInterface, local_claude
 def _fixup_local_installed_plugins_json(host: OnlineHostInterface, config_dir: Path) -> None:
     """Rewrite installPath values in the per-agent installed_plugins.json on a local host.
 
-    Called after _sync_local_user_resources to ensure every per-agent config dir
-    has a self-contained installed_plugins.json with paths pointing to
-    config_dir/plugins/cache/... (rather than the source ~/.claude/ directory).
+    Only called in copy mode (not symlink mode) after _sync_local_user_resources,
+    so installed_plugins.json is a real file that can be overwritten in place.
 
     Determines the original claude dir prefix from either a deploy marker file
     (written by get_files_for_deploy) or the current machine's ~/.claude/.
-    If the plugins/ directory is a symlink, breaks it into a real directory
-    with file-level symlinks so the rewritten file can be written without
-    modifying the source.
     """
     installed_plugins_path = config_dir / _INSTALLED_PLUGINS_RELATIVE_PATH
     try:
@@ -768,15 +764,6 @@ def _fixup_local_installed_plugins_json(host: OnlineHostInterface, config_dir: P
     rewritten = _rewrite_installed_plugins_paths(content, source_claude_dir, config_dir)
     if rewritten == content:
         return
-
-    plugins_dir = config_dir / "plugins"
-    if plugins_dir.is_symlink():
-        source_dir = plugins_dir.resolve()
-        plugins_dir.unlink()
-        plugins_dir.mkdir(parents=True)
-        for item in source_dir.iterdir():
-            if item.name != "installed_plugins.json" and item.name != _INSTALLED_PLUGINS_SOURCE_DIR_MARKER.name:
-                (plugins_dir / item.name).symlink_to(item)
 
     host.write_text_file(installed_plugins_path, rewritten)
 
@@ -1489,7 +1476,8 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
 
         if config.sync_home_settings:
             _sync_local_user_resources(host, config_dir, symlink=config.symlink_user_resources)
-            _fixup_local_installed_plugins_json(host, config_dir)
+            if not config.symlink_user_resources:
+                _fixup_local_installed_plugins_json(host, config_dir)
 
         _apply_settings_json_overrides(host, config_dir, config)
 
