@@ -109,7 +109,7 @@ def format_topic_help(topic: TopicHelpPage) -> str:
 
 
 def _resolve_command_chain(
-    cli_group: click.Group,
+    root_group: click.Group,
     parent_ctx: click.Context,
     parts: tuple[str, ...],
 ) -> list[click.Command] | None:
@@ -117,13 +117,13 @@ def _resolve_command_chain(
 
     Walks through group hierarchies to support subcommands.
     For example, ("snapshot", "create") resolves to [snapshot_group, create_cmd].
-    Returns None if any part fails to resolve.
+    Returns None if any part fails to resolve or if an intermediate command is not a group.
     """
     if not parts:
         return None
 
     commands: list[click.Command] = []
-    current_group: click.Group = cli_group
+    current_group = root_group
     current_ctx = parent_ctx
 
     for i, part in enumerate(parts):
@@ -133,9 +133,9 @@ def _resolve_command_chain(
         commands.append(cmd)
 
         if i < len(parts) - 1:
-            if not hasattr(cmd, "get_command"):
+            if not isinstance(cmd, click.Group):
                 return None
-            current_group = cmd  # type: ignore[assignment]
+            current_group = cmd
             current_ctx = click.Context(cmd, info_name=cmd.name, parent=current_ctx)
 
     return commands
@@ -248,10 +248,13 @@ def help_command(ctx: click.Context, topic: tuple[str, ...]) -> None:
 
     root_ctx = ctx.parent
     assert root_ctx is not None
-    cli_group: click.Group = root_ctx.command  # type: ignore[assignment]
+    root_cmd = root_ctx.command
+    if not isinstance(root_cmd, click.Group):
+        _show_help_overview(ctx)
+        return
 
     # Try to resolve as a CLI command (supports aliases and subcommands)
-    commands = _resolve_command_chain(cli_group, root_ctx, topic)
+    commands = _resolve_command_chain(root_cmd, root_ctx, topic)
     if commands is not None:
         _show_command_help(ctx, commands)
         return
