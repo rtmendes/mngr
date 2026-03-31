@@ -50,6 +50,7 @@ from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import IdleMode
 from imbue.mngr.primitives import ProviderInstanceName
+from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr.utils.editor import EditorSession
 
@@ -366,7 +367,7 @@ def test_try_reuse_existing_agent_found_and_started(
     temp_work_dir: Path,
 ) -> None:
     """Returns (agent, host) when agent is found and started."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
 
     # Create a real agent on the local host with a harmless command
     agent_options = CreateAgentOptions(
@@ -415,7 +416,7 @@ def test_try_reuse_existing_agent_not_found_on_host(
     temp_mngr_ctx: MngrContext,
 ) -> None:
     """Returns None when agent reference exists but agent not found on online host."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
 
     # Build references pointing to this host, but with a nonexistent agent ID
     host_ref = DiscoveredHost(
@@ -489,7 +490,7 @@ def test_resolve_target_host_with_host_reference(
     host_ref = DiscoveredHost(
         provider_name=ProviderInstanceName("local"),
         host_id=local_provider.host_id,
-        host_name=HostName("localhost"),
+        host_name=HostName(LOCAL_HOST_NAME),
     )
 
     result = _resolve_target_host(
@@ -512,7 +513,7 @@ def test_parse_project_name_returns_explicit_project(
     temp_work_dir: Path,
 ) -> None:
     """When --project is specified, return it directly."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     resolved = ResolvedSource(location=HostLocation(host=local_host, path=temp_work_dir))
     opts = default_create_cli_opts.model_copy_update(
         to_update(default_create_cli_opts.field_ref().project, "explicit-project"),
@@ -531,7 +532,7 @@ def test_parse_project_name_inherits_from_source_agent(
     """When source agent has a project label, inherit it."""
     some_dir = tmp_path / "local-folder"
     some_dir.mkdir()
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     resolved = ResolvedSource(
         location=HostLocation(host=local_host, path=some_dir),
         agent=DiscoveredAgent(
@@ -556,7 +557,7 @@ def test_parse_project_name_derives_from_remote_url(
     """When remote URL is available, derive project name from it."""
     some_dir = tmp_path / "local-folder"
     some_dir.mkdir()
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     resolved = ResolvedSource(location=HostLocation(host=local_host, path=some_dir))
 
     result = _parse_project_name(resolved, default_create_cli_opts, remote_url="https://github.com/owner/my-repo.git")
@@ -572,7 +573,7 @@ def test_parse_project_name_falls_back_to_folder_name(
     """When no remote URL, fall back to the source directory name."""
     some_dir = tmp_path / "some-project"
     some_dir.mkdir()
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     resolved = ResolvedSource(location=HostLocation(host=local_host, path=some_dir))
 
     result = _parse_project_name(resolved, default_create_cli_opts, remote_url=None)
@@ -600,7 +601,7 @@ def test_get_source_remote_url_returns_url_when_remote_exists(
         capture_output=True,
     )
 
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     source_location = HostLocation(host=local_host, path=repo_dir)
 
     result = _get_source_remote_url(source_location)
@@ -617,7 +618,7 @@ def test_get_source_remote_url_returns_none_when_no_remote(
     repo_dir.mkdir()
     subprocess.run(["git", "init"], cwd=repo_dir, check=True, capture_output=True)
 
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     source_location = HostLocation(host=local_host, path=repo_dir)
 
     result = _get_source_remote_url(source_location)
@@ -633,7 +634,7 @@ def test_get_source_remote_url_returns_none_when_no_git(
     plain_dir = tmp_path / "plain"
     plain_dir.mkdir()
 
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     source_location = HostLocation(host=local_host, path=plain_dir)
 
     result = _get_source_remote_url(source_location)
@@ -706,7 +707,7 @@ def test_parse_agent_opts_includes_labels(
     temp_work_dir: Path,
 ) -> None:
     """--label KEY=VALUE options should be parsed into label_options.labels."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     source_location = HostLocation(host=local_host, path=temp_work_dir)
     opts = default_create_cli_opts.model_copy_update(
         to_update(default_create_cli_opts.field_ref().label, ("project=mngr", "env=prod")),
@@ -730,7 +731,7 @@ def test_parse_agent_opts_label_invalid_format_raises(
     temp_work_dir: Path,
 ) -> None:
     """--label without = should raise UserInputError."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     source_location = HostLocation(host=local_host, path=temp_work_dir)
     opts = default_create_cli_opts.model_copy_update(
         to_update(default_create_cli_opts.field_ref().label, ("invalid-no-equals",)),
@@ -753,7 +754,7 @@ def test_parse_agent_opts_empty_labels_by_default(
     temp_work_dir: Path,
 ) -> None:
     """Without --label, label_options.labels should be empty."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     source_location = HostLocation(host=local_host, path=temp_work_dir)
 
     result, _ = _parse_agent_opts(
@@ -774,7 +775,7 @@ def test_parse_agent_opts_with_agent_id(
     temp_work_dir: Path,
 ) -> None:
     """--id should be parsed into id field."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     source_location = HostLocation(host=local_host, path=temp_work_dir)
     explicit_id = AgentId()
     opts = default_create_cli_opts.model_copy_update(
@@ -799,7 +800,7 @@ def test_parse_agent_opts_agent_id_none_by_default(
     temp_work_dir: Path,
 ) -> None:
     """Without --id, id should be None (auto-generated later)."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     source_location = HostLocation(host=local_host, path=temp_work_dir)
 
     result, _ = _parse_agent_opts(
@@ -820,7 +821,7 @@ def test_parse_agent_opts_conflicting_type_and_positional_raises(
     temp_work_dir: Path,
 ) -> None:
     """Specifying both --type and positional agent type with different values should raise."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     source_location = HostLocation(host=local_host, path=temp_work_dir)
     opts = default_create_cli_opts.model_copy_update(
         to_update(default_create_cli_opts.field_ref().type, "claude"),
@@ -844,7 +845,7 @@ def test_parse_agent_opts_matching_type_and_positional_ok(
     temp_work_dir: Path,
 ) -> None:
     """Specifying both --type and positional with the same value should not raise."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName("localhost")))
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     source_location = HostLocation(host=local_host, path=temp_work_dir)
     opts = default_create_cli_opts.model_copy_update(
         to_update(default_create_cli_opts.field_ref().type, "claude"),
