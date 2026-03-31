@@ -140,16 +140,21 @@ def _resolve_config_files(
         if raw is not None:
             configs.append(raw)
 
-    # Project + local config need the project root
+    # Project + local config need the project root.
+    # Resolve the directory inside the ConcurrencyGroup (it needs git lookups),
+    # but load the TOML files outside it so ConfigParseError propagates directly
+    # instead of being wrapped in ConcurrencyExceptionGroup.
     cg = ConcurrencyGroup(name="config-pre-reader")
     with cg:
-        raw_project = load_project_config(context_dir, root_name, cg)
-        raw_local = load_local_config(context_dir, root_name, cg)
+        project_dir = resolve_project_config_dir(context_dir, root_name, cg)
 
-    if raw_project is not None:
-        configs.append(raw_project)
-    if raw_local is not None:
-        configs.append(raw_local)
+    if project_dir is not None:
+        raw_project = try_load_toml(project_dir / "settings.toml")
+        if raw_project is not None:
+            configs.append(raw_project)
+        raw_local = try_load_toml(project_dir / "settings.local.toml")
+        if raw_local is not None:
+            configs.append(raw_local)
 
     return configs
 
