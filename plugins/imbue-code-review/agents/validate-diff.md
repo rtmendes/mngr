@@ -4,7 +4,7 @@ description: Quick sanity check on a branch's diff before detailed review.
 model: haiku
 ---
 
-Before doing anything, run this command: `rm .reviewer/outputs/autofix/verified.md`
+Before doing anything, run this command: `rm -f .reviewer/outputs/autofix/*_verified.md`
 (to ensure that any previous validation results are cleared out and won't interfere with this run).
 
 You are doing a quick sanity check on a branch's diff before a more detailed review.
