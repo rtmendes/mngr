@@ -4,6 +4,7 @@ Uses shared plugin test fixtures from mngr to avoid duplicating common
 fixture code across plugin libraries.
 """
 
+import subprocess
 from pathlib import Path
 
 import pluggy
@@ -68,3 +69,21 @@ def bare_temp_mngr_ctx(
 ) -> MngrContext:
     """MngrContext with no plugins loaded (bare hookspecs only)."""
     return _build_mngr_ctx(bare_plugin_manager, tmp_path)
+
+
+@pytest.fixture()
+def monorepo_root() -> Path:
+    """Get the git root from this file's location.
+
+    mngr schedule add needs to package the repo, so the subprocess must run
+    from the git root. We can't use cwd because isolate_home() chdir's to a
+    temp directory.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=Path(__file__).parent,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"git rev-parse failed: {result.stderr}"
+    return Path(result.stdout.strip())

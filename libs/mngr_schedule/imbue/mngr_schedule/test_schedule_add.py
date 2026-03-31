@@ -14,24 +14,6 @@ import pytest
 from imbue.mngr_schedule.implementations.modal.deploy import get_modal_app_name
 
 
-@pytest.fixture()
-def monorepo_root() -> Path:
-    """Get the git root from this file's location.
-
-    mngr schedule add needs to package the repo, so the subprocess must run
-    from the git root. We can't use cwd because isolate_home() chdir's to a
-    temp directory.
-    """
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=Path(__file__).parent,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"git rev-parse failed: {result.stderr}"
-    return Path(result.stdout.strip())
-
-
 def _build_subprocess_env() -> dict[str, str]:
     """Build environment for subprocess calls that need Modal credentials.
 

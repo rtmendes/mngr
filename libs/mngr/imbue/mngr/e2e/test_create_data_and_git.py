@@ -261,7 +261,6 @@ def test_create_with_shallow_depth(e2e: E2eSession) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-@pytest.mark.rsync
 def test_create_from_another_agent(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # you can clone from an existing agent's work directory:
