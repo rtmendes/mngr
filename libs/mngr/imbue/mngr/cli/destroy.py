@@ -446,7 +446,7 @@ def _destroy_single_online_agent(
         emit_discovery_events_for_host(mngr_ctx.config, host)
 
     except MngrError as e:
-        _output(f"Error destroying agent {agent.name}@{host.get_name()}: {e}", output_opts)
+        _output(f"Error destroying agent {agent_display}: {e}", output_opts)
 
 
 def _destroy_single_offline_host(
