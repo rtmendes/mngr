@@ -95,12 +95,13 @@ _CLAUDE_HOME_SYNC_ITEMS: Final[tuple[str, ...]] = (
 
 _INSTALLED_PLUGINS_RELATIVE_PATH: Final[Path] = Path("plugins") / "installed_plugins.json"
 
-_INSTALLED_PLUGINS_SOURCE_DIR_MARKER: Final[Path] = Path("plugins") / ".installed_plugins_source_dir"
-"""Metadata file written at deploy build time containing the build machine's claude dir.
+_INSTALLED_PLUGINS_SENTINEL_PREFIX: Final[str] = "/__mngr_plugins_source__"
+"""Sentinel prefix written into installPath values at deploy build time.
 
-At runtime, ``_fixup_installed_plugins_json`` reads this to determine the original
-installPath prefix, rewrites paths to point to the per-agent config dir, then
-removes the marker.
+At build time, ``get_files_for_deploy`` rewrites absolute local paths
+(e.g. /Users/ev/.claude/plugins/cache/...) to use this sentinel prefix.
+At runtime, the fixup rewrites the sentinel to the actual per-agent config dir.
+This avoids depending on the build machine's home directory path.
 """
 
 
@@ -745,8 +746,9 @@ def _fixup_local_installed_plugins_json(host: OnlineHostInterface, config_dir: P
     Only called in copy mode (not symlink mode) after _sync_local_user_resources,
     so installed_plugins.json is a real file that can be overwritten in place.
 
-    Determines the original claude dir prefix from either a deploy marker file
-    (written by get_files_for_deploy) or the current machine's ~/.claude/.
+    Handles two cases:
+    - Deploy runtime: paths use the sentinel prefix (written by get_files_for_deploy)
+    - Normal local: paths use the current machine's ~/.claude/
     """
     installed_plugins_path = config_dir / _INSTALLED_PLUGINS_RELATIVE_PATH
     try:
@@ -754,11 +756,11 @@ def _fixup_local_installed_plugins_json(host: OnlineHostInterface, config_dir: P
     except FileNotFoundError:
         return
 
-    marker_path = config_dir / _INSTALLED_PLUGINS_SOURCE_DIR_MARKER
-    try:
-        source_claude_dir = Path(host.read_text_file(marker_path).strip())
-        host.execute_idempotent_command(f"rm -f {shlex.quote(str(marker_path))}", timeout_seconds=5.0)
-    except FileNotFoundError:
+    # Try sentinel prefix first (deploy case), then fall back to local ~/.claude/
+    source_claude_dir: Path
+    if _INSTALLED_PLUGINS_SENTINEL_PREFIX in content:
+        source_claude_dir = Path(_INSTALLED_PLUGINS_SENTINEL_PREFIX)
+    else:
         source_claude_dir = Path.home() / ".claude"
 
     rewritten = _rewrite_installed_plugins_paths(content, source_claude_dir, config_dir)
@@ -1995,10 +1997,13 @@ def get_files_for_deploy(
 
     if include_user_settings:
         for relative_path, content in home_files.items():
+            # Rewrite installPath values at build time to use the sentinel prefix,
+            # so the runtime fixup doesn't need to know the build machine's home dir
+            if relative_path == _INSTALLED_PLUGINS_RELATIVE_PATH and isinstance(content, str):
+                content = _rewrite_installed_plugins_paths(
+                    content, local_claude_dir, Path(_INSTALLED_PLUGINS_SENTINEL_PREFIX)
+                )
             files[Path("~/.claude") / relative_path] = content
-        # Write source dir marker so runtime fixup can rewrite installPaths
-        if _INSTALLED_PLUGINS_RELATIVE_PATH in home_files:
-            files[Path("~/.claude") / _INSTALLED_PLUGINS_SOURCE_DIR_MARKER] = str(local_claude_dir)
 
         # ~/.claude/.credentials.json (OAuth tokens)
         credentials = local_claude_dir / ".credentials.json"

@@ -2915,15 +2915,14 @@ def test_fixup_local_installed_plugins_json_noop_when_no_file(tmp_path: Path) ->
     _fixup_local_installed_plugins_json(host, config_dir)
 
 
-def test_fixup_local_installed_plugins_json_uses_marker_for_deploy(tmp_path: Path) -> None:
-    """Local fixup reads source dir from marker file (deploy case) and removes it after."""
+def test_fixup_local_installed_plugins_json_rewrites_sentinel_for_deploy(tmp_path: Path) -> None:
+    """Local fixup rewrites sentinel-prefixed paths (deploy case) to config_dir."""
     host = cast(OnlineHostInterface, FakeHost())
     config_dir = tmp_path / "config"
     plugins_dir = config_dir / "plugins"
     plugins_dir.mkdir(parents=True)
 
-    # Simulate deploy: installPaths reference the build machine's home
-    build_machine_claude_dir = Path("/Users/builduser/.claude")
+    # Simulate deploy: installPaths use the sentinel prefix (written by get_files_for_deploy)
     installed_plugins = plugins_dir / "installed_plugins.json"
     installed_plugins.write_text(
         json.dumps(
@@ -2932,7 +2931,7 @@ def test_fixup_local_installed_plugins_json_uses_marker_for_deploy(tmp_path: Pat
                 "plugins": {
                     "test@org": [
                         {
-                            "installPath": "/Users/builduser/.claude/plugins/cache/org/test/1.0.0",
+                            "installPath": "/__mngr_plugins_source__/plugins/cache/org/test/1.0.0",
                             "version": "1.0.0",
                         }
                     ]
@@ -2941,41 +2940,53 @@ def test_fixup_local_installed_plugins_json_uses_marker_for_deploy(tmp_path: Pat
         )
     )
 
-    # Write the marker file
-    marker = plugins_dir / ".installed_plugins_source_dir"
-    marker.write_text(str(build_machine_claude_dir))
-
     _fixup_local_installed_plugins_json(host, config_dir)
 
     result = json.loads(installed_plugins.read_text())
     assert result["plugins"]["test@org"][0]["installPath"] == str(
         config_dir / "plugins" / "cache" / "org" / "test" / "1.0.0"
     )
-    # Marker should be removed
-    assert not marker.exists()
 
 
 # =============================================================================
-# get_files_for_deploy marker file Tests
+# get_files_for_deploy sentinel rewrite Tests
 # =============================================================================
 
 
-def test_get_files_for_deploy_includes_source_dir_marker_when_plugins_present(
-    temp_mngr_ctx: MngrContext, tmp_path: Path
-) -> None:
-    """get_files_for_deploy includes the source dir marker when installed_plugins.json exists."""
+def test_get_files_for_deploy_rewrites_install_paths_to_sentinel(temp_mngr_ctx: MngrContext, tmp_path: Path) -> None:
+    """get_files_for_deploy rewrites installPath values to use the sentinel prefix."""
     claude_dir = Path.home() / ".claude"
     plugins_dir = claude_dir / "plugins"
     plugins_dir.mkdir(parents=True, exist_ok=True)
-    (plugins_dir / "installed_plugins.json").write_text('{"version": 2, "plugins": {}}')
+    (plugins_dir / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "plugins": {
+                    "test@org": [
+                        {
+                            "installPath": f"{claude_dir}/plugins/cache/org/test/1.0.0",
+                            "version": "1.0.0",
+                        }
+                    ]
+                },
+            }
+        )
+    )
 
     result = get_files_for_deploy(
         mngr_ctx=temp_mngr_ctx, include_user_settings=True, include_project_settings=False, repo_root=tmp_path
     )
 
+    plugins_json_key = Path("~/.claude/plugins/installed_plugins.json")
+    assert plugins_json_key in result
+    plugins_json_content = result[plugins_json_key]
+    assert isinstance(plugins_json_content, str)
+    data = json.loads(plugins_json_content)
+    assert data["plugins"]["test@org"][0]["installPath"] == "/__mngr_plugins_source__/plugins/cache/org/test/1.0.0"
+    # No marker file should be present
     marker_key = Path("~/.claude/plugins/.installed_plugins_source_dir")
-    assert marker_key in result
-    assert result[marker_key] == str(claude_dir)
+    assert marker_key not in result
 
 
 # =============================================================================
