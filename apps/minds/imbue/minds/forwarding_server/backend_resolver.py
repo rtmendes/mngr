@@ -267,8 +267,12 @@ class MngrStreamManager(MutableModel):
 
     Runs two types of long-lived subprocesses via ConcurrencyGroup:
     1. `mngr observe --discovery-only --quiet` to discover agents and hosts.
-       Parses DISCOVERY_FULL events for the agent list and agent-to-host mapping,
-       and HOST_SSH_INFO events for SSH connection details per host.
+       Handles the following discovery event types:
+       - DISCOVERY_FULL: replaces the entire agent list and agent-to-host mapping
+       - HOST_SSH_INFO: updates SSH connection details for a specific host
+       - AGENT_DISCOVERED: incrementally adds or updates a single agent
+       - AGENT_DESTROYED: incrementally removes a single agent
+       - HOST_DESTROYED: removes all agents on a destroyed host
     2. `mngr events <agent-id> servers/events.jsonl --follow --quiet` (one per agent)
        to discover each agent's servers.
     """
