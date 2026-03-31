@@ -20,7 +20,7 @@ Command aliases are supported (e.g., 'mngr help c' shows help for 'create').
 For subcommands, specify the full command path (e.g., 'mngr help snapshot create').
 
 Help topics provide documentation on concepts that span multiple commands,
-such as filter syntax and agent address format.
+such as agent address format.
 
 **Usage:**
 
@@ -43,7 +43,6 @@ mngr help [OPTIONS] [TOPIC]...
 
 | Topic | Aliases | Description |
 | ----- | ------- | ----------- |
-| `filter` | `filters`, `cel` | CEL filter expression syntax for mngr commands |
 | `address` | `addr` | Agent address syntax for targeting agents and hosts |
 
 ## Examples
@@ -64,12 +63,6 @@ $ mngr help c
 
 ```bash
 $ mngr help snapshot create
-```
-
-**Show the filter syntax topic**
-
-```bash
-$ mngr help filter
 ```
 
 **Show the address format topic**

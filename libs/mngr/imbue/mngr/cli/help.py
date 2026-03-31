@@ -2,7 +2,7 @@
 
 Provides two types of help:
 1. Command help: ``mngr help create`` is equivalent to ``mngr create --help``
-2. Topic help: ``mngr help filter`` shows a standalone documentation page
+2. Topic help: ``mngr help address`` shows a standalone documentation page
 
 Both commands and topics support aliases (e.g., ``mngr help c`` for create,
 ``mngr help addr`` for address).
@@ -285,13 +285,12 @@ Command aliases are supported (e.g., 'mngr help c' shows help for 'create').
 For subcommands, specify the full command path (e.g., 'mngr help snapshot create').
 
 Help topics provide documentation on concepts that span multiple commands,
-such as filter syntax and agent address format.""",
+such as agent address format.""",
     additional_sections=(
         (
             "Available Topics",
             "| Topic | Aliases | Description |\n"
             "| ----- | ------- | ----------- |\n"
-            "| `filter` | `filters`, `cel` | CEL filter expression syntax for mngr commands |\n"
             "| `address` | `addr` | Agent address syntax for targeting agents and hosts |",
         ),
     ),
@@ -299,7 +298,6 @@ such as filter syntax and agent address format.""",
         ("Show help for the create command", "mngr help create"),
         ("Show help using a command alias", "mngr help c"),
         ("Show help for a subcommand", "mngr help snapshot create"),
-        ("Show the filter syntax topic", "mngr help filter"),
         ("Show the address format topic", "mngr help address"),
         ("List all commands and topics", "mngr help"),
     ),
@@ -311,88 +309,6 @@ add_pager_help_option(help_command)
 # =============================================================================
 # Topic page definitions
 # =============================================================================
-
-TopicHelpPage(
-    key="filter",
-    one_line_description="CEL filter expression syntax for mngr commands",
-    aliases=("filters", "cel"),
-    content="""\
-Several mngr commands support filtering using CEL (Common Expression
-Language) expressions. Filters are specified with --include and --exclude
-flags, where --include keeps only matching items and --exclude removes
-matching items. Multiple filters can be combined.
-
-OPERATORS
-
-  Comparison:  ==  !=  <  <=  >  >=
-  Logical:     &&  ||  !
-  Grouping:    ( )
-
-STRING METHODS
-
-  name.contains("prod")       Substring match
-  name.startsWith("staging-") Prefix match
-  name.endsWith("-dev")       Suffix match
-
-EXISTENCE CHECKS
-
-  has(url)                    True if the field exists and is set
-  has(host.ssh)               True if SSH access is configured
-
-SIMPLE EQUALITY FILTERS
-
-  name == "my-agent"                 Match by exact agent name
-  state == "RUNNING"                 Match by lifecycle state
-  host.provider == "docker"          Match by host provider
-  type == "claude"                   Match by agent type
-  labels.project == "mngr"           Match by label value
-
-COMPOUND EXPRESSIONS
-
-  state == "RUNNING" && host.provider == "modal"
-  state == "STOPPED" || state == "FAILED"
-  host.provider == "docker" && name.startsWith("test-")
-
-NUMERIC COMPARISONS
-
-  runtime_seconds > 3600             Running for more than an hour
-  idle_seconds < 300                 Active in the last 5 minutes
-  host.resource.memory_gb >= 8       Hosts with 8GB+ memory
-  host.uptime_seconds > 86400        Hosts running for more than a day
-
-SORTING
-
-  The --sort flag also accepts CEL expressions with optional direction:
-
-  --sort 'name'                      Sort by name ascending (default)
-  --sort 'name desc'                 Sort by name descending
-  --sort 'state, name asc'           Sort by state then name
-  --sort 'create_time desc'          Most recently created first
-
-COMMANDS THAT SUPPORT FILTERS
-
-  mngr list     --include, --exclude, --sort
-  mngr destroy  --include, --exclude (with --all)
-  mngr stop     --include, --exclude (with --all)
-  mngr start    --include, --exclude (with --all)
-
-EXAMPLES
-
-  List only running agents:
-      $ mngr list --include 'state == "RUNNING"'
-
-  List agents except those on local hosts:
-      $ mngr list --exclude 'host.provider == "local"'
-
-  List agents with names containing "prod" on Modal:
-      $ mngr list --include 'name.contains("prod") && host.provider == "modal"'\
-""",
-    see_also=(
-        ("list", "List agents with filtering and sorting"),
-        ("address", "Agent address syntax"),
-    ),
-).register()
-
 
 TopicHelpPage(
     key="address",
@@ -465,6 +381,5 @@ EXAMPLES
     see_also=(
         ("create", "Create and run an agent"),
         ("connect", "Connect to an existing agent"),
-        ("filter", "CEL filter expression syntax"),
     ),
 ).register()

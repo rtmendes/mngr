@@ -16,9 +16,9 @@ from imbue.mngr.main import cli
 
 def test_get_topic_by_canonical_name() -> None:
     """get_topic returns a topic when looked up by its canonical key."""
-    topic = get_topic("filter")
+    topic = get_topic("address")
     assert topic is not None
-    assert topic.key == "filter"
+    assert topic.key == "address"
 
 
 def test_get_topic_by_alias() -> None:
@@ -36,7 +36,6 @@ def test_get_topic_nonexistent() -> None:
 def test_get_all_topics_contains_registered_topics() -> None:
     """get_all_topics returns all registered topic pages."""
     topics = get_all_topics()
-    assert "filter" in topics
     assert "address" in topics
 
 
@@ -120,7 +119,6 @@ def test_help_no_args_shows_overview(
     assert result.exit_code == 0
     assert "COMMANDS" in result.output
     assert "TOPICS" in result.output
-    assert "filter" in result.output
     assert "address" in result.output
 
 
@@ -165,17 +163,6 @@ def test_help_subcommand_with_group_alias(
     assert "snapshot create" in result.output
 
 
-def test_help_topic_filter(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """'mngr help filter' shows the filter topic page."""
-    result = cli_runner.invoke(cli, ["help", "filter"], obj=plugin_manager, catch_exceptions=False)
-    assert result.exit_code == 0
-    assert "CEL" in result.output
-    assert "DESCRIPTION" in result.output
-
-
 def test_help_topic_address(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
@@ -195,17 +182,6 @@ def test_help_topic_alias(
     assert result.exit_code == 0
     assert "address" in result.output
     assert "[NAME][@[HOST][.PROVIDER]]" in result.output
-
-
-def test_help_topic_filter_alias_cel(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
-    """'mngr help cel' resolves to the filter topic."""
-    result = cli_runner.invoke(cli, ["help", "cel"], obj=plugin_manager, catch_exceptions=False)
-    assert result.exit_code == 0
-    assert "CEL" in result.output
-    assert "filter" in result.output
 
 
 def test_help_nonexistent_topic(
