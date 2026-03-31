@@ -947,8 +947,8 @@ def test_get_or_create_profile_dir_creates_profile_dir_if_specified_but_missing(
     assert result.exists()
 
 
-def test_get_or_create_profile_dir_handles_invalid_config_toml(tmp_path: Path) -> None:
-    """get_or_create_profile_dir should handle invalid config.toml by creating new profile."""
+def test_get_or_create_profile_dir_warns_and_creates_new_profile_for_invalid_config_toml(tmp_path: Path) -> None:
+    """get_or_create_profile_dir should warn and create a new profile when config.toml is invalid."""
     base_dir = tmp_path / "mngr"
     base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -956,7 +956,12 @@ def test_get_or_create_profile_dir_handles_invalid_config_toml(tmp_path: Path) -
     config_path = base_dir / "config.toml"
     config_path.write_text("[invalid toml syntax")
 
-    result = get_or_create_profile_dir(base_dir)
+    messages: list[str] = []
+    sink_id = logger.add(lambda msg: messages.append(str(msg)), level="WARNING")
+    try:
+        result = get_or_create_profile_dir(base_dir)
+    finally:
+        logger.remove(sink_id)
 
     # Should have created a new profile (with new config)
     assert result.exists()
@@ -965,6 +970,9 @@ def test_get_or_create_profile_dir_handles_invalid_config_toml(tmp_path: Path) -
     # config.toml should have been overwritten with valid content
     new_content = config_path.read_text()
     assert 'profile = "' in new_content
+
+    # Should have warned about the parse failure
+    assert any("Failed to parse config file" in m and str(config_path) in m for m in messages)
 
 
 def test_get_or_create_profile_dir_handles_config_without_profile_key(tmp_path: Path) -> None:
