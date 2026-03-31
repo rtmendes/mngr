@@ -55,6 +55,13 @@ test-offload args="":
     # Run offload, and make sure to specifically permit error code 2 (flaky tests). Any other error code is a failure.
     offload -c offload-modal.toml {{args}} run --copy-dir="/tmp/$OFFLOAD_PATCH_UUID:/offload-upload" || [[ $? -eq 2 ]]
 
+    # Copy results to the main worktree so new worktrees inherit baselines via COPY mode.
+    MAIN_WORKTREE=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+    if [ -f test-results/junit.xml ] && [ -n "$MAIN_WORKTREE" ] && [ "$MAIN_WORKTREE" != "$(pwd)" ]; then
+        mkdir -p "$MAIN_WORKTREE/test-results"
+        cp test-results/junit.xml "$MAIN_WORKTREE/test-results/junit.xml"
+    fi
+
 # Run acceptance tests on Modal via Offload
 test-offload-acceptance args="":
     #!/bin/bash
