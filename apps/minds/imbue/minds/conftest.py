@@ -61,6 +61,7 @@ def created_test_coder() -> Generator[dict[str, object], None, None]:
         "ROLE=thinking",
         "--yes",
         "--transfer=none",
+        timeout=120.0,
         cwd=mind_dir,
     )
     assert create_result.returncode == 0, "mngr create failed:\nstdout: {}\nstderr: {}".format(
