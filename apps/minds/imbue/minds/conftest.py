@@ -57,6 +57,8 @@ def created_test_coder() -> Generator[dict[str, object], None, None]:
         "test-coder",
         "--label",
         "mind=true",
+        "--env",
+        "ROLE=thinking",
         "--yes",
         "--transfer=none",
         cwd=mind_dir,
