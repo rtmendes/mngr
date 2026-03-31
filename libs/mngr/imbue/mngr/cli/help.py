@@ -286,6 +286,15 @@ For subcommands, specify the full command path (e.g., 'mngr help snapshot create
 
 Help topics provide documentation on concepts that span multiple commands,
 such as filter syntax and agent address format.""",
+    additional_sections=(
+        (
+            "Available Topics",
+            "| Topic | Aliases | Description |\n"
+            "| ----- | ------- | ----------- |\n"
+            "| `filter` | `filters`, `cel` | CEL filter expression syntax for mngr commands |\n"
+            "| `address` | `addr` | Agent address syntax for targeting agents and hosts |",
+        ),
+    ),
     examples=(
         ("Show help for the create command", "mngr help create"),
         ("Show help using a command alias", "mngr help c"),

@@ -25,8 +25,19 @@ such as filter syntax and agent address format.
 **Usage:**
 
 ```text
-mngr help [TOPIC]...
+mngr help [OPTIONS] [TOPIC]...
 ```
+## Arguments
+
+- `TOPIC`: The topic (optional)
+
+**Options:**
+
+## Other Options
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `-h`, `--help` | boolean | Show this message and exit. | `False` |
 
 ## Available Topics
 
