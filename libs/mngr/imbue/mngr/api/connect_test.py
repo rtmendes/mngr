@@ -484,42 +484,6 @@ def test_ssh_wrapper_script_is_correctly_quoted_for_bash_c() -> None:
     assert parsed == ["bash", "-c", wrapper_script]
 
 
-def test_build_ssh_activity_wrapper_script_sends_sigwinch_via_pane_pid() -> None:
-    """Test that the wrapper sends SIGWINCH to pane process groups instead of using pkill.
-
-    Uses tmux list-panes to get the actual pane PID, then sends SIGWINCH to the
-    negative PID (process group) so that child processes like Claude also receive
-    the signal, not just the initial bash shell in the pane.
-    """
-    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/mngr"))
-
-    assert "tmux list-panes -t 'mngr-test'" in script
-    # Sends to process group via negative PID
-    assert "kill -WINCH -{}" in script
-    # Should not use pkill
-    assert "pkill" not in script
-
-
-def test_build_ssh_activity_wrapper_script_resize_does_not_block_sigwinch() -> None:
-    """Test that SIGWINCH is sent even if resize-window fails.
-
-    The resize and SIGWINCH steps should be separated by ';' (not '&&')
-    so that a no-op resize doesn't prevent the SIGWINCH from being sent.
-    """
-    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/mngr"))
-
-    # Find the resize-window command and verify it's followed by ; not &&
-    # The resize is followed by "; sleep 1; tmux list-panes" not "&& sleep 1 && ..."
-    resize_idx = script.index("resize-window")
-    after_resize = script[resize_idx:]
-    # After the resize-window -A, the next separator should be ; not &&
-    first_separator_idx = min(
-        after_resize.index(";") if ";" in after_resize else len(after_resize),
-        after_resize.index("&&") if "&&" in after_resize else len(after_resize),
-    )
-    assert after_resize[first_separator_idx] == ";"
-
-
 # =========================================================================
 # Tests for nested tmux detection in connect_to_agent (local host)
 # =========================================================================

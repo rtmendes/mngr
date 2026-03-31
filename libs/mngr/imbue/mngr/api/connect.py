@@ -21,6 +21,28 @@ SIGNAL_EXIT_CODE_DESTROY: Final[int] = 10
 SIGNAL_EXIT_CODE_STOP: Final[int] = 11
 
 
+def build_post_attach_resize_script(session_name: str) -> str:
+    """Build a shell command that resizes tmux windows and sends SIGWINCH.
+
+    After a tmux client attaches, resize all windows to match the client
+    (resize-window -A), then explicitly send SIGWINCH to each pane's child
+    processes. The explicit SIGWINCH is needed because resize-window -A can
+    be a no-op (and thus not trigger SIGWINCH) when the window already
+    matches the client size (e.g., due to window-size=latest).
+
+    Uses pgrep -P to find child processes of each pane. This avoids any
+    dependency on matching the agent's process name, which is unreliable
+    (on macOS, Claude's process title shows as its version number rather
+    than "claude").
+    """
+    return (
+        f"tmux list-windows -t '{session_name}' -F '#I' | "
+        f"xargs -I{{}} tmux resize-window -t '{session_name}':{{}} -A; "
+        f"tmux list-panes -t '{session_name}' -F '#{{pane_pid}}' | "
+        f"xargs -I{{}} sh -c 'kill -WINCH {{}} $(pgrep -P {{}})' 2>/dev/null"
+    )
+
+
 def _build_ssh_activity_wrapper_script(session_name: str, host_dir: Path) -> str:
     """Build a shell script that tracks SSH activity while running tmux.
 
@@ -50,15 +72,8 @@ def _build_ssh_activity_wrapper_script(session_name: str, host_dir: Path) -> str
         f'printf \'{{\\n  "time": %d,\\n  "ssh_pid": %d\\n}}\\n\' "$TIME_MS" "$$" > \'{activity_file}\'; '
         f"sleep 5; done) & "
         "MNGR_ACTIVITY_PID=$!; "
-        # After attaching, resize all tmux windows to match the client and send
-        # SIGWINCH to the pane processes so they redraw at the correct size.
-        # Uses ';' (not '&&') so the SIGWINCH is sent even if resize-window is
-        # a no-op. Sends SIGWINCH to the negative PID (process group) so that
-        # child processes like Claude also receive the signal, not just the
-        # initial bash shell in the pane.
-        f"(sleep 3 && tmux list-windows -t '{session_name}' -F '#I' | xargs -I{{}} tmux resize-window -t '{session_name}':{{}} -A; "
-        f"sleep 1; "
-        f"tmux list-panes -t '{session_name}' -F '#{{pane_pid}}' | xargs -I{{}} kill -WINCH -{{}}) 2>/dev/null & "
+        # Force a terminal resize after attaching to trigger SIGWINCH delivery.
+        f"(sleep 3; {build_post_attach_resize_script(session_name)}) 2>/dev/null & "
         # actually attach
         f"tmux attach -t '{session_name}'; "
         "kill $MNGR_ACTIVITY_PID 2>/dev/null; "
