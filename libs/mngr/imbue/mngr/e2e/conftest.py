@@ -6,7 +6,6 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import tomllib
 from collections.abc import Generator
 from datetime import datetime
 from datetime import timezone
@@ -228,34 +227,8 @@ def _setup_test_profile(host_dir: Path) -> str:
     return user_id
 
 
-def _delete_modal_environment(env: dict[str, str]) -> None:
-    """Delete the Modal environment created by this test, if any.
-
-    The environment name is {MNGR_PREFIX}{user_id}, where user_id is read
-    from the profile directory under MNGR_HOST_DIR.
-    """
-    host_dir = env.get("MNGR_HOST_DIR")
-    prefix = env.get("MNGR_PREFIX")
-    if not host_dir or not prefix:
-        logger.debug("Skipping Modal environment cleanup: MNGR_HOST_DIR or MNGR_PREFIX not set")
-        return
-
-    host_dir_path = Path(host_dir)
-    user_id_file: Path | None = None
-    try:
-        config_path = host_dir_path / ROOT_CONFIG_FILENAME
-        with open(config_path, "rb") as f:
-            root_config = tomllib.load(f)
-        profile_id = root_config.get("profile")
-        if not profile_id:
-            logger.warning("No profile ID found in {}", config_path)
-            return
-        user_id_file = host_dir_path / PROFILES_DIRNAME / profile_id / USER_ID_FILENAME
-        user_id = user_id_file.read_text().strip()
-    except (OSError, ValueError) as exc:
-        logger.warning("Failed to read user_id from {}: {}", user_id_file or host_dir_path, exc)
-        return
-
+def _delete_modal_environment(prefix: str, user_id: str) -> None:
+    """Delete the Modal environment for this test."""
     environment_name = f"{prefix}{user_id}"
     logger.info("Deleting Modal environment: {}", environment_name)
     try:
@@ -353,7 +326,7 @@ def e2e(
     # Create the mngr profile proactively so that:
     # 1. The user_id follows the timestamp convention for Modal cleanup
     # 2. The tmux onboarding screen is suppressed in test transcripts
-    _setup_test_profile(temp_host_dir)
+    test_user_id = _setup_test_profile(temp_host_dir)
 
     # Add the e2e bin directory to PATH so the connect script is available
     env["PATH"] = f"{_BIN_DIR}:{env.get('PATH', '')}"
@@ -419,7 +392,7 @@ def e2e(
     )
 
     # Delete the Modal environment (if one was created)
-    _delete_modal_environment(env)
+    _delete_modal_environment("mngr_test-", test_user_id)
 
     # Kill the isolated tmux server
     tmux_tmpdir_str = str(tmux_tmpdir)
