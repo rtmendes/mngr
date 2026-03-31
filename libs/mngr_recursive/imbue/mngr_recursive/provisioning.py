@@ -57,19 +57,14 @@ def _upload_deploy_files(
     Returns the number of files uploaded.
     """
     # do this in parallel, since there can sometimes be a bunch of things to transfer
-    # Create all needed directories. Use batching to avoid exceeding bash's
-    # argument length limit when there are many deploy files.
-    remote_dirs: set[str] = set()
+    # first, figure out all directories and do a single mkdir -p that captures all of them:
+    remote_paths: list[str] = []
     for dest_path in deploy_files:
         resolved_path = _resolve_remote_path(dest_path, remote_home)
-        remote_dirs.add(shlex.quote(str(resolved_path.parent)))
-    dir_list = sorted(remote_dirs)
-    batch_size = 50
-    for i in range(0, len(dir_list), batch_size):
-        batch = dir_list[i : i + batch_size]
-        mkdir_result = host.execute_idempotent_command(f"mkdir -p {' '.join(batch)}")
-        if not mkdir_result.success:
-            raise MngrError(f"Failed to create directories: {mkdir_result.stderr}")
+        remote_paths.append(shlex.quote(str(resolved_path.parent)))
+    mkdir_result = host.execute_idempotent_command(f"mkdir -p {' '.join(remote_paths)}")
+    if not mkdir_result.success:
+        raise MngrError(f"Failed to create directories: {mkdir_result.stderr}")
 
     # then upload them all in parallel
     count = 0

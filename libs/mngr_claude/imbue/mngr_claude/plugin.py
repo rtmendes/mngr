@@ -1624,17 +1624,12 @@ def _generate_claude_json(version: str | None, current_time: datetime | None = N
 
 
 def _parallel_file_transfer(transfers: Sequence[tuple[Path, bytes]], host, mngr_ctx):
-    remote_folders: set[str] = set()
+    remote_folders: list[str] = []
     for dest_path, _dest_contents in transfers:
-        remote_folders.add(shlex.quote(str(dest_path.parent)))
-    # Create directories in batches to avoid exceeding bash's argument length limit
-    folder_list = sorted(remote_folders)
-    batch_size = 50
-    for i in range(0, len(folder_list), batch_size):
-        batch = folder_list[i : i + batch_size]
-        mkdir_result = host.execute_idempotent_command(f"mkdir -p {' '.join(batch)}")
-        if not mkdir_result.success:
-            raise MngrError(f"Failed to create directories: {mkdir_result.stderr}")
+        remote_folders.append(shlex.quote(str(dest_path.parent)))
+    mkdir_result = host.execute_idempotent_command(f"mkdir -p {' '.join(remote_folders)}")
+    if not mkdir_result.success:
+        raise MngrError(f"Failed to create directories: {mkdir_result.stderr}")
 
     # then upload them all in parallel
     count = 0
