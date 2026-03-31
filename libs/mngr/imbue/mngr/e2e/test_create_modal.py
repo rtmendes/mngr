@@ -32,7 +32,7 @@ def test_create_provider_modal(e2e: E2eSession) -> None:
 
 
 @pytest.mark.rsync
-@pytest.mark.timeout(420)
+@pytest.mark.timeout(660)
 def test_create_modal_no_connect_message(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # you can send an initial message (so you don't have to wait around, eg, while a Modal container starts)
@@ -43,11 +43,12 @@ def test_create_modal_no_connect_message(e2e: E2eSession) -> None:
     """)
     # Use a generous ready timeout because the agent needs to fully start
     # (install Claude Code, authenticate, signal readiness) before the message
-    # can be sent. This is slow on fresh Modal hosts (~2-5 min).
+    # can be sent. This is slow on fresh Modal hosts (~2-5 min), and even
+    # slower in Modal-in-Modal (offload) environments (~5-8 min).
     result = e2e.run(
-        'MNGR_AGENT_READY_TIMEOUT=300 mngr create my-task --provider modal --no-connect --pass-env ANTHROPIC_API_KEY --message "Speed up one of my tests and make a PR on github" --no-ensure-clean',
+        'MNGR_AGENT_READY_TIMEOUT=540 mngr create my-task --provider modal --no-connect --pass-env ANTHROPIC_API_KEY --message "Speed up one of my tests and make a PR on github" --no-ensure-clean',
         comment="you can send an initial message (so you don't have to wait around)",
-        timeout=360.0,
+        timeout=600.0,
     )
     expect(result).to_succeed()
 
