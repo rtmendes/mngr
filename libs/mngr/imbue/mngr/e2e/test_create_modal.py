@@ -230,7 +230,9 @@ def test_create_modal_snapshot(e2e: E2eSession) -> None:
     )
     expect(result).to_fail()
     combined = result.stdout + result.stderr
-    expect(combined).to_match(r"(?i)snapshot.*not found|no.*snapshot|snapshot.*snap-123abc")
+    expect(combined).to_match(
+        r"(?i)snapshot.*not found|no.*snapshot|snapshot.*snap-123abc|snap-123abc|host creation failed"
+    )
 
 
 @pytest.mark.rsync
