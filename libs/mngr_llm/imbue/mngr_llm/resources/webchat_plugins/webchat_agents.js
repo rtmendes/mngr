@@ -138,6 +138,16 @@ window.addEventListener("load", function () {
     }
   }
 
+  // Re-apply branding whenever the upstream app (re-)creates the
+  // claimed slot element -- e.g. after a route change that causes
+  // the sidebar component to be fully recreated.
+  $llm.on("slot_rendered", function (event) {
+    if (event.slotName === "sidebar-branding") {
+      applyAgentBranding();
+    }
+    return event;
+  });
+
   // ── Rendering ────────────────────────────────────────────────
 
   function buildAgentsListHtml() {
