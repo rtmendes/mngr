@@ -440,6 +440,8 @@ def find_and_maybe_start_agent_by_name_or_id(
     # Try matching by name
     agent_name = AgentName(agent_str)
     matching: list[tuple[AgentInterface, OnlineHostInterface]] = []
+    # Track display info for error messages: (agent_id, host_name, provider_name)
+    match_display_info: list[tuple[AgentId, HostName, ProviderInstanceName]] = []
 
     for host_ref, agent_refs in agents_by_host.items():
         for agent_ref in agent_refs:
@@ -453,20 +455,26 @@ def find_and_maybe_start_agent_by_name_or_id(
                 for agent in online_host.get_agents():
                     if agent.id == agent_ref.agent_id:
                         matching.append((agent, online_host))
+                        match_display_info.append((agent_ref.agent_id, host_ref.host_name, host_ref.provider_name))
                         break
 
     if not matching:
         raise UserInputError(f"No agent found with name or ID: {agent_str}")
 
     if len(matching) > 1:
-        # Build helpful error message showing the matching agents
-        agent_list = "\n".join([f"  - {agent.id} (on {host.get_name()})" for agent, host in matching])
+        # Build helpful error message showing the matching agents with address syntax
+        agent_list = "\n".join(
+            [
+                f"  - {agent_str}@{host_name}.{provider_name} (ID: {agent_id})"
+                for agent_id, host_name, provider_name in match_display_info
+            ]
+        )
         raise UserInputError(
             f"Multiple agents found with name '{agent_str}':\n{agent_list}\n\n"
-            f"Please use the agent ID instead:\n"
-            f"  mngr {command_name} <agent-id>\n\n"
-            f"To see all agent IDs, run:\n"
-            f"  mngr list --fields id,name,host"
+            f"Disambiguate using the address format:\n"
+            f"  mngr {command_name} {agent_str}@<host>.<provider>\n\n"
+            f"Or use the agent ID directly:\n"
+            f"  mngr {command_name} <agent-id>"
         )
 
     # make sure the agent is started
