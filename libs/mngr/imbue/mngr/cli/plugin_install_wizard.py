@@ -95,13 +95,14 @@ def _filter_already_installed(
 def _should_preselect(entry: CatalogEntry) -> bool:
     """Determine if a catalog entry should be preselected in the wizard.
 
-    BASIC-tier entries with a signal are preselected if the signal passes.
-    All other entries are not preselected.
+    BASIC-tier entries are preselected by default. If a signal is specified,
+    preselection depends on the signal check passing. EXTRA-tier entries
+    are never preselected.
     """
     if entry.tier != PluginTier.BASIC:
         return False
     if entry.signal is None:
-        return False
+        return True
     signal_check = SIGNAL_CHECKS.get(entry.signal)
     if signal_check is None:
         return False

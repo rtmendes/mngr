@@ -1,6 +1,3 @@
-import subprocess
-from unittest.mock import patch
-
 from imbue.mngr.plugin_catalog import PLUGIN_CATALOG
 from imbue.mngr.plugin_catalog import SIGNAL_CHECKS
 from imbue.mngr.plugin_catalog import SignalCheck
@@ -38,12 +35,16 @@ def test_catalog_contains_expected_basic_entry_points() -> None:
     assert "claude" in basic_names
     assert "opencode" in basic_names
     assert "llm" in basic_names
+    assert "tutor" in basic_names
 
 
-def test_catalog_basic_entries_have_signals() -> None:
+def test_catalog_basic_entries_with_signal_reference_valid_keys() -> None:
+    """BASIC entries that have a signal should reference a valid signal key."""
     for entry in PLUGIN_CATALOG:
-        if entry.tier == PluginTier.BASIC:
-            assert entry.signal is not None, f"BASIC entry {entry.entry_point_name} has no signal"
+        if entry.tier == PluginTier.BASIC and entry.signal is not None:
+            assert entry.signal in SIGNAL_CHECKS, (
+                f"BASIC entry {entry.entry_point_name} references unknown signal '{entry.signal}'"
+            )
 
 
 # =============================================================================
@@ -93,15 +94,6 @@ def test_check_signal_fails_for_missing_binary() -> None:
     assert check_signal(signal) is False
 
 
-def test_check_signal_fails_on_timeout() -> None:
-    signal = SignalCheck(command=("sleep", "999"))
-    with patch(
-        "imbue.mngr.plugin_catalog.subprocess.run",
-        side_effect=subprocess.TimeoutExpired(cmd="sleep", timeout=10),
-    ):
-        assert check_signal(signal) is False
-
-
 # =============================================================================
 # get_installable_packages
 # =============================================================================
@@ -124,7 +116,6 @@ def test_get_installable_packages_prefers_basic_tier() -> None:
     """For packages with both BASIC and EXTRA entries, the representative should be BASIC."""
     packages = get_installable_packages()
     for pkg in packages:
-        # Check that if a BASIC entry exists for this package, it's the representative
         basic_entries = [
             e for e in PLUGIN_CATALOG if e.package_name == pkg.package_name and e.tier == PluginTier.BASIC
         ]

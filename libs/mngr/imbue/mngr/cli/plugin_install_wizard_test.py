@@ -55,7 +55,7 @@ def test_should_preselect_extra_tier_is_never_preselected() -> None:
 
 
 def test_should_preselect_basic_no_signal() -> None:
-    """BASIC tier with no signal should not be preselected."""
+    """BASIC tier with no signal should always be preselected."""
     entry = CatalogEntry(
         entry_point_name="test",
         package_name="test",
@@ -63,7 +63,7 @@ def test_should_preselect_basic_no_signal() -> None:
         tier=PluginTier.BASIC,
         signal=None,
     )
-    assert _should_preselect(entry) is False
+    assert _should_preselect(entry) is True
 
 
 def test_should_preselect_basic_unknown_signal() -> None:

@@ -189,7 +189,7 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
         entry_point_name="tutor",
         package_name="imbue-mngr-tutor",
         description="Interactive tutorial plugin for mngr",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.BASIC,
     ),
     CatalogEntry(
         entry_point_name="wait",
