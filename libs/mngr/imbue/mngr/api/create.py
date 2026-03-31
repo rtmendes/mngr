@@ -1,3 +1,4 @@
+from typing import Final
 from typing import cast
 
 from loguru import logger
@@ -9,13 +10,18 @@ from imbue.mngr.api.discovery_events import emit_discovery_events_for_host
 from imbue.mngr.api.providers import get_provider_instance
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import DuplicateAgentNameError
+from imbue.mngr.errors import MngrError
 from imbue.mngr.hosts.host import HostLocation
 from imbue.mngr.interfaces.host import CreateAgentOptions
 from imbue.mngr.interfaces.host import HostEnvironmentOptions
 from imbue.mngr.interfaces.host import NewHostOptions
 from imbue.mngr.interfaces.host import OnlineHostInterface
+from imbue.mngr.interfaces.provider_instance import ProviderInstanceInterface
 from imbue.mngr.plugins.hookspecs import OnBeforeCreateArgs
+from imbue.mngr.primitives import HostName
 from imbue.mngr.utils.env_utils import parse_env_file
+
+_MAX_HOST_NAME_GENERATION_ATTEMPTS: Final[int] = 100
 
 
 def _call_on_before_create_hooks(
@@ -196,6 +202,24 @@ def _write_host_env_vars(
             host.set_env_vars(env_vars)
 
 
+def _generate_unique_host_name(
+    provider: ProviderInstanceInterface,
+    target_host: NewHostOptions,
+    mngr_ctx: MngrContext,
+) -> HostName:
+    """Generate a host name that does not collide with existing hosts on the provider."""
+    existing_hosts = provider.discover_hosts(cg=mngr_ctx.concurrency_group)
+    existing_names: set[HostName] = {h.host_name for h in existing_hosts}
+    for _ in range(_MAX_HOST_NAME_GENERATION_ATTEMPTS):
+        candidate = provider.get_host_name(target_host.name_style)
+        if candidate not in existing_names:
+            return candidate
+    raise MngrError(
+        f"Failed to generate a unique host name after {_MAX_HOST_NAME_GENERATION_ATTEMPTS} attempts. "
+        f"Use an explicit host name in the address (e.g. NAME@HOST.PROVIDER)."
+    )
+
+
 def resolve_target_host(
     target_host: OnlineHostInterface | NewHostOptions,
     mngr_ctx: MngrContext,
@@ -204,9 +228,9 @@ def resolve_target_host(
     if target_host is not None and isinstance(target_host, NewHostOptions):
         # Create a new host using the specified provider
         provider = get_provider_instance(target_host.provider, mngr_ctx)
-        host_name = (
-            target_host.name if target_host.name is not None else provider.get_host_name(target_host.name_style)
-        )
+        host_name = target_host.name
+        if host_name is None:
+            host_name = _generate_unique_host_name(provider, target_host, mngr_ctx)
 
         with log_span("Calling on_before_host_create hooks"):
             mngr_ctx.pm.hook.on_before_host_create(name=host_name, provider_name=target_host.provider)

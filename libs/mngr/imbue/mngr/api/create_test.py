@@ -1,12 +1,22 @@
 from pathlib import Path
 
+import pytest
+
+from imbue.mngr.api.create import _generate_unique_host_name
 from imbue.mngr.api.create import _write_host_env_vars
 from imbue.mngr.api.create import resolve_target_host
 from imbue.mngr.config.data_types import EnvVar
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.errors import MngrError
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.interfaces.host import HostEnvironmentOptions
+from imbue.mngr.interfaces.host import NewHostOptions
 from imbue.mngr.interfaces.host import OnlineHostInterface
+from imbue.mngr.interfaces.provider_instance import ProviderInstanceInterface
+from imbue.mngr.primitives import HostName
+from imbue.mngr.primitives import HostNameStyle
+from imbue.mngr.primitives import ProviderInstanceName
+from imbue.mngr.providers.local.instance import LocalProviderInstance
 
 
 def test_write_host_env_vars_writes_explicit_env_vars(
@@ -98,6 +108,69 @@ def test_resolve_target_host_with_existing_host(
 
     resolved = resolve_target_host(local_host, temp_mngr_ctx)
     assert resolved.id == local_host.id
+
+
+# =============================================================================
+# _generate_unique_host_name Tests
+# =============================================================================
+
+
+def test_generate_unique_host_name_avoids_existing_names(
+    local_provider: LocalProviderInstance,
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """_generate_unique_host_name produces a name not already used by existing hosts.
+
+    The local provider generates "localhost" every time and has one host named
+    "localhost", so every attempt collides. This test uses the real COOLNAME
+    style with a non-local-provider name generator that produces random names
+    from a large pool, so collisions are effectively impossible.
+    """
+    target = NewHostOptions(
+        provider=ProviderInstanceName("local"),
+        name=None,
+        name_style=HostNameStyle.COOLNAME,
+        tags={},
+    )
+
+    # The local provider discovers one host ("localhost") and get_host_name
+    # returns "localhost" every time (guaranteed collision). Override
+    # get_host_name by using the base class implementation which generates
+    # random names from a large pool -- no collision with "localhost".
+    original_get_host_name = ProviderInstanceInterface.get_host_name
+    test_provider_cls = type(
+        "_TestProvider",
+        (LocalProviderInstance,),
+        {"get_host_name": lambda self, style: original_get_host_name(self, style)},
+    )
+    provider = test_provider_cls(
+        name=local_provider.name,
+        host_dir=local_provider.host_dir,
+        mngr_ctx=local_provider.mngr_ctx,
+    )
+    result = _generate_unique_host_name(provider, target, temp_mngr_ctx)
+
+    assert result != HostName("localhost")
+
+
+def test_generate_unique_host_name_raises_after_exhausting_attempts(
+    local_provider: LocalProviderInstance,
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """_generate_unique_host_name raises MngrError when all names collide.
+
+    The local provider always generates "localhost" and has a host named
+    "localhost", so every attempt collides forever.
+    """
+    target = NewHostOptions(
+        provider=ProviderInstanceName("local"),
+        name=None,
+        name_style=HostNameStyle.COOLNAME,
+        tags={},
+    )
+
+    with pytest.raises(MngrError, match="Failed to generate a unique host name"):
+        _generate_unique_host_name(local_provider, target, temp_mngr_ctx)
 
 
 def test_write_host_env_vars_later_env_file_overrides_earlier(
