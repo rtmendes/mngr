@@ -24,9 +24,6 @@ def _build_subprocess_env() -> dict[str, str]:
     --env flags -- NOT from ~/.modal.toml.
     """
     env = os.environ.copy()
-    # Remove test isolation vars that would interfere with the real mngr config
-    env.pop("MNGR_HOST_DIR", None)
-    env.pop("MNGR_ROOT_NAME", None)
     # Remove pytest marker so mngr doesn't reject the call
     env.pop("PYTEST_CURRENT_TEST", None)
     return env
