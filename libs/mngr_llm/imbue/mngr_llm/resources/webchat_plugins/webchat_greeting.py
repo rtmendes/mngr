@@ -27,7 +27,7 @@ from pydantic import Field
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.mngr_llm.provisioning import MIND_CONVERSATIONS_TABLE_SQL
-from imbue.mngr_llm.resources.webchat_default_model import read_default_chat_model
+from imbue.mngr_llm.resources.webchat_plugins.webchat_default_model import read_default_chat_model
 from llm_webchat.hookspecs import hookimpl
 
 _LLM_USER_PATH: Final[str] = os.environ.get("LLM_USER_PATH", "")

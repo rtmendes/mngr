@@ -27,13 +27,13 @@ import uvicorn
 from loguru import logger
 
 from imbue.imbue_common.logging import log_span
-from imbue.mngr_llm import resources as llm_resources
-from imbue.mngr_llm.resources.webchat_agents import AgentsPlugin
-from imbue.mngr_llm.resources.webchat_default_model import DefaultModelPlugin
-from imbue.mngr_llm.resources.webchat_greeting import GreetingPlugin
-from imbue.mngr_llm.resources.webchat_injected_messages import InjectedMessagesPlugin
-from imbue.mngr_llm.resources.webchat_register_conversations import RegisterConversationsPlugin
-from imbue.mngr_llm.resources.webchat_system_prompt import create_system_prompt_plugin
+from imbue.mngr_llm.resources import webchat_plugins as llm_webchat_plugins
+from imbue.mngr_llm.resources.webchat_plugins.webchat_agents import AgentsPlugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_default_model import DefaultModelPlugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_greeting import GreetingPlugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_injected_messages import InjectedMessagesPlugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_register_conversations import RegisterConversationsPlugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_system_prompt import create_system_prompt_plugin
 from llm_webchat.config import Config
 from llm_webchat.config import load_config
 from llm_webchat.plugins import get_plugin_manager
@@ -65,7 +65,7 @@ def _compute_root_path(agent_id: str, server_name: str) -> str:
 
 def _resolve_resource_path(filename: str) -> str:
     """Return the absolute filesystem path of a resource file in this package."""
-    resource_files = importlib.resources.files(llm_resources)
+    resource_files = importlib.resources.files(llm_webchat_plugins)
     resource = resource_files.joinpath(filename)
     return str(resource)
 

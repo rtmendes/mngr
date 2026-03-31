@@ -7,8 +7,8 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from imbue.mngr_llm.resources.webchat_agents import AgentsPlugin
-from imbue.mngr_llm.resources.webchat_agents import _fetch_agent_list
+from imbue.mngr_llm.resources.webchat_plugins.webchat_agents import AgentsPlugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_agents import _fetch_agent_list
 
 
 def test_fetch_agent_list_returns_empty_when_mngr_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:

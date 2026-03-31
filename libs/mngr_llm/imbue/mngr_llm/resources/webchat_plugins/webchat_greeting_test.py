@@ -10,9 +10,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from imbue.mngr_llm.conftest import create_mind_conversations_table_in_test_db
-from imbue.mngr_llm.resources.webchat_greeting import GreetingPlugin
-from imbue.mngr_llm.resources.webchat_greeting import _parse_conversation_id_from_inject_output
-from imbue.mngr_llm.resources.webchat_greeting import _register_conversation_in_mind_table
+from imbue.mngr_llm.resources.webchat_plugins.webchat_greeting import GreetingPlugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_greeting import _parse_conversation_id_from_inject_output
+from imbue.mngr_llm.resources.webchat_plugins.webchat_greeting import _register_conversation_in_mind_table
 
 
 def test_parse_conversation_id_from_typical_output() -> None:

@@ -7,9 +7,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
-from imbue.mngr_llm.resources.webchat_default_model import DefaultModelPlugin
-from imbue.mngr_llm.resources.webchat_default_model import _FALLBACK_MODEL
-from imbue.mngr_llm.resources.webchat_default_model import read_default_chat_model
+from imbue.mngr_llm.resources.webchat_plugins.webchat_default_model import DefaultModelPlugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_default_model import _FALLBACK_MODEL
+from imbue.mngr_llm.resources.webchat_plugins.webchat_default_model import read_default_chat_model
 
 
 def testread_default_chat_model_returns_fallback_when_no_work_dir() -> None:

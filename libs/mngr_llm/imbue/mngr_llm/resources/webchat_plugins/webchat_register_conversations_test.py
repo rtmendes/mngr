@@ -12,8 +12,8 @@ from llm.cli import logs_db_path
 from llm_webchat.database import open_database
 
 from imbue.mngr_llm.conftest import create_mind_conversations_table_in_test_db
-from imbue.mngr_llm.resources.webchat_register_conversations import RegisterConversationsPlugin
-from imbue.mngr_llm.resources.webchat_register_conversations import _register_conversation_in_mind_table
+from imbue.mngr_llm.resources.webchat_plugins.webchat_register_conversations import RegisterConversationsPlugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_register_conversations import _register_conversation_in_mind_table
 
 
 def _create_app_with_plugin(db_path: Path) -> FastAPI:

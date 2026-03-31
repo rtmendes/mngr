@@ -7,11 +7,11 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from imbue.mngr_llm.resources.webchat_injected_messages import _get_max_rowid
-from imbue.mngr_llm.resources.webchat_injected_messages import _get_tracked_conversation_ids
-from imbue.mngr_llm.resources.webchat_injected_messages import _is_injected_response
-from imbue.mngr_llm.resources.webchat_injected_messages import _poll_for_injected_messages
-from imbue.mngr_llm.resources.webchat_injected_messages import _run_poll_loop
+from imbue.mngr_llm.resources.webchat_plugins.webchat_injected_messages import _get_max_rowid
+from imbue.mngr_llm.resources.webchat_plugins.webchat_injected_messages import _get_tracked_conversation_ids
+from imbue.mngr_llm.resources.webchat_plugins.webchat_injected_messages import _is_injected_response
+from imbue.mngr_llm.resources.webchat_plugins.webchat_injected_messages import _poll_for_injected_messages
+from imbue.mngr_llm.resources.webchat_plugins.webchat_injected_messages import _run_poll_loop
 
 
 def _create_test_db(db_path: Path) -> None:

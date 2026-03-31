@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from imbue.mngr_llm.resources.webchat_system_prompt import SystemPromptPlugin
-from imbue.mngr_llm.resources.webchat_system_prompt import create_system_prompt_plugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_system_prompt import SystemPromptPlugin
+from imbue.mngr_llm.resources.webchat_plugins.webchat_system_prompt import create_system_prompt_plugin
 
 
 def test_modify_command_injects_system_flag() -> None:
