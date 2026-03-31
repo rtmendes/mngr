@@ -1,8 +1,8 @@
 """Generate .dockerignore from .gitignore.
 
-.dockerignore and .gitignore have slightly different semantics for bare names:
-in .gitignore, `foo` matches at any depth; in .dockerignore, `foo` matches only
-at root. We normalize by prefixing bare names with `**/`.
+Since .gitignore is normalized (all patterns use **/ or / prefixes), the
+transformation is straightforward: strip leading / (root-only in gitignore
+is already the default in dockerignore) and append docker-specific entries.
 
 Usage:
     python scripts/generate_dockerignore.py          # write .dockerignore
@@ -37,21 +37,8 @@ DOCKER_EXTRA = """\
 # Patterns from .gitignore that must NOT appear in .dockerignore because
 # they are needed in the Docker build context.
 EXCLUDE_PATTERNS = {
-    "current.tar.gz",
+    "/current.tar.gz",
 }
-
-
-def _is_bare_name(pattern: str) -> bool:
-    """Return True if the pattern is a bare name (no directory separator).
-
-    A bare name in .gitignore matches at any depth, but in .dockerignore it
-    only matches at root. These need a **/ prefix.
-
-    Trailing `/` doesn't count as a directory separator for this purpose --
-    `foo/` is still a bare name that should match at any depth.
-    """
-    stripped = pattern.rstrip("/")
-    return "/" not in stripped
 
 
 def transform_line(line: str) -> str | None:
@@ -59,27 +46,19 @@ def transform_line(line: str) -> str | None:
 
     Returns None if the line should be excluded from .dockerignore.
     """
-    # Preserve blank lines and comments as-is.
     stripped = line.strip()
     if not stripped or stripped.startswith("#"):
         return line.rstrip()
 
     # Check if this pattern should be excluded.
-    clean = stripped.lstrip("!")
-    if clean in EXCLUDE_PATTERNS:
+    if stripped in EXCLUDE_PATTERNS or stripped.lstrip("!") in EXCLUDE_PATTERNS:
         return None
 
-    # Handle negation: transform the inner pattern, then re-add `!`.
+    # Strip leading / -- in gitignore it means root-only, which is already
+    # the default in dockerignore for patterns without **/.
     negated = stripped.startswith("!")
     pattern = stripped[1:] if negated else stripped
-
-    # Strip leading `/` -- in .gitignore it means root-only, which is already
-    # the default behavior in .dockerignore for patterns containing `/`.
     pattern = pattern.lstrip("/")
-
-    # Prefix bare names with `**/` so they match at any depth.
-    if _is_bare_name(pattern) and not pattern.startswith("**/"):
-        pattern = f"**/{pattern}"
 
     return f"!{pattern}" if negated else pattern
 

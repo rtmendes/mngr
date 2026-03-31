@@ -161,7 +161,7 @@ docs/_build/
 **/.ropeproject
 
 # mkdocs documentation
-**/site
+site
 
 # mypy
 **/.mypy_cache/
@@ -256,8 +256,8 @@ scripts/notify_user.local.sh
 
 # Offload caches and local files
 .offload/**
-**/.offload-cache-key
-**/test-results
+.offload-cache-key
+test-results
 
 # Minds deploy-time build artifacts
 **/.minds/
