@@ -94,7 +94,7 @@ _INSTALLED_PLUGINS_SENTINEL_PREFIX: Final[str] = "/__mngr_plugins_source__"
 """Sentinel prefix written into installPath values at deploy build time.
 
 At build time, ``get_files_for_deploy`` rewrites absolute local paths
-(e.g. /Users/ev/.claude/plugins/cache/...) to use this sentinel prefix.
+(e.g. /home/user/.claude/plugins/cache/...) to use this sentinel prefix.
 At runtime, the fixup rewrites the sentinel to the actual per-agent config dir.
 This avoids depending on the build machine's home directory path.
 """
@@ -679,7 +679,7 @@ def _fixup_installed_plugins_json(host: OnlineHostInterface, source_claude_dir: 
     source_claude_dir to config_dir.
 
     installed_plugins.json contains absolute paths (e.g.
-    /Users/ev/.claude/plugins/cache/...) that won't resolve on a
+    /home/user/.claude/plugins/cache/...) that won't resolve on a
     different machine or in a different config dir. This rewrites them
     to point to config_dir/plugins/cache/... so Claude Code can find
     the plugin files.
