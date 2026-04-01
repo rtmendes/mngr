@@ -443,6 +443,9 @@ def find_and_maybe_start_agent_by_name_or_id(
     # Track display info for error messages: (agent_id, host_name, provider_name)
     match_display_info: list[tuple[AgentId, HostName, ProviderInstanceName]] = []
 
+    # Track agents found during discovery but missing from get_agents()
+    missing_from_host: list[tuple[AgentId, HostName, ProviderInstanceName]] = []
+
     for host_ref, agent_refs in agents_by_host.items():
         for agent_ref in agent_refs:
             if agent_ref.agent_name == agent_name:
@@ -460,13 +463,27 @@ def find_and_maybe_start_agent_by_name_or_id(
                         found_on_host = True
                         break
                 if not found_on_host:
-                    logger.warning(
-                        "Agent {} ({}) was discovered on host {} but not found via get_agents(). "
-                        "This may indicate a stale discovery cache or host state inconsistency.",
-                        agent_ref.agent_name,
-                        agent_ref.agent_id,
-                        host_ref.host_name,
-                    )
+                    missing_from_host.append((agent_ref.agent_id, host_ref.host_name, host_ref.provider_name))
+
+    if missing_from_host:
+        missing_details = ", ".join(
+            f"{agent_id}@{host_name}.{provider_name}" for agent_id, host_name, provider_name in missing_from_host
+        )
+        if not matching:
+            # All discovered agents disappeared -- this is an internal consistency error,
+            # not user error. Raise RuntimeError to trigger the unexpected-error handler
+            # with GitHub issue reporting.
+            raise RuntimeError(
+                f"Agent '{agent_str}' was found during discovery but not on host(s). "
+                f"Missing: {missing_details}. "
+                f"This indicates a stale discovery cache or host state inconsistency."
+            )
+        # Some agents disappeared but others were found. Log a warning and proceed.
+        logger.warning(
+            "Some agents named '{}' were discovered but not found on their host(s): {}",
+            agent_str,
+            missing_details,
+        )
 
     if not matching:
         raise UserInputError(f"No agent found with name or ID: {agent_str}")
