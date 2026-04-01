@@ -55,6 +55,7 @@ from imbue.mngr.providers.registry import get_all_provider_args_help_sections
 from imbue.mngr.providers.registry import load_all_registries
 from imbue.mngr.utils.click_utils import detect_alias_to_canonical
 from imbue.mngr.utils.click_utils import detect_aliases_by_command
+from imbue.mngr.utils.env_utils import parse_bool_env
 
 # Module-level container for the plugin manager singleton, created lazily.
 # Using a dict avoids the need for the 'global' keyword while still allowing module-level state.
@@ -269,7 +270,7 @@ def create_plugin_manager() -> pluggy.PluginManager:
     # load_setuptools_entrypoints so disabled plugins are never registered.
     # MNGR_LOAD_ALL_PLUGINS overrides this so that tooling (e.g. doc generation)
     # can produce output that reflects all providers regardless of local config.
-    if not os.environ.get("MNGR_LOAD_ALL_PLUGINS"):
+    if not parse_bool_env(os.environ.get("MNGR_LOAD_ALL_PLUGINS", "")):
         block_disabled_plugins(pm, read_disabled_plugins())
 
     # Automatically discover and load plugins registered via setuptools entry points.
