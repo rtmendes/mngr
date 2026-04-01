@@ -265,9 +265,11 @@ def _run_reintegrate(
         run_commands=_build_run_commands(run_name),
     )
 
-    # Run integrator
+    # Run integrator (include tmr_run_name so it can be discovered alongside test agents)
     env_options = AgentEnvironmentOptions(env_vars=resolve_env_vars((), opts.env))
-    label_options = resolve_labels(opts.label)
+    run_labels = dict(resolve_labels(opts.label).labels)
+    run_labels["tmr_run_name"] = run_name
+    label_options = AgentLabelOptions(labels=run_labels)
     integrator_agent_type = opts.integrator_type if opts.integrator_type is not None else opts.agent_type
     integrator_config = TmrLaunchConfig(
         source_dir=source_dir,
