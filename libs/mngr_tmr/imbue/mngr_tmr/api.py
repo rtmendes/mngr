@@ -77,7 +77,8 @@ def _list_agents_thread_target(
             is_streaming=False,
             error_behavior=ErrorBehavior.CONTINUE,
         )
-    except (MngrError, HostError, OSError):
+    except (MngrError, HostError, OSError) as exc:
+        logger.warning("Polling failed (will retry next cycle): {}", exc)
         result_holder[0] = None
 
 
