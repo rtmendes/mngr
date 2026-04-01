@@ -21,6 +21,7 @@ from imbue.mngr.api.testing import FakeHost
 from imbue.mngr.config.data_types import EnvVar
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.errors import ConfigError
 from imbue.mngr.errors import NoCommandDefinedError
 from imbue.mngr.errors import PluginMngrError
 from imbue.mngr.errors import UserInputError
@@ -2680,8 +2681,8 @@ def test_rewrite_installed_plugins_paths_handles_multiple_plugins() -> None:
     assert result["plugins"]["plugin-b@org-b"][0]["installPath"] == "/remote/config/plugins/cache/org-b/plugin-b/2.0.0"
 
 
-def test_rewrite_installed_plugins_paths_preserves_non_matching_paths() -> None:
-    """installPath values that don't start with local_claude_dir are left unchanged."""
+def test_rewrite_installed_plugins_paths_raises_on_non_matching_prefix() -> None:
+    """installPath values that don't start with the expected prefix raise ConfigError."""
     local_claude_dir = Path("/Users/testuser/.claude")
     remote_config_dir = Path("/remote/config")
     content = json.dumps(
@@ -2698,12 +2699,8 @@ def test_rewrite_installed_plugins_paths_preserves_non_matching_paths() -> None:
         }
     )
 
-    result = json.loads(_rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir))
-
-    assert (
-        result["plugins"]["other-plugin@other-org"][0]["installPath"]
-        == "/some/other/path/plugins/cache/other-org/other-plugin/1.0.0"
-    )
+    with pytest.raises(ConfigError, match="does not start with expected prefix"):
+        _rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir)
 
 
 def test_rewrite_installed_plugins_paths_preserves_other_fields() -> None:
@@ -2749,8 +2746,8 @@ def test_rewrite_installed_plugins_paths_handles_empty_plugins() -> None:
     assert result["plugins"] == {}
 
 
-def test_rewrite_installed_plugins_paths_does_not_match_similar_prefix() -> None:
-    """A path like /Users/testuser/.claude2/ must not match /Users/testuser/.claude/."""
+def test_rewrite_installed_plugins_paths_raises_on_similar_prefix() -> None:
+    """A path like /Users/testuser/.claude2/ raises because it doesn't match /Users/testuser/.claude/."""
     local_claude_dir = Path("/Users/testuser/.claude")
     remote_config_dir = Path("/remote/config")
     content = json.dumps(
@@ -2767,12 +2764,8 @@ def test_rewrite_installed_plugins_paths_does_not_match_similar_prefix() -> None
         }
     )
 
-    result = json.loads(_rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir))
-
-    # Should NOT be rewritten because .claude2 != .claude
-    assert (
-        result["plugins"]["plugin@org"][0]["installPath"] == "/Users/testuser/.claude2/plugins/cache/org/plugin/1.0.0"
-    )
+    with pytest.raises(ConfigError, match="does not start with expected prefix"):
+        _rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir)
 
 
 # =============================================================================

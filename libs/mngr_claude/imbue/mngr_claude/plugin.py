@@ -39,6 +39,7 @@ from imbue.mngr.api.providers import get_provider_instance
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import AgentStartError
+from imbue.mngr.errors import ConfigError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import NoCommandDefinedError
 from imbue.mngr.errors import PluginMngrError
@@ -235,20 +236,25 @@ class ClaudeAgentConfig(AgentTypeConfig):
 
 
 @pure
-def _rewrite_installed_plugins_paths(content: str, local_claude_dir: Path, target_config_dir: Path) -> str:
+def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, target_config_dir: Path) -> str:
     """Rewrite installPath values in installed_plugins.json for a target config dir.
 
-    Rebases absolute local paths (under local_claude_dir) onto target_config_dir
+    Rebases absolute paths from source_claude_dir onto target_config_dir
     so that Claude Code can find plugin files in the per-agent config dir.
+    Raises ConfigError if any installPath doesn't start with the expected prefix.
     """
     data: dict[str, Any] = json.loads(content)
-    local_prefix = str(local_claude_dir) + "/"
-    for plugin_entries in data.get("plugins", {}).values():
+    source_prefix = str(source_claude_dir) + "/"
+    for plugin_name, plugin_entries in data.get("plugins", {}).items():
         for entry in plugin_entries:
             install_path = entry.get("installPath", "")
-            if install_path.startswith(local_prefix):
-                relative = install_path[len(local_prefix) :]
-                entry["installPath"] = str(target_config_dir / relative)
+            if not install_path.startswith(source_prefix):
+                raise ConfigError(
+                    f"installed_plugins.json: plugin {plugin_name!r} has installPath {install_path!r} "
+                    f"which does not start with expected prefix {source_prefix!r}"
+                )
+            relative = install_path[len(source_prefix) :]
+            entry["installPath"] = str(target_config_dir / relative)
     return json.dumps(data, indent=2) + "\n"
 
 
