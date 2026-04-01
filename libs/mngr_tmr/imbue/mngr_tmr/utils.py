@@ -1,9 +1,6 @@
 """Utility functions for the test-mapreduce plugin."""
 
-import os
-import resource
 import secrets
-from collections import Counter
 from pathlib import Path
 
 from loguru import logger
@@ -17,46 +14,6 @@ from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import TransferMode
 
 _SHORT_ID_LENGTH = 6
-
-
-def log_open_fds() -> None:
-    """Log a summary of all open file descriptors for debugging FD exhaustion."""
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    fd_dir = Path("/dev/fd")
-    if not fd_dir.exists():
-        fd_dir = Path(f"/proc/{os.getpid()}/fd")
-    try:
-        fds = list(fd_dir.iterdir())
-    except OSError:
-        logger.warning("Cannot enumerate open FDs")
-        return
-
-    fd_count = len(fds)
-    logger.warning("Open FDs: {} (soft limit: {}, hard limit: {})", fd_count, soft, hard)
-
-    categories: Counter[str] = Counter()
-    samples: dict[str, list[str]] = {}
-    for fd_path in fds:
-        try:
-            target = os.readlink(str(fd_path))
-        except OSError:
-            target = "<unreadable>"
-        if target.startswith("/"):
-            parts = Path(target).parts[:4]
-            category = str(Path(*parts)) if len(parts) > 1 else target
-        elif target.startswith("pipe:") or target.startswith("socket:"):
-            category = target.split(":")[0]
-        else:
-            category = target
-        categories[category] += 1
-        if category not in samples:
-            samples[category] = []
-        if len(samples[category]) < 3:
-            samples[category].append(target)
-
-    for category, count in categories.most_common(20):
-        sample_str = ", ".join(samples[category])
-        logger.warning("  {} x {} (e.g. {})", count, category, sample_str)
 
 
 def resolve_templates(

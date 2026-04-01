@@ -50,7 +50,6 @@ from imbue.mngr_tmr.report import generate_html_report
 from imbue.mngr_tmr.utils import CollectTestsError as CollectTestsError
 from imbue.mngr_tmr.utils import collect_tests as collect_tests
 from imbue.mngr_tmr.utils import get_base_commit as get_base_commit
-from imbue.mngr_tmr.utils import log_open_fds as log_open_fds
 from imbue.mngr_tmr.utils import resolve_templates as resolve_templates
 
 _TERMINAL_STATES = frozenset(

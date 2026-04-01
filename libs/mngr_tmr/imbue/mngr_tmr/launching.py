@@ -30,7 +30,6 @@ from imbue.mngr_tmr.data_types import TestAgentInfo
 from imbue.mngr_tmr.data_types import TmrLaunchConfig
 from imbue.mngr_tmr.prompts import build_integrator_prompt
 from imbue.mngr_tmr.prompts import build_test_agent_prompt
-from imbue.mngr_tmr.utils import log_open_fds
 from imbue.mngr_tmr.utils import resolve_templates
 from imbue.mngr_tmr.utils import sanitize_test_name_for_agent
 from imbue.mngr_tmr.utils import short_random_id
@@ -289,8 +288,6 @@ def launch_all_test_agents(
                 agent_hosts[str(info.agent_id)] = host
             except (MngrError, HostError, OSError, BaseExceptionGroup) as exc:
                 logger.warning("Failed to launch agent: {}", exc)
-                if "Too many open files" in str(exc):
-                    log_open_fds()
 
     logger.info("Launched {} agent(s)", len(agents))
     return agents, agent_hosts, launch_config.snapshot
@@ -335,8 +332,6 @@ def launch_agents_up_to_limit(
             continue
         except (MngrError, HostError, OSError, BaseExceptionGroup) as exc:
             logger.warning("Failed to launch agent for {}: {}", test_node_id, exc)
-            if "Too many open files" in str(exc):
-                log_open_fds()
             continue
         all_agents.append(info)
         all_hosts[str(info.agent_id)] = host
