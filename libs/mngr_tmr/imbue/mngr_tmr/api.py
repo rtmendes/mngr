@@ -423,6 +423,22 @@ def launch_all_test_agents(
     return agents, agent_hosts, launch_config.snapshot
 
 
+_AGENT_CREATION_TIMEOUT_SECONDS = 600.0
+
+
+def _launch_with_timeout(
+    test_node_id: str,
+    config: TmrLaunchConfig,
+    mngr_ctx: MngrContext,
+    pytest_flags: tuple[str, ...],
+    prompt_suffix: str,
+) -> tuple[TestAgentInfo, OnlineHostInterface]:
+    """Launch a test agent with a timeout. Raises TimeoutError if creation takes too long."""
+    with ConcurrencyGroupExecutor(mngr_ctx.concurrency_group, name="launch-agent", max_workers=1) as executor:
+        future = executor.submit(launch_test_agent, test_node_id, config, mngr_ctx, pytest_flags, prompt_suffix)
+        return future.result(timeout=_AGENT_CREATION_TIMEOUT_SECONDS)
+
+
 def _launch_agents_up_to_limit(
     remaining_tests: list[str],
     pending_ids: set[str],
@@ -443,7 +459,10 @@ def _launch_agents_up_to_limit(
     while remaining_tests and (max_agents <= 0 or len(pending_ids) < max_agents):
         test_node_id = remaining_tests.pop(0)
         try:
-            info, host = launch_test_agent(test_node_id, config, mngr_ctx, pytest_flags, prompt_suffix)
+            info, host = _launch_with_timeout(test_node_id, config, mngr_ctx, pytest_flags, prompt_suffix)
+        except TimeoutError:
+            logger.warning("Agent creation timed out after {}s for {}", _AGENT_CREATION_TIMEOUT_SECONDS, test_node_id)
+            continue
         except (MngrError, HostError, OSError, BaseExceptionGroup) as exc:
             logger.warning("Failed to launch agent for {}: {}", test_node_id, exc)
             continue
@@ -569,7 +588,13 @@ def launch_and_poll_agents(
             continue
 
         pending_names = [agent_id_to_info[aid].agent_name for aid in pending_ids]
-        logger.info("Polling {} pending agent(s): {}", len(pending_ids), ", ".join(str(n) for n in pending_names))
+        queued_msg = f", {len(remaining_tests)} queued" if remaining_tests else ""
+        logger.info(
+            "Polling {} pending agent(s){}: {}",
+            len(pending_ids),
+            queued_msg,
+            ", ".join(str(n) for n in pending_names),
+        )
         list_result = try_list_agents(mngr_ctx)
         if list_result is None:
             time.sleep(poll_interval_seconds)
