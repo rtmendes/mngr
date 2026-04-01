@@ -68,7 +68,7 @@ class TmrCliOptions(CommonCliOptions):
     pytest_args: tuple[str, ...]
     testing_flags: tuple[str, ...]
     agent_type: str
-    integrator_type: str
+    integrator_type: str | None
     provider: str
     integrator_provider: str
     env: tuple[str, ...]
