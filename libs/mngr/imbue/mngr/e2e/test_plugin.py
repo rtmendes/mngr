@@ -56,6 +56,7 @@ def test_plugin_disable_enable_roundtrip(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.tmux
 def test_plugin_disable_affects_create(e2e: E2eSession) -> None:
     # Disable the claude plugin so its agent type is unavailable
     expect(e2e.run("mngr plugin disable claude", comment="Disable claude plugin")).to_succeed()

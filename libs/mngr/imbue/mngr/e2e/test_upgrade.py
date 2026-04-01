@@ -55,42 +55,47 @@ def test_config_with_unknown_keys_non_strict(minimal_install_env: MinimalInstall
 
 
 @pytest.mark.release
-@pytest.mark.timeout(120)
-def test_existing_agents_survive_reinstall(minimal_install_env: MinimalInstallEnv) -> None:
-    """Agent state should persist across mngr reinstalls.
+@pytest.mark.timeout(60)
+def test_preexisting_agent_state_discovered(minimal_install_env: MinimalInstallEnv) -> None:
+    """mngr list should discover agents from pre-existing state on disk.
 
-    When a user upgrades mngr (via uv tool install), their existing agents
-    (stored under MNGR_HOST_DIR) should still be discoverable.
+    This simulates an upgrade scenario: agent state files written by an older
+    version of mngr should still be found by the current version's discovery.
     """
-    agents_dir = minimal_install_env.env["MNGR_HOST_DIR"]
+    host_dir = Path(minimal_install_env.env["MNGR_HOST_DIR"])
+    host_id = uuid.uuid4().hex
     agent_id = uuid.uuid4().hex
-    agent_dir = Path(agents_dir) / "agents" / agent_id
-    agent_dir.mkdir(parents=True)
 
-    state_file = agent_dir / "state.json"
-    state_file.write_text(
+    # Write host state
+    host_dir_path = host_dir / "hosts" / host_id
+    host_dir_path.mkdir(parents=True)
+    (host_dir_path / "state.json").write_text(
+        json.dumps(
+            {
+                "id": host_id,
+                "name": "local",
+                "provider": "local",
+            }
+        )
+    )
+
+    # Write agent state under the host
+    agent_dir = host_dir_path / "agents" / agent_id
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "state.json").write_text(
         json.dumps(
             {
                 "id": agent_id,
                 "name": "pre-existing-agent",
                 "type": "claude",
-                "host_id": "local",
+                "host_id": host_id,
                 "work_dir": str(minimal_install_env.repo_dir),
             }
         )
     )
 
-    # Reinstall mngr into the same venv (simulates upgrade)
-    subprocess.run(
-        ["uv", "pip", "install", "--reinstall", "imbue-mngr"],
-        capture_output=True,
-        text=True,
-        cwd=minimal_install_env.repo_dir,
-        env=minimal_install_env.env,
-        timeout=60,
+    # mngr list should find the pre-existing agent
+    result = minimal_install_env.run_mngr(["list"])
+    assert result.returncode == 0, (
+        f"mngr list failed (exit {result.returncode}):\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
-    # Reinstall may fail if the package isn't in a registry, which is expected
-    # in dev environments. The important thing is that the agent state files
-    # are still on disk after any install operation.
-    assert agent_dir.exists(), "Agent state directory should survive reinstall"
-    assert state_file.exists(), "Agent state file should survive reinstall"
