@@ -10,7 +10,7 @@ import pytest
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
-from imbue.mngr.plugin_catalog import get_basic_tier_entry_point_names
+from imbue.mngr.plugin_catalog import get_independent_entry_point_names
 from imbue.mngr.utils.testing import make_mngr_ctx
 
 
@@ -22,7 +22,7 @@ def enabled_plugins() -> frozenset[str]:
     fixme_fairy, and headless_claude (EXTRA). Tests in this package need
     all of them loaded.
     """
-    return get_basic_tier_entry_point_names() | {"code_guardian", "fixme_fairy", "headless_claude"}
+    return get_independent_entry_point_names() | {"code_guardian", "fixme_fairy", "headless_claude"}
 
 
 @pytest.fixture()

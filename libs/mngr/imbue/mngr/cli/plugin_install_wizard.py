@@ -186,42 +186,45 @@ def _get_accepted_signals(selected: list[CatalogEntry]) -> set[SignalCheck]:
 def _run_two_phase_wizard(available: tuple[CatalogEntry, ...]) -> list[str]:
     """Run the two-phase install wizard.
 
-    Phase 1: BASIC-tier plugins (preselected based on signal detection).
-    Phase 2: EXTRA-tier plugins, filtered to only show extras whose
-             signal's BASIC plugin was accepted in phase 1 (or extras
-             with no signal). Preselection based on is_recommended.
+    Phase 1: Recommended INDEPENDENT plugins. Preselected based on signal
+             detection (or always if no signal).
+    Phase 2: Everything else -- non-recommended INDEPENDENT plugins plus
+             DEPENDENT plugins whose signal was accepted in phase 1.
+             Preselection based on is_recommended.
 
     Returns the list of selected package names, or an empty list if cancelled.
     """
-    basic = tuple(e for e in available if e.tier == PluginTier.BASIC)
-    extras = tuple(e for e in available if e.tier == PluginTier.EXTRA)
+    recommended = tuple(e for e in available if e.tier == PluginTier.INDEPENDENT and e.is_recommended)
+    rest_independent = tuple(e for e in available if e.tier == PluginTier.INDEPENDENT and not e.is_recommended)
+    dependent = tuple(e for e in available if e.tier == PluginTier.DEPENDENT)
 
-    # Phase 1: BASIC plugins
-    basic_preselect = {e.entry_point_name: _should_preselect_basic(e) for e in basic}
+    # Phase 1: Recommended plugins
+    recommended_preselect = {e.entry_point_name: _should_preselect_basic(e) for e in recommended}
 
-    if basic:
+    if recommended:
         phase1_result = _run_selection_screen(
-            basic,
-            basic_preselect,
-            "Select which agent types and providers to enable.\nDetected tools are pre-selected:",
+            recommended,
+            recommended_preselect,
+            "Here are the recommended plugins for mngr.\nDetected tools are pre-selected:",
         )
         if phase1_result is None:
             return []
     else:
         phase1_result = []
 
-    # Determine which signals were accepted
+    # Determine which signals were accepted in phase 1
     accepted_signals = _get_accepted_signals(phase1_result)
 
-    # Phase 2: EXTRA plugins, filtered by accepted signals
-    visible_extras = tuple(e for e in extras if e.signal is None or e.signal in accepted_signals)
+    # Phase 2: non-recommended INDEPENDENT + DEPENDENT (filtered by accepted signals)
+    visible_dependent = tuple(e for e in dependent if e.signal in accepted_signals)
+    phase2_plugins = rest_independent + visible_dependent
 
-    if visible_extras:
-        extras_preselect = {e.entry_point_name: e.is_recommended for e in visible_extras}
+    if phase2_plugins:
+        phase2_preselect = {e.entry_point_name: e.is_recommended for e in phase2_plugins}
 
         phase2_result = _run_selection_screen(
-            visible_extras,
-            extras_preselect,
+            phase2_plugins,
+            phase2_preselect,
             "Do you want to install any extras?",
         )
         if phase2_result is None:

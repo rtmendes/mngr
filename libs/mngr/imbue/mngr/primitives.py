@@ -185,14 +185,15 @@ class ConflictMode(UpperCaseStrEnum):
 
 
 class PluginTier(UpperCaseStrEnum):
-    """Plugin tier controlling install wizard preselection.
+    """Whether a plugin works standalone or depends on another plugin.
 
-    BASIC: preselected in the install wizard when the signal check passes.
-    EXTRA: not preselected; user opts in manually.
+    INDEPENDENT: works out of the box (may have a signal for binary detection).
+    DEPENDENT: requires another plugin's signal to be relevant (e.g.,
+               fixme_fairy depends on claude).
     """
 
-    BASIC = auto()
-    EXTRA = auto()
+    INDEPENDENT = auto()
+    DEPENDENT = auto()
 
 
 # === ID Types ===

@@ -69,19 +69,19 @@ class CatalogEntry(FrozenModel):
     entry_point_name: str = Field(description="Pluggy entry point name")
     package_name: str = Field(description="PyPI package name")
     description: str = Field(description="Human-readable description")
-    tier: PluginTier = Field(description="BASIC (preselected when signal passes) or EXTRA (manual opt-in)")
+    tier: PluginTier = Field(description="INDEPENDENT (works alone) or DEPENDENT (needs another plugin's signal)")
     signal: SignalCheck | None = Field(default=None, description="Signal check, or None")
     is_recommended: bool = Field(default=False, description="Whether this plugin is recommended for most users")
 
 
 # Descriptions sourced from each plugin's pyproject.toml.
 PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
-    # --- BASIC tier: preselected in wizard when signal passes ---
+    # --- INDEPENDENT with signal (binary/credential detection) ---
     CatalogEntry(
         entry_point_name="claude",
         package_name="imbue-mngr-claude",
         description="Claude agent type plugin for mngr",
-        tier=PluginTier.BASIC,
+        tier=PluginTier.INDEPENDENT,
         signal=_CLAUDE_SIGNAL,
         is_recommended=True,
     ),
@@ -89,7 +89,7 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
         entry_point_name="opencode",
         package_name="imbue-mngr-opencode",
         description="OpenCode agent type plugin for mngr",
-        tier=PluginTier.BASIC,
+        tier=PluginTier.INDEPENDENT,
         signal=_OPENCODE_SIGNAL,
         is_recommended=True,
     ),
@@ -97,21 +97,21 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
         entry_point_name="pi_coding",
         package_name="imbue-mngr-pi-coding",
         description="Pi coding agent type plugin for mngr",
-        tier=PluginTier.BASIC,
+        tier=PluginTier.INDEPENDENT,
         signal=_PI_SIGNAL,
     ),
     CatalogEntry(
         entry_point_name="llm",
         package_name="imbue-mngr-llm",
         description="LLM agent plugin for mngr - runs the llm CLI tool as an agent",
-        tier=PluginTier.BASIC,
+        tier=PluginTier.INDEPENDENT,
         signal=_LLM_SIGNAL,
     ),
     CatalogEntry(
         entry_point_name="modal",
         package_name="imbue-mngr-modal",
         description="Modal provider backend plugin for mngr",
-        tier=PluginTier.BASIC,
+        tier=PluginTier.INDEPENDENT,
         signal=_MODAL_SIGNAL,
         is_recommended=True,
     ),
@@ -119,119 +119,119 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
         entry_point_name="tutor",
         package_name="imbue-mngr-tutor",
         description="Interactive tutorial plugin for mngr",
-        tier=PluginTier.BASIC,
+        tier=PluginTier.INDEPENDENT,
         is_recommended=True,
     ),
-    # --- EXTRA tier with signal ---
+    # --- DEPENDENT (require another plugin's signal) ---
     CatalogEntry(
         entry_point_name="code_guardian",
         package_name="imbue-mngr-claude",
         description="Code guardian agent for mngr",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.DEPENDENT,
         signal=_CLAUDE_SIGNAL,
     ),
     CatalogEntry(
         entry_point_name="fixme_fairy",
         package_name="imbue-mngr-claude",
         description="Fixme fairy agent for mngr",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.DEPENDENT,
         signal=_CLAUDE_SIGNAL,
     ),
     CatalogEntry(
         entry_point_name="headless_claude",
         package_name="imbue-mngr-claude",
         description="Headless Claude agent for mngr",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.DEPENDENT,
         signal=_CLAUDE_SIGNAL,
     ),
     CatalogEntry(
         entry_point_name="claude_mind",
         package_name="imbue-mngr-claude-mind",
         description="Claude mind agent plugin for mngr - base class for mind agents built on Claude Code",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.DEPENDENT,
         signal=_CLAUDE_SIGNAL,
     ),
     CatalogEntry(
         entry_point_name="elena_code",
         package_name="imbue-mngr-elena-code",
         description="Elena Code agent plugin for mngr - a conversational AI mind powered by Claude Code",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.DEPENDENT,
         signal=_CLAUDE_SIGNAL,
     ),
     CatalogEntry(
         entry_point_name="test_coder",
         package_name="imbue-mngr-test-coder",
         description="Test agent type plugin for mngr - uses matched-responses model for testing without API keys",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.DEPENDENT,
         signal=_LLM_SIGNAL,
     ),
-    # --- EXTRA tier, no signal ---
+    # --- INDEPENDENT, no signal ---
     CatalogEntry(
         entry_point_name="ttyd",
         package_name="imbue-mngr-ttyd",
         description="ttyd web terminal plugin for mngr - automatically launches a ttyd server alongside agents",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
         entry_point_name="file",
         package_name="imbue-mngr-file",
         description="File command plugin for mngr - read, write, and list files on agents and hosts",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
         entry_point_name="kanpan",
         package_name="imbue-mngr-kanpan",
         description="All-seeing agent tracker",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
         entry_point_name="mind",
         package_name="imbue-mngr-mind",
         description="Common code for mind-based agents in mngr",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
         entry_point_name="mind_chat",
         package_name="imbue-mngr-mind-chat",
         description="Chat command plugin for mngr - connect to mind chat sessions",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
         entry_point_name="notifications",
         package_name="imbue-mngr-notifications",
         description="Notification plugin for mngr - alerts when agents transition to WAITING state",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
         entry_point_name="pair",
         package_name="imbue-mngr-pair",
         description="Pair command plugin for mngr - continuous file sync between agent and local directory",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
         is_recommended=True,
     ),
     CatalogEntry(
         entry_point_name="recursive",
         package_name="imbue-mngr-recursive",
         description="Recursive mngr plugin: injects mngr config and dependencies into remote hosts",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
         entry_point_name="schedule",
         package_name="imbue-mngr-schedule",
         description="Schedule command plugin for mngr - schedule remote invocations of mngr commands",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
         entry_point_name="tmr",
         package_name="imbue-mngr-tmr",
         description="Test map-reduce plugin for mngr - launch agents to run and fix tests in parallel",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
         entry_point_name="wait",
         package_name="imbue-mngr-wait",
         description="Wait plugin for mngr - wait for agents/hosts to reach target states",
-        tier=PluginTier.EXTRA,
+        tier=PluginTier.INDEPENDENT,
     ),
 )
 
@@ -252,9 +252,9 @@ def get_all_cataloged_entry_point_names() -> frozenset[str]:
     return frozenset(_CATALOG_BY_ENTRY_POINT.keys())
 
 
-def get_basic_tier_entry_point_names() -> frozenset[str]:
-    """Return entry point names for all BASIC-tier plugins."""
-    return frozenset(e.entry_point_name for e in PLUGIN_CATALOG if e.tier == PluginTier.BASIC)
+def get_independent_entry_point_names() -> frozenset[str]:
+    """Return entry point names for all INDEPENDENT-tier plugins."""
+    return frozenset(e.entry_point_name for e in PLUGIN_CATALOG if e.tier == PluginTier.INDEPENDENT)
 
 
 def check_signal(signal: SignalCheck) -> bool:
@@ -277,7 +277,7 @@ def get_installable_packages() -> tuple[CatalogEntry, ...]:
     """Return one representative CatalogEntry per unique package.
 
     Used by the install wizard to show per-package choices. Returns the
-    first catalog entry for each package (typically the BASIC-tier entry
+    first catalog entry for each package (typically the INDEPENDENT-tier entry
     if one exists).
     """
     seen: set[str] = set()

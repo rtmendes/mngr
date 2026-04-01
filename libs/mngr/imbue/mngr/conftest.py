@@ -24,7 +24,7 @@ from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.hosts.host import Host
-from imbue.mngr.plugin_catalog import get_basic_tier_entry_point_names
+from imbue.mngr.plugin_catalog import get_independent_entry_point_names
 from imbue.mngr.plugins import hookspecs
 from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import ProviderInstanceName
@@ -452,7 +452,7 @@ def enabled_plugins() -> frozenset[str]:
         def enabled_plugins():
             return frozenset()
     """
-    return get_basic_tier_entry_point_names()
+    return get_independent_entry_point_names()
 
 
 @pytest.fixture(autouse=True)

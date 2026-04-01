@@ -24,7 +24,7 @@ def test_should_preselect_basic_with_passing_signal() -> None:
         entry_point_name="test",
         package_name="test",
         description="test",
-        tier=PluginTier.BASIC,
+        tier=PluginTier.INDEPENDENT,
         signal=_PASSING_SIGNAL,
     )
     assert _should_preselect_basic(entry) is True
@@ -36,7 +36,7 @@ def test_should_preselect_basic_with_failing_signal() -> None:
         entry_point_name="test",
         package_name="test",
         description="test",
-        tier=PluginTier.BASIC,
+        tier=PluginTier.INDEPENDENT,
         signal=_FAILING_SIGNAL,
     )
     assert _should_preselect_basic(entry) is False
@@ -48,7 +48,7 @@ def test_should_preselect_basic_no_signal() -> None:
         entry_point_name="test",
         package_name="test",
         description="test",
-        tier=PluginTier.BASIC,
+        tier=PluginTier.INDEPENDENT,
         signal=None,
     )
     assert _should_preselect_basic(entry) is True
@@ -61,9 +61,9 @@ def test_should_preselect_basic_no_signal() -> None:
 
 def test_get_selected_entries_returns_checked() -> None:
     plugins = (
-        CatalogEntry(entry_point_name="a", package_name="a", description="A", tier=PluginTier.EXTRA),
-        CatalogEntry(entry_point_name="b", package_name="b", description="B", tier=PluginTier.EXTRA),
-        CatalogEntry(entry_point_name="c", package_name="c", description="C", tier=PluginTier.EXTRA),
+        CatalogEntry(entry_point_name="a", package_name="a", description="A", tier=PluginTier.DEPENDENT),
+        CatalogEntry(entry_point_name="b", package_name="b", description="B", tier=PluginTier.DEPENDENT),
+        CatalogEntry(entry_point_name="c", package_name="c", description="C", tier=PluginTier.DEPENDENT),
     )
     checkboxes = [
         CheckBox("a", state=True),
@@ -75,15 +75,15 @@ def test_get_selected_entries_returns_checked() -> None:
 
 
 def test_get_selected_entries_none_checked() -> None:
-    plugins = (CatalogEntry(entry_point_name="a", package_name="a", description="A", tier=PluginTier.EXTRA),)
+    plugins = (CatalogEntry(entry_point_name="a", package_name="a", description="A", tier=PluginTier.DEPENDENT),)
     checkboxes = [CheckBox("a", state=False)]
     assert _get_selected_entries(plugins, checkboxes) == []
 
 
 def test_get_selected_entries_all_checked() -> None:
     plugins = (
-        CatalogEntry(entry_point_name="a", package_name="a", description="A", tier=PluginTier.EXTRA),
-        CatalogEntry(entry_point_name="b", package_name="b", description="B", tier=PluginTier.EXTRA),
+        CatalogEntry(entry_point_name="a", package_name="a", description="A", tier=PluginTier.DEPENDENT),
+        CatalogEntry(entry_point_name="b", package_name="b", description="B", tier=PluginTier.DEPENDENT),
     )
     checkboxes = [CheckBox("a", state=True), CheckBox("b", state=True)]
     result = _get_selected_entries(plugins, checkboxes)
@@ -101,14 +101,14 @@ def test_get_accepted_signals_returns_signals_from_selected() -> None:
             entry_point_name="claude",
             package_name="p",
             description="d",
-            tier=PluginTier.BASIC,
+            tier=PluginTier.INDEPENDENT,
             signal=_CLAUDE_SIGNAL,
         ),
         CatalogEntry(
             entry_point_name="tutor",
             package_name="p2",
             description="d",
-            tier=PluginTier.BASIC,
+            tier=PluginTier.INDEPENDENT,
         ),
     ]
     accepted = _get_accepted_signals(selected)
@@ -122,7 +122,7 @@ def test_get_accepted_signals_empty_when_no_signals() -> None:
             entry_point_name="tutor",
             package_name="p",
             description="d",
-            tier=PluginTier.BASIC,
+            tier=PluginTier.INDEPENDENT,
         ),
     ]
     assert _get_accepted_signals(selected) == set()
@@ -135,9 +135,9 @@ def test_get_accepted_signals_empty_when_no_signals() -> None:
 
 def test_filter_already_installed_removes_installed() -> None:
     plugins = (
-        CatalogEntry(entry_point_name="a", package_name="a", description="Plugin A", tier=PluginTier.EXTRA),
-        CatalogEntry(entry_point_name="b", package_name="b", description="Plugin B", tier=PluginTier.EXTRA),
-        CatalogEntry(entry_point_name="c", package_name="c", description="Plugin C", tier=PluginTier.EXTRA),
+        CatalogEntry(entry_point_name="a", package_name="a", description="Plugin A", tier=PluginTier.DEPENDENT),
+        CatalogEntry(entry_point_name="b", package_name="b", description="Plugin B", tier=PluginTier.DEPENDENT),
+        CatalogEntry(entry_point_name="c", package_name="c", description="Plugin C", tier=PluginTier.DEPENDENT),
     )
     installed = frozenset({"b"})
     result = _filter_already_installed(plugins, installed)
@@ -148,8 +148,8 @@ def test_filter_already_installed_removes_installed() -> None:
 
 def test_filter_already_installed_all_installed() -> None:
     plugins = (
-        CatalogEntry(entry_point_name="a", package_name="a", description="A", tier=PluginTier.EXTRA),
-        CatalogEntry(entry_point_name="b", package_name="b", description="B", tier=PluginTier.EXTRA),
+        CatalogEntry(entry_point_name="a", package_name="a", description="A", tier=PluginTier.DEPENDENT),
+        CatalogEntry(entry_point_name="b", package_name="b", description="B", tier=PluginTier.DEPENDENT),
     )
     installed = frozenset({"a", "b"})
     result = _filter_already_installed(plugins, installed)
@@ -158,8 +158,8 @@ def test_filter_already_installed_all_installed() -> None:
 
 def test_filter_already_installed_none_installed() -> None:
     plugins = (
-        CatalogEntry(entry_point_name="a", package_name="a", description="A", tier=PluginTier.EXTRA),
-        CatalogEntry(entry_point_name="b", package_name="b", description="B", tier=PluginTier.EXTRA),
+        CatalogEntry(entry_point_name="a", package_name="a", description="A", tier=PluginTier.DEPENDENT),
+        CatalogEntry(entry_point_name="b", package_name="b", description="B", tier=PluginTier.DEPENDENT),
     )
     result = _filter_already_installed(plugins, frozenset())
     assert result == plugins

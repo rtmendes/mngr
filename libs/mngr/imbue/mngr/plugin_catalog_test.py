@@ -30,7 +30,7 @@ def test_catalog_signals_are_signal_check_instances() -> None:
 
 def test_catalog_contains_expected_basic_entry_points() -> None:
     """PLUGIN_CATALOG should include the main agent-type plugins as BASIC tier."""
-    basic_names = {e.entry_point_name for e in PLUGIN_CATALOG if e.tier == PluginTier.BASIC}
+    basic_names = {e.entry_point_name for e in PLUGIN_CATALOG if e.tier == PluginTier.INDEPENDENT}
     assert "claude" in basic_names
     assert "opencode" in basic_names
     assert "llm" in basic_names
@@ -54,7 +54,7 @@ def test_get_catalog_entry_found() -> None:
     entry = get_catalog_entry("claude")
     assert entry is not None
     assert entry.entry_point_name == "claude"
-    assert entry.tier == PluginTier.BASIC
+    assert entry.tier == PluginTier.INDEPENDENT
 
 
 def test_get_catalog_entry_not_found() -> None:
@@ -115,9 +115,9 @@ def test_get_installable_packages_prefers_basic_tier() -> None:
     packages = get_installable_packages()
     for pkg in packages:
         basic_entries = [
-            e for e in PLUGIN_CATALOG if e.package_name == pkg.package_name and e.tier == PluginTier.BASIC
+            e for e in PLUGIN_CATALOG if e.package_name == pkg.package_name and e.tier == PluginTier.INDEPENDENT
         ]
         if basic_entries:
-            assert pkg.tier == PluginTier.BASIC, (
+            assert pkg.tier == PluginTier.INDEPENDENT, (
                 f"Package {pkg.package_name} has BASIC entries but representative is {pkg.tier}"
             )
