@@ -1,5 +1,6 @@
 import json
 from collections.abc import Iterator
+from pathlib import Path
 
 import pluggy
 import pytest
@@ -11,6 +12,7 @@ from imbue.mngr.agents.base_agent import BaseAgent
 from imbue.mngr.cli.ask import ClaudeBackendInterface
 from imbue.mngr.cli.ask import _accumulate_chunks
 from imbue.mngr.cli.ask import _build_ask_context
+from imbue.mngr.cli.ask import _load_mega_tutorial
 from imbue.mngr.cli.ask import _check_headless_claude_available
 from imbue.mngr.cli.ask import _execute_response
 from imbue.mngr.cli.ask import _show_command_summary
@@ -245,6 +247,19 @@ def test_show_command_summary_jsonl(capsys: pytest.CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     data = json.loads(captured.out.strip())
     assert data["event"] == "commands"
+
+
+_MNGR_LIB_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_mega_tutorial_resource_matches_canonical_copy() -> None:
+    """The resource copy of mega_tutorial.sh must stay in sync with the canonical tutorials/ copy."""
+    canonical = (_MNGR_LIB_ROOT / "tutorials" / "mega_tutorial.sh").read_text()
+    resource_copy = _load_mega_tutorial()
+    assert resource_copy == canonical, (
+        "libs/mngr/imbue/mngr/resources/mega_tutorial.sh has diverged from "
+        "libs/mngr/tutorials/mega_tutorial.sh -- update both copies"
+    )
 
 
 def test_check_headless_claude_available_raises_when_plugin_missing() -> None:
