@@ -255,6 +255,10 @@ def create_plugin_manager() -> pluggy.PluginManager:
     setuptools entrypoints are loaded, so they are never registered. CLI-level
     --disable-plugin flags are handled later in load_config().
 
+    Setting the MNGR_LOAD_ALL_PLUGINS environment variable skips the
+    config-based blocking so that tooling (e.g. doc generation) can load
+    every provider regardless of local configuration.
+
     This should only really be called once from the main command (or during testing).
     """
     # Create plugin manager and load registries first (needed for config parsing)
