@@ -711,16 +711,22 @@ def _rsync_claude_home_directories(
 ) -> None:
     """Transfer directory items from ~/.claude/ to a remote config dir using rsync.
 
-    Uses host.copy_directory (rsync) for bulk transfer of directories like
-    skills/, agents/, commands/, plugins/. Individual files like settings.json
-    are handled separately by the caller since they require generation/merging.
+    Uses a single host.copy_directory (rsync) call with include/exclude filters
+    to transfer all directories (skills/, agents/, commands/, plugins/) at once.
+    Individual files like settings.json are handled separately by the caller
+    since they require generation/merging.
     """
+    include_args: list[str] = []
     for item_name in _CLAUDE_HOME_SYNC_ITEMS:
         item_path = local_claude_dir / item_name
         if not item_path.exists() or not item_path.is_dir():
             continue
-        with log_span("Rsyncing {} to per-agent config dir", item_name):
-            host.copy_directory(local_host, item_path, config_dir / item_name)
+        include_args.extend([f"--include={item_name}/", f"--include={item_name}/**"])
+    if not include_args:
+        return
+    include_args.append("--exclude=*")
+    with log_span("Rsyncing claude home directories to per-agent config dir"):
+        host.copy_directory(local_host, local_claude_dir, config_dir, extra_args=" ".join(include_args))
 
 
 def _fixup_installed_plugins_json(host: OnlineHostInterface, config_dir: Path) -> None:
