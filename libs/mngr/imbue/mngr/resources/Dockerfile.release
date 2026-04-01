@@ -1,0 +1,63 @@
+# Dockerfile.release — minimal release test image for Modal with Docker-in-Docker.
+#
+# Kept deliberately small so Modal's alpha image builder (2025.06) can
+# save/materialize it without OOM. Only includes dependencies actually needed
+# by the release test suite (Docker SDK, pytest, mngr).
+#
+# Heavy tools (Claude Code, gh CLI, ttyd, etc.) that are in the regular
+# Dockerfile are intentionally excluded here.
+
+FROM python:3.11-slim
+
+# ---- System packages (minimal set for release tests) ----
+# NOTE: build-essential deliberately omitted to keep image small for Modal's
+# alpha builder. All Python deps must have pre-built wheels for linux/amd64.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    iproute2 \
+    iptables \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv (fast Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# ---- Docker-in-Docker (static binaries, ~70MB) ----
+# Uses static binaries instead of docker-ce apt packages (~1.5GB) to keep the
+# image small enough for Modal's image builder.
+RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
+    | tar xz -C /usr/local/bin --strip-components=1
+
+# Modern runc for reliable networking under gVisor
+RUN rm -f /usr/local/bin/runc \
+    && wget -q https://github.com/opencontainers/runc/releases/download/v1.3.0/runc.amd64 \
+    && chmod +x runc.amd64 \
+    && mv runc.amd64 /usr/local/bin/runc
+
+# gVisor doesn't support nftables (https://github.com/google/gvisor/issues/10510)
+RUN update-alternatives --set iptables /usr/sbin/iptables-legacy \
+    && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+
+ENV UV_LINK_MODE=copy
+
+# ---- Docker daemon startup scripts ----
+COPY libs/mngr/imbue/mngr/resources/start-dockerd.sh /start-dockerd.sh
+COPY libs/mngr/imbue/mngr/resources/ensure-dockerd.sh /ensure-dockerd.sh
+RUN chmod +x /start-dockerd.sh /ensure-dockerd.sh
+
+# BASH_ENV ensures dockerd is running before every bash -c command
+ENV BASH_ENV=/ensure-dockerd.sh
+
+# ---- Project code (changes every run) ----
+COPY . /code/
+
+RUN mkdir -p /code/mngr/ && tar -xzf /code/current.tar.gz -C /code/mngr/ && rm /code/*.tar.gz && git config --global --add safe.directory /code/mngr/ && chown -R root:root /code/mngr/
+
+WORKDIR /code/mngr/
+
+RUN unset UV_INDEX_URL && uv sync --all-packages && uv tool install -e /code/mngr/libs/mngr && uv tool install modal
+
+CMD ["sh", "-c", "/start-dockerd.sh && trap 'exit 0' TERM; tail -f /dev/null & wait"]
