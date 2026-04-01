@@ -107,6 +107,10 @@ class TmrLaunchConfig(FrozenModel):
         default=None,
         description="Snapshot to use for host creation (None means build from scratch)",
     )
+    templates: tuple[str, ...] = Field(
+        default=(),
+        description="Create template names to apply when creating agents",
+    )
 
 
 class IntegratorResult(FrozenModel):

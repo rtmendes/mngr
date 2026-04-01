@@ -69,6 +69,8 @@ class TmrCliOptions(CommonCliOptions):
     testing_flags: tuple[str, ...]
     agent_type: str
     integrator_type: str | None
+    agent_template: tuple[str, ...]
+    integrator_template: tuple[str, ...] | None
     provider: str
     integrator_provider: str
     env: tuple[str, ...]
@@ -272,6 +274,7 @@ def _run_reintegrate(
     run_labels["tmr_run_name"] = run_name
     label_options = AgentLabelOptions(labels=run_labels)
     integrator_agent_type = opts.integrator_type if opts.integrator_type is not None else opts.agent_type
+    integrator_templates = opts.integrator_template if opts.integrator_template is not None else opts.agent_template
     integrator_config = TmrLaunchConfig(
         source_dir=source_dir,
         source_host=source_host,
@@ -279,6 +282,7 @@ def _run_reintegrate(
         provider_name=ProviderInstanceName(opts.integrator_provider),
         env_options=env_options,
         label_options=label_options,
+        templates=integrator_templates,
     )
     integrator_result = _run_integrator_phase(
         results, integrator_config, mngr_ctx, opts, output_dir, base_commit=base_commit
@@ -374,6 +378,18 @@ def _run_integrator_phase(
     "--integrator-type",
     default=None,
     help="Type of agent for the integrator (defaults to --agent-type)",
+)
+@click.option(
+    "-t",
+    "--agent-template",
+    multiple=True,
+    help="Create template to apply for testing agents [repeatable, stacks in order]",
+)
+@click.option(
+    "--integrator-template",
+    multiple=True,
+    default=None,
+    help="Create template to apply for the integrator agent (defaults to --agent-template)",
 )
 @click.option(
     "--provider",
@@ -550,6 +566,7 @@ def tmr(ctx: click.Context, **kwargs: object) -> None:
         env_options=env_options,
         label_options=label_options,
         snapshot=provided_snapshot,
+        templates=opts.agent_template,
     )
 
     try:
@@ -669,6 +686,7 @@ def _run_tmr_pipeline(
 
     # Step 10: Build integrator config (defaults to local provider) and integrate
     integrator_agent_type = opts.integrator_type if opts.integrator_type is not None else opts.agent_type
+    integrator_templates = opts.integrator_template if opts.integrator_template is not None else opts.agent_template
     integrator_config = TmrLaunchConfig(
         source_dir=source_dir,
         source_host=source_host,
@@ -676,6 +694,7 @@ def _run_tmr_pipeline(
         provider_name=ProviderInstanceName(opts.integrator_provider),
         env_options=env_options,
         label_options=label_options,
+        templates=integrator_templates,
     )
     integrator_result = _run_integrator_phase(
         results, integrator_config, mngr_ctx, opts, output_dir, base_commit=base_commit

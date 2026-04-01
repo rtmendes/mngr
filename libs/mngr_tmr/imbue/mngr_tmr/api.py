@@ -25,6 +25,8 @@ from imbue.mngr.api.list import list_agents
 from imbue.mngr.api.providers import get_provider_instance
 from imbue.mngr.api.pull import pull_files
 from imbue.mngr.api.pull import pull_git
+from imbue.mngr.config.data_types import CreateTemplateName
+from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import AgentNotFoundOnHostError
 from imbue.mngr.errors import HostError
@@ -231,6 +233,28 @@ def _transfer_mode_for_provider(provider_name: ProviderInstanceName) -> Transfer
     return TransferMode.GIT_WORKTREE if is_local else TransferMode.GIT_MIRROR
 
 
+def resolve_templates(
+    template_names: tuple[str, ...],
+    config: MngrConfig,
+) -> dict[str, object]:
+    """Resolve create templates by name and merge their options.
+
+    Later templates override earlier ones for the same key.
+    Returns a merged dict of template option values.
+    """
+    merged: dict[str, object] = {}
+    for template_name in template_names:
+        key = CreateTemplateName(template_name)
+        if key not in config.create_templates:
+            available = [str(t) for t in config.create_templates]
+            avail_str = f" Available: {', '.join(available)}" if available else ""
+            raise MngrError(f"Template '{template_name}' not found.{avail_str}")
+        for k, v in config.create_templates[key].options.items():
+            if v is not None:
+                merged[k] = v
+    return merged
+
+
 def _build_agent_options(
     agent_name: AgentName,
     branch_name: str,
@@ -278,8 +302,14 @@ def _create_tmr_agent(
     if existing_host is not None:
         target_host: OnlineHostInterface | NewHostOptions = existing_host
     else:
+        # Resolve template options for host build configuration
+        tmpl = resolve_templates(config.templates, mngr_ctx.config) if config.templates else {}
         snapshot = config.snapshot
-        build = NewHostBuildOptions(snapshot=snapshot) if snapshot is not None else NewHostBuildOptions()
+        raw_build_args = tmpl.get("build_args", ())
+        raw_start_args = tmpl.get("start_args", ())
+        build_args = tuple(str(a) for a in raw_build_args) if isinstance(raw_build_args, (list, tuple)) else ()
+        start_args = tuple(str(a) for a in raw_start_args) if isinstance(raw_start_args, (list, tuple)) else ()
+        build = NewHostBuildOptions(snapshot=snapshot, build_args=build_args, start_args=start_args)
         is_local = config.provider_name.lower() == LOCAL_PROVIDER_NAME
         resolved_host_name = None if is_local else host_name
         target_host = NewHostOptions(provider=config.provider_name, name=resolved_host_name, build=build)
@@ -378,8 +408,13 @@ def _create_host_pool(
     Returns the successfully created hosts (may be fewer than host_count on errors).
     """
     hosts: list[OnlineHostInterface] = []
+    tmpl = resolve_templates(config.templates, mngr_ctx.config) if config.templates else {}
     snapshot = config.snapshot
-    build = NewHostBuildOptions(snapshot=snapshot) if snapshot is not None else NewHostBuildOptions()
+    raw_build_args = tmpl.get("build_args", ())
+    raw_start_args = tmpl.get("start_args", ())
+    build_args = tuple(str(a) for a in raw_build_args) if isinstance(raw_build_args, (list, tuple)) else ()
+    start_args = tuple(str(a) for a in raw_start_args) if isinstance(raw_start_args, (list, tuple)) else ()
+    build = NewHostBuildOptions(snapshot=snapshot, build_args=build_args, start_args=start_args)
 
     with ConcurrencyGroupExecutor(
         parent_cg=mngr_ctx.concurrency_group,
