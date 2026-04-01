@@ -8,46 +8,6 @@ from imbue.skitwright.expect import expect
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_stop_and_start(e2e: E2eSession) -> None:
-    expect(
-        e2e.run(
-            "mngr create my-task --command 'sleep 99999' --no-ensure-clean --no-connect",
-            comment="Create agent for stop/start test",
-        )
-    ).to_succeed()
-
-    stop_result = e2e.run("mngr stop my-task", comment="Stop the agent")
-    expect(stop_result).to_succeed()
-
-    list_after_stop = e2e.run("mngr list", comment="Verify agent is STOPPED")
-    expect(list_after_stop).to_succeed()
-    expect(list_after_stop.stdout).to_match(r"my-task\s+STOPPED")
-
-    start_result = e2e.run("mngr start my-task", comment="Start the agent again")
-    expect(start_result).to_succeed()
-
-    list_after_start = e2e.run("mngr list", comment="Verify agent is RUNNING after restart")
-    expect(list_after_start).to_succeed()
-    expect(list_after_start.stdout).to_match(r"my-task\s+(RUNNING|WAITING)")
-
-
-@pytest.mark.release
-@pytest.mark.tmux
-def test_exec_command(e2e: E2eSession) -> None:
-    expect(
-        e2e.run(
-            "mngr create my-task --command 'sleep 99999' --no-ensure-clean --no-connect",
-            comment="Create agent for exec test",
-        )
-    ).to_succeed()
-
-    exec_result = e2e.run("mngr exec my-task 'echo hello'", comment="Exec a command in the agent")
-    expect(exec_result).to_succeed()
-    expect(exec_result.stdout).to_contain("hello")
-
-
-@pytest.mark.release
-@pytest.mark.tmux
 def test_full_lifecycle(e2e: E2eSession) -> None:
     # Create
     expect(
