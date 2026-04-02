@@ -1,4 +1,6 @@
-# mngr: build your team of AI engineering agents
+# mngr: CLI for managing agents
+
+Programmatically manage 100s of coding agent sessions in parallel.
 
 [![GitHub Stars](https://img.shields.io/github/stars/imbue-ai/mngr?style=flat-square)](https://github.com/imbue-ai/mngr)
 [![PyPI](https://img.shields.io/pypi/v/imbue-mngr?style=flat-square)](https://pypi.org/project/imbue-mngr/)
@@ -6,24 +8,32 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](./LICENSE)
 [![Open Issues](https://img.shields.io/github/issues/imbue-ai/mngr?style=flat-square)](https://github.com/imbue-ai/mngr/issues)
 
-Spin up isolated AI coding agents
+Agents are composable into whatever workflow you actually need. Do things like:
+- For each open GitHub issue, create a PR
+- For each flaky test in the past week, fix it
+- For each rule in the style guide, scan my codebase and fix all instances
 
-*Built on SSH, git, and tmux. Extensible via plugins. No managed service required.*
+We live in `mngr`, so we try to make everything Just Work<sup>TM</sup>:
+- See all your agents, and if they're blocked on you
+- Connect to any agent mid-task to ask a question or unblock it
+- Agent sandboxes auto-snapshot and shut down when idle
 
-> **Why mngr?** Most agent tooling is a managed cloud: opaque infrastructure, per-seat pricing, hard to script. mngr takes the opposite approach. Agents run in isolated containers you own, over SSH you can inspect, on compute that shuts down when idle. It's built on primitives you already know (SSH, git, tmux, docker) and extensible via plugins for anything you need on top.
+Run any agent: Claude Code, Codex, OpenCode, etc.
 
----
+Run on any compute: local, Docker, Modal, or anything you can SSH into.
 
-**installation:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/imbue-ai/mngr/main/scripts/install.sh | bash
 ```
 
+For a quickstart, use `mngr ask` to learn the CLI interface.
+
 ## Overview
 
-`mngr` makes it easy to create and use any AI agent (ex: Claude Code, Codex), whether you want to run locally or remotely.
+`mngr` is a composable primitive for running parallel coding agents at any scale—locally, on Modal, in Docker, or anywhere you can SSH into. Works with Claude, Codex, any coding agent.
 
-`mngr` is built on open-source tools and standards (SSH, git, tmux, docker, etc.), and is extensible via [plugins](libs/mngr/docs/concepts/plugins.md) to enable the latest AI coding workflows.
+Built on open-source standards (SSH, git, tmux, docker) and extensible via [plugins](libs/mngr/docs/concepts/plugins.md) for whatever your workflow needs on top.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#EFF6FF', 'primaryTextColor': '#1E3A5F', 'primaryBorderColor': '#3B82F6', 'lineColor': '#64748B', 'edgeLabelBackground': '#FFFFFF', 'fontSize': '15px'}}}%%
@@ -46,8 +56,20 @@ flowchart LR
     host <-->|"git · SSH · rsync"| codebase
     cli <-->|"connect · transcript · pull"| host
 ```
+## Point 100s of agents at almost anything
 
-## What mngr can do
+```bash
+# every file in your codebase — review + fix issues
+# every open GitHub issue — one PR each
+# every flaky test from the past week
+# every customer use case — generate + validate
+```
+
+Build the SOP once. Run it on demand. mngr handles the rest—isolation, lifecycle, and a live SSH connection to any agent, any time.
+
+---
+
+## Why mngr
 
 - **Simple** — one command launches an agent locally or on Modal; sensible defaults throughout
 - **Fast** — agents start in under 2 seconds
@@ -153,7 +175,7 @@ mngr transcript agent-1
 mngr schedule --template my-daily-hook "look at any flaky tests over the past day and try to fix one of them" --cron "0 * * * *"
 -->
 
-**mngr makes it easy to work with remote agents**
+**mngr makes it easy to work with remote agents:**
 
 ```bash
 mngr connect my-agent       # directly connect to remote agents via SSH for debugging
@@ -203,7 +225,7 @@ uv tool upgrade imbue-mngr
 git clone git@github.com:imbue-ai/mngr.git && cd mngr && uv sync --all-packages && uv tool install -e libs/mngr
 ```
 
-## Shell Completion
+## Shell completion
 
 `mngr` supports tab completion for commands, options, and agent names in bash and zsh.
 Shell completion is configured automatically by the install script (`scripts/install.sh`).
