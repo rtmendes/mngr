@@ -275,4 +275,4 @@
 **/cov.xml
 
 # ignore demos
-recordings
+**/recordings

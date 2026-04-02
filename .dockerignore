@@ -282,7 +282,7 @@ test-results
 **/cov.xml
 
 # ignore demos
-recordings
+**/recordings
 
 # Docker-specific (not in .gitignore)
 .git/
