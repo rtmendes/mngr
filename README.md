@@ -1,6 +1,6 @@
 # mngr
 
-Run 100s of coding agents in parallel. Each in its own container. Each one debuggable. Built on SSH, git, and tmux. Extensible via plugins. No managed service required.
+Run 100s of coding agents in parallel. Each in its own container. Each one debuggable.
 
 [![GitHub Stars](https://img.shields.io/github/stars/imbue-ai/mngr?style=flat-square)](https://github.com/imbue-ai/mngr)
 [![PyPI](https://img.shields.io/pypi/v/imbue-mngr?style=flat-square)](https://pypi.org/project/imbue-mngr/)
@@ -8,11 +8,13 @@ Run 100s of coding agents in parallel. Each in its own container. Each one debug
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](./LICENSE)
 [![Open Issues](https://img.shields.io/github/issues/imbue-ai/mngr?style=flat-square)](https://github.com/imbue-ai/mngr/issues)
 
-> **Why mngr?** Most teams cap out at a handful of parallel agents. mngr removes that ceiling. Run 1 or 100s — same commands. Agents run in isolated containers you own, over SSH you can inspect, on compute that shuts down when idle. Built on primitives you already know (SSH, git, tmux, docker) and composable into whatever workflow your team actually needs.
+*Built on SSH, git, and tmux. No managed service required.*
 
----
+> **Why mngr?** Most teams cap out at a handful of parallel agents. mngr removes that ceiling.
+> Run 1 or 100s — same commands. Agents run in isolated containers you own, over SSH you can
+> inspect, on compute that shuts down when idle. Composable into whatever workflow your team
+> actually needs.
 
-**Installation**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/imbue-ai/mngr/main/scripts/install.sh | bash
 ```
