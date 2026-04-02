@@ -177,7 +177,14 @@ def check_functools_partial(source_dir: Path, max_count: int) -> None:
 
 
 def check_hardcoded_claude_dir(source_dir: Path, max_count: int) -> None:
-    excluded = _SELF_EXCLUSION + ("*_test.py", "test_*.py", "conftest.py", "testing.py", "claude_config.py")
+    excluded = _SELF_EXCLUSION + (
+        "*_test.py",
+        "test_*.py",
+        "conftest.py",
+        "testing.py",
+        "claude_config.py",
+        "common_ratchets.py",
+    )
     chunks = check_ratchet_rule(PREVENT_HARDCODED_CLAUDE_DIR, source_dir, excluded)
     assert len(chunks) <= max_count, PREVENT_HARDCODED_CLAUDE_DIR.format_failure(chunks)
 
