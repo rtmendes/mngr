@@ -1847,9 +1847,9 @@ def get_files_for_deploy(
 ) -> dict[Path, Path | str]:
     """Register claude-specific files for scheduled deployments.
 
-    Files use ~/. prefix paths and are staged to $HOME/ in the deploy image.
-    At runtime, mngr create triggers provisioning which copies these into
-    the per-agent config directory (CLAUDE_CONFIG_DIR).
+    Files use ~/.claude/ prefix paths and are staged to $HOME/.claude/ in the
+    deploy image. At runtime, mngr create triggers provisioning which copies
+    these into the per-agent config directory (CLAUDE_CONFIG_DIR).
 
     Always includes settings.json and .claude.json (using generated defaults
     when local files are unavailable or user settings are excluded).
