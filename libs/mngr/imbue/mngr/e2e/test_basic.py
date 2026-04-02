@@ -45,7 +45,6 @@ def test_create_help_succeeds(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.modal
 def test_list_with_no_agents(e2e: E2eSession) -> None:
     result = e2e.run("mngr list", comment="List agents in a fresh environment")
     expect(result).to_succeed()
@@ -53,7 +52,6 @@ def test_list_with_no_agents(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.modal
 def test_list_json_with_no_agents(e2e: E2eSession) -> None:
     result = e2e.run("mngr list --format json", comment="List agents as JSON in a fresh environment")
     expect(result).to_succeed()
@@ -62,7 +60,6 @@ def test_list_json_with_no_agents(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_named_agent(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -83,7 +80,6 @@ def test_create_named_agent(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_json_output(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -105,7 +101,6 @@ def test_create_with_json_output(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_headless(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -126,7 +121,6 @@ def test_create_headless(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_and_destroy_agent(e2e: E2eSession) -> None:
     expect(
@@ -145,7 +139,6 @@ def test_create_and_destroy_agent(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_and_rename_agent(e2e: E2eSession) -> None:
     expect(
@@ -168,7 +161,6 @@ def test_create_and_rename_agent(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_label(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""

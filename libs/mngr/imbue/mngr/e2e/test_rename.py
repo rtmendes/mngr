@@ -11,7 +11,6 @@ from imbue.skitwright.expect import expect
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_and_rename_agent(e2e: E2eSession) -> None:
     expect(

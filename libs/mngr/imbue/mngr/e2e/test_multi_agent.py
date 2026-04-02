@@ -9,7 +9,6 @@ from imbue.skitwright.expect import expect
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_multiple_agents_coexist(e2e: E2eSession) -> None:
     for name in ["agent-a", "agent-b", "agent-c"]:
@@ -36,7 +35,6 @@ def test_multiple_agents_coexist(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_destroy_all_via_stdin(e2e: E2eSession) -> None:
     for name in ["agent-x", "agent-y"]:
@@ -65,7 +63,6 @@ def test_destroy_all_via_stdin(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_list_filter_by_state(e2e: E2eSession) -> None:
     for name in ["running-agent", "stopped-agent"]:

@@ -7,7 +7,6 @@ from imbue.skitwright.expect import expect
 
 
 @pytest.mark.release
-@pytest.mark.modal
 @pytest.mark.tmux
 def test_full_lifecycle(e2e: E2eSession) -> None:
     # Create
