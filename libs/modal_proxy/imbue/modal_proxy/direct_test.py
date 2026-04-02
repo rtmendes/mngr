@@ -13,11 +13,11 @@ from imbue.modal_proxy.data_types import FileEntryType
 from imbue.modal_proxy.data_types import StreamType
 from imbue.modal_proxy.direct import DirectApp
 from imbue.modal_proxy.direct import DirectImage
-from imbue.modal_proxy.direct import DirectModalInterface
 from imbue.modal_proxy.direct import DirectSecret
 from imbue.modal_proxy.direct import DirectVolume
 from imbue.modal_proxy.direct import _to_file_entry_type
 from imbue.modal_proxy.direct import _to_modal_stream_type
+from imbue.modal_proxy.direct import _translate_modal_cli_not_found
 from imbue.modal_proxy.direct import _unwrap_app
 from imbue.modal_proxy.direct import _unwrap_image
 from imbue.modal_proxy.direct import _unwrap_secret
@@ -156,13 +156,17 @@ def test_unwrap_accepts_direct(unwrap_fn: Any, fake_cls: Any, direct_cls: Any, f
 # --- CLI not found tests ---
 
 
-def test_environment_create_raises_on_missing_modal_cli(modal_cli_missing: DirectModalInterface) -> None:
-    with pytest.raises(ModalProxyError, match="modal.*CLI command was not found"):
-        modal_cli_missing.environment_create("test-env")
+def _make_file_not_found(filename: str) -> FileNotFoundError:
+    e = FileNotFoundError(2, "No such file or directory")
+    e.filename = filename
+    return e
 
 
-def test_deploy_raises_on_missing_modal_cli(modal_cli_missing: DirectModalInterface, tmp_path: Path) -> None:
-    script = tmp_path / "deploy.py"
-    script.write_text("")
+def test_translate_modal_cli_not_found_raises_for_modal() -> None:
     with pytest.raises(ModalProxyError, match="modal.*CLI command was not found"):
-        modal_cli_missing.deploy(script, app_name="test-app", environment_name="test-env")
+        _translate_modal_cli_not_found(_make_file_not_found("modal"))
+
+
+def test_translate_modal_cli_not_found_reraises_for_other() -> None:
+    with pytest.raises(FileNotFoundError):
+        _translate_modal_cli_not_found(_make_file_not_found("other_binary"))
