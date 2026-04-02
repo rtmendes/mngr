@@ -7,10 +7,9 @@ import pytest
 from imbue.mngr.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
 
-pytestmark = [pytest.mark.release, pytest.mark.modal, pytest.mark.tmux]
-
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_default(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -33,6 +32,7 @@ def test_create_default(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_in_place(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -63,6 +63,7 @@ def test_create_in_place(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_short_forms(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -91,6 +92,7 @@ def test_create_short_forms(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_codex_agent(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -121,6 +123,7 @@ def test_create_codex_agent(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_agent_args(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -145,6 +148,7 @@ def test_create_with_agent_args(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_named_agent(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -165,6 +169,7 @@ def test_create_named_agent(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_json_output(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -186,6 +191,7 @@ def test_create_with_json_output(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_headless(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""

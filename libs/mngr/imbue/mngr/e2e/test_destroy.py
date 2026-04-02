@@ -9,10 +9,9 @@ import pytest
 from imbue.mngr.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
 
-pytestmark = [pytest.mark.release, pytest.mark.modal, pytest.mark.tmux]
-
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_and_destroy_agent(e2e: E2eSession) -> None:
     expect(

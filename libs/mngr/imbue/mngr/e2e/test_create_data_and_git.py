@@ -8,10 +8,9 @@ import pytest
 from imbue.mngr.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
 
-pytestmark = [pytest.mark.release, pytest.mark.modal, pytest.mark.tmux]
-
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_source_path(e2e: E2eSession, tmp_path: Path) -> None:
     e2e.write_tutorial_block("""
@@ -35,6 +34,7 @@ def test_create_with_source_path(e2e: E2eSession, tmp_path: Path) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_project_label(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -58,6 +58,7 @@ def test_create_with_project_label(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_source_path_no_git(e2e: E2eSession, tmp_path: Path) -> None:
     e2e.write_tutorial_block("""
@@ -173,6 +174,7 @@ def test_create_with_explicit_branch_name(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_transfer_git_mirror(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -193,6 +195,7 @@ def test_create_with_transfer_git_mirror(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_git_mirror_with_existing_branch(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -219,6 +222,7 @@ def test_create_git_mirror_with_existing_branch(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_transfer_none(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -238,6 +242,7 @@ def test_create_with_transfer_none(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_shallow_depth(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -258,6 +263,7 @@ def test_create_with_shallow_depth(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_from_another_agent(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""

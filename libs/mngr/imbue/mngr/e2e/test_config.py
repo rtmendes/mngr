@@ -7,10 +7,9 @@ import pytest
 from imbue.mngr.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
 
-pytestmark = [pytest.mark.release, pytest.mark.modal, pytest.mark.tmux]
-
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.tmux
 def test_create_with_template(e2e: E2eSession) -> None:
     # Write a template that sets transfer=none (so agent runs in-place)
