@@ -13,6 +13,7 @@ from imbue.modal_proxy.data_types import FileEntryType
 from imbue.modal_proxy.data_types import StreamType
 from imbue.modal_proxy.direct import DirectApp
 from imbue.modal_proxy.direct import DirectImage
+from imbue.modal_proxy.direct import DirectModalInterface
 from imbue.modal_proxy.direct import DirectSecret
 from imbue.modal_proxy.direct import DirectVolume
 from imbue.modal_proxy.direct import _to_file_entry_type
@@ -21,6 +22,7 @@ from imbue.modal_proxy.direct import _unwrap_app
 from imbue.modal_proxy.direct import _unwrap_image
 from imbue.modal_proxy.direct import _unwrap_secret
 from imbue.modal_proxy.direct import _unwrap_volume
+from imbue.modal_proxy.errors import ModalProxyError
 from imbue.modal_proxy.errors import ModalProxyTypeError
 from imbue.modal_proxy.interface import AppInterface
 from imbue.modal_proxy.interface import ImageInterface
@@ -149,3 +151,22 @@ def test_unwrap_accepts_direct(unwrap_fn: Any, fake_cls: Any, direct_cls: Any, f
     sentinel = object()
     direct = direct_cls.model_construct(**{field_name: sentinel})
     assert unwrap_fn(direct) is sentinel
+
+
+# --- CLI not found tests ---
+
+
+def test_environment_create_raises_on_missing_modal_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "/nonexistent_path_for_test")
+    interface = DirectModalInterface()
+    with pytest.raises(ModalProxyError, match="modal.*CLI command was not found"):
+        interface.environment_create("test-env")
+
+
+def test_deploy_raises_on_missing_modal_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PATH", "/nonexistent_path_for_test")
+    interface = DirectModalInterface()
+    script = tmp_path / "deploy.py"
+    script.write_text("")
+    with pytest.raises(ModalProxyError, match="modal.*CLI command was not found"):
+        interface.deploy(script, app_name="test-app", environment_name="test-env")

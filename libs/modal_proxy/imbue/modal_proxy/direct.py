@@ -384,13 +384,19 @@ class DirectModalInterface(ModalInterface):
     # =====================================================================
 
     def environment_create(self, name: str) -> None:
-        result = subprocess.run(
-            ["modal", "environment", "create", name],
-            timeout=30,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["modal", "environment", "create", name],
+                timeout=30,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as e:
+            raise ModalProxyError(
+                "The 'modal' CLI command was not found. Modal is enabled in your configuration"
+                " but the CLI is not available. Install it with: uv tool install modal"
+            ) from e
         if result.returncode != 0:
             raise ModalProxyError(f"Failed to create Modal environment '{name}': {result.stderr or result.stdout}")
 
@@ -556,18 +562,24 @@ class DirectModalInterface(ModalInterface):
         cmd.append(str(script_path))
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = subprocess.run(
-                cmd,
-                timeout=180,
-                check=False,
-                capture_output=True,
-                text=True,
-                env={
-                    **os.environ,
-                    "MNGR_MODAL_APP_NAME": app_name,
-                    "MNGR_MODAL_APP_BUILD_PATH": tmpdir,
-                },
-            )
+            try:
+                result = subprocess.run(
+                    cmd,
+                    timeout=180,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env={
+                        **os.environ,
+                        "MNGR_MODAL_APP_NAME": app_name,
+                        "MNGR_MODAL_APP_BUILD_PATH": tmpdir,
+                    },
+                )
+            except FileNotFoundError as e:
+                raise ModalProxyError(
+                    "The 'modal' CLI command was not found. Modal is enabled in your configuration"
+                    " but the CLI is not available. Install it with: uv tool install modal"
+                ) from e
         if result.returncode != 0:
             output = (result.stdout + "\n" + result.stderr).strip()
             raise ModalProxyError(f"Failed to deploy {script_path}: {output}")
