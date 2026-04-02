@@ -8,6 +8,7 @@ mngr internals and makes the interaction boundary explicit.
 import json
 
 from loguru import logger
+from pydantic import ValidationError
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.api.list import ListResult
@@ -16,7 +17,7 @@ from imbue.mngr.interfaces.data_types import AgentDetails
 
 
 class CliError(MngrError):
-    """Raised when a mngr CLI subprocess exits with a non-zero code."""
+    """Raised when a mngr CLI invocation fails (non-zero exit, unparseable output, etc.)."""
 
     ...
 
@@ -56,7 +57,10 @@ def _parse_list_json(raw_json: str) -> ListResult:
         data = json.loads(raw_json)
     except (json.JSONDecodeError, ValueError) as exc:
         raise CliError("mngr list produced invalid JSON: {}".format(str(exc))) from exc
-    agents = [AgentDetails.model_validate(agent_data) for agent_data in data.get("agents", [])]
+    try:
+        agents = [AgentDetails.model_validate(agent_data) for agent_data in data.get("agents", [])]
+    except ValidationError as exc:
+        raise CliError("mngr list produced JSON with unexpected schema: {}".format(str(exc))) from exc
     return ListResult(agents=agents)
 
 
