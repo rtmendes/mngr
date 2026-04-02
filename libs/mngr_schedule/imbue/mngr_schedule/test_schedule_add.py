@@ -205,7 +205,14 @@ def test_schedule_list_shows_deployed_schedule(monorepo_root: Path) -> None:
         list_data = json.loads(list_result.stdout)
         schedules = list_data.get("schedules", [])
         matching = [s for s in schedules if s["trigger"]["name"] == trigger_name]
-        assert len(matching) == 1, f"Expected 1 schedule named '{trigger_name}', found {len(matching)} in {schedules}"
+        assert len(matching) == 1, (
+            f"Expected 1 schedule named '{trigger_name}', found {len(matching)} in {schedules}\n"
+            f"add stdout: {add_result.stdout[:500]}\n"
+            f"add stderr: {add_result.stderr[:500]}\n"
+            f"list stdout: {list_result.stdout[:500]}\n"
+            f"list stderr: {list_result.stderr[:500]}\n"
+            f"MNGR_PREFIX: {env.get('MNGR_PREFIX', 'NOT SET')}"
+        )
 
         record = matching[0]
         assert record["trigger"]["command"] == "CREATE"
