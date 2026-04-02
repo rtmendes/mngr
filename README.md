@@ -8,7 +8,7 @@ Programmatically manage 100s of coding agent sessions in parallel.
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](./LICENSE)
 [![Open Issues](https://img.shields.io/github/issues/imbue-ai/mngr?style=flat-square)](https://github.com/imbue-ai/mngr/issues)
 
-Agents are composable into whatever workflow your team actually needs. Do things like:
+Agents are composable into whatever workflow you actually need. Do things like:
 - For each open GitHub issue, create a PR
 - For each flaky test in the past week, fix it
 - For each rule in the style guide, scan my codebase and fix all instances
