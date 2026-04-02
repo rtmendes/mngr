@@ -154,15 +154,20 @@ def _discover_hosts_for_gc(
 
     Uses include_destroyed=True so every GC function gets the complete picture.
     Functions that need only non-destroyed hosts can filter by host_state.
-    Provider-level errors (e.g. Docker daemon offline) are handled inside
-    each provider's discover_hosts() and result in an empty list.
+
+    Provider-level errors are caught and logged so that a single unavailable
+    provider does not prevent GC from running on other providers.
     """
     result: ProviderHosts = []
     for provider in providers:
-        hosts = provider.discover_hosts(
-            include_destroyed=True,
-            cg=mngr_ctx.concurrency_group,
-        )
+        try:
+            hosts = provider.discover_hosts(
+                include_destroyed=True,
+                cg=mngr_ctx.concurrency_group,
+            )
+        except MngrError as e:
+            logger.warning("Failed to discover hosts for provider {}: {}", provider.name, e)
+            hosts = []
         result.append((provider, hosts))
     return result
 
