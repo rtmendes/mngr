@@ -151,20 +151,6 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
         tier=PluginTier.DEPENDENT,
         signal=_CLAUDE_SIGNAL,
     ),
-    CatalogEntry(
-        entry_point_name="elena_code",
-        package_name="imbue-mngr-elena-code",
-        description="Elena Code agent plugin for mngr - a conversational AI mind powered by Claude Code",
-        tier=PluginTier.DEPENDENT,
-        signal=_CLAUDE_SIGNAL,
-    ),
-    CatalogEntry(
-        entry_point_name="test_coder",
-        package_name="imbue-mngr-test-coder",
-        description="Test agent type plugin for mngr - uses matched-responses model for testing without API keys",
-        tier=PluginTier.DEPENDENT,
-        signal=_LLM_SIGNAL,
-    ),
     # --- INDEPENDENT, no signal ---
     CatalogEntry(
         entry_point_name="ttyd",
