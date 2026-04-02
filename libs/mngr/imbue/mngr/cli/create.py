@@ -1482,25 +1482,25 @@ class ParsedSourceString(FrozenModel):
 def _parse_source_string(source_str: str) -> ParsedSourceString:
     """Parse [AGENT[@[HOST][.PROVIDER]]][:PATH] format into components.
 
-    Without a colon and without '@', the string is treated as a plain path
-    (the common case for --source ./some/dir). When '@' is present, the string
-    is parsed as an agent address regardless of whether a colon follows. With a
-    colon, the part before the colon is the address and the part after is the path.
+    Strings starting with /, ./, ~/, or ../ are treated as filesystem paths.
+    Otherwise, the string is parsed as an agent address (optionally with host
+    and path components). With a colon, the part before is the address and
+    the part after is the path.
 
     The host_name field may include a .PROVIDER suffix (e.g. "myhost.modal").
     """
     if ":" not in source_str:
-        if "@" in source_str:
-            # Agent address without a path (e.g. "my-agent@my-host")
-            address = parse_agent_address(source_str)
-            host_str = _host_str_from_address_components(address.host_name, address.provider_name)
-            return ParsedSourceString(
-                path=None,
-                agent_name=str(address.agent_name) if address.agent_name else None,
-                host_name=host_str,
-            )
-        # No colon or @ -- treat as a plain path (most common case: --source ./dir)
-        return ParsedSourceString(path=Path(source_str), agent_name=None, host_name=None)
+        if source_str.startswith(("/", "./", "~/", "../")):
+            # Explicit filesystem path
+            return ParsedSourceString(path=Path(source_str), agent_name=None, host_name=None)
+        # Agent address without a path (e.g. "my-agent" or "my-agent@my-host")
+        address = parse_agent_address(source_str)
+        host_str = _host_str_from_address_components(address.host_name, address.provider_name)
+        return ParsedSourceString(
+            path=None,
+            agent_name=str(address.agent_name) if address.agent_name else None,
+            host_name=host_str,
+        )
 
     prefix, path_str = source_str.split(":", 1)
     path = Path(path_str) if path_str else None
