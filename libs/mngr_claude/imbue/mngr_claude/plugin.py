@@ -697,7 +697,7 @@ def _get_local_host(mngr_ctx: MngrContext) -> OnlineHostInterface:
     return local_host_ref
 
 
-def _symlink_user_resources(host: OnlineHostInterface, config_dir: Path, *, symlink: bool) -> None:
+def _sync_user_resources(host: OnlineHostInterface, config_dir: Path, *, symlink: bool) -> None:
     """Sync user resource directories from the claude home dir into the per-agent config dir.
 
     Symlinks or copies skills/, agents/, commands/, plugins/ depending on the
@@ -1476,10 +1476,10 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         # 2. Transfer directories and set up local credentials
         if config.sync_home_settings:
             if host.is_local and config.symlink_user_resources:
-                _symlink_user_resources(host, config_dir, symlink=True)
+                _sync_user_resources(host, config_dir, symlink=True)
             else:
                 if host.is_local:
-                    _symlink_user_resources(host, config_dir, symlink=False)
+                    _sync_user_resources(host, config_dir, symlink=False)
                 else:
                     _rsync_claude_home_directories(host, local_host, source_claude_dir, config_dir)
         if host.is_local:
