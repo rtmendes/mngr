@@ -156,17 +156,13 @@ def test_unwrap_accepts_direct(unwrap_fn: Any, fake_cls: Any, direct_cls: Any, f
 # --- CLI not found tests ---
 
 
-def test_environment_create_raises_on_missing_modal_cli(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PATH", "/nonexistent_path_for_test")
-    interface = DirectModalInterface()
+def test_environment_create_raises_on_missing_modal_cli(modal_cli_missing: DirectModalInterface) -> None:
     with pytest.raises(ModalProxyError, match="modal.*CLI command was not found"):
-        interface.environment_create("test-env")
+        modal_cli_missing.environment_create("test-env")
 
 
-def test_deploy_raises_on_missing_modal_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("PATH", "/nonexistent_path_for_test")
-    interface = DirectModalInterface()
+def test_deploy_raises_on_missing_modal_cli(modal_cli_missing: DirectModalInterface, tmp_path: Path) -> None:
     script = tmp_path / "deploy.py"
     script.write_text("")
     with pytest.raises(ModalProxyError, match="modal.*CLI command was not found"):
-        interface.deploy(script, app_name="test-app", environment_name="test-env")
+        modal_cli_missing.deploy(script, app_name="test-app", environment_name="test-env")
