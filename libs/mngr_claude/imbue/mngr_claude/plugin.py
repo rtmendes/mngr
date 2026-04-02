@@ -66,12 +66,12 @@ from imbue.mngr_claude.claude_config import ClaudeEffortCalloutNotDismissedError
 from imbue.mngr_claude.claude_config import ClaudeOnboardingNotCompletedError
 from imbue.mngr_claude.claude_config import acknowledge_cost_threshold
 from imbue.mngr_claude.claude_config import add_claude_trust_for_path
+from imbue.mngr_claude.claude_config import auto_dismiss_claude_dialogs
 from imbue.mngr_claude.claude_config import build_readiness_hooks_config
 from imbue.mngr_claude.claude_config import check_claude_dialogs_dismissed
 from imbue.mngr_claude.claude_config import complete_onboarding
 from imbue.mngr_claude.claude_config import dismiss_effort_callout
 from imbue.mngr_claude.claude_config import encode_claude_project_dir_name
-from imbue.mngr_claude.claude_config import ensure_claude_dialogs_dismissed
 from imbue.mngr_claude.claude_config import find_project_config
 from imbue.mngr_claude.claude_config import get_claude_config_path
 from imbue.mngr_claude.claude_config import is_effort_callout_dismissed
@@ -1343,7 +1343,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         with log_span("Configuring readiness hooks in {}", settings_path):
             host.write_text_file(settings_path, json.dumps(merged, indent=2) + "\n")
 
-    def _ensure_no_blocking_dialogs(self, source_path: Path | None, mngr_ctx: MngrContext) -> None:
+    def interactively_dismiss_claude_dialogs(self, source_path: Path | None, mngr_ctx: MngrContext) -> None:
         """Ensure all known Claude startup dialogs are dismissed in the global config.
 
         All dialogs that could intercept tmux input must be dismissed before
@@ -1362,7 +1362,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         trust_path = source_path if source_path is not None else self.work_dir
 
         if mngr_ctx.is_auto_approve:
-            ensure_claude_dialogs_dismissed(global_config_path, trust_path)
+            auto_dismiss_claude_dialogs(global_config_path, trust_path)
             return
 
         if not is_source_directory_trusted(global_config_path, trust_path):
@@ -1535,11 +1535,11 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
 
                 if config.auto_dismiss_dialogs:
                     # Auto-approve all dialogs for agents that opt into dismissal
-                    ensure_claude_dialogs_dismissed(get_claude_config_path(), self.work_dir)
+                    auto_dismiss_claude_dialogs(get_claude_config_path(), self.work_dir)
                 else:
                     # Check/prompt for all blocking dialogs
                     # source_path=None (clone/no-git) means trust is prompted for work_dir
-                    self._ensure_no_blocking_dialogs(source_path, mngr_ctx)
+                    self.interactively_dismiss_claude_dialogs(source_path, mngr_ctx)
 
             # Ensure claude is installed (and at the right version if pinned)
             if config.check_installation:
