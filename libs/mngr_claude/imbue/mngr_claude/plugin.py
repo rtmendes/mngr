@@ -1849,8 +1849,8 @@ def get_files_for_deploy(
 
     Always includes settings.json and .claude.json (using generated defaults
     when local files are unavailable or user settings are excluded).
-    When include_user_settings is True, also includes skills/, agents/,
-    commands/, and credentials.
+    When include_user_settings is True, also includes keybindings.json,
+    skills/, agents/, commands/, plugins/, and credentials.
     """
     files: dict[Path, Path | str] = {}
 
@@ -1869,7 +1869,7 @@ def get_files_for_deploy(
     files[Path("~/.claude.json")] = json.dumps(claude_json_data, indent=2) + "\n"
 
     if include_user_settings:
-        # Skills, agents, commands (skip settings.json, handled above)
+        # Keybindings, skills, agents, commands, plugins (skip settings.json, handled above)
         for relative_path, source_path in _collect_claude_home_dir_files(local_claude_dir).items():
             if relative_path == Path("settings.json"):
                 continue
