@@ -2559,8 +2559,10 @@ class Host(BaseHost, OnlineHostInterface):
         current window. This is important for sessions with additional command windows.
 
         Guards with has-session first because list-panes -s does not support the =
-        prefix for exact session matching (it uses target-pane resolution internally).
-        Without this guard, list-panes -s would fall back to prefix matching and could
+        prefix for exact session matching. Despite the man page saying "if -s is given,
+        target is a session", list-panes resolves its -t via CMD_FIND_WINDOW, so a bare
+        '=name' is parsed as an exact window match, not an exact session match. Without
+        this guard, list-panes -s would fall back to session prefix matching and could
         return PIDs from a different session (e.g. 'mngr_foo-bar' when targeting 'mngr_foo').
         """
         # has-session supports = for exact matching -- bail out if session doesn't exist
@@ -2814,11 +2816,12 @@ def _build_start_agent_shell_command(
 
     # NOTE: Commands below target a session that was just created above in the
     # same && chain. The exact session definitely exists, so we do NOT use the
-    # = prefix here -- it's unnecessary, and tmux's = exact-match prefix only
-    # works for commands whose -t resolves as target-session (e.g. has-session,
-    # kill-session). Commands that resolve as target-pane (e.g. set-option) or
-    # target-window (e.g. list-panes) use a different code path in tmux's
-    # cmd-find.c that does not honor the = prefix.
+    # = prefix here -- it's unnecessary. The = prefix only provides exact
+    # *session* matching for commands whose -t resolves as target-session (e.g.
+    # has-session, kill-session). For target-pane (e.g. set-option) or
+    # target-window (e.g. list-panes) commands, a bare '=name' is parsed as
+    # an exact window/pane match rather than an exact session match, so it
+    # does not prevent session prefix matching.
 
     # Save the user's original default-command (from their ~/.tmux.conf) into
     # the tmux session environment, then set default-command to env_shell_cmd.
