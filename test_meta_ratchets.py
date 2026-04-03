@@ -1,4 +1,5 @@
 import ast
+import os
 import subprocess
 from pathlib import Path
 
@@ -276,4 +277,57 @@ def test_every_project_with_tests_has_coverage_config() -> None:
 
     assert len(errors) == 0, "Projects with tests are missing coverage configuration:\n" + "\n".join(
         f"  - {e}" for e in errors
+    )
+
+
+# --- Changelog entry enforcement ---
+
+# Branch prefixes that are exempt from the changelog requirement
+_CHANGELOG_EXEMPT_BRANCH_PREFIXES: tuple[str, ...] = (
+    "mngr/changelog-consolidation",
+    "dependabot/",
+)
+
+
+def _resolve_branch_name() -> str:
+    """Resolve the current git branch name.
+
+    On GitHub Actions PRs, uses GITHUB_HEAD_REF. Otherwise falls back to git.
+    Returns empty string if the branch cannot be determined (e.g. detached HEAD on push).
+    """
+    branch = os.environ.get("GITHUB_HEAD_REF", "")
+    if branch:
+        return branch
+    result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=_REPO_ROOT,
+    )
+    return result.stdout.strip()
+
+
+def test_pr_has_changelog_entry() -> None:
+    """Ensure every PR branch has a corresponding changelog entry file.
+
+    Each PR must include a file at changelog/<branch-name>.md where slashes
+    in the branch name are replaced with dashes. This is enforced so that
+    the nightly changelog consolidation agent has material to work with.
+    """
+    branch = _resolve_branch_name()
+
+    if not branch or branch in ("main", "release"):
+        pytest.skip("Not a PR branch")
+
+    for prefix in _CHANGELOG_EXEMPT_BRANCH_PREFIXES:
+        if branch.startswith(prefix):
+            pytest.skip(f"Branch '{branch}' is exempt from changelog requirement")
+
+    sanitized = branch.replace("/", "-")
+    changelog_file = _REPO_ROOT / "changelog" / f"{sanitized}.md"
+    assert changelog_file.exists(), (
+        f"Missing changelog entry for branch '{branch}'.\n"
+        f"Create the file: changelog/{sanitized}.md\n"
+        f"This file should briefly describe the user-visible changes in this PR."
     )
