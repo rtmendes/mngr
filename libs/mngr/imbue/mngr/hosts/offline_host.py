@@ -214,7 +214,7 @@ def derive_offline_host_state(
     certified_data: CertifiedHostData,
     supports_shutdown_hosts: bool,
     supports_snapshots: bool,
-    has_snapshots: bool | None = None,
+    has_snapshots: bool,
 ) -> HostState:
     """Determine the lifecycle state of an offline host from its certified data.
 
@@ -222,9 +222,9 @@ def derive_offline_host_state(
     host. Both OfflineHost.get_state() and provider discovery code should use this
     to avoid duplicating the state-derivation rules.
 
-    has_snapshots overrides the snapshot check when the caller has a more
-    authoritative source (e.g. provider.list_snapshots) than
-    certified_data.snapshots.
+    has_snapshots should reflect the most authoritative source available to the
+    caller: provider.list_snapshots() when accessible (OfflineHost.get_state),
+    or certified_data.snapshots when not (discovery code).
     """
     if certified_data.failure_reason is not None:
         return HostState.FAILED
@@ -239,8 +239,6 @@ def derive_offline_host_state(
     if not supports_snapshots:
         return HostState.DESTROYED
 
-    if has_snapshots is None:
-        has_snapshots = len(certified_data.snapshots) > 0
     if not has_snapshots:
         return HostState.DESTROYED
 

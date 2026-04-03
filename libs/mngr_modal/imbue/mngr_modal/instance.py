@@ -2471,6 +2471,7 @@ log "=== Shutdown script completed ==="
                 certified_data=host_record.certified_host_data,
                 supports_shutdown_hosts=self.supports_shutdown_hosts,
                 supports_snapshots=self.supports_snapshots,
+                has_snapshots=len(host_record.certified_host_data.snapshots) > 0,
             )
 
             if state == HostState.DESTROYED and not include_destroyed:
@@ -2580,6 +2581,7 @@ log "=== Shutdown script completed ==="
                     certified_data=host_record.certified_host_data,
                     supports_shutdown_hosts=self.supports_shutdown_hosts,
                     supports_snapshots=self.supports_snapshots,
+                    has_snapshots=has_snapshots,
                 )
 
             host_ref = DiscoveredHost(
