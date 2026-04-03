@@ -1,33 +1,54 @@
-# Dockerfile.release — minimal release test image for Modal with Docker-in-Docker.
-#
-# Kept deliberately small so Modal's alpha image builder (2025.06) can
-# save/materialize it without OOM. Only includes dependencies actually needed
-# by the release test suite (Docker SDK, pytest, mngr).
-#
-# Heavy tools (Claude Code, gh CLI, ttyd, etc.) that are in the regular
-# Dockerfile are intentionally excluded here.
-
 FROM python:3.11-slim
 
-# ---- System packages (minimal set for release tests) ----
-# NOTE: build-essential deliberately omitted to keep image small for Modal's
-# alpha builder. All Python deps must have pre-built wheels for linux/amd64.
+# Install system dependencies including tini for proper signal handling
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    build-essential \
     ca-certificates \
     curl \
+    fd-find \
     git \
+    git-lfs \
     iproute2 \
     iptables \
+    jq \
+    nano \
+    openssh-server \
+    procps \
+    ripgrep \
+    rsync \
+    tini \
+    tmux \
+    unison \
     wget \
+    xxd \
     && rm -rf /var/lib/apt/lists/*
 
-# uv (fast Python package manager)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+# Install ttyd binary from GitHub releases (not available via apt)
+RUN ARCH=$(uname -m) && \
+    curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${ARCH}" \
+    -o /usr/local/bin/ttyd && \
+    chmod +x /usr/local/bin/ttyd
+
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+	&& out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+	&& cat $out | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+	&& chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+	&& mkdir -p -m 755 /etc/apt/sources.list.d \
+	&& echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+	&& apt update \
+	&& apt install gh -y
+
+# Install uv (fast Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && echo 'PATH="/root/.local/bin:$PATH"' >> /root/.bashrc
 ENV PATH="/root/.local/bin:$PATH"
 
-# ---- Docker-in-Docker (static binaries, ~70MB) ----
-# Uses static binaries instead of docker-ce apt packages (~1.5GB) to keep the
-# image small enough for Modal's image builder.
+# Install claude code (pass CLAUDE_CODE_VERSION as a build arg to pin a specific version)
+ARG CLAUDE_CODE_VERSION=""
+RUN curl -fsSL https://claude.ai/install.sh > /tmp/install_claude.sh && ( if [ -n "$CLAUDE_CODE_VERSION" ]; then cat /tmp/install_claude.sh | bash -s "$CLAUDE_CODE_VERSION"; else cat /tmp/install_claude.sh | bash; fi && test -x /root/.local/bin/claude ) || ( cat /tmp/install_claude.sh && exit 1 )
+ENV CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}
+
+# ---- Docker-in-Docker (static binaries) ----
 RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
     | tar xz -C /usr/local/bin --strip-components=1
 
@@ -41,6 +62,7 @@ RUN rm -f /usr/local/bin/runc \
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy \
     && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
 
+# without this, there are some annoying bugs on modal's side with snapshotting
 ENV UV_LINK_MODE=copy
 
 # ---- Docker daemon startup scripts ----
@@ -48,16 +70,26 @@ COPY libs/mngr/imbue/mngr/resources/start-dockerd.sh /start-dockerd.sh
 COPY libs/mngr/imbue/mngr/resources/ensure-dockerd.sh /ensure-dockerd.sh
 RUN chmod +x /start-dockerd.sh /ensure-dockerd.sh
 
-# BASH_ENV ensures dockerd is running before every bash -c command
-ENV BASH_ENV=/ensure-dockerd.sh
-
-# ---- Project code (changes every run) ----
+# copy in all of our code:
 COPY . /code/
 
+# extract our code into the project directory
 RUN mkdir -p /code/mngr/ && tar -xzf /code/current.tar.gz -C /code/mngr/ && rm /code/*.tar.gz && git config --global --add safe.directory /code/mngr/ && chown -R root:root /code/mngr/
 
+# set working directory to the project root -- this is where `mngr schedule`
+# will copy project deploy files and where scheduled commands will run
 WORKDIR /code/mngr/
 
+# install python dependencies
 RUN unset UV_INDEX_URL && uv sync --all-packages && uv tool install -e /code/mngr/libs/mngr && uv tool install modal
 
+# BASH_ENV ensures dockerd is running before every bash command at runtime.
+# Placed after all RUN instructions so it does not affect the image build.
+ENV BASH_ENV=/ensure-dockerd.sh
+
+# Run idly forever while being responsive to SIGTERM.
+# PID 1 must explicitly install signal handlers in order to respect signals.
+# `tail -f /dev/null` does not do this.
+# Since `docker stop` issues a `SIGTERM`, we use an explicit `trap`.
+# In practice, this appears to enable rapid interactions using `docker stop`.
 CMD ["sh", "-c", "/start-dockerd.sh && trap 'exit 0' TERM; tail -f /dev/null & wait"]
