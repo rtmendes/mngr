@@ -752,7 +752,7 @@ def test_unset_vars_applied_during_agent_start(
 
     # Wait for the tmux session to exist
     def session_ready() -> bool:
-        result = host.execute_idempotent_command(f"tmux has-session -t '{session_name}'")
+        result = host.execute_idempotent_command(f"tmux has-session -t '={session_name}'")
         if not result.success:
             return False
         pane_content = capture_tmux_pane_content(host, session_name)
@@ -925,7 +925,7 @@ def test_stop_agent_kills_multi_pane_processes(
     host._run_shell_command(StringCommand(f"tmux split-window -t '{session_name}' 'sleep 3000'"))
 
     success, output = host._run_shell_command(
-        StringCommand(f"tmux list-panes -t '{session_name}' 2>/dev/null | wc -l")
+        StringCommand(f"tmux list-panes -t '={session_name}' 2>/dev/null | wc -l")
     )
     assert success
     pane_count = int(output.stdout.strip())
@@ -989,7 +989,7 @@ def test_start_agent_creates_process_group(
 
     try:
         success, output = host._run_shell_command(
-            StringCommand(f"tmux list-panes -t '{session_name}' -F '#{{pane_pid}}' 2>/dev/null")
+            StringCommand(f"tmux list-panes -t '={session_name}' -F '#{{pane_pid}}' 2>/dev/null")
         )
         assert success
         pane_pid = output.stdout.strip()
@@ -1165,7 +1165,7 @@ def test_start_agent_creates_additional_tmux_windows(
 
         # Verify we have 3 windows (main + 2 additional)
         success, output = host._run_shell_command(
-            StringCommand(f"tmux list-windows -t '{session_name}' -F '#{{window_name}}' 2>/dev/null")
+            StringCommand(f"tmux list-windows -t '={session_name}' -F '#{{window_name}}' 2>/dev/null")
         )
         assert success
         windows = output.stdout.strip().split("\n")
