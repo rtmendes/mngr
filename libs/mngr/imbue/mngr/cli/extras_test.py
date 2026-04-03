@@ -2,13 +2,17 @@
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
+from imbue.mngr.cli import extras as extras_mod
 from imbue.mngr.cli.extras import _completion_status
 from imbue.mngr.cli.extras import _detect_shell
 from imbue.mngr.cli.extras import _generate_completion_script
 from imbue.mngr.cli.extras import _get_shell_rc
+from imbue.mngr.cli.extras import _install_claude_plugin
 from imbue.mngr.cli.extras import _is_completion_configured
+from imbue.mngr.cli.extras import _plugins_status
 from imbue.mngr.cli.extras import extras
 
 
@@ -16,6 +20,18 @@ def test_detect_shell_returns_zsh_or_bash() -> None:
     """_detect_shell returns a valid shell type."""
     shell = _detect_shell()
     assert shell in ("zsh", "bash")
+
+
+def test_detect_shell_returns_zsh_for_zsh_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_detect_shell returns 'zsh' when SHELL env is set to zsh."""
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    assert _detect_shell() == "zsh"
+
+
+def test_detect_shell_returns_bash_for_bash_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_detect_shell returns 'bash' when SHELL env is set to bash."""
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    assert _detect_shell() == "bash"
 
 
 def test_get_shell_rc_zsh() -> None:
@@ -73,8 +89,40 @@ def test_completion_status_returns_tuple() -> None:
     assert isinstance(rc_path, Path)
 
 
-def test_extras_no_args_shows_status(cli_runner: CliRunner) -> None:
+def test_install_claude_plugin_no_claude(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_install_claude_plugin returns False when claude is not available."""
+    monkeypatch.setattr(extras_mod, "_claude_plugin_status", lambda: (False, False))
+    assert _install_claude_plugin(auto=True) is False
+
+
+def test_plugins_status_returns_string() -> None:
+    """_plugins_status returns a string describing plugin status."""
+    status = _plugins_status()
+    assert isinstance(status, str)
+    assert len(status) > 0
+
+
+def test_extras_no_args_shows_status(cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
     """Running 'mngr extras' with no flags shows status."""
+    monkeypatch.setattr(extras_mod, "_claude_plugin_status", lambda: (False, False))
     result = cli_runner.invoke(extras, [])
     assert result.exit_code == 0
     assert "Extras" in result.output
+
+
+def test_extras_help(cli_runner: CliRunner) -> None:
+    """The --help flag should work for the extras command."""
+    result = cli_runner.invoke(extras, ["--help"])
+    assert result.exit_code == 0
+
+
+def test_extras_completion_subcommand(cli_runner: CliRunner) -> None:
+    """The 'extras completion' subcommand should work."""
+    result = cli_runner.invoke(extras, ["completion"])
+    assert result.exit_code == 0
+
+
+def test_extras_plugins_subcommand(cli_runner: CliRunner) -> None:
+    """The 'extras plugins' subcommand should work."""
+    result = cli_runner.invoke(extras, ["plugins"])
+    assert result.exit_code in (0, 1)

@@ -4,6 +4,7 @@ import pytest
 
 from imbue.mngr.errors import BinaryNotInstalledError
 from imbue.mngr.errors import MngrError
+from imbue.mngr.utils import deps as deps_mod
 from imbue.mngr.utils.deps import ALL_DEPS
 from imbue.mngr.utils.deps import CORE_DEPS
 from imbue.mngr.utils.deps import DependencyCategory
@@ -14,6 +15,7 @@ from imbue.mngr.utils.deps import SystemDependency
 from imbue.mngr.utils.deps import check_bash_version
 from imbue.mngr.utils.deps import describe_install_commands
 from imbue.mngr.utils.deps import detect_os
+from imbue.mngr.utils.deps import install_dep
 from imbue.mngr.utils.deps import install_deps_batch
 
 _EXISTING_BINARY = SystemDependency(
@@ -282,3 +284,80 @@ def test_describe_install_commands_skips_deps_without_install_method() -> None:
     ]
     commands = describe_install_commands(deps, OsName.MACOS)
     assert commands == []
+
+
+def test_describe_install_commands_fallback_manual_install() -> None:
+    """Deps with install_method but no matching platform package get a manual install comment."""
+    deps = [
+        SystemDependency(
+            binary="special-tool",
+            purpose="test",
+            macos_hint="install manually",
+            linux_hint="install manually",
+            install_method=InstallMethod(),
+        ),
+    ]
+    commands = describe_install_commands(deps, OsName.MACOS)
+    assert len(commands) == 1
+    assert "special-tool" in commands[0]
+    assert "install manually" in commands[0]
+
+
+# -- install_dep --
+
+
+def test_install_dep_returns_false_for_no_install_method() -> None:
+    """install_dep returns False when install_method is None."""
+    dep = SystemDependency(
+        binary="no-method",
+        purpose="test",
+        macos_hint="n/a",
+        linux_hint="n/a",
+        install_method=None,
+    )
+    assert install_dep(dep, OsName.LINUX) is False
+
+
+def test_install_dep_returns_false_for_empty_install_method() -> None:
+    """install_dep returns False when install_method has no matching package for the OS."""
+    dep = SystemDependency(
+        binary="no-match",
+        purpose="test",
+        macos_hint="n/a",
+        linux_hint="n/a",
+        install_method=InstallMethod(),
+    )
+    assert install_dep(dep, OsName.LINUX) is False
+    assert install_dep(dep, OsName.MACOS) is False
+
+
+# -- install_deps_batch with no_auto_install deps --
+
+
+def test_install_deps_batch_reports_no_auto_install_as_failed() -> None:
+    """Deps with install_method but no matching platform method are reported as failed."""
+    dep = SystemDependency(
+        binary="no-match-xyz",
+        purpose="test",
+        macos_hint="n/a",
+        linux_hint="n/a",
+        install_method=InstallMethod(),
+    )
+    result = install_deps_batch([dep], OsName.MACOS)
+    assert dep in result
+
+
+# -- _install_via_brew / _install_via_apt / _install_via_script --
+
+
+def test_install_dep_returns_false_for_custom_script_without_curl(monkeypatch: pytest.MonkeyPatch) -> None:
+    """install_dep returns False for custom_install_script when curl is absent."""
+    dep = SystemDependency(
+        binary="custom-tool",
+        purpose="test",
+        macos_hint="curl | bash",
+        linux_hint="curl | bash",
+        install_method=InstallMethod(custom_install_script="https://example.com/install.sh"),
+    )
+    monkeypatch.setattr(deps_mod.shutil, "which", lambda _name: None)
+    assert install_dep(dep, OsName.LINUX) is False
