@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+from typing import Never
 
 from pydantic import Field
 
@@ -276,6 +277,13 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
         """Wait for the agent to finish and return its complete output."""
         return "".join(self.stream_output())
 
+    def _raise_no_output_error(self) -> Never:
+        """Raise MngrError with pane content when claude produces no output."""
+        error_detail = self._get_pane_error_message()
+        if error_detail:
+            raise MngrError(f"claude exited without producing output:\n{error_detail}")
+        raise MngrError("claude exited without producing output (no details available)")
+
     def _get_pane_error_message(self) -> str | None:
         """Capture the tmux pane content to extract an error message.
 
@@ -303,21 +311,27 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
 
         Raises MngrError if the agent exits without producing any output,
         which typically indicates a startup failure (e.g. authentication error).
+        The check covers both cases: stdout file never created, and stdout file
+        created but empty (e.g. shell redirect creates the file before claude
+        fails).
         """
         stdout_path = self._get_stdout_path()
 
         if not self._wait_for_stdout_file(stdout_path):
-            error_detail = self._get_pane_error_message()
-            if error_detail:
-                raise MngrError(f"claude exited without producing output:\n{error_detail}")
-            raise MngrError("claude exited without producing output (no details available)")
+            self._raise_no_output_error()
 
         state = _StreamTailState(
             stdout_path=stdout_path,
             host=self.host,
             is_finished=self._is_agent_finished,
         )
-        yield from state.tail_until_done()
+        yielded_any = False
+        for chunk in state.tail_until_done():
+            yielded_any = True
+            yield chunk
+
+        if not yielded_any:
+            self._raise_no_output_error()
 
 
 @hookimpl

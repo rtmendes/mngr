@@ -220,12 +220,12 @@ def test_stream_output_yields_text_deltas(
     assert chunks == ["Hello ", "world!"]
 
 
-def test_stream_output_handles_empty_file(
+def test_stream_output_raises_when_empty_file(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """stream_output should handle an empty output file gracefully."""
+    """stream_output should raise MngrError when stdout file exists but is empty."""
     _patch_agent_as_stopped(monkeypatch)
     agent, host = _make_headless_agent(local_provider, tmp_path)
 
@@ -234,9 +234,8 @@ def test_stream_output_handles_empty_file(
     stdout_path = agent_dir / "stdout.jsonl"
     stdout_path.write_text("")
 
-    chunks = list(agent.stream_output())
-
-    assert chunks == []
+    with pytest.raises(MngrError, match="claude exited without producing output"):
+        list(agent.stream_output())
 
 
 def test_stream_output_handles_file_without_trailing_newline(
