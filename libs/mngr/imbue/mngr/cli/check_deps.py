@@ -33,6 +33,8 @@ def _print_status_table(
     """Print a table showing each dependency and its status."""
     missing_set = {id(d) for d in missing}
     name_width = max(len(d.binary) for d in deps)
+    if os_name == OsName.MACOS and not bash_ok:
+        name_width = max(name_width, len("bash(4+)"))
 
     for dep in deps:
         status = "missing" if id(dep) in missing_set else "ok"
