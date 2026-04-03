@@ -625,8 +625,8 @@ def _provision_remote_api_key(
 def _sync_local_user_resources(host: OnlineHostInterface, config_dir: Path, *, symlink: bool) -> None:
     """Sync user resources from ~/.claude/ into the per-agent config dir.
 
-    Symlinks or copies settings.json, skills/, agents/, commands/, plugins/
-    depending on the ``symlink`` flag.
+    Symlinks or copies settings.json, keybindings.json, skills/, agents/,
+    commands/, plugins/ depending on the ``symlink`` flag.
     """
     home_claude = Path.home() / ".claude"
     for item_name in _CLAUDE_HOME_SYNC_ITEMS:
