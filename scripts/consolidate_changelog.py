@@ -42,7 +42,7 @@ def _build_new_section(date_str: str, entries: list[tuple[Path, str]]) -> str:
 
 
 def _insert_section_into_changelog(changelog_path: Path, new_section: str) -> None:
-    """Insert a new section after the header of the existing CHANGELOG.md."""
+    """Insert a new section after the header of the existing changelog file."""
     if changelog_path.exists():
         existing = changelog_path.read_text()
     else:
