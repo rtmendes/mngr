@@ -123,7 +123,11 @@ def _check_deps_impl(ctx: click.Context, interactive: bool, core: bool, install_
         write_human_line("")
 
         choice = read_tty_choice("Choice [a/c/n]: ")
-        if choice.lower() in ("a", "y", ""):
+        if choice == "":
+            # /dev/tty was unavailable -- skip rather than silently installing
+            write_human_line("No interactive terminal available. Skipping dependency installation.")
+            return
+        if choice.lower() in ("a", "y"):
             to_install = missing
         elif choice.lower() == "c":
             to_install = missing_core

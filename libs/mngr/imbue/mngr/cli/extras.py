@@ -82,8 +82,11 @@ def _install_completion(auto: bool) -> bool:
     if not auto:
         write_human_line("Enable shell completion? This will add a line to {}", rc_path)
         choice = read_tty_choice("[y/n]: ")
-        if choice.lower() not in ("y", ""):
-            write_human_line("Skipping shell completion.")
+        if choice == "" or choice.lower() != "y":
+            if choice == "":
+                write_human_line("No interactive terminal available. Skipping shell completion.")
+            else:
+                write_human_line("Skipping shell completion.")
             return False
 
     script = _generate_completion_script(shell_type)
@@ -129,8 +132,11 @@ def _install_claude_plugin(auto: bool) -> bool:
     if not auto:
         write_human_line("Install the Claude Code review plugin (imbue-code-guardian)?")
         choice = read_tty_choice("[y/n]: ")
-        if choice.lower() not in ("y", ""):
-            write_human_line("Skipping Claude Code plugin.")
+        if choice == "" or choice.lower() != "y":
+            if choice == "":
+                write_human_line("No interactive terminal available. Skipping Claude Code plugin.")
+            else:
+                write_human_line("Skipping Claude Code plugin.")
             return False
 
     write_human_line("Installing Claude Code review plugin...")
