@@ -186,6 +186,35 @@ def install_dep(dep: SystemDependency, os_name: OsName) -> bool:
     return False
 
 
+def describe_install_commands(deps: Sequence[SystemDependency], os_name: OsName) -> list[str]:
+    """Return the shell commands that would be run to install the given deps.
+
+    This is used to show users exactly what will happen before they confirm.
+    """
+    commands: list[str] = []
+    brew_packages: list[str] = []
+    apt_packages: list[str] = []
+
+    for dep in deps:
+        if dep.install_method is None:
+            continue
+        if dep.install_method.custom_install_script is not None:
+            commands.append(f"curl -fsSL {dep.install_method.custom_install_script} | bash")
+        elif os_name == OsName.MACOS and dep.install_method.brew_package is not None:
+            brew_packages.append(dep.install_method.brew_package)
+        elif os_name == OsName.LINUX and dep.install_method.apt_package is not None:
+            apt_packages.append(dep.install_method.apt_package)
+        else:
+            pass
+
+    if brew_packages:
+        commands.insert(0, f"brew install {' '.join(brew_packages)}")
+    if apt_packages:
+        commands.insert(0, f"sudo apt-get install -y {' '.join(apt_packages)}")
+
+    return commands
+
+
 def install_deps_batch(deps: Sequence[SystemDependency], os_name: OsName) -> list[SystemDependency]:
     """Install multiple dependencies, batching brew/apt calls. Returns list of deps that failed."""
     # Separate deps by install mechanism

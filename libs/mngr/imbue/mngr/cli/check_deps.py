@@ -18,6 +18,7 @@ from imbue.mngr.utils.deps import DependencyCategory
 from imbue.mngr.utils.deps import OsName
 from imbue.mngr.utils.deps import SystemDependency
 from imbue.mngr.utils.deps import check_bash_version
+from imbue.mngr.utils.deps import describe_install_commands
 from imbue.mngr.utils.deps import detect_os
 from imbue.mngr.utils.deps import install_deps_batch
 from imbue.mngr.utils.deps import install_modern_bash
@@ -87,15 +88,29 @@ def _check_deps_impl(ctx: click.Context, interactive: bool, core: bool, install_
 
     # Determine what to install
     to_install: list[SystemDependency] = []
+    need_bash = os_name == OsName.MACOS and not bash_ok
 
     if install_all:
         to_install = missing
     elif core:
         to_install = missing_core
     else:
-        write_human_line("  [a] Install all ({})", ", ".join(d.binary for d in missing))
+        # Show what commands would be run for each option
+        all_commands = describe_install_commands(missing, os_name)
+        if need_bash:
+            all_commands.append("brew install bash")
+        write_human_line("  [a] Install all ({}):", ", ".join(d.binary for d in missing))
+        for cmd in all_commands:
+            write_human_line("        {}", cmd)
+
         if missing_core:
-            write_human_line("  [c] Install core only ({})", ", ".join(d.binary for d in missing_core))
+            core_commands = describe_install_commands(missing_core, os_name)
+            if need_bash:
+                core_commands.append("brew install bash")
+            write_human_line("  [c] Install core only ({}):", ", ".join(d.binary for d in missing_core))
+            for cmd in core_commands:
+                write_human_line("        {}", cmd)
+
         write_human_line("  [n] Skip -- I'll install them myself")
         write_human_line("")
 
@@ -107,8 +122,6 @@ def _check_deps_impl(ctx: click.Context, interactive: bool, core: bool, install_
         else:
             write_human_line("Skipping dependency installation.")
             return
-
-    need_bash = os_name == OsName.MACOS and not bash_ok
 
     if not to_install and not need_bash:
         write_human_line("Nothing to install.")
