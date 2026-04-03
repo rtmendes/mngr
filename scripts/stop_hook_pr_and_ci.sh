@@ -33,7 +33,7 @@ if [[ -z "$EXISTING_PR" ]]; then
     else
         log_error "No PR found for branch $CURRENT_BRANCH."
         log_error "Please create a draft PR using: gh pr create --draft"
-        _log_to_file "INFO" "No PR found, blocking until agent creates one"
+        _log_to_file "ERROR" "No PR found for branch $CURRENT_BRANCH, exiting with error"
         exit 2
     fi
 elif [[ "$PR_STATE" == "MERGED" ]]; then
