@@ -59,99 +59,77 @@ def _print_status_table(
         )
 
 
-def _check_deps_impl(ctx: click.Context, interactive: bool, core: bool, install_all: bool) -> None:
-    """Implementation of the dependencies command."""
-    os_name = detect_os()
+def _prompt_install_choice(
+    missing: list[SystemDependency],
+    missing_core: list[SystemDependency],
+    need_bash: bool,
+    os_name: OsName,
+) -> list[SystemDependency] | None:
+    """Interactively prompt the user to choose what to install.
 
-    # Check which deps are missing
-    missing = [dep for dep in ALL_DEPS if not dep.is_available()]
-    missing_core = [dep for dep in missing if dep.category == DependencyCategory.CORE]
-    # Check bash version (only matters on macOS)
-    bash_ok = True
-    if os_name == OsName.MACOS:
-        bash_ok = check_bash_version()
+    Returns the list of deps to install, or None if the user chose to skip.
+    """
+    all_commands = describe_install_commands(missing, os_name)
+    if need_bash:
+        all_commands.append("brew install bash")
+    all_names = [d.binary for d in missing]
+    if need_bash:
+        all_names.append("bash(4+)")
+    write_human_line("  [a] Install all ({}):", ", ".join(all_names))
+    for cmd in all_commands:
+        write_human_line("        {}", cmd)
 
-    # Print status
-    write_human_line("System dependencies ({})", os_name)
-    _print_status_table(ALL_DEPS, missing, bash_ok, os_name)
-    write_human_line("")
-
-    all_ok = len(missing) == 0 and bash_ok
-    if all_ok:
-        write_human_line("All system dependencies are present.")
-        return
-
-    # Report-only mode (no install flags)
-    if not interactive and not core and not install_all:
-        count = len(missing) + (0 if bash_ok else 1)
-        write_human_line("{} missing dependency(ies). Use -i to install interactively.", count)
-        ctx.exit(1)
-        return
-
-    # Determine what to install
-    to_install: list[SystemDependency] = []
-    need_bash = os_name == OsName.MACOS and not bash_ok
-
-    if install_all:
-        to_install = missing
-    elif core:
-        to_install = missing_core
-    else:
-        # Show what commands would be run for each option
-        all_commands = describe_install_commands(missing, os_name)
+    if missing_core or need_bash:
+        core_commands = describe_install_commands(missing_core, os_name)
         if need_bash:
-            all_commands.append("brew install bash")
-        all_names = [d.binary for d in missing]
+            core_commands.append("brew install bash")
+        core_names = [d.binary for d in missing_core]
         if need_bash:
-            all_names.append("bash(4+)")
-        write_human_line("  [a] Install all ({}):", ", ".join(all_names))
-        for cmd in all_commands:
+            core_names.append("bash(4+)")
+        write_human_line("  [c] Install core only ({}):", ", ".join(core_names))
+        for cmd in core_commands:
             write_human_line("        {}", cmd)
 
-        if missing_core or need_bash:
-            core_commands = describe_install_commands(missing_core, os_name)
-            if need_bash:
-                core_commands.append("brew install bash")
-            core_names = [d.binary for d in missing_core]
-            if need_bash:
-                core_names.append("bash(4+)")
-            write_human_line("  [c] Install core only ({}):", ", ".join(core_names))
-            for cmd in core_commands:
-                write_human_line("        {}", cmd)
+    write_human_line("  [n] Skip -- I'll install them myself")
+    write_human_line("")
 
-        write_human_line("  [n] Skip -- I'll install them myself")
-        write_human_line("")
+    choice = read_tty_choice("Choice [a/c/n]: ")
+    if choice == "":
+        write_human_line("No interactive terminal available. Skipping dependency installation.")
+        return None
+    if choice.lower() in ("a", "y"):
+        return missing
+    if choice.lower() == "c":
+        return missing_core
+    write_human_line("Skipping dependency installation.")
+    return None
 
-        choice = read_tty_choice("Choice [a/c/n]: ")
-        if choice == "":
-            # /dev/tty was unavailable -- skip rather than silently installing
-            write_human_line("No interactive terminal available. Skipping dependency installation.")
-            return
-        if choice.lower() in ("a", "y"):
-            to_install = missing
-        elif choice.lower() == "c":
-            to_install = missing_core
-        else:
-            write_human_line("Skipping dependency installation.")
-            return
 
-    if not to_install and not need_bash:
-        write_human_line("Nothing to install.")
-        return
-
-    # Do the installation
+def _run_installation(
+    to_install: list[SystemDependency],
+    need_bash: bool,
+    os_name: OsName,
+) -> list[SystemDependency]:
+    """Install the given deps (and modern bash if needed). Returns list of failed deps."""
     failed: list[SystemDependency] = []
     if to_install:
         write_human_line("Installing: {}", ", ".join(d.binary for d in to_install))
         failed = install_deps_batch(to_install, os_name)
 
-    # Install modern bash on macOS if needed
     if need_bash:
         write_human_line("Installing modern bash via brew...")
         if not install_modern_bash():
             write_human_line("WARNING: Failed to install modern bash.")
 
-    # Post-install status
+    return failed
+
+
+def _report_post_install_status(
+    failed: list[SystemDependency],
+    need_bash: bool,
+    os_name: OsName,
+) -> bool:
+    """Print post-install status. Returns True if all core deps (and bash) are now present."""
     write_human_line("")
     still_missing = [dep for dep in ALL_DEPS if not dep.is_available()]
     bash_ok_now = check_bash_version() if os_name == OsName.MACOS else True
@@ -162,16 +140,57 @@ def _check_deps_impl(ctx: click.Context, interactive: bool, core: bool, install_
     if still_missing:
         write_human_line("Still missing: {}", ", ".join(d.binary for d in still_missing))
 
-    # Deferred warnings
     if os_name == OsName.MACOS and not bash_ok_now and need_bash:
         write_human_line(
             "WARNING: PATH-resolved bash is still old after install. "
             "Ensure /opt/homebrew/bin (Apple Silicon) or /usr/local/bin (Intel) is before /bin in your PATH."
         )
 
-    # Exit code: 0 if all core deps present, 1 otherwise
     still_missing_core = [d for d in still_missing if d.category == DependencyCategory.CORE]
-    if still_missing_core or (os_name == OsName.MACOS and not bash_ok_now):
+    return len(still_missing_core) == 0 and bash_ok_now
+
+
+def _check_deps_impl(ctx: click.Context, interactive: bool, core: bool, install_all: bool) -> None:
+    """Implementation of the dependencies command."""
+    os_name = detect_os()
+
+    missing = [dep for dep in ALL_DEPS if not dep.is_available()]
+    missing_core = [dep for dep in missing if dep.category == DependencyCategory.CORE]
+    bash_ok = check_bash_version() if os_name == OsName.MACOS else True
+
+    write_human_line("System dependencies ({})", os_name)
+    _print_status_table(ALL_DEPS, missing, bash_ok, os_name)
+    write_human_line("")
+
+    if len(missing) == 0 and bash_ok:
+        write_human_line("All system dependencies are present.")
+        return
+
+    if not interactive and not core and not install_all:
+        count = len(missing) + (0 if bash_ok else 1)
+        write_human_line("{} missing dependency(ies). Use -i to install interactively.", count)
+        ctx.exit(1)
+        return
+
+    need_bash = os_name == OsName.MACOS and not bash_ok
+
+    if install_all:
+        to_install: list[SystemDependency] = missing
+    elif core:
+        to_install = missing_core
+    else:
+        prompted = _prompt_install_choice(missing, missing_core, need_bash, os_name)
+        if prompted is None:
+            return
+        to_install = prompted
+
+    if not to_install and not need_bash:
+        write_human_line("Nothing to install.")
+        return
+
+    failed = _run_installation(to_install, need_bash, os_name)
+    all_core_ok = _report_post_install_status(failed, need_bash, os_name)
+    if not all_core_ok:
         ctx.exit(1)
 
 
