@@ -198,7 +198,7 @@ def connect_to_agent(
 ) -> None:
     """Connect to an agent via tmux attach (local) or SSH + tmux attach (remote).
 
-    For local agents, replaces the current process with: tmux attach -t <session_name>
+    For local agents, replaces the current process with: tmux attach -t =<session_name>
 
     For remote agents, runs SSH interactively and then checks the exit code to
     determine if a post-disconnect action (destroy/stop) was requested via the
