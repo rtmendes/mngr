@@ -217,7 +217,6 @@ def describe_install_commands(deps: Sequence[SystemDependency], os_name: OsName)
 
 def install_deps_batch(deps: Sequence[SystemDependency], os_name: OsName) -> list[SystemDependency]:
     """Install multiple dependencies, batching brew/apt calls. Returns list of deps that failed."""
-    # Separate deps by install mechanism
     brew_packages: list[str] = []
     apt_packages: list[str] = []
     custom_deps: list[SystemDependency] = []
