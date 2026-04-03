@@ -357,7 +357,7 @@ PREVENT_IF_ELIF_WITHOUT_ELSE = RatchetRuleInfo(
         "All if/elif chains must have an else clause. The purpose is to force you to "
         "consider what happens when none of the conditions match. Adding 'else: pass' "
         "defeats the purpose -- if a case truly requires no action, add a comment "
-        "explaining why (e.g. 'else: pass  # dep has no installer for this OS, handled by caller'). "
+        "explaining why (e.g. 'else: pass' with a comment like 'no installer for this OS'). "
         "If you cannot think of what should happen, that usually means the else case is a bug."
     ),
 )
