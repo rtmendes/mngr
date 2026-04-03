@@ -2814,8 +2814,11 @@ def _build_start_agent_shell_command(
 
     # NOTE: Commands below target a session that was just created above in the
     # same && chain. The exact session definitely exists, so we do NOT use the
-    # = prefix here -- it's unnecessary and some tmux versions don't support it
-    # for target-pane/-window resolution (e.g. set-option's -t target-pane).
+    # = prefix here -- it's unnecessary, and tmux's = exact-match prefix only
+    # works for commands whose -t resolves as target-session (e.g. has-session,
+    # kill-session). Commands that resolve as target-pane (e.g. set-option) or
+    # target-window (e.g. list-panes) use a different code path in tmux's
+    # cmd-find.c that does not honor the = prefix.
 
     # Save the user's original default-command (from their ~/.tmux.conf) into
     # the tmux session environment, then set default-command to env_shell_cmd.
