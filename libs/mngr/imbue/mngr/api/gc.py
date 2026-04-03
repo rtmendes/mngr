@@ -25,6 +25,7 @@ from imbue.mngr.errors import HostAuthenticationError
 from imbue.mngr.errors import HostConnectionError
 from imbue.mngr.errors import HostOfflineError
 from imbue.mngr.errors import MngrError
+from imbue.mngr.errors import ProviderUnavailableError
 from imbue.mngr.interfaces.data_types import BuildCacheInfo
 from imbue.mngr.interfaces.data_types import LogFileInfo
 from imbue.mngr.interfaces.data_types import SizeBytes
@@ -446,6 +447,9 @@ def gc_volumes(
                     result.errors.append(error_msg)
                     _handle_error(error_msg, error_behavior, exc=e)
 
+        except ProviderUnavailableError:
+            # Provider is offline -- discover_hosts already warned, skip silently.
+            continue
         except MngrError as e:
             error_msg = f"Failed to process volumes for provider {provider.name}: {e}"
             result.errors.append(error_msg)
