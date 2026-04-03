@@ -447,8 +447,9 @@ def gc_volumes(
                     result.errors.append(error_msg)
                     _handle_error(error_msg, error_behavior, exc=e)
 
-        except ProviderUnavailableError:
-            # Provider is offline -- discover_hosts already warned, skip silently.
+        except ProviderUnavailableError as e:
+            # Provider is offline -- discover_hosts already warned the user.
+            logger.debug("Skipped volume GC for provider {} (unavailable): {}", provider.name, e)
             continue
         except MngrError as e:
             error_msg = f"Failed to process volumes for provider {provider.name}: {e}"
