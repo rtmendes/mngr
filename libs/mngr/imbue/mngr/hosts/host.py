@@ -2560,7 +2560,7 @@ class Host(BaseHost, OnlineHostInterface):
         """
         all_pids: list[str] = []
         result = self.execute_idempotent_command(
-            f"tmux list-panes -s -t '{session_name}' -F '#{{pane_pid}}' 2>/dev/null || true"
+            f"tmux list-panes -s -t '={session_name}' -F '#{{pane_pid}}' 2>/dev/null || true"
         )
         if result.success and result.stdout.strip():
             for pane_pid in result.stdout.strip().split("\n"):
@@ -2609,7 +2609,7 @@ class Host(BaseHost, OnlineHostInterface):
             # Finally kill the tmux sessions themselves
             for agent in current_agents:
                 session_name = f"{self.mngr_ctx.config.prefix}{agent.name}"
-                self.execute_idempotent_command(f"tmux kill-session -t '{session_name}' 2>/dev/null || true")
+                self.execute_idempotent_command(f"tmux kill-session -t '={session_name}' 2>/dev/null || true")
 
     def _get_agent_by_id(self, agent_id: AgentId) -> AgentInterface | None:
         """Get an agent by ID."""
