@@ -224,6 +224,13 @@ class ClaudeAgentConfig(AgentTypeConfig):
         "events/claude/common_transcript/events.jsonl. The common format includes user messages, "
         "assistant messages, and tool call/result summaries.",
     )
+    archive_sessions_on_destroy: bool = Field(
+        default=True,
+        description="Archive Claude session files before the agent's state directory is deleted on destroy. "
+        "When enabled, session JSONL files, the aggregated transcript, and the session ID history "
+        "are copied to <host_dir>/session_archives/<agent-name>--<agent-id>/. "
+        "Set to False to discard session data on destroy.",
+    )
 
 
 def _collect_claude_home_dir_files(claude_dir: Path) -> dict[Path, Path]:
@@ -1648,13 +1655,21 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
             host.copy_directory(host, source_plugin_dir, dest_plugin_dir)
 
     def on_destroy(self, host: OnlineHostInterface) -> None:
-        """Clean up per-agent credentials and trust entries.
+        """Archive session files and clean up per-agent credentials and trust entries.
+
+        When archive_sessions_on_destroy is enabled (default), copies session JSONL
+        files, the aggregated transcript, and session history to a persistent archive
+        directory before the agent state directory is deleted.
 
         For agents with per-agent config dirs: cleans up macOS keychain entries
         (the config dir itself is deleted with the agent state).
         For legacy agents without per-agent config dirs: cleans up the global
         ~/.claude.json trust entry.
         """
+        # Archive session files before the state dir is deleted
+        if self.agent_config.archive_sessions_on_destroy:
+            _archive_session_files(self, host)
+
         config_dir = self.get_claude_config_dir()
         per_agent_config_exists = host.execute_idempotent_command(
             f"test -d {shlex.quote(str(config_dir))}", timeout_seconds=5.0
@@ -1676,6 +1691,85 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         else:
             # Per-agent config dir on non-macOS: config dir is deleted with agent state, nothing extra to clean up
             pass
+
+
+def _get_session_archive_dir(host: OnlineHostInterface, agent: ClaudeAgent) -> Path:
+    """Return the archive directory path for an agent's session files."""
+    return host.host_dir / "session_archives" / f"{agent.name}--{agent.id}"
+
+
+def _archive_session_files(agent: ClaudeAgent, host: OnlineHostInterface) -> None:
+    """Copy session files to a persistent archive before the agent state dir is deleted.
+
+    Archives three categories of data:
+    - Session JSONL files from the per-agent Claude config dir (projects/)
+    - The aggregated transcript (logs/claude_transcript/events.jsonl)
+    - The session ID history file (claude_session_id_history)
+
+    Failures are logged as warnings but do not prevent agent destruction.
+    """
+    agent_dir = agent._get_agent_dir()
+    archive_dir = _get_session_archive_dir(host, agent)
+
+    # Check if the config dir has any session data worth archiving
+    config_dir = agent.get_claude_config_dir()
+    projects_dir = config_dir / "projects"
+    has_projects = host.execute_idempotent_command(
+        f"test -d {shlex.quote(str(projects_dir))}", timeout_seconds=5.0
+    ).success
+
+    transcript_path = agent_dir / "logs" / "claude_transcript" / "events.jsonl"
+    has_transcript = host.execute_idempotent_command(
+        f"test -f {shlex.quote(str(transcript_path))}", timeout_seconds=5.0
+    ).success
+
+    history_path = agent_dir / "claude_session_id_history"
+    has_history = host.execute_idempotent_command(
+        f"test -f {shlex.quote(str(history_path))}", timeout_seconds=5.0
+    ).success
+
+    if not has_projects and not has_transcript and not has_history:
+        logger.debug("No session data to archive for agent {}", agent.name)
+        return
+
+    with log_span("Archiving session files for agent {}", agent.name):
+        host.execute_idempotent_command(f"mkdir -p {shlex.quote(str(archive_dir))}", timeout_seconds=5.0)
+
+        # Copy session JSONL files
+        if has_projects:
+            archive_projects = archive_dir / "projects"
+            result = host.execute_idempotent_command(
+                f"cp -r {shlex.quote(str(projects_dir))} {shlex.quote(str(archive_projects))}",
+                timeout_seconds=30.0,
+            )
+            if result.success:
+                logger.debug("Archived session projects to {}", archive_projects)
+            else:
+                logger.warning("Failed to archive session projects: {}", result.stderr)
+
+        # Copy the aggregated transcript
+        if has_transcript:
+            archive_transcript = archive_dir / "claude_transcript.jsonl"
+            result = host.execute_idempotent_command(
+                f"cp {shlex.quote(str(transcript_path))} {shlex.quote(str(archive_transcript))}",
+                timeout_seconds=30.0,
+            )
+            if result.success:
+                logger.debug("Archived transcript to {}", archive_transcript)
+            else:
+                logger.warning("Failed to archive transcript: {}", result.stderr)
+
+        # Copy the session history
+        if has_history:
+            archive_history = archive_dir / "claude_session_id_history"
+            result = host.execute_idempotent_command(
+                f"cp {shlex.quote(str(history_path))} {shlex.quote(str(archive_history))}",
+                timeout_seconds=10.0,
+            )
+            if result.success:
+                logger.debug("Archived session history to {}", archive_history)
+            else:
+                logger.warning("Failed to archive session history: {}", result.stderr)
 
 
 def _generate_claude_home_settings() -> dict[str, Any]:
