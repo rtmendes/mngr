@@ -12,6 +12,7 @@ from imbue.mngr.utils.deps import OPTIONAL_DEPS
 from imbue.mngr.utils.deps import OsName
 from imbue.mngr.utils.deps import SystemDependency
 from imbue.mngr.utils.deps import check_bash_version
+from imbue.mngr.utils.deps import describe_install_commands
 from imbue.mngr.utils.deps import detect_os
 from imbue.mngr.utils.deps import install_deps_batch
 
@@ -181,3 +182,103 @@ def test_detect_os_raises_on_unsupported_platform(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(platform, "system", lambda: "Windows")
     with pytest.raises(MngrError, match="Unsupported operating system"):
         detect_os()
+
+
+# -- describe_install_commands --
+
+
+def test_describe_install_commands_empty_deps() -> None:
+    """describe_install_commands returns empty list for no deps."""
+    assert describe_install_commands([], OsName.MACOS) == []
+    assert describe_install_commands([], OsName.LINUX) == []
+
+
+def test_describe_install_commands_brew_only_on_macos() -> None:
+    """Brew deps on macOS produce a single 'brew install' command."""
+    deps = [
+        SystemDependency(
+            binary="tmux",
+            purpose="test",
+            macos_hint="brew install tmux",
+            linux_hint="apt-get install tmux",
+            install_method=InstallMethod(brew_package="tmux", apt_package="tmux"),
+        ),
+        SystemDependency(
+            binary="jq",
+            purpose="test",
+            macos_hint="brew install jq",
+            linux_hint="apt-get install jq",
+            install_method=InstallMethod(brew_package="jq", apt_package="jq"),
+        ),
+    ]
+    commands = describe_install_commands(deps, OsName.MACOS)
+    assert commands == ["brew install tmux jq"]
+
+
+def test_describe_install_commands_apt_only_on_linux() -> None:
+    """Apt deps on Linux produce a single 'sudo apt-get install' command."""
+    deps = [
+        SystemDependency(
+            binary="git",
+            purpose="test",
+            macos_hint="brew install git",
+            linux_hint="apt-get install git",
+            install_method=InstallMethod(brew_package="git", apt_package="git"),
+        ),
+    ]
+    commands = describe_install_commands(deps, OsName.LINUX)
+    assert commands == ["sudo apt-get install -y git"]
+
+
+def test_describe_install_commands_custom_script() -> None:
+    """Custom install scripts produce curl-pipe-bash commands."""
+    deps = [
+        SystemDependency(
+            binary="claude",
+            purpose="test",
+            macos_hint="curl -fsSL https://example.com/install.sh | bash",
+            linux_hint="curl -fsSL https://example.com/install.sh | bash",
+            install_method=InstallMethod(custom_install_script="https://example.com/install.sh"),
+        ),
+    ]
+    commands = describe_install_commands(deps, OsName.MACOS)
+    assert commands == ["curl -fsSL https://example.com/install.sh | bash"]
+
+
+def test_describe_install_commands_mixed_brew_and_custom_on_macos() -> None:
+    """Brew commands appear before custom script commands."""
+    deps = [
+        SystemDependency(
+            binary="tmux",
+            purpose="test",
+            macos_hint="brew install tmux",
+            linux_hint="apt-get install tmux",
+            install_method=InstallMethod(brew_package="tmux", apt_package="tmux"),
+        ),
+        SystemDependency(
+            binary="claude",
+            purpose="test",
+            macos_hint="curl | bash",
+            linux_hint="curl | bash",
+            install_method=InstallMethod(custom_install_script="https://example.com/install.sh"),
+        ),
+    ]
+    commands = describe_install_commands(deps, OsName.MACOS)
+    assert len(commands) == 2
+    assert commands[0] == "brew install tmux"
+    assert commands[1] == "curl -fsSL https://example.com/install.sh | bash"
+
+
+def test_describe_install_commands_skips_deps_without_install_method() -> None:
+    """Deps with install_method=None are silently skipped."""
+    deps = [
+        SystemDependency(
+            binary="ssh",
+            purpose="test",
+            macos_hint="included with macOS",
+            linux_hint="apt-get install openssh-client",
+            install_method=None,
+        ),
+    ]
+    commands = describe_install_commands(deps, OsName.MACOS)
+    assert commands == []
