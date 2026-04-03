@@ -84,6 +84,7 @@ _READY_SIGNAL_TIMEOUT_SECONDS: Final[float] = 10.0
 # Used by both get_files_for_deploy() and provision() to ensure consistency.
 _CLAUDE_HOME_SYNC_ITEMS: Final[tuple[str, ...]] = (
     "settings.json",
+    "keybindings.json",
     "skills",
     "agents",
     "commands",
