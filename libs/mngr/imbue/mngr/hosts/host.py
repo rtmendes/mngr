@@ -2099,7 +2099,7 @@ class Host(BaseHost, OnlineHostInterface):
             data = json.loads(content)
             return datetime.fromisoformat(data["create_time"])
         except (FileNotFoundError, KeyError, json.JSONDecodeError, ValueError) as e:
-            logger.debug("Could not read existing create_time from {}: {}", data_path, e)
+            logger.warning("Could not read existing create_time from {}: {}", data_path, e)
             return datetime.now(timezone.utc)
 
     def _get_agent_state_dir(self, agent: AgentInterface) -> Path:
