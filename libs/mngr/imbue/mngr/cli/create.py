@@ -651,9 +651,17 @@ def _create_agent(
                 existing_agent, existing_host = reuse_result
                 logger.info("Updating existing agent: {}", existing_agent.name)
                 existing_host.stop_agents([existing_agent.id])
+                # If the user didn't explicitly set --target-path, default to
+                # the existing agent's work_dir so we update in place.
+                # If they did set one, honor it (the agent moves to the new path).
+                resolved_target = (
+                    agent_opts.target_path
+                    if agent_opts.target_path is not None
+                    else existing_agent.work_dir
+                )
                 agent_opts = agent_opts.model_copy_update(
                     to_update(agent_opts.field_ref().agent_id, existing_agent.id),
-                    to_update(agent_opts.field_ref().target_path, existing_agent.work_dir),
+                    to_update(agent_opts.field_ref().target_path, resolved_target),
                     to_update(agent_opts.field_ref().is_update, True),
                 )
                 update_host = existing_host
