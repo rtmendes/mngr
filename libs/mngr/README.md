@@ -224,10 +224,11 @@ From the repo where you would like a Dockerfile created.
 
 ## Installation
 
-**Quick install** (installs system dependencies + mngr automatically):
+**Quick install:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/imbue-ai/mngr/main/scripts/install.sh | bash
 ```
+This installs [uv](https://docs.astral.sh/uv/) and mngr (`uv tool install imbue-mngr`), then interactively prompts about system dependencies and optional extras. You can [review the script](https://github.com/imbue-ai/mngr/blob/main/scripts/install.sh) before running it.
 
 **Manual install** (requires [uv](https://docs.astral.sh/uv/) and core system deps: `ssh`, `git`, `tmux`, `jq`; optional: `rsync`, `unison`, `claude`):
 ```bash
