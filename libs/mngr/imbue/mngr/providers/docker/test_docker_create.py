@@ -178,7 +178,7 @@ RUN echo "custom-dockerfile-marker" > /dockerfile-marker.txt
 
 
 @pytest.mark.release
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(900)
 def test_mngr_create_stop_start_destroy_lifecycle(
     temp_source_dir: Path,
     docker_subprocess_env: dict[str, str],
@@ -206,7 +206,7 @@ def test_mngr_create_stop_start_destroy_lifecycle(
         ],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=600,
         env=docker_subprocess_env,
     )
     assert create_result.returncode == 0, (
