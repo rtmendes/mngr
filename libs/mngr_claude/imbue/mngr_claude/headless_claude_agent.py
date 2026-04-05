@@ -246,11 +246,15 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
             parts.extend(all_extra_args)
 
         cmd_str = " ".join(parts)
-        return CommandString(f'{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl"')
+        return CommandString(f'{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"')
 
     def _get_stdout_path(self) -> Path:
         """Return the path to the stdout.jsonl file for this agent."""
         return self._get_agent_dir() / "stdout.jsonl"
+
+    def _get_stderr_path(self) -> Path:
+        """Return the path to the stderr.log file for this agent."""
+        return self._get_agent_dir() / "stderr.log"
 
     def _is_agent_finished(self) -> bool:
         """Check if the agent process has exited (tmux lifecycle) or is no longer running."""
@@ -280,22 +284,33 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
     def _raise_no_output_error(self) -> Never:
         """Raise MngrError with the best available error detail.
 
-        Checks stdout.jsonl first -- claude prints some errors (like auth
-        failures) to stdout, which the shell redirect captures into the file
-        as plain text instead of stream-json. Falls back to tmux pane content.
+        Checks, in order: stderr.log, stdout.jsonl (for non-JSON text),
+        then tmux pane content as a last resort.
         """
-        error_detail = self._get_stdout_error_message() or self._get_pane_error_message()
+        error_detail = (
+            self._get_stderr_error_message() or self._get_stdout_error_message() or self._get_pane_error_message()
+        )
         if error_detail:
             raise MngrError(f"claude exited without producing output:\n{error_detail}")
         raise MngrError("claude exited without producing output (no details available)")
 
-    def _get_stdout_error_message(self) -> str | None:
-        """Check stdout.jsonl for non-JSON error text.
+    def _get_stderr_error_message(self) -> str | None:
+        """Read stderr.log for error output from the claude process."""
+        stderr_path = self._get_stderr_path()
+        try:
+            content = self.host.read_text_file(stderr_path)
+        except FileNotFoundError:
+            return None
+        stripped = content.strip()
+        return stripped if stripped else None
 
-        Claude prints some errors (e.g. 'Not logged in') to stdout rather
-        than stderr. Since stdout is redirected to a file, these end up in
-        stdout.jsonl as plain text instead of stream-json events. If the file
-        contains non-empty text that isn't valid JSON, it's likely an error.
+    def _get_stdout_error_message(self) -> str | None:
+        """Check stdout.jsonl for error content.
+
+        Handles two cases:
+        1. Plain text errors (when claude prints without --output-format)
+        2. Stream-json result events with is_error=true (e.g. auth failures
+           with --output-format stream-json --verbose)
         """
         stdout_path = self._get_stdout_path()
         try:
@@ -305,11 +320,19 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
         stripped = content.strip()
         if not stripped:
             return None
-        # If the first line is valid JSON, this is normal stream output, not an error
-        first_line = stripped.split("\n", 1)[0].strip()
-        if first_line.startswith("{"):
-            return None
-        return stripped
+        # Check each line for error result events or plain text
+        for line in stripped.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+                if parsed.get("type") == "result" and parsed.get("is_error"):
+                    return parsed.get("result", "unknown error")
+            except (json.JSONDecodeError, ValueError):
+                # Non-JSON line -- likely a plain text error message
+                return line
+        return None
 
     def _get_pane_error_message(self) -> str | None:
         """Capture the tmux pane content to extract an error message.

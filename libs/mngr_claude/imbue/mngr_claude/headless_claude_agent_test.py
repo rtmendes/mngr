@@ -277,6 +277,27 @@ def test_stream_output_raises_with_stdout_error_text(
         list(agent.stream_output())
 
 
+def test_stream_output_raises_with_stream_json_error_result(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """stream_output should surface error from stream-json result event with is_error=true."""
+    _patch_agent_as_stopped(monkeypatch)
+    agent, host = _make_headless_agent(local_provider, tmp_path)
+
+    agent_dir = host.host_dir / "agents" / str(agent.id)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = agent_dir / "stdout.jsonl"
+    stdout_path.write_text(
+        '{"type":"system","subtype":"init","session_id":"abc"}\n'
+        '{"type":"result","subtype":"success","is_error":true,"result":"Not logged in"}\n'
+    )
+
+    with pytest.raises(MngrError, match="Not logged in"):
+        list(agent.stream_output())
+
+
 def test_stream_output_raises_when_agent_stopped_and_no_file(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
