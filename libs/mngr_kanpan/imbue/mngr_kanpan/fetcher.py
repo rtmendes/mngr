@@ -58,12 +58,7 @@ def fetch_agent_snapshot(
 
     muted_agents = _load_muted_agents(mngr_ctx)
 
-    # Collect local work dirs for parallel commits-ahead check
-    agent_work_dirs: dict[int, Path] = {}
-    for i, agent in enumerate(result.agents):
-        is_local = agent.host.provider_name == LOCAL_PROVIDER_NAME
-        if is_local and agent.work_dir.exists():
-            agent_work_dirs[i] = agent.work_dir
+    agent_work_dirs = _collect_local_work_dirs(result.agents)
     commits_ahead_map = _get_all_commits_ahead(list(agent_work_dirs.values()), cg)
 
     entries: list[AgentBoardEntry] = []
@@ -206,12 +201,7 @@ def fetch_board_snapshot(
     # Fetch remote data (GitHub PRs)
     remote = fetch_github_data(mngr_ctx, result.agents)
 
-    # Collect local work dirs for parallel commits-ahead check
-    agent_work_dirs: dict[int, Path] = {}
-    for i, agent in enumerate(result.agents):
-        is_local = agent.host.provider_name == LOCAL_PROVIDER_NAME
-        if is_local and agent.work_dir.exists():
-            agent_work_dirs[i] = agent.work_dir
+    agent_work_dirs = _collect_local_work_dirs(result.agents)
     commits_ahead_map = _get_all_commits_ahead(list(agent_work_dirs.values()), cg)
 
     # Build board entries with both local and remote info
@@ -371,6 +361,15 @@ def _load_muted_agents(mngr_ctx: MngrContext) -> set[AgentName]:
 def _is_agent_muted(certified_data: Any) -> bool:
     """Check if an agent is muted based on its certified data."""
     return certified_data.get("plugin", {}).get(PLUGIN_NAME, {}).get("muted", False)
+
+
+def _collect_local_work_dirs(agents: list[AgentDetails]) -> dict[int, Path]:
+    """Map agent index to work_dir for local agents with existing work directories."""
+    work_dirs: dict[int, Path] = {}
+    for i, agent in enumerate(agents):
+        if agent.host.provider_name == LOCAL_PROVIDER_NAME and agent.work_dir.exists():
+            work_dirs[i] = agent.work_dir
+    return work_dirs
 
 
 def _get_all_commits_ahead(
