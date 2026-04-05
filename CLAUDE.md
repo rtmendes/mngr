@@ -88,6 +88,10 @@ Ratchets are guidance and reminders about good code, not rules to be blindly obe
 4. If you cannot find a fix that honors the spirit of the ratchet, **flag this to the user** rather than silently working around it. Do not use type-system escape hatches (e.g. assigning through `Any`, intermediate variables, or synonyms) to bypass a ratchet -- these are evasions even if they dodge the regex.
 5. If the ratchet is a **true misfire** -- the regex pattern matched something that is genuinely not the anti-pattern it was designed to catch (e.g. a variable name that happens to contain a flagged substring, or a string literal / comment that matches the pattern) -- then first try to update the ratchet's regex to be more specific so it no longer misfires (be extra careful not to exclude any real violations in the process). If that's not feasible, bump the ratchet count and explain the misfire to the user. This is distinct from a case where there *is* a real violation but you believe it's "justified"; justified violations are still violations and should be handled per steps 1-4 above.
 
+## Adding a new common ratchet
+
+To add a new ratchet across all projects, use `/writing-ratchet-tests`. Do NOT add per-project code quality ratchets to `test_meta_ratchets.py` -- that file is for repo-wide structural checks only.
+
 ## Test fixture discovery
 
 Before writing new tests, read the relevant `conftest.py` and `testing.py` files to avoid reimplementing things that already exist. Test infrastructure lives in these files:
