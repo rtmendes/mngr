@@ -171,10 +171,11 @@ class DockerOverSsh(MutableModel):
     def upload_directory(self, local_path: Path, remote_path: str, timeout_seconds: float = 120.0) -> None:
         """Upload a local directory to the VPS via rsync over SSH."""
         ssh_cmd = (
-            f"ssh -i {self.ssh_key_path} "
-            f"-o UserKnownHostsFile={self.known_hosts_path} "
+            f"ssh -i {shlex.quote(str(self.ssh_key_path))} "
+            f"-o UserKnownHostsFile={shlex.quote(str(self.known_hosts_path))} "
             f"-o StrictHostKeyChecking=yes "
-            f"-o BatchMode=yes"
+            f"-o BatchMode=yes "
+            f"-o ConnectTimeout=15"
         )
         local_str = str(local_path).rstrip("/") + "/"
         cmd = [
