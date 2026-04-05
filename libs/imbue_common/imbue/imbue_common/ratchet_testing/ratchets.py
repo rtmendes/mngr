@@ -1,4 +1,5 @@
 import ast
+import json
 import re
 import subprocess
 from fnmatch import fnmatch
@@ -473,8 +474,6 @@ def assert_posix_compatible(command: str) -> None:
     for non-portable constructs (shellcheck SC3xxx codes: arrays, [[ ]], declare, etc.)
     that would break in non-bash shells.
     """
-    import json
-
     result = subprocess.run(
         ["shellcheck", "-s", "sh", "--format=json1", "-"],
         input=command,
