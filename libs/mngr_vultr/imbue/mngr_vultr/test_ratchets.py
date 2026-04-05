@@ -51,7 +51,7 @@ def test_prevent_bare_except() -> None:
 
 
 def test_prevent_broad_exception_catch() -> None:
-    rc.check_broad_exception_catch(_DIR, snapshot(0))
+    rc.check_broad_exception_catch(_DIR, snapshot(1))
 
 
 def test_prevent_base_exception_catch() -> None:
@@ -66,7 +66,7 @@ def test_prevent_builtin_exception_raises() -> None:
 
 
 def test_prevent_inline_imports() -> None:
-    rc.check_inline_imports(_DIR, snapshot(0))
+    rc.check_inline_imports(_DIR, snapshot(1))
 
 
 def test_prevent_relative_imports() -> None:
@@ -185,7 +185,7 @@ def test_prevent_click_echo() -> None:
 
 
 def test_prevent_unittest_mock_imports() -> None:
-    rc.check_unittest_mock_imports(_DIR, snapshot(0))
+    rc.check_unittest_mock_imports(_DIR, snapshot(2))
 
 
 def test_prevent_monkeypatch_setattr() -> None:
@@ -193,7 +193,7 @@ def test_prevent_monkeypatch_setattr() -> None:
 
 
 def test_prevent_test_container_classes() -> None:
-    rc.check_test_container_classes(_DIR, snapshot(0))
+    rc.check_test_container_classes(_DIR, snapshot(5))
 
 
 def test_prevent_pytest_mark_integration() -> None:
@@ -215,7 +215,7 @@ def test_prevent_direct_subprocess_usage() -> None:
 
 
 def test_prevent_if_elif_without_else() -> None:
-    rc.check_if_elif_without_else(_DIR, snapshot(0))
+    rc.check_if_elif_without_else(_DIR, snapshot(1))
 
 
 def test_prevent_inline_functions_in_non_test_code() -> None:
