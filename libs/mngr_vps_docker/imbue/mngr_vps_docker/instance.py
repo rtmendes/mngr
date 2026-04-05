@@ -354,178 +354,64 @@ class VpsDockerProvider(BaseProviderInstance):
 
         base_image = str(image) if image else self.config.default_image
         effective_start_args = tuple(self.config.default_start_args) + tuple(start_args or ())
-
-        # Parse build args for VPS provisioning
         region, plan, os_id = self._parse_build_args(build_args)
 
-        # Step 1: Generate/load SSH keys
-        vps_key_path, vps_public_key = self._get_vps_ssh_keypair()
+        _vps_key_path, vps_public_key = self._get_vps_ssh_keypair()
         vps_host_key_path, vps_host_public_key = self._get_vps_host_keypair()
-        vps_host_private_key = vps_host_key_path.read_text()
 
-        # Step 2: Upload VPS client public key to provider
         with log_span("Uploading SSH key to provider"):
             key_name = f"mngr-{self.name}-{host_id}"
             vps_ssh_key_id = self.vps_client.upload_ssh_key(key_name, vps_public_key)
 
         vps_instance_id: VpsInstanceId | None = None
         try:
-            # Step 3: Generate cloud-init user_data
-            user_data = generate_cloud_init_user_data(
-                host_private_key=vps_host_private_key,
-                host_public_key=vps_host_public_key,
+            vps_instance_id, vps_ip, docker_ssh = self._provision_vps(
+                host_id=host_id,
+                name=name,
+                region=region,
+                plan=plan,
+                os_id=os_id,
+                vps_host_key_path=vps_host_key_path,
+                vps_host_public_key=vps_host_public_key,
+                vps_ssh_key_id=vps_ssh_key_id,
             )
 
-            # Step 4: Create VPS
-            with log_span("Creating VPS instance"):
-                vps_tags = [f"mngr-host-id={host_id}", f"mngr-provider={self.name}"]
-                vps_instance_id = self.vps_client.create_instance(
-                    label=f"mngr-{name}",
-                    region=region,
-                    plan=plan,
-                    os_id=os_id,
-                    user_data=user_data,
-                    ssh_key_ids=[vps_ssh_key_id],
-                    tags=vps_tags,
-                )
-
-            # Step 5: Wait for VPS to become active
-            with log_span("Waiting for VPS to become active"):
-                vps_ip = self.vps_client.wait_for_instance_active(
-                    vps_instance_id,
-                    timeout_seconds=self.config.vps_boot_timeout,
-                )
-
-            # Step 6: Add VPS host key to known_hosts
-            add_host_to_known_hosts(
-                known_hosts_path=self._vps_known_hosts_path(),
-                hostname=vps_ip,
-                port=22,
-                public_key=vps_host_public_key,
-            )
-
-            # Step 7: Wait for sshd on VPS
-            with log_span("Waiting for VPS SSH"):
-                self._wait_for_sshd_on_vps(vps_ip, timeout_seconds=self.config.ssh_connect_timeout)
-
-            docker_ssh = self._make_docker_ssh(vps_ip)
-
-            # Step 8: Wait for cloud-init (Docker install)
-            with log_span("Waiting for cloud-init (Docker install)"):
-                self._wait_for_cloud_init(docker_ssh, timeout_seconds=self.config.docker_install_timeout)
-
-            # Step 9: Set up state container
-            with log_span("Setting up state container on VPS"):
-                self._get_host_store(docker_ssh)
-
-            # Step 10: Create host volume
-            volume_name = f"mngr-host-vol-{host_id.get_uuid().hex}"
-            with log_span("Creating host volume"):
-                docker_ssh.create_volume(volume_name)
-
-            # Step 11: Pull base image
-            with log_span("Pulling Docker image on VPS"):
-                docker_ssh.pull_image(base_image, timeout_seconds=300.0)
-
-            # Step 12: Run container
-            container_name = f"{self.mngr_ctx.config.prefix}{name}"
-            labels = {
-                LABEL_HOST_ID: str(host_id),
-                LABEL_HOST_NAME: str(name),
-                LABEL_PROVIDER: str(self.name),
-                LABEL_TAGS: json.dumps(dict(tags) if tags else {}),
-            }
-            with log_span("Starting Docker container"):
-                container_id = docker_ssh.run_container(
-                    image=base_image,
-                    name=container_name,
-                    port_mappings={f"0.0.0.0:{self.config.container_ssh_port}": "22"},
-                    volumes=[f"{volume_name}:{HOST_VOLUME_MOUNT_PATH}:rw"],
-                    labels=labels,
-                    extra_args=list(effective_start_args),
-                    entrypoint_cmd=CONTAINER_ENTRYPOINT_CMD,
-                )
-
-            # Step 13: Set up SSH in container
-            with log_span("Setting up SSH in container"):
-                self._setup_container_ssh(
-                    docker_ssh=docker_ssh,
-                    container_name=container_name,
-                    host_volume_mount_path=HOST_VOLUME_MOUNT_PATH,
-                    known_hosts_entries=tuple(known_hosts or ()),
-                    authorized_keys_entries=tuple(authorized_keys or ()),
-                )
-
-            # Step 14: Add container host key to known_hosts and wait for sshd
-            _container_host_key_path, container_host_public_key = self._get_container_host_keypair()
-            add_host_to_known_hosts(
-                known_hosts_path=self._container_known_hosts_path(),
-                hostname=vps_ip,
-                port=self.config.container_ssh_port,
-                public_key=container_host_public_key,
-            )
-            with log_span("Waiting for container SSH"):
-                self._wait_for_container_sshd(vps_ip)
-
-            # Step 15: Create Host object
-            host = self._create_host_object(host_id, vps_ip, docker_ssh)
-
-            # Step 16: Configure idle timeout and activity
-            idle_timeout = self.config.default_idle_timeout
-            activity_sources = self.config.default_activity_sources
-            if lifecycle is not None:
-                if lifecycle.idle_timeout_seconds is not None:
-                    idle_timeout = lifecycle.idle_timeout_seconds
-                if lifecycle.activity_sources is not None:
-                    activity_sources = lifecycle.activity_sources
-
-            now = datetime.now(timezone.utc)
-            host_data = CertifiedHostData(
-                host_id=str(host_id),
-                host_name=str(name),
-                idle_timeout_seconds=idle_timeout,
-                activity_sources=activity_sources,
-                image=base_image,
-                user_tags=dict(tags) if tags else {},
-                created_at=now,
-                updated_at=now,
-            )
-            host.record_activity(ActivitySource.BOOT)
-            host.set_certified_data(host_data)
-
-            # Step 17: Create shutdown script and start activity watcher
-            self._create_shutdown_script(host)
-            with log_span("Starting activity watcher"):
-                start_watcher_cmd = build_start_activity_watcher_command(str(self.host_dir))
-                docker_ssh.exec_in_container(container_name, start_watcher_cmd)
-
-            # Step 18: Write host record to state volume
-            host_record = VpsDockerHostRecord(
-                certified_host_data=host_data,
+            container_name, container_id, volume_name = self._setup_container_on_vps(
+                docker_ssh=docker_ssh,
+                host_id=host_id,
+                name=name,
                 vps_ip=vps_ip,
-                ssh_host_public_key=vps_host_public_key,
-                container_ssh_host_public_key=self._get_container_host_keypair()[1],
-                config=VpsHostConfig(
-                    vps_instance_id=vps_instance_id,
-                    region=region,
-                    plan=plan,
-                    os_id=os_id,
-                    start_args=effective_start_args,
-                    image=base_image,
-                    container_name=container_name,
-                    volume_name=volume_name,
-                    vps_ssh_key_id=vps_ssh_key_id,
-                ),
-                container_id=container_id,
+                base_image=base_image,
+                effective_start_args=effective_start_args,
+                tags=tags,
+                known_hosts=known_hosts,
+                authorized_keys=authorized_keys,
             )
-            host_store = self._get_host_store(docker_ssh)
-            host_store.write_host_record(host_record)
+
+            host = self._finalize_host_creation(
+                host_id=host_id,
+                name=name,
+                vps_ip=vps_ip,
+                docker_ssh=docker_ssh,
+                container_name=container_name,
+                container_id=container_id,
+                volume_name=volume_name,
+                base_image=base_image,
+                effective_start_args=effective_start_args,
+                tags=tags,
+                lifecycle=lifecycle,
+                region=region,
+                plan=plan,
+                os_id=os_id,
+                vps_instance_id=vps_instance_id,
+                vps_ssh_key_id=vps_ssh_key_id,
+                vps_host_public_key=vps_host_public_key,
+            )
 
             logger.info("VPS Docker host {} created successfully (VPS: {}, IP: {})", name, vps_instance_id, vps_ip)
             return host
 
         except Exception:
-            # Best-effort cleanup on failure: destroy VPS and SSH key
             logger.error("Host creation failed, attempting cleanup...")
             try:
                 if vps_instance_id is not None:
@@ -537,6 +423,200 @@ class VpsDockerProvider(BaseProviderInstance):
             except Exception as cleanup_err:
                 logger.warning("Failed to clean up SSH key: {}", cleanup_err)
             raise
+
+    def _provision_vps(
+        self,
+        host_id: HostId,
+        name: HostName,
+        region: str,
+        plan: str,
+        os_id: int,
+        vps_host_key_path: Path,
+        vps_host_public_key: str,
+        vps_ssh_key_id: str,
+    ) -> tuple[VpsInstanceId, str, DockerOverSsh]:
+        """Provision a VPS, wait for it to boot, and wait for Docker to install.
+
+        Returns (vps_instance_id, vps_ip, docker_ssh).
+        """
+        vps_host_private_key = vps_host_key_path.read_text()
+        user_data = generate_cloud_init_user_data(
+            host_private_key=vps_host_private_key,
+            host_public_key=vps_host_public_key,
+        )
+
+        with log_span("Creating VPS instance"):
+            vps_tags = [f"mngr-host-id={host_id}", f"mngr-provider={self.name}"]
+            vps_instance_id = self.vps_client.create_instance(
+                label=f"mngr-{name}",
+                region=region,
+                plan=plan,
+                os_id=os_id,
+                user_data=user_data,
+                ssh_key_ids=[vps_ssh_key_id],
+                tags=vps_tags,
+            )
+
+        with log_span("Waiting for VPS to become active"):
+            vps_ip = self.vps_client.wait_for_instance_active(
+                vps_instance_id,
+                timeout_seconds=self.config.vps_boot_timeout,
+            )
+
+        add_host_to_known_hosts(
+            known_hosts_path=self._vps_known_hosts_path(),
+            hostname=vps_ip,
+            port=22,
+            public_key=vps_host_public_key,
+        )
+
+        with log_span("Waiting for VPS SSH"):
+            self._wait_for_sshd_on_vps(vps_ip, timeout_seconds=self.config.ssh_connect_timeout)
+
+        docker_ssh = self._make_docker_ssh(vps_ip)
+
+        with log_span("Waiting for cloud-init (Docker install)"):
+            self._wait_for_cloud_init(docker_ssh, timeout_seconds=self.config.docker_install_timeout)
+
+        return vps_instance_id, vps_ip, docker_ssh
+
+    def _setup_container_on_vps(
+        self,
+        docker_ssh: DockerOverSsh,
+        host_id: HostId,
+        name: HostName,
+        vps_ip: str,
+        base_image: str,
+        effective_start_args: tuple[str, ...],
+        tags: Mapping[str, str] | None,
+        known_hosts: Sequence[str] | None,
+        authorized_keys: Sequence[str] | None,
+    ) -> tuple[str, str, str]:
+        """Create the Docker container and configure SSH inside it.
+
+        Returns (container_name, container_id, volume_name).
+        """
+        with log_span("Setting up state container on VPS"):
+            self._get_host_store(docker_ssh)
+
+        volume_name = f"mngr-host-vol-{host_id.get_uuid().hex}"
+        with log_span("Creating host volume"):
+            docker_ssh.create_volume(volume_name)
+
+        with log_span("Pulling Docker image on VPS"):
+            docker_ssh.pull_image(base_image, timeout_seconds=300.0)
+
+        container_name = f"{self.mngr_ctx.config.prefix}{name}"
+        labels = {
+            LABEL_HOST_ID: str(host_id),
+            LABEL_HOST_NAME: str(name),
+            LABEL_PROVIDER: str(self.name),
+            LABEL_TAGS: json.dumps(dict(tags) if tags else {}),
+        }
+        with log_span("Starting Docker container"):
+            container_id = docker_ssh.run_container(
+                image=base_image,
+                name=container_name,
+                port_mappings={f"0.0.0.0:{self.config.container_ssh_port}": "22"},
+                volumes=[f"{volume_name}:{HOST_VOLUME_MOUNT_PATH}:rw"],
+                labels=labels,
+                extra_args=list(effective_start_args),
+                entrypoint_cmd=CONTAINER_ENTRYPOINT_CMD,
+            )
+
+        with log_span("Setting up SSH in container"):
+            self._setup_container_ssh(
+                docker_ssh=docker_ssh,
+                container_name=container_name,
+                host_volume_mount_path=HOST_VOLUME_MOUNT_PATH,
+                known_hosts_entries=tuple(known_hosts or ()),
+                authorized_keys_entries=tuple(authorized_keys or ()),
+            )
+
+        _container_host_key_path, container_host_public_key = self._get_container_host_keypair()
+        add_host_to_known_hosts(
+            known_hosts_path=self._container_known_hosts_path(),
+            hostname=vps_ip,
+            port=self.config.container_ssh_port,
+            public_key=container_host_public_key,
+        )
+        with log_span("Waiting for container SSH"):
+            self._wait_for_container_sshd(vps_ip)
+
+        return container_name, container_id, volume_name
+
+    def _finalize_host_creation(
+        self,
+        host_id: HostId,
+        name: HostName,
+        vps_ip: str,
+        docker_ssh: DockerOverSsh,
+        container_name: str,
+        container_id: str,
+        volume_name: str,
+        base_image: str,
+        effective_start_args: tuple[str, ...],
+        tags: Mapping[str, str] | None,
+        lifecycle: HostLifecycleOptions | None,
+        region: str,
+        plan: str,
+        os_id: int,
+        vps_instance_id: VpsInstanceId,
+        vps_ssh_key_id: str,
+        vps_host_public_key: str,
+    ) -> Host:
+        """Create the Host object, configure activity watching, and persist state."""
+        host = self._create_host_object(host_id, vps_ip, docker_ssh)
+
+        idle_timeout = self.config.default_idle_timeout
+        activity_sources = self.config.default_activity_sources
+        if lifecycle is not None:
+            if lifecycle.idle_timeout_seconds is not None:
+                idle_timeout = lifecycle.idle_timeout_seconds
+            if lifecycle.activity_sources is not None:
+                activity_sources = lifecycle.activity_sources
+
+        now = datetime.now(timezone.utc)
+        host_data = CertifiedHostData(
+            host_id=str(host_id),
+            host_name=str(name),
+            idle_timeout_seconds=idle_timeout,
+            activity_sources=activity_sources,
+            image=base_image,
+            user_tags=dict(tags) if tags else {},
+            created_at=now,
+            updated_at=now,
+        )
+        host.record_activity(ActivitySource.BOOT)
+        host.set_certified_data(host_data)
+
+        self._create_shutdown_script(host)
+        with log_span("Starting activity watcher"):
+            start_watcher_cmd = build_start_activity_watcher_command(str(self.host_dir))
+            docker_ssh.exec_in_container(container_name, start_watcher_cmd)
+
+        host_record = VpsDockerHostRecord(
+            certified_host_data=host_data,
+            vps_ip=vps_ip,
+            ssh_host_public_key=vps_host_public_key,
+            container_ssh_host_public_key=self._get_container_host_keypair()[1],
+            config=VpsHostConfig(
+                vps_instance_id=vps_instance_id,
+                region=region,
+                plan=plan,
+                os_id=os_id,
+                start_args=effective_start_args,
+                image=base_image,
+                container_name=container_name,
+                volume_name=volume_name,
+                vps_ssh_key_id=vps_ssh_key_id,
+            ),
+            container_id=container_id,
+        )
+        host_store = self._get_host_store(docker_ssh)
+        host_store.write_host_record(host_record)
+
+        return host
 
     def _wait_for_container_sshd(self, vps_ip: str) -> None:
         """Wait for sshd in the container to be reachable via the VPS's exposed port."""
