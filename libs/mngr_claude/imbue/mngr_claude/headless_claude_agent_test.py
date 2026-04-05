@@ -236,14 +236,19 @@ def test_stream_output_raises_when_empty_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """stream_output should raise MngrError when stdout file exists but is empty."""
+    """stream_output should raise MngrError when stdout file exists but is empty.
+
+    Creates both stdout.jsonl (empty) and stderr.log (empty) so the error
+    fallback chain stops before reaching tmux pane capture.
+    """
     _patch_agent_as_stopped(monkeypatch)
     agent, host = _make_headless_agent(local_provider, tmp_path)
 
     agent_dir = _setup_agent_output_dir(host, agent)
     (agent_dir / "stdout.jsonl").write_text("")
+    (agent_dir / "stderr.log").write_text("")
 
-    with pytest.raises(MngrError, match="claude exited without producing output"):
+    with pytest.raises(MngrError, match="no details available"):
         list(agent.stream_output())
 
 
@@ -317,14 +322,23 @@ def test_stream_output_raises_with_stderr_content(
         list(agent.stream_output())
 
 
-def test_stream_output_raises_when_agent_stopped_and_no_file(
+@pytest.mark.tmux
+def test_stream_output_falls_back_to_pane_capture(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """stream_output should raise MngrError when agent exits without producing output."""
+    """stream_output should fall back to pane capture when stderr and stdout are empty.
+
+    With no stderr.log on disk and empty stdout.jsonl, the fallback chain
+    reaches tmux pane capture. Since no tmux session exists for this test
+    agent, pane capture returns None and we get 'no details available'.
+    """
     _patch_agent_as_stopped(monkeypatch)
-    agent, _host = _make_headless_agent(local_provider, tmp_path)
+    agent, host = _make_headless_agent(local_provider, tmp_path)
+
+    agent_dir = _setup_agent_output_dir(host, agent)
+    (agent_dir / "stdout.jsonl").write_text("")
 
     with pytest.raises(MngrError, match="no details available"):
         list(agent.stream_output())
