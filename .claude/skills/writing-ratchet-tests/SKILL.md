@@ -60,9 +60,9 @@ def check_my_pattern(source_dir: Path, max_count: int) -> None:
 
 Remember to import the rule at the top of the file.
 
-### Step 3: Add the Test to ONE Project
+### Step 3: Add the Test to imbue_common
 
-Add the test function to any one project's `test_ratchets.py`, in the appropriate section:
+Add the test function to `libs/imbue_common/imbue/imbue_common/test_ratchets.py`, in the appropriate section:
 
 ```python
 def test_prevent_my_pattern() -> None:

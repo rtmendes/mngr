@@ -8,7 +8,7 @@ New tests are added with snapshot(0) as the default violation count.
 Workflow for adding a new common ratchet:
 1. Add the RegexRatchetRule/RatchetRuleInfo to common_ratchets.py
 2. Add a wrapper function to standard_ratchet_checks.py
-3. Add the test function to ONE project's test_ratchets.py
+3. Add the test function to imbue_common's test_ratchets.py (the canonical source)
 4. Run: uv run python scripts/sync_common_ratchets.py
 5. Run: uv run pytest --inline-snapshot=update -k test_ratchets
 """
@@ -29,6 +29,11 @@ SNAPSHOT_VALUE_RE = re.compile(r"snapshot\(\d+\)")
 # Keep in sync with _EXCLUDED_PROJECTS in test_meta_ratchets.py
 # (verified by test_excluded_projects_in_sync in scripts/sync_common_ratchets_test.py).
 EXCLUDED_RATCHET_PROJECTS: frozenset[str] = frozenset({"flexmux"})
+
+# imbue_common is the canonical source of truth for which ratchet tests exist.
+# New ratchets should be added to imbue_common's test_ratchets.py first,
+# then this script propagates them to all other projects.
+CANONICAL_PROJECT = "imbue_common"
 
 # Canonical section order, used for inserting new sections at the right position.
 SECTION_ORDER = [
@@ -193,32 +198,29 @@ def main() -> int:
 
     print(f"Found {len(files)} test_ratchets.py file(s)")
 
-    # Parse all files and build the canonical test set.
-    file_test_names: dict[Path, set[str]] = {}
+    # Find the canonical file (imbue_common) -- this is the source of truth.
+    canonical_file = next((f for f in files if CANONICAL_PROJECT in f.parts), None)
+    if canonical_file is None:
+        print(f"Cannot find test_ratchets.py for {CANONICAL_PROJECT}.", file=sys.stderr)
+        return 1
+
+    # Build templates from the canonical file.
+    canonical_text = canonical_file.read_text()
+    canonical_tests = _extract_tests(canonical_text)
     templates: dict[str, RatchetTemplate] = {}
-
-    for f in files:
-        text = f.read_text()
-        tests = _extract_tests(text)
-        file_test_names[f] = {t.name for t in tests}
-
-        for t in tests:
-            normalized = RatchetTemplate(
-                name=t.name,
-                source=_normalize_snapshot(t.source),
-                section=t.section,
-            )
-            if t.name not in templates:
-                templates[t.name] = normalized
-            elif len(normalized.source) < len(templates[t.name].source):
-                # Prefer the shorter source: some projects add extra kwargs
-                # (e.g. excluded_patterns, allowed_root_init_lines) that are
-                # project-specific.  The generic form without those kwargs is
-                # always shorter, so picking the shortest gives us the right
-                # default template for new projects.
-                templates[t.name] = normalized
-
+    for t in canonical_tests:
+        templates[t.name] = RatchetTemplate(
+            name=t.name,
+            source=_normalize_snapshot(t.source),
+            section=t.section,
+        )
     canonical_names = set(templates.keys())
+
+    # Parse all files to find which tests each has.
+    file_test_names: dict[Path, set[str]] = {}
+    for f in files:
+        tests = _extract_tests(f.read_text())
+        file_test_names[f] = {t.name for t in tests}
 
     # Sync each file.
     modified_files: list[Path] = []

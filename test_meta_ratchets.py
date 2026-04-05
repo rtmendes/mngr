@@ -78,29 +78,28 @@ def test_every_project_has_test_ratchets_file() -> None:
 
 
 def test_all_test_ratchets_files_have_same_tests() -> None:
-    """Ensure all test_ratchets.py files define precisely the same set of test functions."""
-    test_names_by_project: dict[str, frozenset[str]] = {}
+    """Ensure all test_ratchets.py files define precisely the same set of test functions.
+
+    imbue_common is the canonical source of truth for which ratchet tests exist.
+    All other projects must define exactly the same test function names.
+    """
+    canonical_dir = _REPO_ROOT / "libs" / "imbue_common"
+    canonical_file = _find_test_ratchets_file(canonical_dir)
+    assert canonical_file is not None, "imbue_common must have a test_ratchets.py file"
+    reference_tests = _extract_test_function_names(canonical_file)
+
+    mismatches: list[str] = []
     for project_dir in _get_all_project_dirs():
+        if project_dir.name == "imbue_common":
+            continue
         ratchet_file = _find_test_ratchets_file(project_dir)
         if ratchet_file is None:
             continue
-        test_names_by_project[project_dir.name] = _extract_test_function_names(ratchet_file)
-
-    if not test_names_by_project:
-        raise AssertionError("No test_ratchets.py files found")
-
-    # Use the first project's test names as the reference
-    project_names = sorted(test_names_by_project.keys())
-    reference_project = project_names[0]
-    reference_tests = test_names_by_project[reference_project]
-
-    mismatches: list[str] = []
-    for project_name in project_names[1:]:
-        project_tests = test_names_by_project[project_name]
+        project_tests = _extract_test_function_names(ratchet_file)
         missing_tests = reference_tests - project_tests
         extra_tests = project_tests - reference_tests
         if missing_tests or extra_tests:
-            parts = [f"  {project_name} (vs {reference_project}):"]
+            parts = [f"  {project_dir.name} (vs imbue_common):"]
             if missing_tests:
                 parts.append(f"    missing: {sorted(missing_tests)}")
             if extra_tests:
