@@ -272,8 +272,9 @@ def test_check_agent_type_known_for_custom_type_with_unregistered_parent() -> No
 def _get_safe_directories() -> list[str]:
     """Read safe.directory entries from the global gitconfig.
 
-    Uses `git config --global` which respects the GIT_CONFIG_GLOBAL env var
-    set by the autouse fixture.
+    Uses ``git config --global`` which writes to ``$HOME/.gitconfig``.
+    The autouse fixture redirects HOME to a temp directory, so this
+    reads/writes an isolated gitconfig without affecting the real one.
     """
     result = subprocess.run(
         ["git", "config", "--global", "--get-all", "safe.directory"],
