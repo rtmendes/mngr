@@ -289,6 +289,25 @@ def test_stream_output_raises_with_stream_json_error_result(
         list(agent.stream_output())
 
 
+def test_stream_output_raises_error_result_even_after_yielding_text(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """stream_output should raise MngrError for is_error result even if text was yielded first."""
+    _patch_agent_as_stopped(monkeypatch)
+    agent, host = _make_headless_agent(local_provider, tmp_path)
+
+    agent_dir = _setup_agent_output_dir(host, agent)
+    (agent_dir / "stdout.jsonl").write_text(
+        _make_stream_json_line("partial output") + "\n"
+        '{"type":"result","subtype":"success","is_error":true,"result":"API rate limit exceeded"}\n'
+    )
+
+    with pytest.raises(MngrError, match="API rate limit exceeded"):
+        list(agent.stream_output())
+
+
 def test_stream_output_raises_with_stderr_content(
     local_provider: LocalProviderInstance,
     tmp_path: Path,

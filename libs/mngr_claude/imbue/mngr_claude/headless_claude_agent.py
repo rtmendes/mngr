@@ -78,6 +78,21 @@ def _is_result_event(line: str) -> bool:
     return parsed.get("type") == "result"
 
 
+@pure
+def _extract_result_error(line: str) -> str | None:
+    """Extract error text from a stream-json result event with is_error=true.
+
+    Returns the error message if this is an error result, None otherwise.
+    """
+    try:
+        parsed = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if parsed.get("type") == "result" and parsed.get("is_error"):
+        return parsed.get("result", "unknown error")
+    return None
+
+
 def _yield_text_deltas_from_lines(lines: list[str]) -> Iterator[str]:
     """Yield text deltas parsed from stream-json lines, skipping blanks and non-delta events."""
     for line in lines:
@@ -102,6 +117,7 @@ class _StreamTailState(MutableModel):
     last_mtime: datetime | None = None
     chars_consumed: int = 0
     line_buffer: str = ""
+    result_error: str | None = None
 
     def _has_new_data_or_finished(self) -> bool:
         current_mtime = self.host.get_file_mtime(self.stdout_path)
@@ -140,6 +156,7 @@ class _StreamTailState(MutableModel):
                     if not stripped:
                         continue
                     if _is_result_event(stripped):
+                        self.result_error = _extract_result_error(stripped)
                         got_result = True
                         break
                     text = extract_text_delta(stripped)
@@ -154,7 +171,16 @@ class _StreamTailState(MutableModel):
                 return
             remaining = self.line_buffer + content[self.chars_consumed :]
             if remaining:
-                yield from _yield_text_deltas_from_lines(remaining.split("\n"))
+                for line in remaining.split("\n"):
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    if _is_result_event(stripped):
+                        self.result_error = _extract_result_error(stripped)
+                        break
+                    text = extract_text_delta(stripped)
+                    if text is not None:
+                        yield text
 
 
 class NoPermissionsClaudeAgent(ClaudeAgent, NoPermissionsAgentMixin):
@@ -363,11 +389,9 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
         Yields text delta chunks parsed from stream-json events. Completes when
         the agent process exits and the file is fully consumed.
 
-        Raises MngrError if the agent exits without producing any output,
-        which typically indicates a startup failure (e.g. authentication error).
-        The check covers both cases: stdout file never created, and stdout file
-        created but empty (e.g. shell redirect creates the file before claude
-        fails).
+        Raises MngrError if the stream-json result event has is_error=true
+        (even if some text was yielded before the error), or if the agent exits
+        without producing any output (startup failure, auth error, etc.).
         """
         stdout_path = self._get_stdout_path()
 
@@ -384,6 +408,8 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
             yielded_any = True
             yield chunk
 
+        if state.result_error:
+            raise MngrError(f"claude returned an error:\n{state.result_error}")
         if not yielded_any:
             self._raise_no_output_error()
 
