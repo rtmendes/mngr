@@ -691,6 +691,12 @@ class VpsDockerProvider(BaseProviderInstance):
                 _remove_host_from_known_hosts(self._vps_known_hosts_path(), vps_ip, 22)
             except Exception as e:
                 logger.trace("Failed to clean up VPS known_hosts: {}", e)
+            try:
+                _remove_host_from_known_hosts(
+                    self._container_known_hosts_path(), vps_ip, self.config.container_ssh_port
+                )
+            except Exception as e:
+                logger.trace("Failed to clean up container known_hosts: {}", e)
 
         self._host_by_id_cache.pop(host_id, None)
         logger.info("Host {} destroyed (VPS {})", host_id, vps_config.vps_instance_id)
