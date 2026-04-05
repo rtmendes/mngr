@@ -16,8 +16,5 @@
   "devDependencies": {
     "electron": "35.7.5",
     "@todesktop/cli": "^1.8.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["electron"]
   }
 }
