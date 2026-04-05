@@ -682,8 +682,9 @@ def init_git_repo(path: Path, initial_commit: bool = True) -> None:
     """Initialize a git repo at the given path.
 
     If initial_commit is True, creates a README.md and commits it.
-    Expects git user config to be available (provided by the autouse
-    setup_test_mngr_env fixture via GIT_CONFIG_GLOBAL).
+    Expects git user config to be available (provided by the
+    setup_git_config fixture, or temp_git_repo which depends on it,
+    via GIT_CONFIG_GLOBAL).
     """
     subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
     if initial_commit:
