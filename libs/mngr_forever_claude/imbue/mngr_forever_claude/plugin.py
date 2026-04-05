@@ -15,7 +15,6 @@ from imbue.mngr.errors import PluginMngrError
 from imbue.mngr.interfaces.agent import AgentInterface
 from imbue.mngr.interfaces.host import CreateAgentOptions
 from imbue.mngr.interfaces.host import OnlineHostInterface
-from imbue.mngr.primitives import CommandString
 from imbue.mngr_claude.plugin import ClaudeAgent
 from imbue.mngr_claude.plugin import ClaudeAgentConfig
 
