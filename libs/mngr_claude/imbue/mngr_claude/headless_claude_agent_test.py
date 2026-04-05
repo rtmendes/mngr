@@ -108,12 +108,14 @@ def test_assemble_command_includes_print_and_redirect(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
 ) -> None:
-    """assemble_command should include --print and redirect stdout to stdout.jsonl."""
+    """assemble_command should include --print and redirect stdout and stderr."""
     agent, host = _make_headless_agent(local_provider, tmp_path)
     cmd = agent.assemble_command(host, agent_args=(), command_override=None)
     assert "--print" in cmd
     assert "$MNGR_AGENT_STATE_DIR/stdout.jsonl" in cmd
     assert ">" in cmd
+    assert "$MNGR_AGENT_STATE_DIR/stderr.log" in cmd
+    assert "2>" in cmd
 
 
 def test_assemble_command_includes_agent_args(
