@@ -37,19 +37,6 @@ def _run_mngr(*args: str, timeout: int = 300) -> subprocess.CompletedProcess[str
     )
 
 
-def _cleanup_instance(instance_id: str) -> None:
-    """Best-effort cleanup of a Vultr instance."""
-    if not instance_id or not _VULTR_API_KEY:
-        return
-    from imbue.mngr_vps_docker.primitives import VpsInstanceId
-    client = VultrVpsClient(api_key=SecretStr(_VULTR_API_KEY))
-    try:
-        client.destroy_instance(VpsInstanceId(instance_id))
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("Failed to clean up instance %s: %s", instance_id, e)
-
-
 class TestVultrProviderLifecycle:
     """Tests for the full VPS Docker provider lifecycle."""
 

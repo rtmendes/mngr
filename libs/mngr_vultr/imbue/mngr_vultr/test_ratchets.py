@@ -51,7 +51,7 @@ def test_prevent_bare_except() -> None:
 
 
 def test_prevent_broad_exception_catch() -> None:
-    rc.check_broad_exception_catch(_DIR, snapshot(2))
+    rc.check_broad_exception_catch(_DIR, snapshot(1))
 
 
 def test_prevent_base_exception_catch() -> None:
@@ -66,7 +66,7 @@ def test_prevent_builtin_exception_raises() -> None:
 
 
 def test_prevent_inline_imports() -> None:
-    rc.check_inline_imports(_DIR, snapshot(3))
+    rc.check_inline_imports(_DIR, snapshot(1))
 
 
 def test_prevent_relative_imports() -> None:
