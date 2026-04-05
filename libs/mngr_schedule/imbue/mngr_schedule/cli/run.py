@@ -4,14 +4,13 @@ from typing import Any
 from typing import assert_never
 
 import click
-import modal
-import modal.exception
 from click_option_group import optgroup
 from loguru import logger
 
 from imbue.mngr.cli.common_opts import add_common_options
 from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.errors import MngrError
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr_modal.instance import ModalProviderInstance
 from imbue.mngr_schedule.cli.group import schedule
@@ -20,6 +19,7 @@ from imbue.mngr_schedule.cli.provider_utils import load_schedule_provider
 from imbue.mngr_schedule.implementations.local.deploy import get_local_schedule_creation_record
 from imbue.mngr_schedule.implementations.local.deploy import get_local_trigger_run_script
 from imbue.mngr_schedule.implementations.modal.deploy import get_modal_schedule_creation_record
+from imbue.mngr_schedule.implementations.modal.deploy import invoke_modal_trigger_function
 
 # Callable that executes a shell script and returns the exit code.
 # The default implementation runs the script with inherited stdio.
@@ -135,19 +135,8 @@ def run_modal_trigger(provider: ModalProviderInstance, trigger_name: str) -> int
     )
 
     try:
-        fn = modal.Function.from_name(
-            record.app_name,
-            "run_scheduled_trigger",
-            environment_name=record.environment,
-        )
-        fn.remote()
-    except modal.exception.NotFoundError:
-        raise click.ClickException(
-            f"Modal function for trigger '{trigger_name}' not found "
-            f"(app: {record.app_name}, env: {record.environment}). "
-            "The trigger may need to be re-deployed with 'mngr schedule add'."
-        ) from None
-    except modal.exception.Error as exc:
+        invoke_modal_trigger_function(record)
+    except MngrError as exc:
         raise click.ClickException(f"Modal invocation failed for trigger '{trigger_name}': {exc}") from None
 
     return 0

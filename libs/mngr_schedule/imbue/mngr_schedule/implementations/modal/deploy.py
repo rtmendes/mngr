@@ -15,6 +15,7 @@ from typing import Any
 from typing import Final
 from typing import assert_never
 
+import modal
 import modal.exception
 from dotenv import dotenv_values
 from loguru import logger
@@ -569,6 +570,29 @@ def get_modal_schedule_creation_record(
     except (ValidationError, ValueError) as exc:
         logger.warning("Invalid schedule record at {}: {}", file_path, exc)
         return None
+
+
+def invoke_modal_trigger_function(record: ModalScheduleCreationRecord) -> None:
+    """Invoke the deployed modal function for a trigger.
+
+    Calls modal.Function.from_name() to look up the deployed function and
+    invokes it remotely. Raises MngrError if the function is not found or
+    the invocation fails.
+    """
+    try:
+        fn = modal.Function.from_name(
+            record.app_name,
+            "run_scheduled_trigger",
+            environment_name=record.environment,
+        )
+        fn.remote()
+    except modal.exception.NotFoundError:
+        raise MngrError(
+            f"Modal function not found (app: {record.app_name}, env: {record.environment}). "
+            "The trigger may need to be re-deployed with 'mngr schedule add'."
+        ) from None
+    except modal.exception.Error as exc:
+        raise MngrError(f"Modal invocation failed: {exc}") from None
 
 
 def list_schedule_creation_records(
