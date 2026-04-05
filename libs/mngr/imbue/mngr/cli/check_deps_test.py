@@ -206,7 +206,16 @@ def test_prompt_install_choice_interactive_choices(monkeypatch: pytest.MonkeyPat
 
 
 def test_run_installation_with_deps_invokes_batch_install() -> None:
-    """_run_installation with deps to install exercises the install flow."""
-    # Deps with nonexistent binaries won't actually install, but the code path is exercised.
-    failed = _run_installation(to_install=[_MISSING_CORE], need_bash=False, os_name=OsName.LINUX)
-    assert _MISSING_CORE in failed
+    """_run_installation with deps that have no installer for the given OS returns them as failed."""
+    # Use a dep with only a brew installer but pass OsName.LINUX, so no installer matches
+    # and the dep ends up in the "no auto install" / failed list without touching any package manager.
+    brew_only = SystemDependency(
+        binary="no-such-xyz",
+        purpose="testing",
+        macos_hint="brew install no-such-xyz",
+        linux_hint="n/a",
+        category=DependencyCategory.CORE,
+        install_method=InstallMethod(brew_package="no-such-xyz"),
+    )
+    failed = _run_installation(to_install=[brew_only], need_bash=False, os_name=OsName.LINUX)
+    assert brew_only in failed
