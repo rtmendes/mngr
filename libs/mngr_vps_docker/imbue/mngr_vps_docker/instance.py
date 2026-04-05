@@ -514,9 +514,10 @@ class VpsDockerProvider(BaseProviderInstance):
             idle_timeout = self.config.default_idle_timeout
             activity_sources = self.config.default_activity_sources
             if lifecycle is not None:
-                if lifecycle.activity_config is not None:
-                    idle_timeout = lifecycle.activity_config.idle_timeout_seconds
-                    activity_sources = lifecycle.activity_config.activity_sources
+                if lifecycle.idle_timeout_seconds is not None:
+                    idle_timeout = lifecycle.idle_timeout_seconds
+                if lifecycle.activity_sources is not None:
+                    activity_sources = lifecycle.activity_sources
 
             now = datetime.now(timezone.utc)
             host_data = CertifiedHostData(
