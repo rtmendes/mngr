@@ -76,7 +76,7 @@ This updates each project's snapshot with the actual violation count.
 
 ## Adding a Project-Specific Ratchet
 
-Not all ratchets belong in every project. If a ratchet only applies to one project (e.g., a project-specific API convention), add it to a separate file -- NOT to `test_ratchets.py` (which is enforced to be identical across all projects by `test_meta_ratchets.py`).
+Not all ratchets belong in every project. If a ratchet only applies to one project (e.g., a project-specific API convention), add it to a separate file -- NOT to `test_ratchets.py` (which must define the same test function names across all projects, enforced by `test_meta_ratchets.py`).
 
 Create a project-specific ratchet test file (e.g., `test_project_ratchets.py`) using the core API directly:
 
