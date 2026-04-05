@@ -179,8 +179,8 @@ def isolate_tmux_server(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None
 
 
 # Environment variables that isolate git from system-level config and
-# interactive prompts. Used by both isolate_git() (fixture path) and
-# _git_isolation_env() (subprocess path, for init_git_repo_with_config).
+# interactive prompts.  Applied via monkeypatch in isolate_git() and via
+# explicit env dict in _git_isolation_env() (used by run_git_command).
 _GIT_ISOLATION_ENV: Final[dict[str, str]] = {
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_TERMINAL_PROMPT": "0",
@@ -191,9 +191,10 @@ def _git_isolation_env() -> dict[str, str]:
     """Return env dict for subprocess git calls with system config isolation.
 
     Merges the current os.environ with GIT_CONFIG_NOSYSTEM and
-    GIT_TERMINAL_PROMPT. Use this for git subprocesses that need isolation
-    but are not running inside an isolate_git() context manager (e.g.
-    init_git_repo_with_config).
+    GIT_TERMINAL_PROMPT.  Used by run_git_command() to ensure every
+    subprocess git call skips /etc/gitconfig and never prompts
+    interactively, regardless of whether an isolate_git() context is
+    active.
     """
     return {**os.environ, **_GIT_ISOLATION_ENV}
 
