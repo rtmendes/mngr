@@ -10,14 +10,11 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 const { execSync } = require('child_process');
-const os = require('os');
 
 const ROOT = path.resolve(__dirname, '..');
 const RESOURCES_DIR = path.join(ROOT, 'resources');
 
-// Versions
 const UV_VERSION = '0.7.12';
-const GIT_VERSION = '2.49.0';
 
 function getPlatformArch() {
   const platform = process.platform;
@@ -80,39 +77,21 @@ async function downloadUv({ platform, arch }) {
   console.log(`uv binary installed at ${uvBinary}`);
 }
 
-async function downloadGit({ platform, arch }) {
+async function downloadGit() {
   const gitDir = path.join(RESOURCES_DIR, 'git');
-  fs.mkdirSync(gitDir, { recursive: true });
+  const binDir = path.join(gitDir, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
 
-  if (platform === 'darwin') {
-    // On macOS, use the system git or install from a known source
-    // For now, we'll use a lightweight approach: copy the system git
-    const systemGit = execSync('which git', { encoding: 'utf-8' }).trim();
-    if (!systemGit) {
-      throw new Error('git not found on system -- install git first');
-    }
-
-    const binDir = path.join(gitDir, 'bin');
-    fs.mkdirSync(binDir, { recursive: true });
-
-    // Copy the git binary
-    fs.copyFileSync(systemGit, path.join(binDir, 'git'));
-    fs.chmodSync(path.join(binDir, 'git'), 0o755);
-    console.log(`git binary copied to ${path.join(binDir, 'git')}`);
-  } else if (platform === 'linux') {
-    // On Linux, use the system git
-    const systemGit = execSync('which git', { encoding: 'utf-8' }).trim();
-    if (!systemGit) {
-      throw new Error('git not found on system -- install git first');
-    }
-
-    const binDir = path.join(gitDir, 'bin');
-    fs.mkdirSync(binDir, { recursive: true });
-
-    fs.copyFileSync(systemGit, path.join(binDir, 'git'));
-    fs.chmodSync(path.join(binDir, 'git'), 0o755);
-    console.log(`git binary copied to ${path.join(binDir, 'git')}`);
+  // Copy the system git binary into the resources directory.
+  const systemGit = execSync('which git', { encoding: 'utf-8' }).trim();
+  if (!systemGit) {
+    throw new Error('git not found on system -- install git first');
   }
+
+  const destGit = path.join(binDir, 'git');
+  fs.copyFileSync(systemGit, destGit);
+  fs.chmodSync(destGit, 0o755);
+  console.log(`git binary copied to ${destGit}`);
 }
 
 function copyPyproject() {
@@ -157,7 +136,7 @@ async function main() {
   // Download binaries and copy pyproject in parallel
   await Promise.all([
     downloadUv({ platform, arch }),
-    downloadGit({ platform, arch }),
+    downloadGit(),
   ]);
 
   copyPyproject();
