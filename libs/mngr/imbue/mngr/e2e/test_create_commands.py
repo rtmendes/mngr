@@ -33,6 +33,7 @@ def test_create_with_custom_command(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_with_idle_mode_and_timeout(e2e: E2eSession) -> None:
@@ -48,6 +49,7 @@ def test_create_with_idle_mode_and_timeout(e2e: E2eSession) -> None:
         "mngr create my-task --provider modal --command 'sleep 99999' --no-ensure-clean"
         " --idle-mode run --idle-timeout 60 --no-connect",
         comment="idle timeout requires a remote provider",
+        timeout=120.0,
     )
     expect(result).to_succeed()
 
