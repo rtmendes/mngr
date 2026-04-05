@@ -1,7 +1,6 @@
 import json
 import os
 import sys
-import termios
 import traceback
 import webbrowser
 from typing import Final
@@ -176,34 +175,6 @@ def _format_existing_issue_message(issue: ExistingIssue) -> str:
     return "Found existing issue " + str(issue.number) + ": " + issue.title
 
 
-def _restore_terminal_for_prompting() -> None:
-    """Restore terminal settings needed for interactive prompting.
-
-    If a TUI (e.g. urwid) was active when an error occurred, the terminal may
-    have been left with signal generation disabled (ISIG off, or VINTR cleared)
-    so that Ctrl-C no longer raises SIGINT, or with canonical mode / CR-to-NL
-    translation off so that input() never completes. This function re-enables
-    the flags that click.confirm (which uses input()) requires.
-    """
-    try:
-        if not sys.stdin.isatty():
-            return
-    except (AttributeError, ValueError):
-        return
-    try:
-        attrs = termios.tcgetattr(sys.stdin)
-        attrs[0] |= termios.ICRNL
-        attrs[3] |= termios.ICANON | termios.ECHO | termios.ISIG
-        # urwid's tty_signal_keys(intr="undefined") clears the interrupt
-        # character (VINTR) so Ctrl-C is ignored even when ISIG is on.
-        # Restore it to the conventional Ctrl-C (0x03).
-        if attrs[6][termios.VINTR] == b"\x00":
-            attrs[6][termios.VINTR] = b"\x03"
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, attrs)
-    except (termios.error, OSError):
-        pass
-
-
 def _prompt_and_report_issue(title: str, body: str, search_text: str) -> None:
     """Prompt the user to report a GitHub issue and open the browser.
 
@@ -214,8 +185,6 @@ def _prompt_and_report_issue(title: str, body: str, search_text: str) -> None:
     # don't bother reporting when this is autonomous
     if os.environ.get("IS_AUTONOMOUS", "0") == "1":
         return
-
-    _restore_terminal_for_prompting()
 
     if not click.confirm("\nWould you like to report this as a GitHub issue?", default=True):
         return
