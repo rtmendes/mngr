@@ -211,6 +211,10 @@ def test_prevent_direct_subprocess_usage() -> None:
     rc.check_direct_subprocess(_DIR, snapshot(5))
 
 
+def test_prevent_bare_urwid_tty_signal_keys() -> None:
+    rc.check_bare_urwid_tty_signal_keys(_DIR, snapshot(0))
+
+
 # --- AST-based ratchets ---
 
 
