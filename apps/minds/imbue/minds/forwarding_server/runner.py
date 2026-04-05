@@ -1,3 +1,4 @@
+import os
 import secrets
 import time
 import webbrowser
@@ -18,6 +19,10 @@ from imbue.minds.forwarding_server.ssh_tunnel import SSHTunnelManager
 from imbue.minds.primitives import OneTimeCode
 
 _ONE_TIME_CODE_LENGTH: Final[int] = 32
+
+
+def _is_electron_mode() -> bool:
+    return os.environ.get("MINDS_ELECTRON") == "1"
 
 
 def start_forwarding_server(
@@ -43,10 +48,15 @@ def start_forwarding_server(
     auth_store.add_one_time_code(code=code)
     login_url = "http://{}:{}/login?one_time_code={}".format(host, port, code)
 
-    logger.info("")
-    logger.info("Login URL (one-time use):")
-    logger.info("  {}", login_url)
-    logger.info("")
+    # Emit login URL -- in JSONL mode the structured `login_url` extra field
+    # allows Electron's backend.js to detect and parse this event.
+    logger.info("Login URL ready", login_url=login_url)
+
+    if not _is_electron_mode():
+        logger.info("")
+        logger.info("Login URL (one-time use):")
+        logger.info("  {}", login_url)
+        logger.info("")
 
     stream_manager.start()
 
@@ -58,9 +68,12 @@ def start_forwarding_server(
         agent_creator=agent_creator,
     )
 
-    thread = Thread(target=_sleep_then_open, args=(login_url,))
-    thread.daemon = True
-    thread.start()
+    # In Electron mode, the BrowserWindow navigates directly to the login URL,
+    # so we skip opening the system browser.
+    if not _is_electron_mode():
+        thread = Thread(target=_sleep_then_open, args=(login_url,))
+        thread.daemon = True
+        thread.start()
 
     try:
         uvicorn.run(app, host=host, port=port)
