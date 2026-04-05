@@ -189,3 +189,49 @@ def test_container_is_running_error_returns_false(docker_ssh: DockerOverSsh) -> 
     )
     with patch("subprocess.run", return_value=mock_result):
         assert docker_ssh.container_is_running("nonexistent") is False
+
+
+def test_upload_directory_success(docker_ssh: DockerOverSsh, tmp_path: Path) -> None:
+    local_dir = tmp_path / "context"
+    local_dir.mkdir()
+    (local_dir / "Dockerfile").write_text("FROM ubuntu")
+    mock_result = subprocess.CompletedProcess(args=["rsync"], returncode=0, stdout="", stderr="")
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        docker_ssh.upload_directory(local_dir, "/tmp/build-ctx")
+        call_args = mock_run.call_args[0][0]
+        assert call_args[0] == "rsync"
+        assert "-az" in call_args
+        assert "--delete" in call_args
+        assert str(local_dir) + "/" in call_args
+        assert "root@192.168.1.100:/tmp/build-ctx/" in call_args
+
+
+def test_upload_directory_timeout(docker_ssh: DockerOverSsh, tmp_path: Path) -> None:
+    local_dir = tmp_path / "context"
+    local_dir.mkdir()
+    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("rsync", 5)):
+        with pytest.raises(VpsConnectionError, match="timed out"):
+            docker_ssh.upload_directory(local_dir, "/tmp/build-ctx", timeout_seconds=5.0)
+
+
+def test_upload_directory_rsync_failure(docker_ssh: DockerOverSsh, tmp_path: Path) -> None:
+    local_dir = tmp_path / "context"
+    local_dir.mkdir()
+    mock_result = subprocess.CompletedProcess(
+        args=["rsync"], returncode=1, stdout="", stderr="rsync error: some failure"
+    )
+    with patch("subprocess.run", return_value=mock_result):
+        with pytest.raises(ContainerSetupError, match="Upload failed"):
+            docker_ssh.upload_directory(local_dir, "/tmp/build-ctx")
+
+
+def test_build_image_success(docker_ssh: DockerOverSsh) -> None:
+    mock_result = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        tag = docker_ssh.build_image("my-tag", "/tmp/ctx", ("--file=Dockerfile",))
+        assert tag == "my-tag"
+        call_args = mock_run.call_args[0][0]
+        remote_cmd = call_args[-1]
+        assert "docker build" in remote_cmd
+        assert "my-tag" in remote_cmd
+        assert "/tmp/ctx" in remote_cmd
