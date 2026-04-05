@@ -6,7 +6,7 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.primitives import AgentLifecycleState
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import ProviderInstanceName
-from imbue.mngr.utils.testing import init_git_repo_with_config
+from imbue.mngr.utils.testing import init_git_repo
 from imbue.mngr_kanpan.data_types import AgentBoardEntry
 from imbue.mngr_kanpan.data_types import BoardSnapshot
 from imbue.mngr_kanpan.data_types import ColumnData
@@ -483,7 +483,7 @@ def test_fetch_agent_snapshot_passes_labels_and_plugin_data() -> None:
 
 def test_fetch_board_snapshot_surfaces_gh_errors_and_suppresses_create_pr_url(tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
-    init_git_repo_with_config(repo_dir)
+    init_git_repo(repo_dir)
 
     agent = make_agent_details(
         name="agent-1",
