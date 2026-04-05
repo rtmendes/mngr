@@ -5,11 +5,22 @@ description: Write ratchet tests to prevent accumulation of code anti-patterns. 
 
 # Writing Ratchet Tests
 
-This skill provides guidelines for writing ratchet tests that prevent accumulation of code anti-patterns across all projects.
+This skill provides guidelines for writing ratchet tests that prevent accumulation of code anti-patterns in a project.
 
 ## What are Ratchet Tests?
 
-Ratchet tests track the current count of a specific anti-pattern in the codebase. The count can only stay the same or decrease -- increasing it fails the test. They use inline-snapshot to store the current violation count.
+Ratchet tests are a testing pattern that:
+- Track the current count of a specific anti-pattern in the codebase
+- Prevent that count from increasing (using inline-snapshot)
+- Allow the count to decrease (improvement is always allowed)
+- Provide clear, actionable feedback when violations increase
+
+Common use cases:
+- TODO comments
+- Inline imports
+- Use of eval() or exec()
+- Broad exception handling (bare except, except Exception)
+- Any other code pattern you want to gradually eliminate
 
 ## Architecture
 
@@ -115,12 +126,17 @@ Run with `--inline-snapshot=create` to set the initial count, then verify it pas
 
 ## Troubleshooting
 
-**Ratchet test fails after your code change:**
-- Read the `rule_description` to understand why
-- Fix your code to avoid the anti-pattern
-- Never run `--inline-snapshot=fix` to paper over violations
-
 **Pattern not matching expected violations:**
-- Check if `is_multiline=True` is needed for patterns using `^` or `$`
-- Verify the regex is correct
-- Check that violations are in git-tracked `.py` files
+- Check if you need `multiline=True` for patterns using `^` or `$`
+- Verify the regex is correct using a regex tester
+- Check that the file extension is correct
+- Ensure violations are in git-tracked files (git blame only works on committed code)
+
+**Test fails after running:**
+- This is expected if the current count is higher than the snapshot
+- Always fix the violations if a ratchet test fails--it's because you messed something up. NEVER run with `--inline-snapshot=fix`
+- Never just blindly update snapshots - investigate why the count increased
+
+**Snapshot shows 0 but violations exist:**
+- The regex pattern might be incorrect
+- Try running with `multiline=True` if using `^` or `$` anchors
