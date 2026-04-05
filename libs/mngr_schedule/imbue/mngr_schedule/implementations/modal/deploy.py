@@ -549,6 +549,28 @@ def _save_schedule_creation_record(
     logger.debug("Saved schedule creation record to {}", path)
 
 
+def get_modal_schedule_creation_record(
+    provider: ModalProviderInstance,
+    trigger_name: str,
+) -> ModalScheduleCreationRecord | None:
+    """Read a single schedule creation record by trigger name from the state volume.
+
+    Returns None if the record does not exist, is unreadable, or is invalid.
+    """
+    volume = provider.get_state_volume()
+    file_path = f"{_SCHEDULE_RECORDS_PREFIX}/{trigger_name}.json"
+    try:
+        data = volume.read_file(file_path)
+    except (modal.exception.NotFoundError, FileNotFoundError, OSError) as exc:
+        logger.debug("Schedule record not found at {}: {}", file_path, exc)
+        return None
+    try:
+        return ModalScheduleCreationRecord.model_validate_json(data)
+    except (ValidationError, ValueError) as exc:
+        logger.warning("Invalid schedule record at {}: {}", file_path, exc)
+        return None
+
+
 def list_schedule_creation_records(
     provider: ModalProviderInstance,
 ) -> list[ModalScheduleCreationRecord]:

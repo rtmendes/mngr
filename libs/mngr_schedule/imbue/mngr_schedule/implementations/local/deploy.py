@@ -136,6 +136,34 @@ def _save_creation_record(
     logger.debug("Saved schedule creation record to {}", record_path)
 
 
+def get_local_schedule_creation_record(
+    mngr_ctx: MngrContext,
+    trigger_name: str,
+) -> ScheduleCreationRecord | None:
+    """Read a single schedule creation record by trigger name.
+
+    Returns None if the record does not exist, is unreadable, or is invalid.
+    """
+    record_path = _get_records_dir(mngr_ctx) / f"{trigger_name}.json"
+    if not record_path.is_file():
+        return None
+    try:
+        data = record_path.read_bytes()
+    except OSError as exc:
+        logger.warning("Unreadable schedule record at {}: {}", record_path, exc)
+        return None
+    try:
+        return ScheduleCreationRecord.model_validate_json(data)
+    except (ValidationError, ValueError) as exc:
+        logger.warning("Invalid schedule record at {}: {}", record_path, exc)
+        return None
+
+
+def get_local_trigger_run_script(mngr_ctx: MngrContext, trigger_name: str) -> Path:
+    """Get the path to a local trigger's run.sh wrapper script."""
+    return _get_trigger_dir(mngr_ctx, trigger_name) / "run.sh"
+
+
 def list_local_schedule_creation_records(
     mngr_ctx: MngrContext,
 ) -> list[ScheduleCreationRecord]:

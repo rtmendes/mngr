@@ -58,4 +58,4 @@ class ScheduleRunCliOptions(CommonCliOptions):
     """Options for the schedule run subcommand."""
 
     name: str
-    local: bool
+    provider: str
