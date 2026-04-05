@@ -1,6 +1,7 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -91,6 +92,11 @@ def fetch_agent_snapshot(
     )
 
 
+def _fetch_repo_prs(cg: ConcurrencyGroup, repo_path: str) -> tuple[str, FetchPrsResult]:
+    """Fetch PRs for a single repo. Designed for use with ThreadPoolExecutor."""
+    return repo_path, fetch_all_prs(cg, repo=repo_path)
+
+
 def fetch_github_data(mngr_ctx: MngrContext, agents: list[AgentDetails]) -> GitHubData:
     """Fetch GitHub PR data from all unique repos and build the PR-to-branch index.
 
@@ -112,11 +118,8 @@ def fetch_github_data(mngr_ctx: MngrContext, agents: list[AgentDetails]) -> GitH
     pr_by_repo_branch: dict[str, dict[str, PrInfo]] = {}
     repo_pr_loaded: dict[str, bool] = {}
 
-    def _fetch_repo(repo_path: str) -> tuple[str, FetchPrsResult]:
-        return repo_path, fetch_all_prs(cg, repo=repo_path)
-
     with ThreadPoolExecutor(max_workers=min(len(all_repos), 8) or 1) as executor:
-        for repo_path, pr_result in executor.map(_fetch_repo, all_repos):
+        for repo_path, pr_result in executor.map(partial(_fetch_repo_prs, cg), all_repos):
             if pr_result.error is None:
                 repo_index = _build_pr_branch_index(pr_result.prs)
                 if repo_index:
