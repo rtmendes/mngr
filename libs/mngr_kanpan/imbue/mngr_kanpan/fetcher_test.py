@@ -650,6 +650,20 @@ def test_run_refresh_hooks_execute_in_order(tmp_path: Path) -> None:
     assert prefixes[4:] == ["3", "3"]
 
 
+def test_run_refresh_hooks_timeout_returns_error_instead_of_raising() -> None:
+    """When a hook process times out and the concurrency group raises, the error is collected as a string."""
+    hook = RefreshHook(name="Slow hook", command="sleep 60")
+    entries = (_make_entry(name="agent-1"),)
+    with (
+        patch("imbue.mngr_kanpan.fetcher._HOOK_TIMEOUT_SECONDS", 0.5),
+        ConcurrencyGroup(name="test") as cg,
+    ):
+        errors = run_refresh_hooks(cg, [hook], entries)
+    assert len(errors) == 1
+    assert "Slow hook" in errors[0]
+    assert "timed out or failed" in errors[0]
+
+
 # === fetch_board_snapshot with hooks ===
 
 
