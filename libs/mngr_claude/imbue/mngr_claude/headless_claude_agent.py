@@ -286,13 +286,24 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
         """Raise MngrError with the best available error detail.
 
         Checks, in order: stderr.log, stdout.jsonl (for non-JSON text),
-        then tmux pane content as a last resort.
+        then tmux pane content as a last resort. Pane capture is only
+        attempted if neither file exists (the command never ran far enough
+        to create the redirects).
         """
-        error_detail = (
-            self._get_stderr_error_message() or self._get_stdout_error_message() or self._get_pane_error_message()
-        )
-        if error_detail:
-            raise MngrError(f"claude exited without producing output:\n{error_detail}")
+        stderr_error = self._get_stderr_error_message()
+        if stderr_error:
+            raise MngrError(f"claude exited without producing output:\n{stderr_error}")
+        stdout_error = self._get_stdout_error_message()
+        if stdout_error:
+            raise MngrError(f"claude exited without producing output:\n{stdout_error}")
+        # Only try pane capture if the redirect files don't exist at all,
+        # meaning the shell command never got far enough to create them.
+        stderr_exists = self._file_exists_on_host(self._get_stderr_path())
+        stdout_exists = self._file_exists_on_host(self._get_stdout_path())
+        if not stderr_exists and not stdout_exists:
+            pane_error = self._get_pane_error_message()
+            if pane_error:
+                raise MngrError(f"claude exited without producing output:\n{pane_error}")
         raise MngrError("claude exited without producing output (no details available)")
 
     def _get_stderr_error_message(self) -> str | None:
