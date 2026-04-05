@@ -16,6 +16,7 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.errors import ProcessSetupError
 from imbue.concurrency_group.subprocess_utils import FinishedProcess
+from imbue.imbue_common.ratchet_testing.ratchets import assert_posix_compatible
 from imbue.mngr.agents.base_agent import BaseAgent
 from imbue.mngr.api.testing import FakeHost
 from imbue.mngr.config.data_types import EnvVar
@@ -434,17 +435,7 @@ def test_claude_agent_assemble_command_is_posix_compatible(
 
     command = agent.assemble_command(host=host, agent_args=("--model", "opus"), command_override=None)
 
-    result = subprocess.run(
-        ["shellcheck", "-s", "sh", "--format=json1", "-"],
-        input=str(command),
-        capture_output=True,
-        text=True,
-    )
-    issues = json.loads(result.stdout)
-    portability_issues = [c for c in issues.get("comments", []) if c["code"] >= 3000]
-    assert portability_issues == [], "Assembled command contains non-POSIX constructs:\n" + "\n".join(
-        f"  SC{c['code']}: {c['message']}" for c in portability_issues
-    )
+    assert_posix_compatible(str(command))
 
 
 def test_claude_agent_assemble_command_remote_is_posix_compatible(
@@ -456,17 +447,7 @@ def test_claude_agent_assemble_command_remote_is_posix_compatible(
     non_local_host = cast(OnlineHostInterface, SimpleNamespace(is_local=False))
     command = agent.assemble_command(host=non_local_host, agent_args=(), command_override=None)
 
-    result = subprocess.run(
-        ["shellcheck", "-s", "sh", "--format=json1", "-"],
-        input=str(command),
-        capture_output=True,
-        text=True,
-    )
-    issues = json.loads(result.stdout)
-    portability_issues = [c for c in issues.get("comments", []) if c["code"] >= 3000]
-    assert portability_issues == [], "Assembled command contains non-POSIX constructs:\n" + "\n".join(
-        f"  SC{c['code']}: {c['message']}" for c in portability_issues
-    )
+    assert_posix_compatible(str(command))
 
 
 # =============================================================================

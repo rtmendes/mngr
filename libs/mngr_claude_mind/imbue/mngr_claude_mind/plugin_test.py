@@ -1,7 +1,6 @@
 """Unit tests for the mngr_claude_mind plugin."""
 
 import json
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -9,6 +8,7 @@ from typing import cast
 
 import pytest
 
+from imbue.imbue_common.ratchet_testing.ratchets import assert_posix_compatible
 from imbue.mngr.config.data_types import EnvVar
 from imbue.mngr.interfaces.host import AgentEnvironmentOptions
 from imbue.mngr.interfaces.host import CreateAgentOptions
@@ -260,31 +260,18 @@ def test_assemble_command_prepends_cd_role(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_assemble_command_is_posix_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Assembled commands are sent via tmux send-keys to the user's shell, which may not be bash."""
-    base_cmd = CommandString(
-        "( $MNGR_AGENT_STATE_DIR/commands/claude_background_tasks.sh session )"
-        ' & _MNGR_READ_SID=$(cat "$MNGR_AGENT_STATE_DIR/claude_session_id" 2>/dev/null || true);'
-        ' export MAIN_CLAUDE_SESSION_ID="${_MNGR_READ_SID:-uuid}" &&'
-        " rm -rf $MNGR_AGENT_STATE_DIR/session_started &&"
-        ' ( ( find "$CLAUDE_CONFIG_DIR" -name "$MAIN_CLAUDE_SESSION_ID" | grep . )'
-        ' && claude --resume "$MAIN_CLAUDE_SESSION_ID" ) || claude --session-id uuid'
-    )
+    """ClaudeMindAgent wraps the base command with cd + subshell -- verify the wrapping is POSIX.
+
+    The base ClaudeAgent command is tested separately in plugin_test.py. This test verifies
+    that ClaudeMindAgent's own contribution (cd "$ROLE" && ( ... )) stays POSIX-compatible.
+    """
+    base_cmd = CommandString("echo hello || echo fallback")
     monkeypatch.setattr(ClaudeAgent, "assemble_command", lambda self, host, args, override: base_cmd)
 
     agent = ClaudeMindAgent.model_construct(agent_config=ClaudeMindConfig())
     command = agent.assemble_command(cast(Any, None), (), None)
 
-    result = subprocess.run(
-        ["shellcheck", "-s", "sh", "--format=json1", "-"],
-        input=str(command),
-        capture_output=True,
-        text=True,
-    )
-    issues = json.loads(result.stdout)
-    portability_issues = [c for c in issues.get("comments", []) if c["code"] >= 3000]
-    assert portability_issues == [], "Assembled command contains non-POSIX constructs:\n" + "\n".join(
-        f"  SC{c['code']}: {c['message']}" for c in portability_issues
-    )
+    assert_posix_compatible(str(command))
 
 
 # -- _get_role_from_env tests --
