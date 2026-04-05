@@ -60,6 +60,7 @@ from imbue.mngr.utils.polling import wait_for
 from imbue.mngr.utils.testing import capture_tmux_pane_contents
 from imbue.mngr.utils.testing import generate_ssh_keypair
 from imbue.mngr.utils.testing import local_sshd
+from imbue.mngr.utils.testing import tmux_session_cleanup
 
 
 @pytest.fixture
@@ -944,7 +945,7 @@ def test_stop_agent_does_not_kill_prefix_matched_session(
     session_short = f"{mngr_test_prefix}{agent_short.name}"
     session_long = f"{mngr_test_prefix}{agent_long.name}"
 
-    try:
+    with tmux_session_cleanup(session_short), tmux_session_cleanup(session_long):
         # Verify both sessions exist
         success, output = host._run_shell_command(StringCommand("tmux list-sessions -F '#{session_name}' 2>/dev/null"))
         assert success
@@ -964,9 +965,6 @@ def test_stop_agent_does_not_kill_prefix_matched_session(
             f"Session '{session_long}' was killed by stop_agents targeting '{session_short}' -- "
             f"tmux prefix matching is not being prevented"
         )
-    finally:
-        host.stop_agents([agent_short.id], timeout_seconds=3.0)
-        host.stop_agents([agent_long.id], timeout_seconds=3.0)
 
 
 @pytest.mark.tmux
