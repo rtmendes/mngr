@@ -22,7 +22,8 @@ from imbue.mngr_schedule.implementations.local.deploy import get_local_trigger_r
 from imbue.mngr_schedule.implementations.modal.deploy import get_modal_schedule_creation_record
 
 # Callable that executes a shell script and returns the exit code.
-# Default uses subprocess.run with inherited stdio. Tests inject a fake.
+# The default implementation runs the script with inherited stdio.
+# Tests inject a fake.
 ScriptRunner = Callable[[str], int]
 
 
