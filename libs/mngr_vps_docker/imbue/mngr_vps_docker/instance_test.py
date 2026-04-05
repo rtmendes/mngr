@@ -5,15 +5,22 @@ from pathlib import Path
 from imbue.mngr_vps_docker.instance import _parse_build_args
 from imbue.mngr_vps_docker.instance import _remove_host_from_known_hosts
 
-_DEFAULTS = {
-    "default_region": "ewr",
-    "default_plan": "vc2-1c-1gb",
-    "default_os_id": 2136,
-}
+_DEFAULT_REGION = "ewr"
+_DEFAULT_PLAN = "vc2-1c-1gb"
+_DEFAULT_OS_ID = 2136
+
+
+def _parse_with_defaults(build_args: list[str] | None) -> tuple[str, str, int, tuple[str, ...]]:
+    return _parse_build_args(
+        build_args,
+        default_region=_DEFAULT_REGION,
+        default_plan=_DEFAULT_PLAN,
+        default_os_id=_DEFAULT_OS_ID,
+    )
 
 
 def test_parse_build_args_defaults_when_none() -> None:
-    region, plan, os_id, docker_args = _parse_build_args(None, **_DEFAULTS)
+    region, plan, os_id, docker_args = _parse_with_defaults(None)
     assert region == "ewr"
     assert plan == "vc2-1c-1gb"
     assert os_id == 2136
@@ -21,7 +28,7 @@ def test_parse_build_args_defaults_when_none() -> None:
 
 
 def test_parse_build_args_defaults_when_empty() -> None:
-    region, plan, os_id, docker_args = _parse_build_args([], **_DEFAULTS)
+    region, plan, os_id, docker_args = _parse_with_defaults([])
     assert region == "ewr"
     assert plan == "vc2-1c-1gb"
     assert os_id == 2136
@@ -29,7 +36,7 @@ def test_parse_build_args_defaults_when_empty() -> None:
 
 
 def test_parse_build_args_vps_region() -> None:
-    region, plan, os_id, docker_args = _parse_build_args(["--vps-region=lax"], **_DEFAULTS)
+    region, plan, os_id, docker_args = _parse_with_defaults(["--vps-region=lax"])
     assert region == "lax"
     assert plan == "vc2-1c-1gb"
     assert os_id == 2136
@@ -37,27 +44,24 @@ def test_parse_build_args_vps_region() -> None:
 
 
 def test_parse_build_args_vps_plan() -> None:
-    region, plan, os_id, docker_args = _parse_build_args(["--vps-plan=vc2-2c-4gb"], **_DEFAULTS)
+    _region, plan, _os_id, _docker_args = _parse_with_defaults(["--vps-plan=vc2-2c-4gb"])
     assert plan == "vc2-2c-4gb"
 
 
 def test_parse_build_args_vps_os() -> None:
-    region, plan, os_id, docker_args = _parse_build_args(["--vps-os=9999"], **_DEFAULTS)
+    _region, _plan, os_id, _docker_args = _parse_with_defaults(["--vps-os=9999"])
     assert os_id == 9999
 
 
 def test_parse_build_args_docker_args_passthrough() -> None:
-    region, plan, os_id, docker_args = _parse_build_args(
-        ["--file=Dockerfile", "."], **_DEFAULTS
-    )
+    region, _plan, _os_id, docker_args = _parse_with_defaults(["--file=Dockerfile", "."])
     assert region == "ewr"
     assert docker_args == ("--file=Dockerfile", ".")
 
 
 def test_parse_build_args_mixed_vps_and_docker() -> None:
-    region, plan, os_id, docker_args = _parse_build_args(
+    region, plan, os_id, docker_args = _parse_with_defaults(
         ["--vps-plan=vc2-2c-4gb", "--file=Dockerfile", "--vps-region=lax", "."],
-        **_DEFAULTS,
     )
     assert region == "lax"
     assert plan == "vc2-2c-4gb"
@@ -66,9 +70,8 @@ def test_parse_build_args_mixed_vps_and_docker() -> None:
 
 
 def test_parse_build_args_all_vps_overrides() -> None:
-    region, plan, os_id, docker_args = _parse_build_args(
+    region, plan, os_id, docker_args = _parse_with_defaults(
         ["--vps-region=sjc", "--vps-plan=vc2-4c-8gb", "--vps-os=1234"],
-        **_DEFAULTS,
     )
     assert region == "sjc"
     assert plan == "vc2-4c-8gb"
