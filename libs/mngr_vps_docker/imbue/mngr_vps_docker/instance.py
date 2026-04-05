@@ -829,9 +829,7 @@ class VpsDockerProvider(BaseProviderInstance):
         discovered: list[DiscoveredHost] = []
 
         # Query all VPS instances from the provider API that have our tags
-        # Then SSH to each VPS to read host records from the state volume
-        # For simplicity, iterate Vultr instances and filter by tag
-        # The tag format is "mngr-provider=<name>"
+        # then SSH to each VPS to read host records from the state volume.
 
         # First, try to find any VPS instances for this provider
         # We'll need the host records from each VPS
@@ -869,13 +867,9 @@ class VpsDockerProvider(BaseProviderInstance):
         # the state volume for host records
         all_records: list[VpsDockerHostRecord] = []
 
-        # List all instances from the Vultr API
-        # Note: VpsClientInterface doesn't have list_instances, so we need
-        # to use a different approach. We'll rely on the host records that
-        # we can read from VPSes we know about.
-        # For now, we use a simplified approach: scan all Vultr instances
-        # and check tags.
-        # TODO: The VpsClientInterface should include list_instances
+        # VpsClientInterface doesn't expose list_instances, so this base
+        # implementation returns empty. Concrete subclasses override this
+        # to query their provider API for tagged instances.
 
         # Since we can't easily list all VPS instances from the abstract interface,
         # we'll iterate host records from the state volumes of known VPSes.
