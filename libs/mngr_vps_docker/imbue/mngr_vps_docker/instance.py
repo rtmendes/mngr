@@ -558,9 +558,9 @@ class VpsDockerProvider(BaseProviderInstance):
         self, build_args: Sequence[str] | None
     ) -> tuple[str, str, int]:
         """Parse build args for VPS provisioning. Returns (region, plan, os_id)."""
-        region = getattr(self.config, "default_region", "ewr")
-        plan = getattr(self.config, "default_plan", "vc2-1c-1gb")
-        os_id = getattr(self.config, "default_os_id", 2136)
+        region = self.config.default_region
+        plan = self.config.default_plan
+        os_id = self.config.default_os_id
 
         if build_args:
             for arg in build_args:
