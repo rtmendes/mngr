@@ -9,6 +9,7 @@ from typing import Final
 import requests
 from loguru import logger
 from pydantic import Field
+from pydantic import SecretStr
 
 from imbue.mngr_vps_docker.errors import VpsApiError
 from imbue.mngr_vps_docker.errors import VpsProvisioningError
@@ -33,11 +34,11 @@ _STATUS_MAP: Final[dict[str, VpsInstanceStatus]] = {
 class VultrVpsClient(VpsClientInterface):
     """Vultr API v2 client using raw HTTP calls."""
 
-    api_key: str = Field(frozen=True, description="Vultr API key")
+    api_key: SecretStr = Field(frozen=True, description="Vultr API key")
 
     def _headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {self.api_key.get_secret_value()}",
             "Content-Type": "application/json",
         }
 

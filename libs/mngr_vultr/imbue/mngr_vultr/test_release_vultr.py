@@ -12,6 +12,7 @@ import subprocess
 import time
 
 import pytest
+from pydantic import SecretStr
 
 from imbue.mngr_vultr.client import VultrVpsClient
 
@@ -41,7 +42,7 @@ def _cleanup_instance(instance_id: str) -> None:
     if not instance_id or not _VULTR_API_KEY:
         return
     from imbue.mngr_vps_docker.primitives import VpsInstanceId
-    client = VultrVpsClient(api_key=_VULTR_API_KEY)
+    client = VultrVpsClient(api_key=SecretStr(_VULTR_API_KEY))
     try:
         client.destroy_instance(VpsInstanceId(instance_id))
     except Exception as e:
@@ -176,18 +177,18 @@ class TestVultrApiClient:
 
     def test_list_instances_does_not_error(self) -> None:
         """Verify the API client can list instances without error."""
-        client = VultrVpsClient(api_key=_VULTR_API_KEY)
+        client = VultrVpsClient(api_key=SecretStr(_VULTR_API_KEY))
         instances = client.list_instances()
         assert isinstance(instances, list)
 
     def test_list_ssh_keys(self) -> None:
         """Verify the API client can list SSH keys."""
-        client = VultrVpsClient(api_key=_VULTR_API_KEY)
+        client = VultrVpsClient(api_key=SecretStr(_VULTR_API_KEY))
         keys = client.list_ssh_keys()
         assert isinstance(keys, list)
 
     def test_list_snapshots(self) -> None:
         """Verify the API client can list snapshots."""
-        client = VultrVpsClient(api_key=_VULTR_API_KEY)
+        client = VultrVpsClient(api_key=SecretStr(_VULTR_API_KEY))
         snapshots = client.list_snapshots()
         assert isinstance(snapshots, list)

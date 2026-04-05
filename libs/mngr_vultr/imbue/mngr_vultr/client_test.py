@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import pytest
+from pydantic import SecretStr
 
 from imbue.mngr_vps_docker.errors import VpsApiError
 from imbue.mngr_vps_docker.errors import VpsProvisioningError
@@ -16,7 +17,7 @@ from imbue.mngr_vultr.client import VultrVpsClient
 
 @pytest.fixture()
 def client() -> VultrVpsClient:
-    return VultrVpsClient(api_key="test-api-key")
+    return VultrVpsClient(api_key=SecretStr("test-api-key"))
 
 
 def _mock_response(

@@ -3,6 +3,7 @@ from typing import Final
 from loguru import logger
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import SecretStr
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.config.data_types import MngrContext
@@ -39,7 +40,7 @@ class VultrProvider(VpsDockerProvider):
         all_records: list[VpsDockerHostRecord] = []
 
         # Skip discovery if no API key is configured
-        if not self.vultr_client.api_key:
+        if not self.vultr_client.api_key.get_secret_value():
             return []
 
         # List all Vultr instances and filter for ones tagged with our provider name
@@ -69,7 +70,7 @@ class VultrProvider(VpsDockerProvider):
 
     def _find_host_record(self, host: HostId | HostName) -> VpsDockerHostRecord | None:
         """Find a host record by ID or name across all known VPSes."""
-        if not self.vultr_client.api_key:
+        if not self.vultr_client.api_key.get_secret_value():
             return None
         records = self._discover_host_records()
         for record in records:
@@ -163,7 +164,7 @@ class VultrProviderBackend(ProviderBackendInterface):
             # The provider will be discoverable but operations will fail
             # with a clear error message when the API is actually used.
             api_key = ""
-        vultr_client = VultrVpsClient(api_key=api_key)
+        vultr_client = VultrVpsClient(api_key=SecretStr(api_key))
 
         return VultrProvider(
             name=name,
