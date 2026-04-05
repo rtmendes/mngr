@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import pytest
+
+from imbue.mngr.errors import MngrError
 from imbue.mngr_vps_docker.instance import _parse_build_args
 from imbue.mngr_vps_docker.instance import _remove_host_from_known_hosts
 
@@ -77,6 +80,11 @@ def test_parse_build_args_all_vps_overrides() -> None:
     assert plan == "vc2-4c-8gb"
     assert os_id == 1234
     assert docker_args == ()
+
+
+def test_parse_build_args_rejects_unknown_vps_arg() -> None:
+    with pytest.raises(MngrError, match="Unknown VPS build arg.*--vps-regiom"):
+        _parse_with_defaults(["--vps-regiom=ewr"])
 
 
 def test_remove_host_from_known_hosts_port_22(tmp_path: Path) -> None:

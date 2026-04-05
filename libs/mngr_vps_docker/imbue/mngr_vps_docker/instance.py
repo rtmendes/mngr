@@ -99,6 +99,11 @@ def _parse_build_args(
                 plan = arg.split("=", 1)[1]
             elif arg.startswith("--vps-os="):
                 os_id = int(arg.split("=", 1)[1])
+            elif arg.startswith("--vps-"):
+                raise MngrError(
+                    f"Unknown VPS build arg: {arg}. "
+                    "Valid VPS args: --vps-region=, --vps-plan=, --vps-os="
+                )
             else:
                 docker_build_args.append(arg)
 
