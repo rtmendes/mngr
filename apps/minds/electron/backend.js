@@ -70,7 +70,6 @@ function startBackend(onProgress) {
       const uvPath = paths.getUvPath();
       const uvBinDir = paths.getUvBinDir();
       const gitBinDir = paths.getGitBinDir();
-      const venvDir = paths.getVenvDir();
       const uvCacheDir = paths.getUvCacheDir();
       const uvPythonDir = paths.getUvPythonDir();
       const pyprojectDir = paths.getPyprojectDir();
