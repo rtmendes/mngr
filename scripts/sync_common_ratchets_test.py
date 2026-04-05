@@ -2,6 +2,7 @@ import textwrap
 
 from scripts.sync_common_ratchets import EXCLUDED_RATCHET_PROJECTS
 from scripts.sync_common_ratchets import RatchetTemplate
+from scripts.sync_common_ratchets import _discover_check_functions
 from scripts.sync_common_ratchets import _extract_tests
 from scripts.sync_common_ratchets import _find_test_ratchet_files
 from scripts.sync_common_ratchets import _insert_test
@@ -134,6 +135,19 @@ def test_insert_test_creates_new_section() -> None:
 def test_excluded_projects_in_sync() -> None:
     """The sync script and meta ratchets must agree on which projects are excluded."""
     assert EXCLUDED_RATCHET_PROJECTS == _EXCLUDED_PROJECTS
+
+
+def test_discover_check_functions_finds_all() -> None:
+    """Verify the script discovers all check functions from standard_ratchet_checks.py."""
+    templates = _discover_check_functions()
+    names = {t.name for t in templates}
+    assert len(templates) >= 40, f"Expected at least 40 check functions, found {len(templates)}"
+    assert "test_prevent_todos" in names
+    assert "test_prevent_bare_except" in names
+    assert "test_prevent_code_in_init_files" in names
+    for t in templates:
+        assert t.name.startswith("test_prevent_")
+        assert t.section != "Unknown"
 
 
 def test_script_reports_all_in_sync() -> None:

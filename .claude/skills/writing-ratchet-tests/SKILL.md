@@ -51,39 +51,23 @@ Or a `RatchetRuleInfo` for AST-based checks (add the detection function to `ratc
 
 ### Step 2: Add a Wrapper Function
 
-Add to `standard_ratchet_checks.py`:
+Add to `standard_ratchet_checks.py` (the single source of truth for which ratchets exist):
 
 ```python
 def check_my_pattern(source_dir: Path, max_count: int) -> None:
     assert_ratchet(PREVENT_MY_PATTERN, source_dir, max_count)
 ```
 
-Remember to import the rule at the top of the file.
+Remember to import the rule at the top of the file. The function name determines the test name: `check_foo` becomes `test_prevent_foo`.
 
-### Step 3: Add the Test to imbue_common
-
-Add the test function to `libs/imbue_common/imbue/imbue_common/test_ratchets.py`, in the appropriate section:
-
-```python
-def test_prevent_my_pattern() -> None:
-    rc.check_my_pattern(_DIR, snapshot(0))
-```
-
-### Step 4: Sync to All Projects
+### Step 3: Sync and Set Counts
 
 ```bash
 uv run python scripts/sync_common_ratchets.py
-```
-
-This propagates the test to all other `test_ratchets.py` files with `snapshot(0)`.
-
-### Step 5: Set Actual Counts
-
-```bash
 uv run pytest --inline-snapshot=update -k test_ratchets
 ```
 
-This updates each project's snapshot with the actual violation count.
+The sync script reads `standard_ratchet_checks.py`, generates `test_prevent_my_pattern` in all 26 `test_ratchets.py` files with `snapshot(0)`, then the pytest command sets the actual violation counts per project.
 
 ## Adding a Project-Specific Ratchet
 

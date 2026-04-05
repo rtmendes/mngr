@@ -77,21 +77,42 @@ def test_every_project_has_test_ratchets_file() -> None:
     )
 
 
-def test_all_test_ratchets_files_have_same_tests() -> None:
-    """Ensure all test_ratchets.py files define precisely the same set of test functions.
+def _get_expected_ratchet_test_names() -> frozenset[str]:
+    """Derive the expected set of test function names from standard_ratchet_checks.py.
 
-    imbue_common is the canonical source of truth for which ratchet tests exist.
-    All other projects must define exactly the same test function names.
+    Each check_foo() function maps to test_prevent_foo(). Two additional hand-written
+    tests (test_no_type_errors, test_no_ruff_errors) are always expected.
     """
-    canonical_dir = _REPO_ROOT / "libs" / "imbue_common"
-    canonical_file = _find_test_ratchets_file(canonical_dir)
-    assert canonical_file is not None, "imbue_common must have a test_ratchets.py file"
-    reference_tests = _extract_test_function_names(canonical_file)
+    checks_path = (
+        _REPO_ROOT
+        / "libs"
+        / "imbue_common"
+        / "imbue"
+        / "imbue_common"
+        / "ratchet_testing"
+        / "standard_ratchet_checks.py"
+    )
+    tree = ast.parse(checks_path.read_text())
+    test_names = {
+        f"test_prevent_{node.name.removeprefix('check_')}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("check_")
+    }
+    test_names.add("test_no_type_errors")
+    test_names.add("test_no_ruff_errors")
+    return frozenset(test_names)
+
+
+def test_all_test_ratchets_files_have_same_tests() -> None:
+    """Ensure all test_ratchets.py files define precisely the expected set of test functions.
+
+    The expected tests are derived from standard_ratchet_checks.py (one test_prevent_*
+    per check_* function) plus test_no_type_errors and test_no_ruff_errors.
+    """
+    reference_tests = _get_expected_ratchet_test_names()
 
     mismatches: list[str] = []
     for project_dir in _get_all_project_dirs():
-        if project_dir.name == "imbue_common":
-            continue
         ratchet_file = _find_test_ratchets_file(project_dir)
         if ratchet_file is None:
             continue
@@ -99,7 +120,7 @@ def test_all_test_ratchets_files_have_same_tests() -> None:
         missing_tests = reference_tests - project_tests
         extra_tests = project_tests - reference_tests
         if missing_tests or extra_tests:
-            parts = [f"  {project_dir.name} (vs imbue_common):"]
+            parts = [f"  {project_dir.name} (vs standard_ratchet_checks.py):"]
             if missing_tests:
                 parts.append(f"    missing: {sorted(missing_tests)}")
             if extra_tests:

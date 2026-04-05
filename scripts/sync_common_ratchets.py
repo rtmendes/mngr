@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Synchronize test_ratchets.py files across all projects in the monorepo.
 
-This script ensures all projects have the same set of ratchet tests by
-propagating tests from any file that has them to all files that don't.
-New tests are added with snapshot(0) as the default violation count.
+Reads standard_ratchet_checks.py to discover all check_* functions, then
+ensures every project's test_ratchets.py has a corresponding test_prevent_*
+function. Missing tests are added with snapshot(0).
 
 Workflow for adding a new common ratchet:
 1. Add the RegexRatchetRule/RatchetRuleInfo to common_ratchets.py
 2. Add a wrapper function to standard_ratchet_checks.py
-3. Add the test function to imbue_common's test_ratchets.py (the canonical source)
-4. Run: uv run python scripts/sync_common_ratchets.py
-5. Run: uv run pytest --inline-snapshot=update -k test_ratchets
+3. Run: uv run python scripts/sync_common_ratchets.py
+4. Run: uv run pytest --inline-snapshot=update -k test_ratchets
 """
 
 import ast
@@ -30,10 +29,10 @@ SNAPSHOT_VALUE_RE = re.compile(r"snapshot\(\d+\)")
 # (verified by test_excluded_projects_in_sync in scripts/sync_common_ratchets_test.py).
 EXCLUDED_RATCHET_PROJECTS: frozenset[str] = frozenset({"flexmux"})
 
-# imbue_common is the canonical source of truth for which ratchet tests exist.
-# New ratchets should be added to imbue_common's test_ratchets.py first,
-# then this script propagates them to all other projects.
-CANONICAL_PROJECT = "imbue_common"
+# Path to the source of truth for which ratchet checks exist.
+STANDARD_RATCHET_CHECKS_PATH = (
+    REPO_ROOT / "libs" / "imbue_common" / "imbue" / "imbue_common" / "ratchet_testing" / "standard_ratchet_checks.py"
+)
 
 # Canonical section order, used for inserting new sections at the right position.
 SECTION_ORDER = [
@@ -186,6 +185,36 @@ def _insert_test(lines: list[str], test: RatchetTemplate) -> list[str]:
     return lines[:insert_at] + insertion + lines[insert_at:]
 
 
+def _discover_check_functions() -> list[RatchetTemplate]:
+    """Parse standard_ratchet_checks.py to discover all check_* functions and their sections.
+
+    Returns a RatchetTemplate for each check function, with the test name derived
+    as test_prevent_{check_name} and a default body of rc.check_{name}(_DIR, snapshot(0)).
+    """
+    text = STANDARD_RATCHET_CHECKS_PATH.read_text()
+    tree = ast.parse(text)
+    sections = _parse_section_headers(text)
+
+    templates: list[RatchetTemplate] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("check_"):
+            continue
+
+        check_name = node.name
+        test_name = f"test_prevent_{check_name.removeprefix('check_')}"
+        test_source = f"def {test_name}() -> None:\n    rc.{check_name}(_DIR, snapshot(0))"
+
+        section = "Unknown"
+        func_line = node.lineno - 1
+        for sec_line, sec_name in sections:
+            if sec_line < func_line:
+                section = sec_name
+
+        templates.append(RatchetTemplate(name=test_name, source=test_source, section=section))
+
+    return templates
+
+
 def _warn(msg: str) -> None:
     print(f"  warning: {msg}", file=sys.stderr)
 
@@ -198,23 +227,11 @@ def main() -> int:
 
     print(f"Found {len(files)} test_ratchets.py file(s)")
 
-    # Find the canonical file (imbue_common) -- this is the source of truth.
-    canonical_file = next((f for f in files if CANONICAL_PROJECT in f.parts), None)
-    if canonical_file is None:
-        print(f"Cannot find test_ratchets.py for {CANONICAL_PROJECT}.", file=sys.stderr)
-        return 1
-
-    # Build templates from the canonical file.
-    canonical_text = canonical_file.read_text()
-    canonical_tests = _extract_tests(canonical_text)
-    templates: dict[str, RatchetTemplate] = {}
-    for t in canonical_tests:
-        templates[t.name] = RatchetTemplate(
-            name=t.name,
-            source=_normalize_snapshot(t.source),
-            section=t.section,
-        )
+    # Discover check functions from standard_ratchet_checks.py (the source of truth).
+    discovered = _discover_check_functions()
+    templates: dict[str, RatchetTemplate] = {t.name: t for t in discovered}
     canonical_names = set(templates.keys())
+    print(f"Discovered {len(canonical_names)} check functions in standard_ratchet_checks.py")
 
     # Parse all files to find which tests each has.
     file_test_names: dict[Path, set[str]] = {}
