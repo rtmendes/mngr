@@ -418,7 +418,8 @@ def _get_all_commits_ahead(
         if proc.returncode == 0:
             try:
                 result[work_dir] = int(proc.read_stdout().strip())
-            except ValueError:
+            except ValueError as exc:
+                logger.debug("Unparseable git rev-list output in {}: {}", work_dir, exc)
                 result[work_dir] = None
         else:
             result[work_dir] = None
