@@ -50,6 +50,7 @@ from imbue.mngr.providers.ssh_host_setup import build_check_and_install_packages
 from imbue.mngr.providers.ssh_host_setup import build_configure_ssh_command
 from imbue.mngr.providers.ssh_host_setup import build_start_activity_watcher_command
 from imbue.mngr.providers.ssh_utils import add_host_to_known_hosts
+from imbue.mngr.providers.ssh_utils import create_pyinfra_host
 from imbue.mngr.providers.ssh_utils import load_or_create_host_keypair
 from imbue.mngr.providers.ssh_utils import load_or_create_ssh_keypair
 from imbue.mngr.providers.ssh_utils import wait_for_sshd
@@ -77,59 +78,6 @@ def _remove_host_from_known_hosts(known_hosts_path: Path, hostname: str, port: i
     known_hosts_path.write_text("".join(filtered))
 
 
-def _create_pyinfra_host_with_proxy(
-    hostname: str,
-    port: int,
-    private_key_path: Path,
-    known_hosts_path: Path,
-    proxy_command: str,
-    ssh_config_path: Path,
-) -> "PyinfraHost":
-    """Create a pyinfra host with SSH connector and ProxyCommand support.
-
-    Writes an SSH config file that pyinfra's SSHClient.parse_config() will
-    read, providing the ProxyCommand transparently.
-    """
-    from pyinfra.api.inventory import Inventory
-    from pyinfra.api.state import State as PyinfraState
-    from pyinfra.connectors.sshuserclient.client import get_host_keys
-
-    get_host_keys.cache.clear()
-
-    # pyinfra reads ProxyCommand from an SSH config file.
-    # We write a config file with the ProxyCommand entry for this host.
-    ssh_config_path.parent.mkdir(parents=True, exist_ok=True)
-    # Use a unique hostname alias to avoid conflicts
-    alias = f"mngr-container-{port}"
-    ssh_config_content = (
-        f"Host {alias}\n"
-        f"  HostName {hostname}\n"
-        f"  Port {port}\n"
-        f"  User root\n"
-        f"  IdentityFile {private_key_path}\n"
-        f"  UserKnownHostsFile {known_hosts_path}\n"
-        f"  StrictHostKeyChecking yes\n"
-        f"  ProxyCommand {proxy_command}\n"
-    )
-    ssh_config_path.write_text(ssh_config_content)
-
-    host_data = {
-        "ssh_user": "root",
-        "ssh_port": port,
-        "ssh_key": str(private_key_path),
-        "ssh_known_hosts_file": str(known_hosts_path),
-        "ssh_strict_host_key_checking": "yes",
-        "ssh_config_file": str(ssh_config_path),
-    }
-
-    names_data = ([(alias, host_data)], {})
-    inventory = Inventory(names_data)
-    state = PyinfraState(inventory=inventory)
-
-    pyinfra_host = inventory.get_host(alias)
-    pyinfra_host.init(state)
-
-    return pyinfra_host
 
 
 # Label constants (same scheme as Docker provider)
@@ -253,27 +201,16 @@ class VpsDockerProvider(BaseProviderInstance):
         vps_ip: str,
         docker_ssh: DockerOverSsh,
     ) -> Host:
-        """Create a Host object with ProxyJump SSH connectivity to the container."""
+        """Create a Host object with direct SSH to the container via the VPS's exposed port."""
         container_key_path, _container_pub = self._get_container_ssh_keypair()
-        vps_key_path, _vps_pub = self._get_vps_ssh_keypair()
 
-        proxy_command = (
-            f"ssh -i {vps_key_path} "
-            f"-o UserKnownHostsFile={self._vps_known_hosts_path()} "
-            f"-o StrictHostKeyChecking=yes "
-            f"-o BatchMode=yes "
-            f"-W localhost:{self.config.container_ssh_port} "
-            f"root@{vps_ip}"
-        )
-
-        ssh_config_path = self._key_dir() / "ssh_config"
-        pyinfra_host = _create_pyinfra_host_with_proxy(
-            hostname="localhost",
+        # Container sshd port is exposed on the VPS's public IP.
+        # We connect directly to vps_ip:container_ssh_port.
+        pyinfra_host = create_pyinfra_host(
+            hostname=vps_ip,
             port=self.config.container_ssh_port,
             private_key_path=container_key_path,
             known_hosts_path=self._container_known_hosts_path(),
-            proxy_command=proxy_command,
-            ssh_config_path=ssh_config_path,
         )
 
         connector = PyinfraConnector(pyinfra_host)
@@ -397,13 +334,10 @@ class VpsDockerProvider(BaseProviderInstance):
                 "/usr/sbin/sshd -D -o MaxSessions=100 &",
             )
 
-        # Add container host key to local known_hosts
-        add_host_to_known_hosts(
-            known_hosts_path=self._container_known_hosts_path(),
-            hostname="localhost",
-            port=self.config.container_ssh_port,
-            public_key=container_host_public_key,
-        )
+        # Add container host key to local known_hosts.
+        # The container is reached via <vps_ip>:<container_ssh_port> directly.
+        # We need to add the key for that endpoint. Since we don't know the
+        # VPS IP here, the caller is responsible for adding the known_hosts entry.
 
     # =========================================================================
     # Core Lifecycle: create_host
@@ -510,7 +444,7 @@ class VpsDockerProvider(BaseProviderInstance):
                 container_id = docker_ssh.run_container(
                     image=base_image,
                     name=container_name,
-                    port_mappings={f"127.0.0.1:{self.config.container_ssh_port}": "22"},
+                    port_mappings={f"0.0.0.0:{self.config.container_ssh_port}": "22"},
                     volumes=[f"{volume_name}:{HOST_VOLUME_MOUNT_PATH}:rw"],
                     labels=labels,
                     extra_args=list(effective_start_args),
@@ -527,8 +461,15 @@ class VpsDockerProvider(BaseProviderInstance):
                     authorized_keys_entries=tuple(authorized_keys or ()),
                 )
 
-            # Step 14: Wait for container sshd via ProxyJump
-            with log_span("Waiting for container SSH (via ProxyJump)"):
+            # Step 14: Add container host key to known_hosts and wait for sshd
+            _container_host_key_path, container_host_public_key = self._get_container_host_keypair()
+            add_host_to_known_hosts(
+                known_hosts_path=self._container_known_hosts_path(),
+                hostname=vps_ip,
+                port=self.config.container_ssh_port,
+                public_key=container_host_public_key,
+            )
+            with log_span("Waiting for container SSH"):
                 self._wait_for_container_sshd(vps_ip)
 
             # Step 15: Create Host object
@@ -598,53 +539,11 @@ class VpsDockerProvider(BaseProviderInstance):
             raise
 
     def _wait_for_container_sshd(self, vps_ip: str) -> None:
-        """Wait for sshd in the container to be reachable via ProxyJump."""
-        # We need to connect through the VPS to localhost:container_ssh_port
-        # Use paramiko to test the SSH transport via proxy
-        vps_key_path, _ = self._get_vps_ssh_keypair()
-        container_key_path, _ = self._get_container_ssh_keypair()
-
-        # Simple approach: try SSH through proxy command
-        import subprocess
-        proxy_cmd = (
-            f"ssh -i {vps_key_path} "
-            f"-o UserKnownHostsFile={self._vps_known_hosts_path()} "
-            f"-o StrictHostKeyChecking=yes "
-            f"-o BatchMode=yes "
-            f"-o ConnectTimeout=5 "
-            f"-W localhost:{self.config.container_ssh_port} "
-            f"root@{vps_ip}"
-        )
-
-        start = time.monotonic()
-        timeout = self.config.ssh_connect_timeout
-        while time.monotonic() - start < timeout:
-            try:
-                result = subprocess.run(
-                    [
-                        "ssh",
-                        "-i", str(container_key_path),
-                        "-o", f"UserKnownHostsFile={self._container_known_hosts_path()}",
-                        "-o", "StrictHostKeyChecking=yes",
-                        "-o", "BatchMode=yes",
-                        "-o", "ConnectTimeout=5",
-                        "-o", f"ProxyCommand={proxy_cmd}",
-                        "-p", str(self.config.container_ssh_port),
-                        "root@localhost",
-                        "echo ok",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=15.0,
-                )
-                if result.returncode == 0 and "ok" in result.stdout:
-                    return
-            except (subprocess.TimeoutExpired, OSError):
-                pass
-            time.sleep(2.0)
-
-        raise ContainerSetupError(
-            f"Container sshd not reachable via ProxyJump after {timeout}s"
+        """Wait for sshd in the container to be reachable via the VPS's exposed port."""
+        wait_for_sshd(
+            hostname=vps_ip,
+            port=self.config.container_ssh_port,
+            timeout_seconds=self.config.ssh_connect_timeout,
         )
 
     def _create_shutdown_script(self, host: Host) -> None:
