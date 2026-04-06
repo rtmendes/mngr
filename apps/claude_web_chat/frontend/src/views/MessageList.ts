@@ -44,11 +44,29 @@ function getAgentState(agentId: string | null): string {
   return agent?.state || "";
 }
 
+/**
+ * Stable message component that skips re-rendering when the event hasn't changed.
+ * Session file events are immutable once written, so we only need to render once.
+ */
+function StableUserMessage(): m.Component<{ event: TranscriptEvent }> {
+  let renderedEventId: string | null = null;
+  return {
+    onbeforeupdate(vnode) {
+      return vnode.attrs.event.event_id !== renderedEventId;
+    },
+    view(vnode) {
+      const event = vnode.attrs.event;
+      renderedEventId = event.event_id;
+      return m("div", { class: "message-user-bubble" }, [
+        m("div", { class: "message-content whitespace-pre-wrap" }, event.content || ""),
+      ]);
+    },
+  };
+}
+
 function renderUserMessage(event: TranscriptEvent): m.Vnode {
   return m("div", { class: "message message-user", key: event.event_id }, [
-    m("div", { class: "message-user-bubble" }, [
-      m("div", { class: "message-content whitespace-pre-wrap" }, event.content || ""),
-    ]),
+    m(StableUserMessage, { event }),
   ]);
 }
 
@@ -83,24 +101,43 @@ function renderToolCallBlock(toolCall: ToolCall, toolResult: TranscriptEvent | n
   ]);
 }
 
+function StableAssistantMessage(): m.Component<{
+  event: TranscriptEvent;
+  toolResults: Map<string, TranscriptEvent>;
+}> {
+  let renderedEventId: string | null = null;
+  return {
+    onbeforeupdate(vnode) {
+      return vnode.attrs.event.event_id !== renderedEventId;
+    },
+    view(vnode) {
+      const event = vnode.attrs.event;
+      const toolResults = vnode.attrs.toolResults;
+      renderedEventId = event.event_id;
+
+      const textContent = event.text || "";
+      const toolCalls = event.tool_calls || [];
+
+      const children: m.Children[] = [];
+
+      if (textContent) {
+        children.push(m(MarkdownContent, { content: textContent }));
+      }
+
+      for (const toolCall of toolCalls) {
+        const result = toolResults.get(toolCall.tool_call_id) ?? null;
+        children.push(renderToolCallBlock(toolCall, result));
+      }
+
+      return m("div", children);
+    },
+  };
+}
+
 function renderAssistantMessage(
   event: TranscriptEvent,
   toolResults: Map<string, TranscriptEvent>,
 ): m.Vnode {
-  const textContent = event.text || "";
-  const toolCalls = event.tool_calls || [];
-
-  const children: m.Children[] = [];
-
-  if (textContent) {
-    children.push(m(MarkdownContent, { content: textContent }));
-  }
-
-  for (const toolCall of toolCalls) {
-    const result = toolResults.get(toolCall.tool_call_id) ?? null;
-    children.push(renderToolCallBlock(toolCall, result));
-  }
-
   return m(
     "div",
     {
@@ -108,7 +145,7 @@ function renderAssistantMessage(
       class: "message message-assistant",
       key: event.event_id,
     },
-    children,
+    m(StableAssistantMessage, { event, toolResults }),
   );
 }
 
