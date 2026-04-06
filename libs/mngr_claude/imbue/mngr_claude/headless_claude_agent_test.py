@@ -1,6 +1,5 @@
 import json
 import subprocess
-import time
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -392,17 +391,25 @@ def test_stream_output_falls_back_to_pane_capture(
     agent, _host = _make_headless_agent(local_provider, tmp_path)
     session = agent.session_name
 
+    # Start a session that immediately prints error text and exits.
+    # Using a command argument to new-session ensures the text is in the
+    # pane buffer without needing send-keys + sleep.
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", session, "-x", "200", "-y", "50"],
+        [
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-x",
+            "200",
+            "-y",
+            "50",
+            "echo pane-err-j1k2l3m4; exec cat",
+        ],
         check=True,
     )
     try:
-        subprocess.run(
-            ["tmux", "send-keys", "-t", f"{session}:0", "echo pane-err-j1k2l3m4", "Enter"],
-            check=True,
-        )
-        time.sleep(0.5)
-
         with pytest.raises(MngrError, match="pane-err-j1k2l3m4"):
             list(agent.stream_output())
     finally:
