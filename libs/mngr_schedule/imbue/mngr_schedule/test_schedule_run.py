@@ -73,14 +73,26 @@ def test_schedule_run_and_remove_modal_trigger() -> None:
             timeout=600,
             env=env,
         )
-        # fn.remote() succeeds (returns without RuntimeError) only if
-        # run_scheduled_trigger() completes without error, which means
-        # the mngr command inside the container exited 0. Exit code 0
-        # from schedule run confirms the full invocation chain worked.
-        # Note: container stdout is not forwarded by fn.remote(), so
-        # we cannot assert on output content here.
         assert run_result.returncode == 0, (
             f"schedule run failed\nstdout: {run_result.stdout}\nstderr: {run_result.stderr}"
+        )
+
+        # Verify the deployed function actually executed by checking for
+        # output from cron_runner.py's run_scheduled_trigger(), which prints
+        # "Running: mngr create ..." before invoking the command.
+        combined_output = run_result.stdout + run_result.stderr
+        assert "Running:" in combined_output and "mngr create" in combined_output, (
+            f"schedule run exited 0 but the trigger function does not appear to have "
+            f"executed (expected 'Running: mngr create ...' in output)\n"
+            f"stdout: {run_result.stdout}\nstderr: {run_result.stderr}"
+        )
+
+        # Verify the echo agent actually ran by checking for the passthrough
+        # message in the output.
+        assert "hello-from-schedule-run" in combined_output, (
+            f"The echo agent's passthrough message was not found in the output. "
+            f"The trigger may have started but the agent may not have executed.\n"
+            f"stdout: {run_result.stdout}\nstderr: {run_result.stderr}"
         )
 
         # Step 4: Remove the trigger
