@@ -2,3 +2,6 @@
 imbue/claude_web_chat/static/
 # Node modules
 frontend/node_modules/
+# Binary assets (cause UnicodeDecodeError in meta ratchet scans)
+frontend/media/*.ico
+frontend/src/assets/*.png
