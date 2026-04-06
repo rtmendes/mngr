@@ -16,14 +16,32 @@ from unittest.mock import patch
 
 import pytest
 import uvicorn
-from playwright.sync_api import Page
-from playwright.sync_api import expect
 
 from imbue.claude_web_chat.agent_discovery import AgentInfo
 from imbue.claude_web_chat.config import Config
 from imbue.claude_web_chat.server import create_application
 
-pytestmark = pytest.mark.acceptance
+try:
+    from playwright.sync_api import Page
+    from playwright.sync_api import expect
+
+    _PLAYWRIGHT_IMPORTABLE = True
+except ImportError:
+    _PLAYWRIGHT_IMPORTABLE = False
+
+
+def _playwright_browsers_installed() -> bool:
+    """Check if Playwright browsers are installed by looking for the cache directory."""
+    if not _PLAYWRIGHT_IMPORTABLE:
+        return False
+    cache_dir = Path.home() / ".cache" / "ms-playwright"
+    return cache_dir.exists() and any(cache_dir.iterdir())
+
+
+pytestmark = [
+    pytest.mark.release,
+    pytest.mark.skipif(not _playwright_browsers_installed(), reason="Playwright browsers not installed"),
+]
 
 _PORT = 18765
 _BASE_URL = f"http://127.0.0.1:{_PORT}"
