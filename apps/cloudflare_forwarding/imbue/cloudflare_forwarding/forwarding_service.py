@@ -8,10 +8,11 @@ from pydantic import SkipValidation
 
 from imbue.cloudflare_forwarding.data_types import ServiceInfo
 from imbue.cloudflare_forwarding.data_types import TunnelInfo
+from imbue.cloudflare_forwarding.errors import InvalidTunnelComponentError
 from imbue.cloudflare_forwarding.errors import ServiceNotFoundError
-from imbue.cloudflare_forwarding.interfaces import CloudflareClientInterface
 from imbue.cloudflare_forwarding.errors import TunnelNotFoundError
 from imbue.cloudflare_forwarding.errors import TunnelOwnershipError
+from imbue.cloudflare_forwarding.interfaces import CloudflareClientInterface
 from imbue.cloudflare_forwarding.primitives import AgentId
 from imbue.cloudflare_forwarding.primitives import CloudflareDnsRecordId
 from imbue.cloudflare_forwarding.primitives import CloudflareTunnelId
@@ -23,9 +24,16 @@ from imbue.cloudflare_forwarding.primitives import Username
 from imbue.imbue_common.frozen_model import FrozenModel
 
 
+_TUNNEL_NAME_SEPARATOR = "-"
+
+
 def make_tunnel_name(username: Username, agent_id: AgentId) -> TunnelName:
     """Generate a tunnel name from username and agent ID."""
-    return TunnelName(f"{username}-{agent_id}")
+    if _TUNNEL_NAME_SEPARATOR in username:
+        raise InvalidTunnelComponentError("Username", username, _TUNNEL_NAME_SEPARATOR)
+    if _TUNNEL_NAME_SEPARATOR in agent_id:
+        raise InvalidTunnelComponentError("Agent ID", agent_id, _TUNNEL_NAME_SEPARATOR)
+    return TunnelName(f"{username}{_TUNNEL_NAME_SEPARATOR}{agent_id}")
 
 
 def make_hostname(service_name: ServiceName, agent_id: AgentId, username: Username, domain: DomainName) -> str:

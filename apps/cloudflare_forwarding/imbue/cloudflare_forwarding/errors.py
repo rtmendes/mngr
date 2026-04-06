@@ -38,3 +38,16 @@ class ServiceNotFoundError(CloudflareForwardingError, KeyError):
         self.service_name = service_name
         self.tunnel_name = tunnel_name
         super().__init__(f"Service '{service_name}' not found on tunnel '{tunnel_name}'")
+
+
+class InvalidTunnelComponentError(CloudflareForwardingError, ValueError):
+    """Raised when a username or agent ID contains characters that would make the tunnel name ambiguous."""
+
+    def __init__(self, component_name: str, value: str, forbidden: str) -> None:
+        self.component_name = component_name
+        self.value = value
+        self.forbidden = forbidden
+        super().__init__(
+            f"{component_name} '{value}' must not contain '{forbidden}' "
+            f"(used as the tunnel name separator)"
+        )

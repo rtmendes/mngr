@@ -1,5 +1,6 @@
 import pytest
 
+from imbue.cloudflare_forwarding.errors import InvalidTunnelComponentError
 from imbue.cloudflare_forwarding.errors import ServiceNotFoundError
 from imbue.cloudflare_forwarding.errors import TunnelNotFoundError
 from imbue.cloudflare_forwarding.errors import TunnelOwnershipError
@@ -18,6 +19,16 @@ from imbue.cloudflare_forwarding.testing import make_forwarding_service
 
 def test_make_tunnel_name_format() -> None:
     assert make_tunnel_name(Username("alice"), AgentId("agent1")) == "alice-agent1"
+
+
+def test_make_tunnel_name_rejects_hyphen_in_username() -> None:
+    with pytest.raises(InvalidTunnelComponentError, match="Username"):
+        make_tunnel_name(Username("alice-bob"), AgentId("agent1"))
+
+
+def test_make_tunnel_name_rejects_hyphen_in_agent_id() -> None:
+    with pytest.raises(InvalidTunnelComponentError, match="Agent ID"):
+        make_tunnel_name(Username("alice"), AgentId("agent-1"))
 
 
 def test_make_hostname_format() -> None:
