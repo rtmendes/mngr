@@ -16,14 +16,14 @@ from typing import Any
 from typing import NoReturn
 from typing import Protocol
 
-logger = logging.getLogger(__name__)
-
 import httpx
 import modal
 from fastapi import HTTPException
 from fastapi import Request
 from pydantic import BaseModel
 from pydantic import Field
+
+logger = logging.getLogger(__name__)
 
 _CF_BASE_URL = "https://api.cloudflare.com/client/v4"
 TUNNEL_NAME_SEP = "--"
