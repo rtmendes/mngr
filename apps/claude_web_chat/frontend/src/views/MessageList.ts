@@ -4,6 +4,7 @@ import {
   fetchEvents,
   fetchBackfillEvents,
   getEventsForAgent,
+  getFirstEventId,
   isConversationNotFound,
   isBackfillComplete,
   type TranscriptEvent,
@@ -162,9 +163,31 @@ export function MessageList(): m.Component<{ agentId: string | null }> {
   }
 
   async function runBackfillLoop(agentId: string): Promise<void> {
+    const MAX_STALLED_RETRIES = 5;
+    const BACKOFF_BASE_MS = 1000;
+    const BACKOFF_CAP_MS = 30000;
+    let stalledCount = 0;
+
     while (!isBackfillComplete(agentId) && agentId === currentAgentId) {
+      const firstIdBefore = getFirstEventId(agentId);
       await fetchBackfillEvents(agentId);
       m.redraw();
+
+      if (isBackfillComplete(agentId)) {
+        break;
+      }
+
+      const firstIdAfter = getFirstEventId(agentId);
+      if (firstIdAfter === firstIdBefore) {
+        stalledCount++;
+        if (stalledCount >= MAX_STALLED_RETRIES) {
+          break;
+        }
+        const delayMs = Math.min(BACKOFF_BASE_MS * 2 ** (stalledCount - 1), BACKOFF_CAP_MS);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      } else {
+        stalledCount = 0;
+      }
     }
   }
 
