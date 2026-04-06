@@ -7,6 +7,8 @@ then use Playwright to interact with the web UI.
 from __future__ import annotations
 
 import json
+import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -34,7 +36,13 @@ def _playwright_browsers_installed() -> bool:
     """Check if Playwright browsers are installed by looking for the cache directory."""
     if not _PLAYWRIGHT_IMPORTABLE:
         return False
-    cache_dir = Path.home() / ".cache" / "ms-playwright"
+    env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if env_path:
+        cache_dir = Path(env_path)
+    elif sys.platform == "darwin":
+        cache_dir = Path.home() / "Library" / "Caches" / "ms-playwright"
+    else:
+        cache_dir = Path.home() / ".cache" / "ms-playwright"
     return cache_dir.exists() and any(cache_dir.iterdir())
 
 
