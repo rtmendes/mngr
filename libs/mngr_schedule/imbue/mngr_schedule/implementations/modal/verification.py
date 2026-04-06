@@ -199,8 +199,8 @@ def verify_schedule_deployment(
     Note: this uses `modal run` which re-evaluates the local cron_runner.py
     source file (not the already-deployed function). This means it tests the
     deploy-time code and environment, not the exact deployed artifact. To
-    invoke the deployed function directly, use invoke_modal_trigger_function()
-    (which calls modal.Function.from_name().remote()).
+    invoke the deployed function directly, use `mngr schedule run` (which
+    calls modal.Function.from_name().remote()).
 
     After modal deploy, this function:
     1. Runs `modal run` to execute the cron function from local source
