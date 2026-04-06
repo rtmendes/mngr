@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 from typing import Never
 
+from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.mutable_model import MutableModel
@@ -42,6 +43,8 @@ def extract_text_delta(line: str) -> str | None:
     try:
         parsed = json.loads(line)
     except (json.JSONDecodeError, ValueError):
+        # Expected: the stream contains non-JSON lines (blank lines, debug
+        # output that claude sometimes leaks to stdout). Skip them silently.
         return None
 
     if parsed.get("type") != "stream_event":
@@ -74,6 +77,7 @@ def _is_result_event(line: str) -> bool:
     try:
         parsed = json.loads(line)
     except (json.JSONDecodeError, ValueError):
+        # Expected: non-JSON lines in the stream (see extract_text_delta).
         return False
     return parsed.get("type") == "result"
 
@@ -87,6 +91,7 @@ def _extract_result_error(line: str) -> str | None:
     try:
         parsed = json.loads(line)
     except (json.JSONDecodeError, ValueError):
+        # Expected: non-JSON lines in the stream (see extract_text_delta).
         return None
     if parsed.get("type") == "result" and parsed.get("is_error"):
         return parsed.get("result", "unknown error")
@@ -348,7 +353,8 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
                 if pane_error:
                     parts.append(pane_error)
         if parts:
-            raise MngrError(f"claude exited without producing output:\n{chr(10).join(parts)}")
+            detail = "\n".join(parts)
+            raise MngrError(f"claude exited without producing output:\n{detail}")
         raise MngrError("claude exited without producing output (no details available)")
 
     def _get_stderr_error_message(self) -> str | None:
@@ -389,6 +395,9 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
                 if parsed.get("type") == "result" and parsed.get("is_error"):
                     return parsed.get("result", "unknown error")
             except (json.JSONDecodeError, ValueError):
+                # Non-JSON in stdout.jsonl after an error -- could indicate
+                # debug output leaking to stdout (known claude CLI bug).
+                logger.debug("Non-JSON line in stdout.jsonl during error recovery: {}", line)
                 continue
         return None
 
@@ -447,7 +456,8 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
             stderr_error = self._get_stderr_error_message()
             if stderr_error:
                 parts.append(stderr_error)
-            raise MngrError(f"claude returned an error:\n{chr(10).join(parts)}")
+            detail = "\n".join(parts)
+            raise MngrError(f"claude returned an error:\n{detail}")
         # If nothing was yielded and no result error was captured, fall back
         # to the full error chain (re-reads stdout for errors, checks pane).
         if not yielded_any:
