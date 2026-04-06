@@ -11,7 +11,7 @@ import {
   type ToolCall,
 } from "../models/Response";
 import { connectToStream, disconnectFromStream } from "../models/StreamingMessage";
-import { getAgents } from "../models/Conversation";
+import { getAgents, getAgentsLoaded } from "../models/Conversation";
 import { EmptySlot } from "./EmptySlot";
 import { MessageInput } from "./MessageInput";
 import { renderAssistantMessageChildren } from "./message-renderers";
@@ -32,7 +32,8 @@ function getAgentName(agentId: string | null): string {
   }
   const agents = getAgents();
   const agent = agents.find((a) => a.id === agentId);
-  return agent?.name || "Loading...";
+  if (agent?.name) return agent.name;
+  return getAgentsLoaded() ? "Unknown agent" : "Loading...";
 }
 
 function getAgentState(agentId: string | null): string {
