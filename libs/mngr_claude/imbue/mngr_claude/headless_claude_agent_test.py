@@ -1,4 +1,6 @@
 import json
+import subprocess
+import time
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -383,15 +385,28 @@ def test_stream_output_falls_back_to_pane_capture(
 ) -> None:
     """stream_output should fall back to pane capture when no redirect files exist.
 
-    With neither stderr.log nor stdout.jsonl on disk, the fallback chain
-    reaches tmux pane capture. Since no tmux session exists for this test
-    agent, pane capture returns None and we get 'no details available'.
+    Creates a real tmux session with error text visible in the pane, then
+    verifies the fallback chain reaches pane capture and surfaces that text.
     """
     _patch_agent_as_stopped(monkeypatch)
     agent, _host = _make_headless_agent(local_provider, tmp_path)
+    session = agent.session_name
 
-    with pytest.raises(MngrError, match="no details available"):
-        list(agent.stream_output())
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", session, "-x", "200", "-y", "50"],
+        check=True,
+    )
+    try:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", f"{session}:0", "echo pane-err-j1k2l3m4", "Enter"],
+            check=True,
+        )
+        time.sleep(0.5)
+
+        with pytest.raises(MngrError, match="pane-err-j1k2l3m4"):
+            list(agent.stream_output())
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", session], check=False)
 
 
 # =============================================================================
