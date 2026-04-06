@@ -64,13 +64,20 @@ def _read_claude_config_dir_from_env_file(agent_state_dir: Path) -> Path:
     return Path.home() / ".claude"
 
 
-def discover_agents() -> list[AgentInfo]:
+def discover_agents(
+    provider_names: tuple[str, ...] | None = None,
+    include_filters: tuple[str, ...] = (),
+    exclude_filters: tuple[str, ...] = (),
+) -> list[AgentInfo]:
     """List all mngr-managed agents."""
     mngr_ctx, cg = _get_mngr_context()
     try:
         result = list_agents(
             mngr_ctx=mngr_ctx,
             is_streaming=False,
+            include_filters=include_filters,
+            exclude_filters=exclude_filters,
+            provider_names=provider_names,
             error_behavior=ErrorBehavior.CONTINUE,
         )
     finally:

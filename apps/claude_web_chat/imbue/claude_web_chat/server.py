@@ -136,9 +136,18 @@ def _favicon() -> Response:
     return Response(status_code=404)
 
 
-def _list_agents_endpoint() -> JSONResponse:
+def _discover_with_filters(request: Request) -> list[AgentInfo]:
+    """Discover agents using the app-level filter configuration."""
+    return discover_agents(
+        provider_names=request.app.state.provider_names,
+        include_filters=request.app.state.include_filters,
+        exclude_filters=request.app.state.exclude_filters,
+    )
+
+
+def _list_agents_endpoint(request: Request) -> JSONResponse:
     """List all mngr-managed agents."""
-    agents = discover_agents()
+    agents = _discover_with_filters(request)
     items = [
         AgentListItem(id=agent.id, name=agent.name, state=agent.state)
         for agent in agents
@@ -146,9 +155,9 @@ def _list_agents_endpoint() -> JSONResponse:
     return JSONResponse(content=AgentListResponse(agents=items).model_dump())
 
 
-def _find_agent(agent_id: str) -> AgentInfo | None:
+def _find_agent(agent_id: str, request: Request) -> AgentInfo | None:
     """Find a specific agent by ID."""
-    agents = discover_agents()
+    agents = _discover_with_filters(request)
     for agent in agents:
         if agent.id == agent_id:
             return agent
@@ -162,7 +171,7 @@ def _agent_not_found_response(agent_id: str) -> JSONResponse:
 
 def _get_events(agent_id: str, request: Request) -> Response:
     """Get events for an agent. Supports tail-first loading and backfill."""
-    agent_info = _find_agent(agent_id)
+    agent_info = _find_agent(agent_id, request)
     if agent_info is None:
         return _agent_not_found_response(agent_id)
 
@@ -187,7 +196,7 @@ def _get_events(agent_id: str, request: Request) -> Response:
 
 def _stream_events(agent_id: str, request: Request) -> Response:
     """SSE stream for an agent's new events."""
-    agent_info = _find_agent(agent_id)
+    agent_info = _find_agent(agent_id, request)
     if agent_info is None:
         return _agent_not_found_response(agent_id)
 
@@ -226,9 +235,9 @@ def _stream_events(agent_id: str, request: Request) -> Response:
     )
 
 
-def _send_message_endpoint(agent_id: str, send_message_request: SendMessageRequest) -> JSONResponse:
+def _send_message_endpoint(agent_id: str, send_message_request: SendMessageRequest, request: Request) -> JSONResponse:
     """Send a message to an agent."""
-    agent_info = _find_agent(agent_id)
+    agent_info = _find_agent(agent_id, request)
     if agent_info is None:
         return _agent_not_found_response(agent_id)
 
@@ -242,7 +251,7 @@ def _send_message_endpoint(agent_id: str, send_message_request: SendMessageReque
 
 def _get_subagent_events(agent_id: str, subagent_session_id: str, request: Request) -> Response:
     """Get events for a specific subagent session."""
-    agent_info = _find_agent(agent_id)
+    agent_info = _find_agent(agent_id, request)
     if agent_info is None:
         return _agent_not_found_response(agent_id)
 
@@ -257,7 +266,7 @@ def _get_subagent_events(agent_id: str, subagent_session_id: str, request: Reque
 
 def _stream_subagent_events(agent_id: str, subagent_session_id: str, request: Request) -> Response:
     """SSE stream for a subagent's new events, filtered by session_id."""
-    agent_info = _find_agent(agent_id)
+    agent_info = _find_agent(agent_id, request)
     if agent_info is None:
         return _agent_not_found_response(agent_id)
 
@@ -311,9 +320,17 @@ def _serve_static_file(basename: str, request: Request) -> Response:
     return FileResponse(file_path)
 
 
-def create_application(config: Config | None = None) -> FastAPI:
+def create_application(
+    config: Config | None = None,
+    provider_names: tuple[str, ...] | None = None,
+    include_filters: tuple[str, ...] = (),
+    exclude_filters: tuple[str, ...] = (),
+) -> FastAPI:
     application = FastAPI(lifespan=_lifespan)
     application.state.config = config or Config()
+    application.state.provider_names = provider_names
+    application.state.include_filters = include_filters
+    application.state.exclude_filters = exclude_filters
 
     plugin_manager = get_plugin_manager()
     plugin_manager.hook.endpoint(app=application)
