@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.mngr.utils.env_utils import parse_env_file
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.mngr.api.list import ErrorBehavior
 from imbue.mngr.api.list import list_agents
@@ -48,9 +49,9 @@ def _read_claude_config_dir_from_env_file(agent_state_dir: Path) -> Path:
     env_file = agent_state_dir / "env"
     if env_file.exists():
         try:
-            for line in env_file.read_text().splitlines():
-                if line.startswith("CLAUDE_CONFIG_DIR="):
-                    return Path(line.split("=", 1)[1])
+            env_vars = parse_env_file(env_file.read_text())
+            if "CLAUDE_CONFIG_DIR" in env_vars:
+                return Path(env_vars["CLAUDE_CONFIG_DIR"])
         except OSError:
             pass
     # Fallback: the conventional location for mngr claude agents
