@@ -44,6 +44,7 @@ PACKAGES: Final[tuple[PackageInfo, ...]] = (
     PackageInfo(dir_name="mngr_opencode", pypi_name="imbue-mngr-opencode", internal_deps=("imbue-mngr",)),
     PackageInfo(dir_name="mngr_kanpan", pypi_name="imbue-mngr-kanpan", internal_deps=("imbue-mngr",)),
     PackageInfo(dir_name="mngr_tutor", pypi_name="imbue-mngr-tutor", internal_deps=("imbue-mngr",)),
+    PackageInfo(dir_name="mngr_notifications", pypi_name="imbue-mngr-notifications", internal_deps=("imbue-mngr",)),
 )
 
 PACKAGE_BY_PYPI_NAME: Final[dict[str, PackageInfo]] = {pkg.pypi_name: pkg for pkg in PACKAGES}

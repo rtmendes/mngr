@@ -85,6 +85,9 @@ jobs:
       - name: Build imbue-mngr-tutor
         run: pyproject-build libs/mngr_tutor -o dist/
 
+      - name: Build imbue-mngr-notifications
+        run: pyproject-build libs/mngr_notifications -o dist/
+
       - name: Publish packages to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
