@@ -7,6 +7,8 @@ in mngr_recursive.
 
 from __future__ import annotations
 
+import json
+
 from loguru import logger as _loguru_logger
 import os
 import threading
@@ -69,8 +71,10 @@ class AgentSessionWatcher:
 
         self._session_states: dict[str, SessionFileState] = {}
         self._known_session_ids: list[str] = []
+        self._main_session_ids: list[str] = []
         self._tool_name_by_call_id: dict[str, str] = {}
         self._existing_event_ids: set[str] = set()
+        self._subagent_metadata: dict[str, dict[str, str]] = {}  # sub_id -> {agent_type, description}
 
         self._wake_event = threading.Event()
         self._stop_event = threading.Event()
@@ -92,51 +96,54 @@ class AgentSessionWatcher:
         if self._thread is not None:
             self._thread.join(timeout=5.0)
 
-    def get_all_events(self, tail: int | None = None) -> list[dict[str, Any]]:
-        """Read all session files and return parsed events.
+    def get_all_events(self, session_id: str | None = None) -> list[dict[str, Any]]:
+        """Read session files and return parsed events.
 
-        This is used for the initial load. Reads all known sessions from scratch.
+        Args:
+            session_id: If provided, only return events from this session.
+                If None, return events from main sessions only (not subagents).
         """
         self._discover_sessions()
-        all_lines: list[str] = []
-        for session_state in self._session_states.values():
-            if not session_state.file_path.exists():
+        all_events: list[dict[str, Any]] = []
+
+        for state in self._session_states.values():
+            if not state.file_path.exists():
                 continue
+
+            # Filter by session if requested
+            if session_id is not None and state.session_id != session_id:
+                continue
+            # Default: only main sessions
+            if session_id is None and state.session_id not in self._main_session_ids:
+                continue
+
             try:
-                content = session_state.file_path.read_text()
-                all_lines.extend(content.splitlines())
+                content = state.file_path.read_text()
+                lines = content.splitlines()
             except OSError:
-                logger.debug("Failed to read session file: %s", session_state.file_path)
+                logger.debug("Failed to read session file: %s", state.file_path)
+                continue
 
-        # Parse without deduplication for initial load
-        tool_names: dict[str, str] = {}
-        events = parse_session_lines(all_lines, existing_event_ids=None, tool_name_by_call_id=tool_names)
-        # Update shared state
-        self._tool_name_by_call_id.update(tool_names)
-        for event in events:
-            self._existing_event_ids.add(event["event_id"])
+            tool_names: dict[str, str] = {}
+            events = parse_session_lines(
+                lines,
+                existing_event_ids=None,
+                tool_name_by_call_id=tool_names,
+                session_id=state.session_id,
+            )
+            self._tool_name_by_call_id.update(tool_names)
+            for event in events:
+                self._existing_event_ids.add(event["event_id"])
+            all_events.extend(events)
 
-        if tail is not None and len(events) > tail:
-            return events[-tail:]
-        return events
+        all_events.sort(key=lambda e: e.get("timestamp", ""))
+        self._enrich_subagent_metadata(all_events)
+        return all_events
 
-    def get_backfill_events(self, before_event_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    def get_backfill_events(self, before_event_id: str, limit: int = 50, session_id: str | None = None) -> list[dict[str, Any]]:
         """Get events before a given event_id for backfill pagination."""
-        self._discover_sessions()
-        all_lines: list[str] = []
-        for session_state in self._session_states.values():
-            if not session_state.file_path.exists():
-                continue
-            try:
-                content = session_state.file_path.read_text()
-                all_lines.extend(content.splitlines())
-            except OSError:
-                continue
+        all_events = self.get_all_events(session_id=session_id)
 
-        tool_names: dict[str, str] = {}
-        all_events = parse_session_lines(all_lines, existing_event_ids=None, tool_name_by_call_id=tool_names)
-
-        # Find the index of the before_event_id
         target_idx = -1
         for i, event in enumerate(all_events):
             if event["event_id"] == before_event_id:
@@ -148,6 +155,36 @@ class AgentSessionWatcher:
 
         start_idx = max(0, target_idx - limit)
         return all_events[start_idx:target_idx]
+
+    def get_subagent_metadata(self, subagent_session_id: str) -> dict[str, str] | None:
+        """Get metadata for a subagent by its session ID."""
+        self._discover_sessions()
+        return self._subagent_metadata.get(subagent_session_id)
+
+    def _enrich_subagent_metadata(self, events: list[dict[str, Any]]) -> None:
+        """Enrich Agent tool_use events with subagent metadata.
+
+        Matches tool_result events that have a subagent_id (extracted from
+        Agent tool results) to their corresponding tool_use events, and adds
+        subagent_metadata to the assistant_message that contains the tool_use.
+        """
+        # Build map: tool_call_id -> subagent_id from tool_result events
+        subagent_by_tool_call: dict[str, str] = {}
+        for event in events:
+            if event.get("type") == "tool_result" and "subagent_id" in event:
+                subagent_by_tool_call[event["tool_call_id"]] = event["subagent_id"]
+
+        # Enrich assistant messages that have Agent tool calls
+        for event in events:
+            if event.get("type") != "assistant_message":
+                continue
+            tool_calls = event.get("tool_calls", [])
+            for tc in tool_calls:
+                if tc.get("tool_name") != "Agent":
+                    continue
+                sub_id = subagent_by_tool_call.get(tc["tool_call_id"])
+                if sub_id and sub_id in self._subagent_metadata:
+                    tc["subagent_metadata"] = self._subagent_metadata[sub_id]
 
     def _run(self) -> None:
         """Main watcher loop."""
@@ -200,6 +237,7 @@ class AgentSessionWatcher:
 
             self._session_states[session_id] = SessionFileState(session_id, file_path)
             self._known_session_ids.append(session_id)
+            self._main_session_ids.append(session_id)
 
             # Set up watchdog for the new file
             if self._observer is not None:
@@ -227,6 +265,19 @@ class AgentSessionWatcher:
 
             self._session_states[sub_id] = SessionFileState(sub_id, jsonl_file)
             self._known_session_ids.append(sub_id)
+
+            # Read .meta.json for subagent metadata
+            meta_file = jsonl_file.with_suffix(".meta.json")
+            if meta_file.exists() and sub_id not in self._subagent_metadata:
+                try:
+                    meta = json.loads(meta_file.read_text())
+                    self._subagent_metadata[sub_id] = {
+                        "agent_type": meta.get("agentType", ""),
+                        "description": meta.get("description", ""),
+                        "session_id": sub_id,
+                    }
+                except (json.JSONDecodeError, OSError):
+                    pass
 
             if self._observer is not None:
                 try:
@@ -329,7 +380,9 @@ class AgentSessionWatcher:
                 new_lines,
                 existing_event_ids=self._existing_event_ids,
                 tool_name_by_call_id=self._tool_name_by_call_id,
+                session_id=state.session_id,
             )
 
             if new_events:
+                self._enrich_subagent_metadata(new_events)
                 self._on_events(self._agent_id, new_events)

@@ -8,12 +8,15 @@ and tool result events.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 _MAX_INPUT_PREVIEW_LENGTH = 200
 _MAX_OUTPUT_LENGTH = 2000
 
 _SOURCE = "claude/common_transcript"
+
+_AGENT_ID_PATTERN = re.compile(r"agentId:\s*(\S+)")
 
 
 def _extract_text_content(content: str | list[dict[str, Any]] | Any) -> str:
@@ -56,6 +59,7 @@ def parse_session_lines(
     lines: list[str],
     existing_event_ids: set[str] | None = None,
     tool_name_by_call_id: dict[str, str] | None = None,
+    session_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Parse raw Claude session JSONL lines into common transcript events.
 
@@ -66,6 +70,8 @@ def parse_session_lines(
         tool_name_by_call_id: Mutable mapping from tool_use_id to tool_name,
             carried across calls for cross-message tool name resolution.
             If None, a fresh dict is used.
+        session_id: Identifier for the session file these lines came from.
+            If provided, each event will include a "session_id" field.
 
     Returns:
         List of common transcript event dicts, sorted by timestamp.
@@ -94,9 +100,9 @@ def parse_session_lines(
             continue
 
         if event_type == "assistant":
-            _parse_assistant_message(raw, uuid, timestamp, existing_event_ids, tool_name_by_call_id, new_events)
+            _parse_assistant_message(raw, uuid, timestamp, existing_event_ids, tool_name_by_call_id, new_events, session_id)
         elif event_type == "user":
-            _parse_user_message(raw, uuid, timestamp, existing_event_ids, tool_name_by_call_id, new_events)
+            _parse_user_message(raw, uuid, timestamp, existing_event_ids, tool_name_by_call_id, new_events, session_id)
         # Skip: progress, file-history-snapshot, system, result, etc.
 
     new_events.sort(key=lambda x: x[0])
@@ -110,6 +116,7 @@ def _parse_assistant_message(
     existing_event_ids: set[str],
     tool_name_by_call_id: dict[str, str],
     new_events: list[tuple[str, dict[str, Any]]],
+    session_id: str | None = None,
 ) -> None:
     event_id = _make_event_id(uuid, "assistant")
     if event_id in existing_event_ids:
@@ -170,6 +177,8 @@ def _parse_assistant_message(
         "usage": usage,
         "message_uuid": uuid,
     }
+    if session_id is not None:
+        event["session_id"] = session_id
     existing_event_ids.add(event_id)
     new_events.append((timestamp, event))
 
@@ -181,6 +190,7 @@ def _parse_user_message(
     existing_event_ids: set[str],
     tool_name_by_call_id: dict[str, str],
     new_events: list[tuple[str, dict[str, Any]]],
+    session_id: str | None = None,
 ) -> None:
     message: dict[str, Any] = raw.get("message", {})
     content = message.get("content")
@@ -200,6 +210,8 @@ def _parse_user_message(
                     "content": text,
                     "message_uuid": uuid,
                 }
+                if session_id is not None:
+                    event["session_id"] = session_id
                 existing_event_ids.add(event_id)
                 new_events.append((timestamp, event))
 
@@ -247,5 +259,14 @@ def _parse_user_message(
                 "is_error": bool(block.get("is_error", False)),
                 "message_uuid": uuid,
             }
+            if session_id is not None:
+                event["session_id"] = session_id
+
+            # Extract subagent ID from Agent tool results
+            if tool_name == "Agent" and result_content:
+                agent_id_match = _AGENT_ID_PATTERN.search(result_content)
+                if agent_id_match:
+                    event["subagent_id"] = agent_id_match.group(1)
+
             existing_event_ids.add(event_id)
             new_events.append((timestamp, event))

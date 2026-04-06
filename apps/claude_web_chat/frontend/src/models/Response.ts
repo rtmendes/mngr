@@ -6,10 +6,17 @@
 import m from "mithril";
 import { apiUrl } from "../base-path";
 
+export interface SubagentMetadata {
+  agent_type: string;
+  description: string;
+  session_id: string;
+}
+
 export interface ToolCall {
   tool_call_id: string;
   tool_name: string;
   input_preview: string;
+  subagent_metadata?: SubagentMetadata;
 }
 
 export interface TranscriptEvent {
@@ -18,6 +25,7 @@ export interface TranscriptEvent {
   event_id: string;
   source: string;
   message_uuid: string;
+  session_id?: string;
 
   // user_message fields
   role?: string;

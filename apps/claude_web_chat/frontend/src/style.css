@@ -971,3 +971,60 @@ body {
 .tool-call-output--error pre code {
   color: #dc2626;
 }
+
+/* ── Sub-agent link card ── */
+.subagent-card {
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-base);
+  background: var(--color-accent-light);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.subagent-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.subagent-card-description {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subagent-card-type-badge {
+  font-size: 11px;
+  font-family: var(--font-family-mono);
+  color: var(--color-accent);
+  background: var(--color-bg);
+  border: 1px solid var(--color-accent);
+  border-radius: 10px;
+  padding: 1px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.subagent-card-link {
+  font-size: 13px;
+  color: var(--color-accent);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color 120ms;
+}
+
+.subagent-card-link:hover {
+  color: var(--color-accent-hover);
+  text-decoration: underline;
+}

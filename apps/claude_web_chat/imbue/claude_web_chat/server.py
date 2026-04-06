@@ -179,7 +179,7 @@ def _get_events(agent_id: str, request: Request) -> Response:
     if before_event_id:
         events = watcher.get_backfill_events(before_event_id, limit=limit)
     else:
-        # Return all events on initial load
+        # Return only main-session events (not subagent events)
         events = watcher.get_all_events()
 
     return JSONResponse(content={"events": events})
@@ -240,6 +240,64 @@ def _send_message_endpoint(agent_id: str, send_message_request: SendMessageReque
     return JSONResponse(content=SendMessageResponse(status="ok").model_dump())
 
 
+def _get_subagent_events(agent_id: str, subagent_session_id: str, request: Request) -> Response:
+    """Get events for a specific subagent session."""
+    agent_info = _find_agent(agent_id)
+    if agent_info is None:
+        return _agent_not_found_response(agent_id)
+
+    watcher = _get_or_create_watcher(request, agent_info)
+    events = watcher.get_all_events(session_id=subagent_session_id)
+
+    # Include metadata in the response
+    metadata = watcher.get_subagent_metadata(subagent_session_id)
+
+    return JSONResponse(content={"events": events, "metadata": metadata})
+
+
+def _stream_subagent_events(agent_id: str, subagent_session_id: str, request: Request) -> Response:
+    """SSE stream for a subagent's new events, filtered by session_id."""
+    agent_info = _find_agent(agent_id)
+    if agent_info is None:
+        return _agent_not_found_response(agent_id)
+
+    _get_or_create_watcher(request, agent_info)
+
+    event_queues: AgentEventQueues = request.app.state.event_queues
+    event_queue = event_queues.register(agent_id)
+
+    def event_generator() -> Iterator[str]:
+        keepalive_counter = 0
+        try:
+            while not event_queues.is_shutdown:
+                try:
+                    event = event_queue.get(timeout=1)
+                    keepalive_counter = 0
+                    if event is None:
+                        break
+                    # Only forward events from this subagent's session
+                    if event.get("session_id") == subagent_session_id:
+                        yield f"data: {json.dumps(event)}\n\n"
+                except queue.Empty:
+                    keepalive_counter += 1
+                    if keepalive_counter >= 8:
+                        keepalive_counter = 0
+                        yield ": keepalive\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            event_queues.unregister(agent_id, event_queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 def _serve_static_file(basename: str, request: Request) -> Response:
     config: Config = request.app.state.config
     file_path_string = config.static_file_basename_to_path.get(basename)
@@ -266,6 +324,12 @@ def create_application(config: Config | None = None) -> FastAPI:
     application.add_api_route("/api/agents/{agent_id}/events", _get_events, methods=["GET"])
     application.add_api_route("/api/agents/{agent_id}/stream", _stream_events, methods=["GET"])
     application.add_api_route("/api/agents/{agent_id}/message", _send_message_endpoint, methods=["POST"])
+    application.add_api_route(
+        "/api/agents/{agent_id}/subagents/{subagent_session_id}/events", _get_subagent_events, methods=["GET"]
+    )
+    application.add_api_route(
+        "/api/agents/{agent_id}/subagents/{subagent_session_id}/stream", _stream_subagent_events, methods=["GET"]
+    )
     application.add_api_route("/plugins/{basename}", _serve_static_file, methods=["GET"])
 
     assets_directory = STATIC_DIRECTORY / "assets"

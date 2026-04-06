@@ -68,6 +68,37 @@ function renderUserMessage(event: TranscriptEvent): m.Vnode {
   return m("div", { class: "message message-user", key: event.event_id }, [m(StableUserMessage, { event })]);
 }
 
+function renderSubagentCard(toolCall: ToolCall, agentId: string): m.Vnode {
+  const metadata = toolCall.subagent_metadata;
+  if (!metadata) {
+    return renderToolCallBlock(toolCall, null);
+  }
+
+  const description = metadata.description || "Sub-agent";
+  const agentType = metadata.agent_type || "";
+  const subagentUrl = `#!/agents/${encodeURIComponent(agentId)}/subagents/${encodeURIComponent(metadata.session_id)}`;
+
+  return m("div", { class: "subagent-card" }, [
+    m("div", { class: "subagent-card-header" }, [
+      m("span", { class: "subagent-card-description" }, description),
+      agentType ? m("span", { class: "subagent-card-type-badge" }, agentType) : null,
+    ]),
+    m(
+      "a",
+      {
+        class: "subagent-card-link",
+        href: subagentUrl,
+        target: "_blank",
+        rel: "noopener",
+        onclick(e: Event) {
+          e.stopPropagation();
+        },
+      },
+      "View conversation \u2197",
+    ),
+  ]);
+}
+
 function renderToolCallBlock(toolCall: ToolCall, toolResult: TranscriptEvent | null): m.Vnode {
   const headerText = `Tool: ${toolCall.tool_name}`;
   const inputText = toolCall.input_preview || "";
@@ -114,6 +145,7 @@ function countResolvedToolResults(
 function StableAssistantMessage(): m.Component<{
   event: TranscriptEvent;
   toolResults: Map<string, TranscriptEvent>;
+  agentId: string;
 }> {
   let renderedEventId: string | null = null;
   let renderedToolResultCount = 0;
@@ -126,6 +158,7 @@ function StableAssistantMessage(): m.Component<{
     view(vnode) {
       const event = vnode.attrs.event;
       const toolResults = vnode.attrs.toolResults;
+      const agentId = vnode.attrs.agentId;
       renderedEventId = event.event_id;
       renderedToolResultCount = countResolvedToolResults(event.tool_calls, toolResults);
 
@@ -139,8 +172,12 @@ function StableAssistantMessage(): m.Component<{
       }
 
       for (const toolCall of toolCalls) {
-        const result = toolResults.get(toolCall.tool_call_id) ?? null;
-        children.push(renderToolCallBlock(toolCall, result));
+        if (toolCall.tool_name === "Agent" && toolCall.subagent_metadata) {
+          children.push(renderSubagentCard(toolCall, agentId));
+        } else {
+          const result = toolResults.get(toolCall.tool_call_id) ?? null;
+          children.push(renderToolCallBlock(toolCall, result));
+        }
       }
 
       return m("div", children);
@@ -148,7 +185,11 @@ function StableAssistantMessage(): m.Component<{
   };
 }
 
-function renderAssistantMessage(event: TranscriptEvent, toolResults: Map<string, TranscriptEvent>): m.Vnode {
+function renderAssistantMessage(
+  event: TranscriptEvent,
+  toolResults: Map<string, TranscriptEvent>,
+  agentId: string,
+): m.Vnode {
   return m(
     "div",
     {
@@ -156,7 +197,7 @@ function renderAssistantMessage(event: TranscriptEvent, toolResults: Map<string,
       class: "message message-assistant",
       key: event.event_id,
     },
-    m(StableAssistantMessage, { event, toolResults }),
+    m(StableAssistantMessage, { event, toolResults, agentId }),
   );
 }
 
@@ -332,7 +373,7 @@ export function MessageList(): m.Component<{ agentId: string | null }> {
       if (event.type === "user_message") {
         messageNodes.push(renderUserMessage(event));
       } else if (event.type === "assistant_message") {
-        messageNodes.push(renderAssistantMessage(event, toolResults));
+        messageNodes.push(renderAssistantMessage(event, toolResults, agentId));
       }
     }
 

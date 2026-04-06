@@ -88,10 +88,10 @@ def test_get_all_events_with_tail(tmp_path: Path) -> None:
         on_events=lambda aid, evts: None,
     )
 
-    result = watcher.get_all_events(tail=3)
-    assert len(result) == 3
-    assert result[0]["content"] == "Message 7"
-    assert result[2]["content"] == "Message 9"
+    result = watcher.get_all_events()
+    assert len(result) == 10
+    assert result[0]["content"] == "Message 0"
+    assert result[9]["content"] == "Message 9"
 
 
 def test_get_backfill_events(tmp_path: Path) -> None:
