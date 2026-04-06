@@ -16,6 +16,12 @@ from loguru import logger
 # git config, mngr profiles, etc.
 REAL_HOME: Path = Path.home()
 
+# Capture the repo root at import time, BEFORE the autouse fixture chdir's
+# into tmp_path (which is outside any git repo). Subprocesses that run
+# mngr schedule commands need to be in a git repo for auto-merge and code
+# packaging to work.
+REPO_ROOT: Path = Path(__file__).resolve().parent.parent.parent.parent
+
 
 def build_subprocess_env() -> dict[str, str]:
     """Build environment for subprocess calls that need real Modal credentials.
@@ -69,7 +75,11 @@ def deploy_test_trigger(
     provider: str = "modal",
     timeout: int = 600,
 ) -> subprocess.CompletedProcess[str]:
-    """Deploy a test trigger via schedule add. Returns the subprocess result."""
+    """Deploy a test trigger via schedule add. Returns the subprocess result.
+
+    Runs from REPO_ROOT so that git context is available (the autouse test
+    fixture chdir's into tmp_path which is outside any git repo).
+    """
     return subprocess.run(
         [
             "uv",
@@ -86,7 +96,6 @@ def deploy_test_trigger(
             "0 3 * * *",
             "--provider",
             provider,
-            "--no-auto-merge",
             "--verify",
             "none",
         ],
@@ -94,4 +103,5 @@ def deploy_test_trigger(
         text=True,
         timeout=timeout,
         env=env,
+        cwd=REPO_ROOT,
     )

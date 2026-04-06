@@ -10,6 +10,7 @@ import subprocess
 import pytest
 
 from imbue.mngr_schedule.implementations.modal.deploy import get_modal_app_name
+from imbue.mngr_schedule.testing import REPO_ROOT
 from imbue.mngr_schedule.testing import build_subprocess_env
 from imbue.mngr_schedule.testing import cleanup_modal_app
 
@@ -41,7 +42,7 @@ def test_schedule_add_deploys_to_modal() -> None:
                 "--command",
                 "create",
                 "--args",
-                "test-agent echo --no-connect --await-ready --no-ensure-clean -- hello-from-schedule",
+                "test-agent echo --no-connect --await-ready --no-ensure-clean --branch :run-{DATE} -- hello-from-schedule",
                 "--schedule",
                 "0 3 * * *",
                 "--provider",
@@ -53,6 +54,7 @@ def test_schedule_add_deploys_to_modal() -> None:
             text=True,
             timeout=600,
             env=env,
+            cwd=REPO_ROOT,
         )
 
         assert result.returncode == 0, (
@@ -93,7 +95,7 @@ def test_schedule_add_with_verification() -> None:
                 "--command",
                 "create",
                 "--args",
-                "test-agent echo --no-connect --await-ready --no-ensure-clean -- hello-verify",
+                "test-agent echo --no-connect --await-ready --no-ensure-clean --branch :run-{DATE} -- hello-verify",
                 "--schedule",
                 "0 3 * * *",
                 "--provider",
@@ -105,6 +107,7 @@ def test_schedule_add_with_verification() -> None:
             text=True,
             timeout=900,
             env=env,
+            cwd=REPO_ROOT,
         )
 
         assert result.returncode == 0, (
@@ -144,7 +147,7 @@ def test_schedule_list_shows_deployed_schedule() -> None:
                 "--command",
                 "create",
                 "--args",
-                "test-agent echo --no-connect --await-ready --no-ensure-clean -- hello-list-test",
+                "test-agent echo --no-connect --await-ready --no-ensure-clean --branch :run-{DATE} -- hello-list-test",
                 "--schedule",
                 "0 4 * * *",
                 "--provider",
@@ -156,6 +159,7 @@ def test_schedule_list_shows_deployed_schedule() -> None:
             text=True,
             timeout=600,
             env=env,
+            cwd=REPO_ROOT,
         )
         assert add_result.returncode == 0, (
             f"schedule add failed\nstdout: {add_result.stdout}\nstderr: {add_result.stderr}"
