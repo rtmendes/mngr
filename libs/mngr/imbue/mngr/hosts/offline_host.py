@@ -230,18 +230,25 @@ def derive_offline_host_state(
         return HostState.FAILED
 
     stop_reason = certified_data.stop_reason
-    if stop_reason is None:
-        return HostState.CRASHED
 
     if supports_shutdown_hosts:
+        # Provider supports controlled shutdown, so stop_reason is authoritative.
+        # None means the host crashed (no controlled shutdown recorded).
+        if stop_reason is None:
+            return HostState.CRASHED
         return HostState(stop_reason)
 
+    # Provider does not support shutdown (e.g. Modal). stop_reason may be
+    # unset, so fall through to snapshot-based state derivation.
     if not supports_snapshots:
         return HostState.DESTROYED
 
     if not has_snapshots:
         return HostState.DESTROYED
 
+    # Has snapshots -- use stop_reason if set, otherwise CRASHED.
+    if stop_reason is None:
+        return HostState.CRASHED
     return HostState(stop_reason)
 
 
