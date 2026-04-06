@@ -658,44 +658,24 @@ def test_headless_flag_sets_is_interactive_false_via_setup_command_context(
 # =============================================================================
 
 
-def test_parse_setting_value_boolean_false() -> None:
-    """_parse_setting_value should parse 'false' as a boolean."""
-    assert _parse_setting_value("false") is False
-
-
-def test_parse_setting_value_boolean_true() -> None:
-    """_parse_setting_value should parse 'true' as a boolean."""
-    assert _parse_setting_value("true") is True
-
-
-def test_parse_setting_value_integer() -> None:
-    """_parse_setting_value should parse numeric strings as integers."""
-    assert _parse_setting_value("42") == 42
-
-
-def test_parse_setting_value_float() -> None:
-    """_parse_setting_value should parse decimal strings as floats."""
-    assert _parse_setting_value("3.14") == 3.14
-
-
-def test_parse_setting_value_plain_string() -> None:
-    """_parse_setting_value should fall back to string for non-JSON values."""
-    assert _parse_setting_value("hello") == "hello"
-
-
-def test_parse_setting_value_string_with_equals() -> None:
-    """_parse_setting_value should preserve equals signs in the value."""
-    assert _parse_setting_value("FOO=bar") == "FOO=bar"
-
-
-def test_parse_setting_value_json_array() -> None:
-    """_parse_setting_value should parse JSON arrays."""
-    assert _parse_setting_value('["a", "b"]') == ["a", "b"]
-
-
-def test_parse_setting_value_empty_string() -> None:
-    """_parse_setting_value should return empty string for empty input."""
-    assert _parse_setting_value("") == ""
+@pytest.mark.parametrize(
+    ("input_str", "expected", "expected_type"),
+    [
+        pytest.param("false", False, bool, id="boolean_false"),
+        pytest.param("true", True, bool, id="boolean_true"),
+        pytest.param("42", 42, int, id="integer"),
+        pytest.param("3.14", 3.14, float, id="float"),
+        pytest.param("hello", "hello", str, id="plain_string"),
+        pytest.param("FOO=bar", "FOO=bar", str, id="string_with_equals"),
+        pytest.param('["a", "b"]', ["a", "b"], list, id="json_array"),
+        pytest.param("", "", str, id="empty_string"),
+    ],
+)
+def test_parse_setting_value(input_str: str, expected: Any, expected_type: type) -> None:
+    """_parse_setting_value should parse values as the appropriate Python type."""
+    result = _parse_setting_value(input_str)
+    assert result == expected
+    assert isinstance(result, expected_type)
 
 
 # =============================================================================
