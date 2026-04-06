@@ -34,7 +34,10 @@ def test_schedule_run_invokes_modal_trigger() -> None:
     env = build_subprocess_env()
 
     try:
-        # Step 1: Deploy the trigger
+        # Step 1: Deploy the trigger (--verify none because the schedule run
+        # call below IS the test -- it exercises invoke_modal_trigger_function,
+        # a completely different code path from --verify quick which uses
+        # `modal run` CLI instead of the SDK's Function.from_name().remote())
         add_result = deploy_test_trigger(trigger_name, env)
         assert add_result.returncode == 0, (
             f"schedule add failed\nstdout: {add_result.stdout}\nstderr: {add_result.stderr}"
