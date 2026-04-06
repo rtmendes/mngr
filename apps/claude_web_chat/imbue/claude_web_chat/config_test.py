@@ -1,6 +1,9 @@
 """Tests for the config module."""
 
+import pytest
+
 from imbue.claude_web_chat.config import Config
+from imbue.claude_web_chat.config import DuplicateStaticBasenameError
 from imbue.claude_web_chat.config import load_config
 
 
@@ -40,3 +43,9 @@ def test_static_file_basename_to_path_maps() -> None:
 def test_split_comma_separated_string() -> None:
     config = Config(claude_web_chat_javascript_plugins="a.js, b.js")  # type: ignore[arg-type]
     assert config.claude_web_chat_javascript_plugins == ["a.js", "b.js"]
+
+
+def test_static_file_basename_to_path_raises_on_duplicate_basename() -> None:
+    config = Config(claude_web_chat_static_paths=["/path/a/file.css", "/path/b/file.css"])
+    with pytest.raises(DuplicateStaticBasenameError, match="Duplicate basename 'file.css'"):
+        _ = config.static_file_basename_to_path

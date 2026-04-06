@@ -40,7 +40,15 @@ class Config(BaseSettings):
         ]
         if not all_paths:
             return {}
-        return {Path(file_path).name: file_path for file_path in all_paths}
+        result: dict[str, str] = {}
+        for file_path in all_paths:
+            basename = Path(file_path).name
+            if basename in result:
+                raise DuplicateStaticBasenameError(
+                    f"Duplicate basename '{basename}': '{result[basename]}' and '{file_path}'"
+                )
+            result[basename] = file_path
+        return result
 
 
 def load_config() -> Config:
