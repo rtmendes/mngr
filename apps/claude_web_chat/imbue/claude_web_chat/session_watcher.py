@@ -209,8 +209,10 @@ class AgentSessionWatcher:
                 except OSError:
                     logger.debug("Failed to schedule watchdog for %s", parent_dir)
 
-            # Also discover subagent session files
-            self._discover_subagent_sessions(session_id, file_path)
+        # Discover subagent sessions for ALL known sessions (not just newly discovered ones),
+        # since subagent files may appear after the parent session is first discovered.
+        for state in list(self._session_states.values()):
+            self._discover_subagent_sessions(state.session_id, state.file_path)
 
     def _discover_subagent_sessions(self, parent_session_id: str, parent_file_path: Path) -> None:
         """Discover subagent session files under <session_id>/subagents/."""
