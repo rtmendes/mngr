@@ -183,8 +183,14 @@ class AgentSessionWatcher:
                 if tc.get("tool_name") != "Agent":
                     continue
                 sub_id = subagent_by_tool_call.get(tc["tool_call_id"])
-                if sub_id and sub_id in self._subagent_metadata:
-                    tc["subagent_metadata"] = self._subagent_metadata[sub_id]
+                if not sub_id:
+                    continue
+                # The agentId in tool results is bare (e.g. "af25b729465418580")
+                # but session files are named "agent-af25b729465418580.jsonl",
+                # so metadata is keyed by "agent-<id>". Try both forms.
+                metadata = self._subagent_metadata.get(sub_id) or self._subagent_metadata.get(f"agent-{sub_id}")
+                if metadata:
+                    tc["subagent_metadata"] = metadata
 
     def _run(self) -> None:
         """Main watcher loop."""
