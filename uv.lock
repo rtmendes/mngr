@@ -18,7 +18,6 @@ members = [
     "imbue-mngr-claude",
     "imbue-mngr-claude-mind",
     "imbue-mngr-file",
-    "imbue-mngr-forever-claude",
     "imbue-mngr-kanpan",
     "imbue-mngr-llm",
     "imbue-mngr-mind",
@@ -1577,21 +1576,6 @@ requires-dist = [
     { name = "click-option-group", specifier = ">=0.5.6" },
     { name = "imbue-mngr", editable = "libs/mngr" },
     { name = "tabulate", specifier = ">=0.9.0" },
-]
-
-[[package]]
-name = "imbue-mngr-forever-claude"
-version = "0.1.0"
-source = { editable = "libs/mngr_forever_claude" }
-dependencies = [
-    { name = "imbue-mngr" },
-    { name = "imbue-mngr-claude" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "imbue-mngr", editable = "libs/mngr" },
-    { name = "imbue-mngr-claude", editable = "libs/mngr_claude" },
 ]
 
 [[package]]
