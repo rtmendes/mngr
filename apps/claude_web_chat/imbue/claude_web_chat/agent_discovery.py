@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from pydantic import Field
 
@@ -39,6 +38,28 @@ def _get_mngr_context() -> tuple[MngrContext, ConcurrencyGroup]:
     return mngr_ctx, cg
 
 
+def _read_claude_config_dir_from_env_file(agent_state_dir: Path) -> Path:
+    """Read CLAUDE_CONFIG_DIR from the agent's env file.
+
+    Each mngr agent has an env file at <agent_state_dir>/env that contains
+    key=value pairs. The CLAUDE_CONFIG_DIR is typically set to
+    <agent_state_dir>/plugin/claude/anthropic.
+    """
+    env_file = agent_state_dir / "env"
+    if env_file.exists():
+        try:
+            for line in env_file.read_text().splitlines():
+                if line.startswith("CLAUDE_CONFIG_DIR="):
+                    return Path(line.split("=", 1)[1])
+        except OSError:
+            pass
+    # Fallback: the conventional location for mngr claude agents
+    conventional = agent_state_dir / "plugin" / "claude" / "anthropic"
+    if conventional.exists():
+        return conventional
+    return Path.home() / ".claude"
+
+
 def discover_agents() -> list[AgentInfo]:
     """List all mngr-managed agents."""
     mngr_ctx, cg = _get_mngr_context()
@@ -63,15 +84,8 @@ def discover_agents() -> list[AgentInfo]:
         # Compute agent state dir from the default host dir
         agent_state_dir = default_host_dir / "agents" / agent_id
 
-        # Get CLAUDE_CONFIG_DIR -- check agent's env vars if available,
-        # default to ~/.claude
-        claude_config_dir = Path.home() / ".claude"
-        # If the agent has plugin data with config dir info, use it
-        plugin_data: dict[str, Any] = agent_details.plugin or {}
-        if "claude" in plugin_data:
-            claude_data = plugin_data["claude"]
-            if isinstance(claude_data, dict) and "config_dir" in claude_data:
-                claude_config_dir = Path(claude_data["config_dir"])
+        # Get CLAUDE_CONFIG_DIR from the agent's env file
+        claude_config_dir = _read_claude_config_dir_from_env_file(agent_state_dir)
 
         agents.append(
             AgentInfo(
