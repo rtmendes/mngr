@@ -401,6 +401,10 @@ def stage_deploy_files(
     - project/: Files destined for the project working directory
     - secrets/.env: Consolidated environment variables from all sources
     """
+    # Wipe and recreate the staging dir so stale files from previous builds
+    # (including read-only git objects) don't block the new copy.
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     # Collect files from all plugins via the hook
