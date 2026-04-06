@@ -73,14 +73,13 @@ def test_schedule_run_invokes_modal_trigger() -> None:
             f"executed (expected 'Running: mngr create ...' in output)\n"
             f"stdout: {run_result.stdout}\nstderr: {run_result.stderr}"
         )
+
+        # Verify the echo agent actually ran by checking for the passthrough
+        # message in the output.
+        assert "hello-from-schedule-run" in combined_output, (
+            f"The echo agent's passthrough message was not found in the output. "
+            f"The trigger may have started but the agent may not have executed.\n"
+            f"stdout: {run_result.stdout}\nstderr: {run_result.stderr}"
+        )
     finally:
         cleanup_modal_app(app_name, env)
-        # Best-effort cleanup of any agent created by the trigger.
-        # The auto-fix args add --host-label SCHEDULE=<name>, but we don't
-        # know the exact agent name, so just try to destroy by the trigger name.
-        subprocess.run(
-            ["uv", "run", "mngr", "destroy", "--force", trigger_name],
-            capture_output=True,
-            timeout=30,
-            env=env,
-        )

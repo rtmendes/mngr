@@ -88,6 +88,7 @@ def deploy_test_trigger(
             provider,
             "--verify",
             "none",
+            "--no-ensure-safe-commands",
         ],
         capture_output=True,
         text=True,
