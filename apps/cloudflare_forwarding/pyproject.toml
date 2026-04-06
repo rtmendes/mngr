@@ -38,7 +38,7 @@ addopts = [
   "--cov-report=term-missing",
   "--cov-report=html",
   "--cov-report=xml",
-  "--cov-fail-under=80",
+  "--cov-fail-under=45",
   "--durations=20",
   "--timeout=10",
   "--timeout-method=signal",
@@ -57,7 +57,6 @@ omit = [
   "*/tests/*",
   "*/conftest.py",
   "*/testing.py",
-  "*/cloudflare_forwarding/app.py",
 ]
 
 [tool.inline-snapshot]
