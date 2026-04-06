@@ -65,9 +65,7 @@ function StableUserMessage(): m.Component<{ event: TranscriptEvent }> {
 }
 
 function renderUserMessage(event: TranscriptEvent): m.Vnode {
-  return m("div", { class: "message message-user", key: event.event_id }, [
-    m(StableUserMessage, { event }),
-  ]);
+  return m("div", { class: "message message-user", key: event.event_id }, [m(StableUserMessage, { event })]);
 }
 
 function renderToolCallBlock(toolCall: ToolCall, toolResult: TranscriptEvent | null): m.Vnode {
@@ -150,10 +148,7 @@ function StableAssistantMessage(): m.Component<{
   };
 }
 
-function renderAssistantMessage(
-  event: TranscriptEvent,
-  toolResults: Map<string, TranscriptEvent>,
-): m.Vnode {
+function renderAssistantMessage(event: TranscriptEvent, toolResults: Map<string, TranscriptEvent>): m.Vnode {
   return m(
     "div",
     {
