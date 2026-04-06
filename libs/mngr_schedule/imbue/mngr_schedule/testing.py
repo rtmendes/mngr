@@ -86,6 +86,7 @@ def deploy_test_trigger(
             "0 3 * * *",
             "--provider",
             provider,
+            "--no-auto-merge",
             "--verify",
             "none",
         ],
