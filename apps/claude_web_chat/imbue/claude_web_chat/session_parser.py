@@ -243,10 +243,17 @@ def _parse_user_message(
             elif not isinstance(result_content, str):
                 result_content = str(result_content)
 
+            tool_name = tool_name_by_call_id.get(tool_call_id, "unknown")
+
+            # Extract subagent ID BEFORE truncation (it may be at the end)
+            extracted_subagent_id: str | None = None
+            if tool_name == "Agent" and result_content:
+                agent_id_match = _AGENT_ID_PATTERN.search(result_content)
+                if agent_id_match:
+                    extracted_subagent_id = agent_id_match.group(1)
+
             if len(result_content) > _MAX_OUTPUT_LENGTH:
                 result_content = result_content[:_MAX_OUTPUT_LENGTH] + "..."
-
-            tool_name = tool_name_by_call_id.get(tool_call_id, "unknown")
 
             event = {
                 "timestamp": timestamp,
@@ -262,11 +269,8 @@ def _parse_user_message(
             if session_id is not None:
                 event["session_id"] = session_id
 
-            # Extract subagent ID from Agent tool results
-            if tool_name == "Agent" and result_content:
-                agent_id_match = _AGENT_ID_PATTERN.search(result_content)
-                if agent_id_match:
-                    event["subagent_id"] = agent_id_match.group(1)
+            if extracted_subagent_id:
+                event["subagent_id"] = extracted_subagent_id
 
             existing_event_ids.add(event_id)
             new_events.append((timestamp, event))
