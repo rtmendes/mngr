@@ -182,8 +182,10 @@ def cf_get_tunnel_by_id(client: httpx.Client, account_id: str, tunnel_id: str) -
     try:
         data = cf_check(response)
         return data["result"]
-    except CloudflareApiError:
-        return None
+    except CloudflareApiError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
 
 
 def cf_get_tunnel_token(client: httpx.Client, account_id: str, tunnel_id: str) -> str:
