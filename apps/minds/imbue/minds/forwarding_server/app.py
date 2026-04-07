@@ -964,7 +964,7 @@ def create_forwarding_server(
     http_client: httpx.AsyncClient | None,
     tunnel_manager: SSHTunnelManager | None = None,
     agent_creator: AgentCreator | None = None,
-    cloudflare_client: object | None = None,
+    cloudflare_client: CloudflareForwardingClient | None = None,
 ) -> FastAPI:
     """Create the forwarding server FastAPI application.
 
