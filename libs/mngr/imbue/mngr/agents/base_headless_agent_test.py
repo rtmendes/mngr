@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from imbue.mngr.agents.base_agent import BaseAgent
 from imbue.mngr.agents.base_headless_agent import BaseHeadlessAgent
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
@@ -17,6 +16,7 @@ from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentLifecycleState
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import AgentTypeName
+from imbue.mngr_claude.headless_claude_agent import HeadlessClaude
 from imbue.mngr_claude.plugin import ClaudeAgent
 
 
@@ -69,26 +69,34 @@ def _make_agent(
 # =============================================================================
 
 
-def test_base_headless_agent_does_not_override_claude_agent_methods() -> None:
-    """Ensure BaseHeadlessAgent and ClaudeAgent have disjoint method overrides.
+def test_headless_claude_resolves_all_shared_method_conflicts() -> None:
+    """Ensure HeadlessClaude explicitly resolves any method defined on both ClaudeAgent and BaseHeadlessAgent.
 
-    This prevents MRO ambiguity in HeadlessClaude's diamond inheritance
-    (HeadlessClaude extends both NoPermissionsClaudeAgent->ClaudeAgent->BaseAgent
-    and BaseHeadlessAgent->BaseAgent).
+    HeadlessClaude has diamond inheritance: it extends both
+    NoPermissionsClaudeAgent (-> ClaudeAgent -> BaseAgent) and
+    BaseHeadlessAgent (-> BaseAgent). When both ClaudeAgent and
+    BaseHeadlessAgent define the same method, the MRO silently picks
+    ClaudeAgent's version (which appears first). HeadlessClaude must
+    explicitly override any such method to select the correct behavior.
     """
-    # Get methods defined directly on each class (not inherited from BaseAgent)
-    base_headless_own = set(BaseHeadlessAgent.__dict__) - set(BaseAgent.__dict__)
-    claude_own = set(ClaudeAgent.__dict__) - set(BaseAgent.__dict__)
 
-    # Filter to only callable methods (skip __module__, __qualname__, etc.)
-    base_headless_methods = {m for m in base_headless_own if callable(getattr(BaseHeadlessAgent, m))}
-    claude_methods = {m for m in claude_own if callable(getattr(ClaudeAgent, m))}
+    def _callable_method_names(cls: type) -> set[str]:
+        return {name for name in cls.__dict__ if callable(getattr(cls, name)) and not name.startswith("__")}
 
-    overlap = base_headless_methods & claude_methods
-    assert not overlap, (
-        f"BaseHeadlessAgent and ClaudeAgent both override these methods from BaseAgent: {overlap}. "
-        f"This creates MRO ambiguity in HeadlessClaude's diamond inheritance. "
-        f"Move the overlapping methods to only one of the two classes."
+    base_headless_methods = _callable_method_names(BaseHeadlessAgent)
+    claude_methods = _callable_method_names(ClaudeAgent)
+    headless_claude_methods = _callable_method_names(HeadlessClaude)
+
+    # Methods defined on both sides of the diamond
+    shared = base_headless_methods & claude_methods
+
+    # HeadlessClaude must explicitly override every shared method
+    unresolved = shared - headless_claude_methods
+    assert not unresolved, (
+        f"BaseHeadlessAgent and ClaudeAgent both define these methods, but HeadlessClaude "
+        f"does not explicitly override them: {unresolved}. Without an explicit override on "
+        f"HeadlessClaude, the MRO silently picks ClaudeAgent's version. Add overrides to "
+        f"HeadlessClaude that delegate to the correct base class."
     )
 
 
