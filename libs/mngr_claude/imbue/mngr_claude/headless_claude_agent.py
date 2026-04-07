@@ -336,9 +336,9 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
             host=self.host,
             is_finished=self._is_agent_finished,
         )
-        yielded_any = False
+        is_yielded_any = False
         for chunk in state.tail_until_done():
-            yielded_any = True
+            is_yielded_any = True
             yield chunk
 
         # After streaming completes, check for errors
@@ -349,7 +349,7 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
                 parts.append(stderr_error)
             detail = "\n".join(parts)
             raise MngrError(f"claude returned an error:\n{detail}")
-        if not yielded_any:
+        if not is_yielded_any:
             self._raise_no_output_error()
 
 
