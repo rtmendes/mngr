@@ -346,9 +346,9 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
             parts.append(stdout_error)
         # pane capture: only if the shell never created the redirect files
         if not parts:
-            stderr_exists = self._file_exists_on_host(self._get_stderr_path())
-            stdout_exists = self._file_exists_on_host(self._get_stdout_path())
-            if not stderr_exists and not stdout_exists:
+            is_stderr_exists = self._file_exists_on_host(self._get_stderr_path())
+            is_stdout_exists = self._file_exists_on_host(self._get_stdout_path())
+            if not is_stderr_exists and not is_stdout_exists:
                 pane_error = self._get_pane_error_message()
                 if pane_error:
                     parts.append(pane_error)
@@ -441,9 +441,9 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
             host=self.host,
             is_finished=self._is_agent_finished,
         )
-        yielded_any = False
+        is_yielded_any = False
         for chunk in state.tail_until_done():
-            yielded_any = True
+            is_yielded_any = True
             yield chunk
 
         # After streaming completes, check for errors. result_error is
@@ -460,7 +460,7 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
             raise MngrError(f"claude returned an error:\n{detail}")
         # If nothing was yielded and no result error was captured, fall back
         # to the full error chain (re-reads stdout for errors, checks pane).
-        if not yielded_any:
+        if not is_yielded_any:
             self._raise_no_output_error()
 
 
