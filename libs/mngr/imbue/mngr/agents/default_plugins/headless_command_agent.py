@@ -110,22 +110,10 @@ class HeadlessCommand(BaseAgent[HeadlessCommandConfig], StreamingHeadlessAgentMi
         command_override: CommandString | None,
     ) -> CommandString:
         """Build the command with stdout/stderr redirected to files."""
-        if command_override is not None:
-            base = str(command_override)
-        elif self.agent_config.command is not None:
-            base = str(self.agent_config.command)
-        else:
-            # Fall back to using the agent type as a command (documented "Direct command" behavior)
-            base = str(self.agent_type)
-
-        parts = [base]
-
-        all_extra_args = self.agent_config.cli_args + agent_args
-        if all_extra_args:
-            parts.extend(all_extra_args)
-
-        cmd_str = " ".join(parts)
-        return CommandString(f'{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.log" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"')
+        base_command = super().assemble_command(host, agent_args, command_override)
+        return CommandString(
+            f'{base_command} > "$MNGR_AGENT_STATE_DIR/stdout.log" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"'
+        )
 
     def _get_stdout_path(self) -> Path:
         return self._get_agent_dir() / "stdout.log"
