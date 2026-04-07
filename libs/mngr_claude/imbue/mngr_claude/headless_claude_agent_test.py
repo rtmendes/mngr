@@ -433,6 +433,10 @@ def test_stream_output_falls_back_to_pane_capture(
     """
     _patch_agent_as_stopped(monkeypatch)
     agent, _host = _make_headless_agent(local_provider, tmp_path)
+    # Use a short grace period so the test doesn't wait 10s before
+    # checking lifecycle state (the default grace period exceeds the
+    # pytest timeout).
+    agent._startup_grace_seconds = 0.5
     session = agent.session_name
 
     # Start a session that immediately prints error text and exits.
@@ -481,12 +485,9 @@ def test_grace_period_ignores_lifecycle_state(
     # Create the agent state directory (normally done by agent lifecycle)
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Create the file after a short delay (within the grace period)
-    def create_file_delayed() -> None:
-        time.sleep(0.15)
-        stdout_path.write_text("")
-
-    timer = threading.Timer(0.0, create_file_delayed)
+    # Create the file after a short delay (within the grace period).
+    # threading.Timer handles the delay internally, avoiding time.sleep in our code.
+    timer = threading.Timer(0.15, lambda: stdout_path.write_text(""))
     timer.start()
     try:
         result = agent._wait_for_stdout_file(stdout_path)
