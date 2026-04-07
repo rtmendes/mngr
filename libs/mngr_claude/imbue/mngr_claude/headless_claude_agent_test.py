@@ -1,6 +1,5 @@
 import json
 import subprocess
-import threading
 import time
 from datetime import datetime
 from datetime import timezone
@@ -451,23 +450,26 @@ def test_grace_period_ignores_lifecycle_state(
     """During the grace period, _wait_for_stdout_file should ignore lifecycle state.
 
     Even though _is_agent_finished returns True immediately, phase 1 should
-    wait the full grace period for the file to appear before checking
-    lifecycle state in phase 2.
+    keep polling for the file. We verify this by wrapping _file_exists_on_host
+    to create the file on the second poll -- proving the poller checked at
+    least once without finding it, then found it on a subsequent check.
     """
     agent, _host = _make_headless_agent(local_provider, tmp_path, agent_cls=_AlwaysFinishedHeadlessClaude)
     stdout_path = agent._get_stdout_path()
-
-    # Create the agent state directory (normally done by agent lifecycle)
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Create the file after a short delay (within the grace period).
-    # threading.Timer handles the delay internally, avoiding time.sleep in our code.
-    timer = threading.Timer(0.15, lambda: stdout_path.write_text(""))
-    timer.start()
-    try:
-        result = agent._wait_for_stdout_file(stdout_path)
-    finally:
-        timer.join(timeout=2.0)
+    poll_count = 0
+    original_file_exists = agent._file_exists_on_host
+
+    def _create_file_on_second_poll(path: Path) -> bool:
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count >= 2 and path == stdout_path:
+            stdout_path.write_text("")
+        return original_file_exists(path)
+
+    agent._file_exists_on_host = _create_file_on_second_poll  # type: ignore[assignment]
+    result = agent._wait_for_stdout_file(stdout_path)
 
     assert result is True
 
