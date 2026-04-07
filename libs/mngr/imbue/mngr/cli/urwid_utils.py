@@ -1,8 +1,8 @@
-import contextlib
 import os
 import sys
 import termios
 from collections.abc import Generator
+from contextlib import ExitStack
 from contextlib import contextmanager
 
 from urwid.display.raw import Screen
@@ -45,7 +45,7 @@ def create_urwid_screen_preserving_terminal() -> Generator[Screen, None, None]:
     Screen reads input from /dev/tty instead so the TUI still works as
     long as a controlling terminal exists.
     """
-    with contextlib.ExitStack() as stack:
+    with ExitStack() as stack:
         if sys.stdin.isatty():
             tty_input = sys.stdin
         else:
