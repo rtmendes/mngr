@@ -117,7 +117,12 @@ def _auth_key_to_string_session(dc_id: int, auth_key_hex: str) -> str:
     if ip_str is None:
         raise TelegramCredentialError(f"Unknown data center ID {dc_id}")
     ip_packed = ipaddress.ip_address(ip_str).packed
-    auth_key_bytes = bytes.fromhex(auth_key_hex)
+    try:
+        auth_key_bytes = bytes.fromhex(auth_key_hex)
+    except ValueError as exc:
+        raise TelegramCredentialError(
+            f"auth_key is not valid hex: {exc}"
+        ) from exc
     if len(auth_key_bytes) != 256:
         raise TelegramCredentialError(
             f"auth_key must be 256 bytes, got {len(auth_key_bytes)}"
@@ -144,7 +149,13 @@ def _get_string_session() -> str:
     dc_id_str = os.environ.get("TELEGRAM_DC_ID")
     auth_key_hex = os.environ.get("TELEGRAM_AUTH_KEY_HEX")
     if dc_id_str and auth_key_hex:
-        return _auth_key_to_string_session(int(dc_id_str), auth_key_hex)
+        try:
+            dc_id = int(dc_id_str)
+        except ValueError as exc:
+            raise TelegramCredentialError(
+                f"TELEGRAM_DC_ID must be an integer, got {dc_id_str!r}"
+            ) from exc
+        return _auth_key_to_string_session(dc_id, auth_key_hex)
 
     # Option 3: latchkey dump file
     if LATCHKEY_DUMP_PATH.exists():
@@ -157,7 +168,12 @@ def _get_string_session() -> str:
             raise TelegramCredentialError(
                 f"{LATCHKEY_DUMP_PATH} does not contain valid auth data"
             )
-        dc_id = int(dc_str)
+        try:
+            dc_id = int(dc_str)
+        except ValueError as exc:
+            raise TelegramCredentialError(
+                f"'dc' value in {LATCHKEY_DUMP_PATH} must be an integer, got {dc_str!r}"
+            ) from exc
         auth_key_raw = ls.get(f"dc{dc_id}_auth_key", "")
         # The value may be JSON-encoded (wrapped in extra quotes)
         auth_key_hex = json.loads(auth_key_raw) if auth_key_raw.startswith('"') else auth_key_raw
