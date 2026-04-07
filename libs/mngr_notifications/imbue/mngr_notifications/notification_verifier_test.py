@@ -146,14 +146,14 @@ def test_build_marker_touch_command_quotes_spaces() -> None:
 # --- check_notifier_binary ---
 
 
-def testcheck_notifier_binary_macos() -> None:
+def test_check_notifier_binary_macos() -> None:
     """On macOS (where we're running tests), terminal-notifier should be found."""
     result = check_notifier_binary(MacOSNotifier())
     # terminal-notifier is installed in the test environment
     assert result is None
 
 
-def testcheck_notifier_binary_linux_missing_on_macos() -> None:
+def test_check_notifier_binary_linux_missing_on_macos() -> None:
     """On macOS, notify-send is not installed so Linux check returns error."""
     result = check_notifier_binary(LinuxNotifier())
     assert result is not None
