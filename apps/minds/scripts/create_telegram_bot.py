@@ -23,7 +23,6 @@ All status/error messages go to stderr.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import ipaddress
 import json
@@ -36,8 +35,8 @@ import urllib.request
 from pathlib import Path
 
 import click
-from telethon import TelegramClient
 from telethon.sessions import StringSession
+from telethon.sync import TelegramClient
 
 DC_IPS = {
     1: "149.154.175.53",
@@ -177,8 +176,10 @@ def _get_string_session() -> str:
     )
 
 
-async def create_bot(bot_display_name: str, bot_username: str) -> tuple[str, str]:
+def create_bot(bot_display_name: str, bot_username: str) -> tuple[str, str]:
     """Create a Telegram bot via BotFather.
+
+    Uses telethon.sync so all Telegram client methods run synchronously.
 
     Returns (bot_token, bot_username) on success.
     Raises BotCreationError on failure.
@@ -188,40 +189,40 @@ async def create_bot(bot_display_name: str, bot_username: str) -> tuple[str, str
     sys.stderr.write(f"Using api_id={api_id}\n")
 
     client = TelegramClient(StringSession(session_str), api_id, api_hash)
-    await client.connect()
+    client.connect()
 
     try:
-        if not await client.is_user_authorized():
+        if not client.is_user_authorized():
             raise TelegramCredentialError(
                 "Telegram session is not authorized. The auth key may have been "
                 "revoked.\nRun 'latchkey auth browser telegram' to log in again."
             )
 
-        me = await client.get_me()
+        me = client.get_me()
         sys.stderr.write(f"Connected as: {me.first_name} (id={me.id})\n")
 
-        botfather = await client.get_entity("@BotFather")
+        botfather = client.get_entity("@BotFather")
 
-        async with client.conversation(botfather) as conv:
+        with client.conversation(botfather) as conv:
             # Step 1: Send /newbot and wait for name prompt
-            await conv.send_message("/newbot")
-            resp = await conv.get_response()
+            conv.send_message("/newbot")
+            resp = conv.get_response()
             if "choose a name" not in resp.text.lower():
                 raise BotCreationError(
                     f"Unexpected BotFather response to /newbot:\n{resp.text}"
                 )
 
             # Step 2: Send the display name and wait for username prompt
-            await conv.send_message(bot_display_name)
-            resp = await conv.get_response()
+            conv.send_message(bot_display_name)
+            resp = conv.get_response()
             if "username" not in resp.text.lower():
                 raise BotCreationError(
                     f"Unexpected BotFather response to bot name:\n{resp.text}"
                 )
 
             # Step 3: Send the username and wait for confirmation
-            await conv.send_message(bot_username)
-            resp = await conv.get_response()
+            conv.send_message(bot_username)
+            resp = conv.get_response()
             response_text = resp.text
 
             if "sorry" in response_text.lower() or "error" in response_text.lower():
@@ -244,7 +245,7 @@ async def create_bot(bot_display_name: str, bot_username: str) -> tuple[str, str
             actual_username = username_match.group(1) if username_match else bot_username
 
     finally:
-        await client.disconnect()
+        client.disconnect()
 
     return bot_token, actual_username
 
@@ -266,9 +267,7 @@ def main(bot_display_name: str, bot_username: str) -> None:
         )
 
     try:
-        bot_token, actual_username = asyncio.run(
-            create_bot(bot_display_name, bot_username)
-        )
+        bot_token, actual_username = create_bot(bot_display_name, bot_username)
     except (TelegramCredentialError, BotCreationError) as exc:
         raise click.ClickException(str(exc)) from exc
 
