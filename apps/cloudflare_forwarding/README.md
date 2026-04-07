@@ -28,17 +28,34 @@ Deploy with:
 modal deploy apps/cloudflare_forwarding/imbue/cloudflare_forwarding/app.py
 ```
 
+## Authentication
+
+Endpoints accept two auth methods, distinguished by the Authorization header:
+
+- **Admin (Basic Auth)**: `Authorization: Basic <base64(username:password)>` -- full access to all endpoints.
+- **Agent (Bearer token)**: `Authorization: Bearer <tunnel_token>` -- scoped to a single tunnel; can add/remove/list services but cannot create/delete tunnels or manage auth policies.
+
+Credentials are validated against a JSON object in the `USER_CREDENTIALS` env var. Agent tokens are the Cloudflare tunnel tokens returned when creating a tunnel.
+
 ## API
 
-All endpoints require HTTP Basic Auth.
+### Tunnels (admin only)
 
-### Tunnels
-
-- `POST /tunnels` -- Create a tunnel. Body: `{"agent_id": "..."}`. Returns tunnel info with token.
+- `POST /tunnels` -- Create a tunnel. Body: `{"agent_id": "...", "default_auth_policy": ...}`. Returns tunnel info with token.
 - `GET /tunnels` -- List your tunnels with their configured services.
-- `DELETE /tunnels/{tunnel_name}` -- Delete a tunnel and all its DNS records/ingress rules.
+- `DELETE /tunnels/{tunnel_name}` -- Delete a tunnel and all its DNS records, Access Applications, ingress rules, and KV entries.
 
-### Services
+### Services (admin or agent)
 
 - `POST /tunnels/{tunnel_name}/services` -- Add a service. Body: `{"service_name": "...", "service_url": "http://localhost:8080"}`.
-- `DELETE /tunnels/{tunnel_name}/services/{service_name}` -- Remove a service and its DNS record.
+- `GET /tunnels/{tunnel_name}/services` -- List services on a tunnel.
+- `DELETE /tunnels/{tunnel_name}/services/{service_name}` -- Remove a service, its DNS record, and its Access Application.
+
+### Auth policies (admin only)
+
+- `GET /tunnels/{tunnel_name}/auth` -- Get the default auth policy for a tunnel (stored in Workers KV).
+- `PUT /tunnels/{tunnel_name}/auth` -- Set the default auth policy for a tunnel. New services inherit this policy.
+- `GET /tunnels/{tunnel_name}/services/{service_name}/auth` -- Get the auth policy for a specific service.
+- `PUT /tunnels/{tunnel_name}/services/{service_name}/auth` -- Set/override the auth policy for a specific service.
+
+When a default auth policy is set on a tunnel, new services automatically get a Cloudflare Access Application with that policy applied. Per-service overrides replace the inherited policy entirely.
