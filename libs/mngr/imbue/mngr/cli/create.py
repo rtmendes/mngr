@@ -3,8 +3,8 @@ import shlex
 import sys
 from collections.abc import Callable
 from collections.abc import Iterator
-from contextlib import ExitStack
 from contextlib import contextmanager
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from typing import Final
@@ -438,10 +438,12 @@ def create(ctx: click.Context, **kwargs) -> None:
     # safety net: if something raises before those run, it restores
     # stdout/stderr so error messages are not swallowed (clear_screen=False
     # because on an error path we don't want to hide prior output).
-    with ExitStack() as stack:
-        if opts.edit_message:
-            stack.enter_context(LoggingSuppressor.suppressed(logging_config.console_level, clear_screen=False))
-
+    suppressor = (
+        LoggingSuppressor.suppressed(logging_config.console_level, clear_screen=False)
+        if opts.edit_message
+        else nullcontext()
+    )
+    with suppressor:
         # Parse agent address from the positional argument or --name flag.
         # Both accept agent addresses; they are equivalent but mutually exclusive.
         if opts.positional_name and opts.name:
