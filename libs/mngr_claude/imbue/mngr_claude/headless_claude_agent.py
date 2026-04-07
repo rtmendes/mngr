@@ -31,6 +31,10 @@ from imbue.mngr_claude.plugin import ClaudeAgentConfig
 
 _TAIL_POLL_INTERVAL: float = 0.05
 _TAIL_POLL_TIMEOUT: float = 300.0
+# Grace period before trusting lifecycle state. Claude can take several seconds
+# to start (especially on first run or via nvm), during which the tmux pane shows
+# bash as the current command, making the agent look DONE/STOPPED.
+_STARTUP_GRACE_SECONDS: float = 10.0
 
 
 @pure
@@ -301,9 +305,25 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
         """Wait for the stdout file to be created or the agent to exit.
 
         Returns True if the file exists, False if the agent exited without creating it.
+
+        Uses a startup grace period before trusting lifecycle state. Claude can
+        take several seconds to start (nvm resolution, node startup, etc.),
+        during which the tmux pane shows bash as the current command. Without
+        the grace period, the lifecycle check sees bash -> DONE and gives up
+        before claude even begins.
         """
+        start = datetime.now()
+
+        def _file_exists_or_agent_finished() -> bool:
+            if self._file_exists_on_host(stdout_path):
+                return True
+            elapsed = (datetime.now() - start).total_seconds()
+            if elapsed < _STARTUP_GRACE_SECONDS:
+                return False
+            return self._is_agent_finished()
+
         poll_until(
-            lambda: self._file_exists_on_host(stdout_path) or self._is_agent_finished(),
+            _file_exists_or_agent_finished,
             timeout=_TAIL_POLL_TIMEOUT,
             poll_interval=_TAIL_POLL_INTERVAL,
         )
