@@ -5,6 +5,8 @@ which ones to install.  Selected plugins are installed in a single
 ``uv tool install`` invocation.
 """
 
+import contextlib
+import os
 import sys
 from typing import Any
 from typing import Final
@@ -167,16 +169,22 @@ def _run_selection_screen(
 
     input_filter = _WizardInputFilter(state=state)
 
-    screen = Screen()
-    screen.tty_signal_keys(intr="undefined")
+    with contextlib.ExitStack() as stack:
+        if sys.stdin.isatty():
+            tty_input = sys.stdin
+        else:
+            tty_input = stack.enter_context(open("/dev/tty"))
 
-    loop = MainLoop(
-        frame,
-        palette=palette,
-        input_filter=input_filter,
-        screen=screen,
-    )
-    loop.run()
+        screen = Screen(input=tty_input)
+        screen.tty_signal_keys(intr="undefined")
+
+        loop = MainLoop(
+            frame,
+            palette=palette,
+            input_filter=input_filter,
+            screen=screen,
+        )
+        loop.run()
 
     if not state.is_confirmed:
         return None
@@ -300,12 +308,17 @@ def install_wizard_impl() -> None:
         write_human_line("All plugins are already installed.")
         return
 
-    # Guard against non-interactive contexts (CI, cron, curl|bash without /dev/tty redirect).
-    # urwid requires a real terminal on stdin; without one it raises RuntimeError.
+    # Guard against non-interactive contexts (CI, cron, headless containers).
+    # urwid needs a real terminal for input.  When stdin is piped (e.g. via
+    # ``uv run``), /dev/tty still provides access to the controlling terminal.
     if not sys.stdin.isatty():
-        write_human_line("No interactive terminal detected; skipping plugin install wizard.")
-        write_human_line(_RELAUNCH_HINT)
-        return
+        try:
+            fd = os.open("/dev/tty", os.O_RDONLY)
+            os.close(fd)
+        except OSError:
+            write_human_line("No interactive terminal detected; skipping plugin install wizard.")
+            write_human_line(_RELAUNCH_HINT)
+            return
 
     selected = _run_two_phase_wizard(available)
 
