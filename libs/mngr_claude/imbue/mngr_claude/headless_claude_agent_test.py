@@ -1,5 +1,7 @@
 import json
 import subprocess
+import threading
+import time
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -74,6 +76,48 @@ def _write_fake_agent_output(
     agent_dir.mkdir(parents=True, exist_ok=True)
     (agent_dir / "stdout.jsonl").write_text(stdout)
     (agent_dir / "stderr.log").write_text(stderr)
+
+
+class _AlwaysFinishedHeadlessClaude(HeadlessClaude):
+    """HeadlessClaude subclass with fast timeouts that always reports as finished.
+
+    Used to test _wait_for_stdout_file's two-phase grace period logic.
+    Overrides _is_agent_finished to always return True (simulating the race
+    condition where tmux reports the agent as DONE during startup) and uses
+    short timeouts to keep tests fast.
+    """
+
+    _startup_grace_seconds: float = 0.3
+    _stdout_poll_timeout: float = 1.5
+
+    def _is_agent_finished(self) -> bool:
+        return True
+
+
+def _make_always_finished_agent(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> tuple[_AlwaysFinishedHeadlessClaude, Host]:
+    """Create an _AlwaysFinishedHeadlessClaude agent for grace period tests."""
+    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
+    assert isinstance(host, Host)
+    work_dir = tmp_path / f"work-{str(AgentId.generate().get_uuid())[:8]}"
+    work_dir.mkdir()
+
+    agent_config = HeadlessClaudeAgentConfig(check_installation=False)
+    mngr_ctx = local_provider.mngr_ctx
+    agent = _AlwaysFinishedHeadlessClaude.model_construct(
+        id=AgentId.generate(),
+        name=AgentName("test-headless-grace"),
+        agent_type=AgentTypeName("headless_claude"),
+        work_dir=work_dir,
+        create_time=datetime.now(timezone.utc),
+        host_id=host.id,
+        mngr_ctx=mngr_ctx,
+        agent_config=agent_config,
+        host=host,
+    )
+    return agent, host
 
 
 # =============================================================================
@@ -414,6 +458,87 @@ def test_stream_output_falls_back_to_pane_capture(
             list(agent.stream_output())
     finally:
         subprocess.run(["tmux", "kill-session", "-t", session], check=False)
+
+
+# =============================================================================
+# Tests for _wait_for_stdout_file grace period
+# =============================================================================
+
+
+def test_grace_period_ignores_lifecycle_state(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """During the grace period, _wait_for_stdout_file should ignore lifecycle state.
+
+    Even though _is_agent_finished returns True immediately, phase 1 should
+    wait the full grace period for the file to appear before checking
+    lifecycle state in phase 2.
+    """
+    agent, host = _make_always_finished_agent(local_provider, tmp_path)
+    stdout_path = agent._get_stdout_path()
+
+    # Create the agent state directory (normally done by agent lifecycle)
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create the file after a short delay (within the grace period)
+    def create_file_delayed() -> None:
+        time.sleep(0.15)
+        stdout_path.write_text("")
+
+    timer = threading.Timer(0.0, create_file_delayed)
+    timer.start()
+    try:
+        result = agent._wait_for_stdout_file(stdout_path)
+    finally:
+        timer.join(timeout=2.0)
+
+    assert result is True
+
+
+def test_phase2_trusts_lifecycle_after_grace_period(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """After the grace period, _wait_for_stdout_file should trust lifecycle state.
+
+    When the agent reports finished and the file never appears, phase 2
+    should detect the agent is done and return False.
+    """
+    agent, host = _make_always_finished_agent(local_provider, tmp_path)
+    stdout_path = agent._get_stdout_path()
+
+    # Do NOT create the stdout file -- agent is "finished" and file never appeared
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+
+    start = time.monotonic()
+    result = agent._wait_for_stdout_file(stdout_path)
+    elapsed = time.monotonic() - start
+
+    assert result is False
+    # Should have waited at least the grace period before trusting lifecycle state
+    assert elapsed >= agent._startup_grace_seconds * 0.9
+
+
+def test_file_during_grace_period_returns_true_immediately(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """If the stdout file already exists, _wait_for_stdout_file should return True immediately."""
+    agent, host = _make_always_finished_agent(local_provider, tmp_path)
+    stdout_path = agent._get_stdout_path()
+
+    # Pre-create the file
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stdout_path.write_text("")
+
+    start = time.monotonic()
+    result = agent._wait_for_stdout_file(stdout_path)
+    elapsed = time.monotonic() - start
+
+    assert result is True
+    # Should return almost immediately, well before the grace period expires
+    assert elapsed < agent._startup_grace_seconds * 0.5
 
 
 # =============================================================================

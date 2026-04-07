@@ -235,6 +235,9 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
     interactive messages, paste detection, or TUI readiness checking.
     """
 
+    _startup_grace_seconds: float = _STARTUP_GRACE_SECONDS
+    _stdout_poll_timeout: float = _TAIL_POLL_TIMEOUT
+
     def _preflight_send_message(self, tmux_target: str) -> None:
         """Headless agents do not accept interactive messages."""
         raise SendMessageError(
@@ -317,14 +320,14 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
         # Phase 1: wait for stdout file, ignoring lifecycle state
         if poll_until(
             lambda: self._file_exists_on_host(stdout_path),
-            timeout=_STARTUP_GRACE_SECONDS,
+            timeout=self._startup_grace_seconds,
             poll_interval=_TAIL_POLL_INTERVAL,
         ):
             return True
         # Phase 2: file didn't appear during grace period, now also check lifecycle
         poll_until(
             lambda: self._file_exists_on_host(stdout_path) or self._is_agent_finished(),
-            timeout=_TAIL_POLL_TIMEOUT - _STARTUP_GRACE_SECONDS,
+            timeout=self._stdout_poll_timeout - self._startup_grace_seconds,
             poll_interval=_TAIL_POLL_INTERVAL,
         )
         return self._file_exists_on_host(stdout_path)
