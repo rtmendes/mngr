@@ -73,7 +73,8 @@ from imbue.mngr_claude.claude_config import complete_onboarding
 from imbue.mngr_claude.claude_config import dismiss_effort_callout
 from imbue.mngr_claude.claude_config import encode_claude_project_dir_name
 from imbue.mngr_claude.claude_config import find_project_config
-from imbue.mngr_claude.claude_config import get_claude_config_path
+from imbue.mngr_claude.claude_config import get_user_claude_config_dir
+from imbue.mngr_claude.claude_config import get_user_claude_config_path
 from imbue.mngr_claude.claude_config import is_effort_callout_dismissed
 from imbue.mngr_claude.claude_config import is_onboarding_completed
 from imbue.mngr_claude.claude_config import is_source_directory_trusted
@@ -123,7 +124,7 @@ def _resolve_adopt_session(adopt_session_arg: str) -> tuple[str, Path]:
     # points to the agent's isolated config dir, but the user's sessions are
     # in ~/.claude/. In non-agent contexts, CLAUDE_CONFIG_DIR may point to a
     # custom config dir that also has sessions.
-    default_config_dir = Path.home() / ".claude"
+    default_config_dir = get_user_claude_config_dir()
     search_dirs: list[Path] = []
     resolved_dirs: list[Path] = []
     env_config_dir_str = os.environ.get("CLAUDE_CONFIG_DIR")
@@ -348,7 +349,7 @@ def _build_claude_json(
     before serializing.
     """
     if sync_local:
-        local_config = read_claude_config(get_claude_config_path())
+        local_config = read_claude_config(get_user_claude_config_path())
         data: dict[str, Any] = (
             local_config if local_config else _generate_claude_json(version, current_time=current_time)
         )
@@ -549,7 +550,7 @@ def _prompt_user_for_onboarding_completion() -> bool:
 
 def _claude_json_has_primary_api_key() -> bool:
     """Check if ~/.claude.json contains a non-empty primaryApiKey."""
-    claude_json_path = Path.home() / ".claude.json"
+    claude_json_path = get_user_claude_config_path()
     if not claude_json_path.exists():
         return False
     try:
@@ -653,7 +654,7 @@ def _provision_keychain_credentials(config_dir: Path, concurrency_group: Concurr
 
 def _symlink_credentials(host: OnlineHostInterface, config_dir: Path) -> None:
     """Linux/fallback: symlink .credentials.json to the per-agent config dir."""
-    credentials_source = Path.home() / ".claude" / ".credentials.json"
+    credentials_source = get_user_claude_config_dir() / ".credentials.json"
     credentials_dest = config_dir / ".credentials.json"
     if credentials_source.exists():
         host.execute_idempotent_command(
@@ -743,7 +744,7 @@ def _sync_user_resources(host: OnlineHostInterface, config_dir: Path, *, symlink
     installed_plugins.json can be rewritten in place without modifying the source.
     settings.json is handled separately by _build_settings_json.
     """
-    home_claude = Path.home() / ".claude"
+    home_claude = get_user_claude_config_dir()
     for dir_name in _CLAUDE_HOME_SYNC_DIRS:
         source = home_claude / dir_name
         if not source.exists():
@@ -820,7 +821,7 @@ def _resolve_installed_plugins_sentinel(host: OnlineHostInterface) -> None:
 
     No-op if the file doesn't exist or doesn't contain the sentinel.
     """
-    local_claude_dir = Path.home() / ".claude"
+    local_claude_dir = get_user_claude_config_dir()
     installed_plugins_path = local_claude_dir / _INSTALLED_PLUGINS_RELATIVE_PATH
     if not installed_plugins_path.exists():
         return
@@ -907,7 +908,7 @@ def _has_api_credentials_available(
         return True
 
     # Check credentials file or macOS keychain (OAuth tokens)
-    credentials_path = Path.home() / ".claude" / ".credentials.json"
+    credentials_path = get_user_claude_config_dir() / ".credentials.json"
     is_oauth_available = credentials_path.exists() or (
         config.convert_macos_credentials
         and is_macos()
@@ -1087,8 +1088,9 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         return self._get_agent_dir() / "plugin" / "claude" / "anthropic"
 
     def modify_env_vars(self, host: OnlineHostInterface, env_vars: dict[str, str]) -> None:
-        """Add CLAUDE_CONFIG_DIR and optionally enable common transcript emission."""
+        """Add CLAUDE_CONFIG_DIR, ORIGINAL_CLAUDE_CONFIG_DIR, and optionally enable common transcript emission."""
         env_vars["CLAUDE_CONFIG_DIR"] = str(self.get_claude_config_dir())
+        env_vars["ORIGINAL_CLAUDE_CONFIG_DIR"] = str(get_user_claude_config_dir())
         config = self.agent_config
         if config.emit_common_transcript:
             env_vars["MNGR_EMIT_COMMON_TRANSCRIPT"] = "1"
@@ -1309,7 +1311,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
                 trust_path = source_path if source_path is not None else self.work_dir
             else:
                 trust_path = self.work_dir
-            check_claude_dialogs_dismissed(get_claude_config_path(), trust_path)
+            check_claude_dialogs_dismissed(get_user_claude_config_path(), trust_path)
         if not config.check_installation:
             logger.debug("Skipped claude installation check (check_installation=False)")
             return
@@ -1413,7 +1415,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         source_path is the trusted source directory (for git-worktree/git-mirror modes).
         When None (rsync/none mode), trust is prompted for work_dir instead.
         """
-        global_config_path = get_claude_config_path()
+        global_config_path = get_user_claude_config_path()
         trust_path = source_path if source_path is not None else self.work_dir
 
         if mngr_ctx.is_auto_approve:
@@ -1467,7 +1469,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         """
         config = self.agent_config
         config_dir = self.get_claude_config_dir()
-        source_claude_dir = Path.home() / ".claude"
+        source_claude_dir = get_user_claude_config_dir()
 
         # Build runtime context
         copy_project_config_from: Path | None = None
@@ -1580,7 +1582,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
 
                 if config.auto_dismiss_dialogs:
                     # Auto-approve all dialogs for agents that opt into dismissal
-                    auto_dismiss_claude_dialogs(get_claude_config_path(), self.work_dir)
+                    auto_dismiss_claude_dialogs(get_user_claude_config_path(), self.work_dir)
                 else:
                     # Check/prompt for all blocking dialogs
                     # source_path=None (clone/no-git) means trust is prompted for work_dir
@@ -1637,7 +1639,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
                     logger.info("Claude installed successfully")
 
             # no matter what, *always* dismiss the cost popup, it's pointless
-            acknowledge_cost_threshold(get_claude_config_path())
+            acknowledge_cost_threshold(get_user_claude_config_path())
 
             # Transfer plugin data from source agent before config setup (if cloning via --from-agent).
             # This copies sessions, memory, transcript offsets, etc. The subsequent config setup
@@ -1746,7 +1748,7 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
                 logger.debug("Removed per-agent OAuth credentials keychain entry")
         elif not per_agent_config_exists:
             # Legacy agent without per-agent config dir -- clean up global file
-            removed = remove_claude_trust_for_path(get_claude_config_path(), self.work_dir)
+            removed = remove_claude_trust_for_path(get_user_claude_config_path(), self.work_dir)
             if removed:
                 logger.debug("Removed Claude trust entry for {} from global config", self.work_dir)
         else:
@@ -1896,7 +1898,7 @@ def get_files_for_deploy(
     """
     files: dict[Path, Path | str] = {}
 
-    local_claude_dir = Path.home() / ".claude"
+    local_claude_dir = get_user_claude_config_dir()
     deploy_ctx = ProvisioningContext(is_unattended=True, copy_project_config_from=None)
     deploy_config = ClaudeAgentConfig()
 
@@ -1988,7 +1990,7 @@ def modify_env_vars_for_deploy(
 
 def approve_api_key_for_claude(data: dict[str, Any]):
     """Approve the API key so that the agent doesn't get blocked by the custom API key dialog."""
-    user_config = read_claude_config(get_claude_config_path())
+    user_config = read_claude_config(get_user_claude_config_path())
     conf_key = user_config.get("primaryApiKey", "")
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key or conf_key:
