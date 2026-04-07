@@ -187,19 +187,18 @@ async def create_bot(bot_display_name: str, bot_username: str) -> tuple[str, str
     client = TelegramClient(StringSession(session_str), api_id, api_hash)
     await client.connect()
 
-    if not await client.is_user_authorized():
-        await client.disconnect()
-        raise TelegramCredentialError(
-            "Telegram session is not authorized. The auth key may have been "
-            "revoked.\nRun 'latchkey auth browser telegram' to log in again."
-        )
-
-    me = await client.get_me()
-    click.echo(f"Connected as: {me.first_name} (id={me.id})", err=True)
-
-    botfather = await client.get_entity("@BotFather")
-
     try:
+        if not await client.is_user_authorized():
+            raise TelegramCredentialError(
+                "Telegram session is not authorized. The auth key may have been "
+                "revoked.\nRun 'latchkey auth browser telegram' to log in again."
+            )
+
+        me = await client.get_me()
+        click.echo(f"Connected as: {me.first_name} (id={me.id})", err=True)
+
+        botfather = await client.get_entity("@BotFather")
+
         async with client.conversation(botfather) as conv:
             # Step 1: Send /newbot and wait for name prompt
             await conv.send_message("/newbot")
