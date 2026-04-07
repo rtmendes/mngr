@@ -674,11 +674,6 @@ def _create_agent(
     if isinstance(resolved_target_host, OnlineHostInterface):
         _apply_host_labels(resolved_target_host, opts.host_label)
 
-    # Apply lifecycle options (idle timeout, activity sources) to existing/local hosts.
-    # For new hosts, lifecycle is passed via NewHostOptions and applied by resolve_target_host.
-    if isinstance(resolved_target_host, OnlineHostInterface):
-        _apply_host_lifecycle(resolved_target_host, setup.host_lifecycle)
-
     # Set auto-derived labels (project, remote) on the agent (labels are agent-level, not host-level).
     # User-specified --label values take precedence over auto-derived ones.
     auto_labels = setup.auto_labels.model_dump(exclude_none=True)
