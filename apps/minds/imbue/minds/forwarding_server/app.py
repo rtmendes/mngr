@@ -923,6 +923,9 @@ async def _stream_creation_logs(
                     result["error"] = info.error
                 result["_type"] = "done"
                 yield "data: {}\n\n".format(json.dumps(result))
+                # Yield a final keepalive so the done event is flushed to the
+                # browser in its own TCP segment, separate from the stream close.
+                yield ": end\n\n"
         else:
             yield "data: {}\n\n".format(json.dumps({"log": line}))
 
