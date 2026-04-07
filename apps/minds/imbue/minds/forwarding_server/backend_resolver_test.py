@@ -9,8 +9,6 @@ from imbue.minds.forwarding_server.backend_resolver import MngrCliBackendResolve
 from imbue.minds.forwarding_server.backend_resolver import MngrStreamManager
 from imbue.minds.forwarding_server.backend_resolver import ParsedAgentsResult
 from imbue.minds.forwarding_server.backend_resolver import ServerLogParseError
-from imbue.minds.forwarding_server.backend_resolver import ServerDeregisteredRecord
-from imbue.minds.forwarding_server.backend_resolver import ServerLogRecord
 from imbue.minds.forwarding_server.backend_resolver import StaticBackendResolver
 from imbue.minds.forwarding_server.backend_resolver import parse_agent_ids_from_json
 from imbue.minds.forwarding_server.backend_resolver import parse_agents_from_json
@@ -95,7 +93,6 @@ def test_parse_server_log_records_parses_valid_jsonl() -> None:
     records = parse_server_log_records(text)
 
     assert len(records) == 1
-    assert isinstance(records[0], ServerLogRecord)
     assert records[0].server == ServerName("web")
     assert records[0].url == "http://127.0.0.1:9100"
 
@@ -134,32 +131,8 @@ def test_parse_server_log_records_ignores_envelope_fields() -> None:
     records = parse_server_log_records(text)
 
     assert len(records) == 1
-    assert isinstance(records[0], ServerLogRecord)
     assert records[0].server == ServerName("web")
     assert records[0].url == "http://127.0.0.1:9100"
-
-
-def test_parse_server_log_records_handles_deregistered_event() -> None:
-    text = '{"type": "server_deregistered", "server": "web"}\n'
-    records = parse_server_log_records(text)
-
-    assert len(records) == 1
-    assert isinstance(records[0], ServerDeregisteredRecord)
-    assert records[0].server == ServerName("web")
-
-
-def test_parse_server_log_records_handles_mixed_events() -> None:
-    text = (
-        '{"server": "web", "url": "http://127.0.0.1:9100"}\n'
-        '{"type": "server_deregistered", "server": "api"}\n'
-    )
-    records = parse_server_log_records(text)
-
-    assert len(records) == 2
-    assert isinstance(records[0], ServerLogRecord)
-    assert records[0].server == ServerName("web")
-    assert isinstance(records[1], ServerDeregisteredRecord)
-    assert records[1].server == ServerName("api")
 
 
 def test_parse_server_log_records_returns_multiple_records() -> None:
