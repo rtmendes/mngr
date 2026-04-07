@@ -31,8 +31,9 @@ def _make_headless_agent(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
     agent_config: HeadlessClaudeAgentConfig | AgentTypeConfig | None = None,
+    agent_cls: type[HeadlessClaude] = HeadlessClaude,
 ) -> tuple[HeadlessClaude, Host]:
-    """Create a HeadlessClaude agent with a real local host for testing."""
+    """Create a HeadlessClaude (or subclass) agent with a real local host for testing."""
     host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
     assert isinstance(host, Host)
     work_dir = tmp_path / f"work-{str(AgentId.generate().get_uuid())[:8]}"
@@ -42,7 +43,7 @@ def _make_headless_agent(
         agent_config = HeadlessClaudeAgentConfig(check_installation=False)
 
     mngr_ctx = local_provider.mngr_ctx
-    agent = HeadlessClaude.model_construct(
+    agent = agent_cls.model_construct(
         id=AgentId.generate(),
         name=AgentName("test-headless"),
         agent_type=AgentTypeName("headless_claude"),
@@ -92,32 +93,6 @@ class _AlwaysFinishedHeadlessClaude(HeadlessClaude):
 
     def _is_agent_finished(self) -> bool:
         return True
-
-
-def _make_always_finished_agent(
-    local_provider: LocalProviderInstance,
-    tmp_path: Path,
-) -> tuple[_AlwaysFinishedHeadlessClaude, Host]:
-    """Create an _AlwaysFinishedHeadlessClaude agent for grace period tests."""
-    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
-    assert isinstance(host, Host)
-    work_dir = tmp_path / f"work-{str(AgentId.generate().get_uuid())[:8]}"
-    work_dir.mkdir()
-
-    agent_config = HeadlessClaudeAgentConfig(check_installation=False)
-    mngr_ctx = local_provider.mngr_ctx
-    agent = _AlwaysFinishedHeadlessClaude.model_construct(
-        id=AgentId.generate(),
-        name=AgentName("test-headless-grace"),
-        agent_type=AgentTypeName("headless_claude"),
-        work_dir=work_dir,
-        create_time=datetime.now(timezone.utc),
-        host_id=host.id,
-        mngr_ctx=mngr_ctx,
-        agent_config=agent_config,
-        host=host,
-    )
-    return agent, host
 
 
 # =============================================================================
@@ -479,7 +454,7 @@ def test_grace_period_ignores_lifecycle_state(
     wait the full grace period for the file to appear before checking
     lifecycle state in phase 2.
     """
-    agent, host = _make_always_finished_agent(local_provider, tmp_path)
+    agent, _host = _make_headless_agent(local_provider, tmp_path, agent_cls=_AlwaysFinishedHeadlessClaude)
     stdout_path = agent._get_stdout_path()
 
     # Create the agent state directory (normally done by agent lifecycle)
@@ -506,7 +481,7 @@ def test_phase2_trusts_lifecycle_after_grace_period(
     When the agent reports finished and the file never appears, phase 2
     should detect the agent is done and return False.
     """
-    agent, host = _make_always_finished_agent(local_provider, tmp_path)
+    agent, _host = _make_headless_agent(local_provider, tmp_path, agent_cls=_AlwaysFinishedHeadlessClaude)
     stdout_path = agent._get_stdout_path()
 
     # Do NOT create the stdout file -- agent is "finished" and file never appeared
@@ -526,7 +501,7 @@ def test_file_during_grace_period_returns_true_immediately(
     tmp_path: Path,
 ) -> None:
     """If the stdout file already exists, _wait_for_stdout_file should return True immediately."""
-    agent, host = _make_always_finished_agent(local_provider, tmp_path)
+    agent, _host = _make_headless_agent(local_provider, tmp_path, agent_cls=_AlwaysFinishedHeadlessClaude)
     stdout_path = agent._get_stdout_path()
 
     # Pre-create the file
