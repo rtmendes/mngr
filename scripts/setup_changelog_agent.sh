@@ -65,6 +65,7 @@ uv run mngr schedule add "$TRIGGER_NAME" \
     --auto-merge-branch main \
     --exclude-user-settings \
     --exclude-project-settings \
+    --upload "$SCRIPT_DIR/changelog_agent_settings.toml:.mngr/settings.local.toml" \
     --pass-env GH_TOKEN \
     --pass-env ANTHROPIC_API_KEY \
     --args '--type claude --branch :mngr/changelog-consolidation-{DATE} --message "Step 1: Run uv run python scripts/consolidate_changelog.py to consolidate changelog entries into UNABRIDGED_CHANGELOG.md. If it reports no entries, exit without changes. Step 2: Read the new section that was just added to UNABRIDGED_CHANGELOG.md (the topmost ## section). Then update CHANGELOG.md by adding a concise, human-friendly summary of these changes under the same date heading, inserted after the header text. Group related changes, use natural language, and keep it brief. Step 3: Commit all changed files. Step 4: Open a PR targeting main with a title like Changelog consolidation YYYY-MM-DD."'
