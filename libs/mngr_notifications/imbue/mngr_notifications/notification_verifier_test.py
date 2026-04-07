@@ -1,7 +1,4 @@
-from collections.abc import Generator
 from pathlib import Path
-
-import pytest
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr_notifications.cli import _run_verification
@@ -21,12 +18,6 @@ def _no_binary_issues(notifier: Notifier) -> str | None:
 def _binary_always_missing(notifier: Notifier) -> str | None:
     """Binary checker that always reports missing binary."""
     return "notifier binary not found"
-
-
-@pytest.fixture()
-def notification_cg() -> Generator[ConcurrencyGroup, None, None]:
-    with ConcurrencyGroup(name="test-notification") as group:
-        yield group
 
 
 class _ClickSimulatingNotifier(MacOSNotifier):
