@@ -78,7 +78,7 @@ Only after doing all of the above should you begin writing code.
 
 # Ratchets
 
-Each project has a `test_ratchets.py` file containing automated code quality checks ("ratchets"). Each ratchet tracks a count of violations for a specific anti-pattern (e.g. raising built-in exceptions, using monkeypatch.setattr). The count can only stay the same or decrease -- increasing it fails the test.
+Each project has a `test_ratchets.py` file containing automated code quality checks ("ratchets"). Each ratchet tracks a count of violations for a specific anti-pattern (e.g. raising built-in exceptions, using monkeypatch.setattr). The count can only stay the same or decrease -- increasing it fails the test. To add or modify ratchets, use `/writing-ratchet-tests`.
 
 Ratchets are guidance and reminders about good code, not rules to be blindly obeyed. When a ratchet fires on your code:
 
