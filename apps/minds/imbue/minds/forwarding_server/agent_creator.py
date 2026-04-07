@@ -1,28 +1,30 @@
 """Agent creation for the forwarding server.
 
-Creates mngr agents from git repositories. Handles cloning, agent type
-resolution, and mngr create invocation.
+Creates mngr agents from git repositories or local directories. The repo's
+own ``.mngr/settings.toml`` drives all configuration -- no minds.toml,
+vendoring, or parent tracking.
 
 Agent creation runs in background threads so the server remains responsive.
 Callers can poll creation status via get_creation_info() or stream logs
 via get_log_queue().
 """
 
-import os.path
+import base64
+import os
 import queue
 import shutil
 import threading
-import tomllib
+import tempfile
 from collections.abc import Callable
 from enum import auto
 from pathlib import Path
 from typing import Final
 from typing import assert_never
 
+import httpx
 from loguru import logger
 from pydantic import Field
 from pydantic import PrivateAttr
-from pydantic import ValidationError
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.enums import UpperCaseStrEnum
@@ -32,27 +34,14 @@ from imbue.imbue_common.mutable_model import MutableModel
 from imbue.minds.config.data_types import MNGR_BINARY
 from imbue.minds.config.data_types import MindPaths
 from imbue.minds.errors import GitCloneError
-from imbue.minds.errors import GitOperationError
 from imbue.minds.errors import MngrCommandError
-from imbue.minds.forwarding_server.mngr_settings import configure_mngr_settings
-from imbue.minds.forwarding_server.parent_tracking import setup_mind_branch_and_parent
-from imbue.minds.forwarding_server.vendor_mngr import apply_vendor_overrides
-from imbue.minds.forwarding_server.vendor_mngr import default_vendor_configs
-from imbue.minds.forwarding_server.vendor_mngr import vendor_repos
 from imbue.minds.primitives import AgentName
 from imbue.minds.primitives import GitBranch
 from imbue.minds.primitives import GitUrl
 from imbue.minds.primitives import LaunchMode
 from imbue.mngr.primitives import AgentId
-from imbue.mngr_claude_mind.data_types import ClaudeMindSettings
-from imbue.mngr_llm.settings import SETTINGS_FILENAME
-from imbue.mngr_llm.settings import load_from_path
 
 OutputCallback = Callable[[str, bool], None]
-
-DEFAULT_AGENT_TYPE: Final[str] = "claude-mind"
-
-_DEFAULT_PASS_ENV: Final[tuple[str, ...]] = ("ANTHROPIC_API_KEY", "GH_TOKEN")
 
 LOG_SENTINEL: Final[str] = "__DONE__"
 
@@ -81,7 +70,7 @@ class AgentCreationInfo(FrozenModel):
 
 
 def extract_repo_name(git_url: str) -> str:
-    """Extract a short name from a git URL for use as agent name.
+    """Extract a short name from a git URL or path for use as agent name.
 
     Strips .git suffix and trailing slashes, then takes the last path component.
     Non-alphanumeric characters (except hyphens and underscores) are replaced
@@ -94,6 +83,11 @@ def extract_repo_name(git_url: str) -> str:
     cleaned = "".join(c if c.isalnum() or c in "-_" else "-" for c in name)
     cleaned = cleaned.strip("-")
     return cleaned if cleaned else "mind"
+
+
+def _is_local_path(repo_source: str) -> bool:
+    """Check if a repo source is a local path rather than a URL."""
+    return repo_source.startswith("/") or repo_source.startswith("./") or repo_source.startswith("~")
 
 
 def clone_git_repo(
@@ -130,7 +124,7 @@ def checkout_branch(
 ) -> None:
     """Check out a specific branch in a cloned repository.
 
-    Raises GitOperationError if the checkout fails (e.g. branch does not exist).
+    Raises GitCloneError if the checkout fails (e.g. branch does not exist).
     """
     logger.debug("Checking out branch {} in {}", branch, repo_dir)
     cg = ConcurrencyGroup(name="git-checkout")
@@ -142,7 +136,7 @@ def checkout_branch(
             on_output=on_output,
         )
     if result.returncode != 0:
-        raise GitOperationError(
+        raise GitCloneError(
             "git checkout failed for branch '{}' (exit code {}):\n{}".format(
                 branch,
                 result.returncode,
@@ -151,20 +145,42 @@ def checkout_branch(
         )
 
 
-def load_creation_settings(repo_dir: Path) -> ClaudeMindSettings:
-    """Load ClaudeMindSettings from minds.toml in the repo, falling back to defaults.
+def _build_mngr_create_command(
+    launch_mode: LaunchMode,
+    mind_dir: Path,
+    agent_name: AgentName,
+    agent_id: AgentId,
+) -> list[str]:
+    """Build the mngr create command for the given launch mode.
 
-    Returns the parsed settings (with defaults for any missing values).
-    Used during agent creation to read both agent_type and vendor config.
+    DEV mode: --template main --template dev (runs in-place on local provider)
+    LOCAL mode: --template main --template docker (runs in Docker container)
+    CLOUD mode: not yet supported
     """
-    settings_path = repo_dir / SETTINGS_FILENAME
-    try:
-        return load_from_path(settings_path, ClaudeMindSettings)
-    except FileNotFoundError:
-        return ClaudeMindSettings()
-    except (tomllib.TOMLDecodeError, ValidationError, OSError) as e:
-        logger.warning("Failed to parse {}, using defaults: {}", settings_path, e)
-        return ClaudeMindSettings()
+    mngr_command: list[str] = [
+        MNGR_BINARY,
+        "create",
+        str(agent_name),
+        "--id",
+        str(agent_id),
+        "--no-connect",
+        "--label",
+        f"mind={agent_name}",
+        "--template",
+        "main",
+    ]
+
+    match launch_mode:
+        case LaunchMode.DEV:
+            mngr_command.extend(["--template", "dev"])
+        case LaunchMode.LOCAL:
+            mngr_command.extend(["--template", "docker"])
+        case LaunchMode.CLOUD:
+            raise NotImplementedError("Cloud launch mode is not yet supported")
+        case _ as unreachable:
+            assert_never(unreachable)
+
+    return mngr_command
 
 
 def run_mngr_create(
@@ -172,91 +188,16 @@ def run_mngr_create(
     mind_dir: Path,
     agent_name: AgentName,
     agent_id: AgentId,
-    agent_type: str,
-    pass_env: tuple[str, ...],
     on_output: OutputCallback | None = None,
 ) -> None:
     """Create an mngr agent via ``mngr create``.
 
-    Builds the appropriate command based on launch_mode:
-    - DEV: runs in-place on the local provider.
-    - LOCAL: runs in a Docker container.
-    - CLOUD: raises NotImplementedError.
+    The repo's own ``.mngr/settings.toml`` defines agent types, templates,
+    environment variables, and all other configuration.
 
     Raises MngrCommandError if the command fails.
     """
-    match launch_mode:
-        case LaunchMode.CLOUD:
-            raise NotImplementedError("Cloud launch mode is not yet supported")
-        case LaunchMode.DEV | LaunchMode.LOCAL:
-            pass
-        case _ as unreachable:
-            assert_never(unreachable)
-
-    mngr_command: list[str] = [
-        MNGR_BINARY,
-        "create",
-        agent_name,
-        "--id",
-        str(agent_id),
-        "--no-connect",
-        "--type",
-        agent_type,
-        "--host-env",
-        "IS_AUTONOMOUS=1",
-        "--env",
-        "ROLE=thinking",
-        "--env",
-        f"MIND_NAME={agent_name}",
-        "--label",
-        f"mind={agent_name}",
-        "--disable-plugin",
-        "ttyd",
-        "--yes",
-    ]
-
-    match launch_mode:
-        case LaunchMode.DEV:
-            mngr_command.append("--transfer=none")
-        case LaunchMode.LOCAL:
-            # stick the source into some canonical location
-            mngr_command.extend(
-                [
-                    "--target-path",
-                    "/code/",
-                ]
-            )
-            remote_data_dir = os.path.expanduser(f"~/.minds/data/{agent_id}")
-            Path(remote_data_dir).mkdir(parents=True, exist_ok=True)
-            mngr_command.extend(
-                [
-                    "--provider",
-                    "docker",
-                    "--host-env",
-                    "IS_SANDBOX=1",
-                    "--disable-plugin",
-                    "recursive",
-                    "-vv",
-                    "--source-path",
-                    str(mind_dir),
-                    "-s",
-                    "-v={}:{}".format(remote_data_dir, "/data/remote"),
-                ]
-            )
-            # If the source directory contains a Dockerfile, use it for the build
-            dockerfile_path = mind_dir / "Dockerfile"
-            if dockerfile_path.is_file():
-                mngr_command.extend(["-b", "--file={}".format(dockerfile_path), "-b", str(mind_dir)])
-            else:
-                raise Exception("Hmmm, idk about that")
-        case _ as unreachable:
-            assert_never(unreachable)
-
-    for env_var in pass_env:
-        mngr_command.extend(["--pass-env", env_var])
-
-    # FOLLOWUP: remove --dangerously-skip-permissions
-    mngr_command.extend(["--", "--dangerously-skip-permissions"])
+    mngr_command = _build_mngr_create_command(launch_mode, mind_dir, agent_name, agent_id)
 
     logger.info("Running: {}", " ".join(mngr_command))
 
@@ -278,8 +219,86 @@ def run_mngr_create(
         )
 
 
+def _create_cloudflare_tunnel(
+    agent_id: AgentId,
+    forwarding_url: str,
+    username: str,
+    secret: str,
+    owner_email: str,
+    log_queue: queue.Queue[str],
+) -> str | None:
+    """Create a Cloudflare tunnel for the agent and return the tunnel token.
+
+    Uses the cloudflare_forwarding API with admin (Basic) auth to create a tunnel
+    and set a default Google OAuth policy for the owner's email.
+
+    Returns the tunnel token string, or None if tunnel creation fails.
+    """
+    auth_header = "Basic " + base64.b64encode(f"{username}:{secret}".encode()).decode()
+
+    try:
+        # Create the tunnel
+        log_queue.put("[minds] Creating Cloudflare tunnel...")
+        response = httpx.post(
+            f"{forwarding_url}/tunnels",
+            headers={"Authorization": auth_header},
+            json={
+                "agent_id": str(agent_id),
+                "default_auth_policy": {
+                    "rules": [
+                        {"action": "allow", "include": [{"email": {"email": owner_email}}]},
+                    ],
+                },
+            },
+            timeout=30.0,
+        )
+        if response.status_code not in (200, 201):
+            log_queue.put(f"[minds] WARNING: Failed to create tunnel: {response.status_code} {response.text}")
+            return None
+
+        tunnel_info = response.json()
+        token = tunnel_info.get("token")
+        tunnel_name = tunnel_info.get("tunnel_name", "")
+        log_queue.put(f"[minds] Cloudflare tunnel created: {tunnel_name}")
+        return token
+
+    except httpx.HTTPError as e:
+        log_queue.put(f"[minds] WARNING: Failed to create tunnel: {e}")
+        return None
+
+
+def _inject_tunnel_token(
+    agent_id: AgentId,
+    token: str,
+    log_queue: queue.Queue[str],
+) -> None:
+    """Inject the tunnel token into the agent's runtime/secrets file via mngr exec."""
+    log_queue.put("[minds] Injecting tunnel token into agent...")
+    cg = ConcurrencyGroup(name="mngr-exec-token")
+    with cg:
+        # Append the token export to runtime/secrets
+        command = [
+            MNGR_BINARY,
+            "exec",
+            str(agent_id),
+            "mkdir -p runtime && echo 'export CLOUDFLARE_TUNNEL_TOKEN={}' >> runtime/secrets".format(token),
+        ]
+        result = cg.run_process_to_completion(
+            command=command,
+            is_checked_after=False,
+        )
+    if result.returncode != 0:
+        log_queue.put(
+            "[minds] WARNING: Failed to inject tunnel token: {}".format(
+                result.stderr.strip() if result.stderr.strip() else result.stdout.strip()
+            )
+        )
+    else:
+        log_queue.put("[minds] Tunnel token injected successfully.")
+
+
 class AgentCreator(MutableModel):
-    """Creates mngr agents in the background from git repositories.
+    """Creates mngr agents in the background from git repositories or local paths.
 
     Tracks creation status so the forwarding server can show progress
     and redirect users to agents when creation is complete.
@@ -288,11 +307,6 @@ class AgentCreator(MutableModel):
     """
 
     paths: MindPaths = Field(frozen=True, description="Filesystem paths for minds data")
-    pass_env: tuple[str, ...] = Field(
-        default=_DEFAULT_PASS_ENV,
-        frozen=True,
-        description="Environment variables to forward to the agent",
-    )
 
     _statuses: dict[str, AgentCreationStatus] = PrivateAttr(default_factory=dict)
     _redirect_urls: dict[str, str] = PrivateAttr(default_factory=dict)
@@ -302,12 +316,12 @@ class AgentCreator(MutableModel):
 
     def start_creation(
         self,
-        git_url: str,
+        repo_source: str,
         agent_name: str = "",
         branch: str = "",
         launch_mode: LaunchMode = LaunchMode.LOCAL,
     ) -> AgentId:
-        """Start creating an agent from a git URL in a background thread.
+        """Start creating an agent from a git URL or local path in a background thread.
 
         Returns the agent ID immediately. Use get_creation_info() to poll status,
         or iter_log_lines() to stream creation logs.
@@ -318,12 +332,12 @@ class AgentCreator(MutableModel):
             self._statuses[str(agent_id)] = AgentCreationStatus.CLONING
             self._log_queues[str(agent_id)] = log_queue
 
-        effective_name = agent_name.strip() if agent_name.strip() else extract_repo_name(git_url)
+        effective_name = agent_name.strip() if agent_name.strip() else extract_repo_name(repo_source)
         effective_branch = branch.strip()
 
         thread = threading.Thread(
             target=self._create_agent_background,
-            args=(agent_id, git_url, effective_name, effective_branch, log_queue, launch_mode),
+            args=(agent_id, repo_source, effective_name, effective_branch, log_queue, launch_mode),
             daemon=True,
             name="agent-creator-{}".format(agent_id),
         )
@@ -351,58 +365,56 @@ class AgentCreator(MutableModel):
     def _create_agent_background(
         self,
         agent_id: AgentId,
-        git_url: str,
+        repo_source: str,
         agent_name: str,
         branch: str,
         log_queue: queue.Queue[str],
         launch_mode: LaunchMode,
     ) -> None:
-        """Background thread that clones a repo and creates an mngr agent."""
+        """Background thread that resolves the repo source and creates an mngr agent."""
         aid = str(agent_id)
-        mind_dir = self.paths.mind_dir(agent_id)
         emit_log = make_log_callback(log_queue)
+        temp_clone_dir: Path | None = None
         try:
-            with log_span("Creating agent {} from {} (mode: {})", agent_id, git_url, launch_mode):
-                self.paths.data_dir.mkdir(parents=True, exist_ok=True)
+            with log_span("Creating agent {} from {} (mode: {})", agent_id, repo_source, launch_mode):
+                # Resolve repo source to a local directory
+                if _is_local_path(repo_source):
+                    resolved_path = Path(os.path.expanduser(repo_source)).resolve()
+                    if not resolved_path.is_dir():
+                        raise MngrCommandError(f"Local path does not exist: {resolved_path}")
+                    mind_dir = resolved_path
+                    log_queue.put(f"[minds] Using local directory: {mind_dir}")
+                else:
+                    # Clone to a temporary directory
+                    temp_clone_dir = Path(tempfile.mkdtemp(prefix="minds-clone-"))
+                    clone_target = temp_clone_dir / extract_repo_name(repo_source)
+                    log_queue.put("[minds] Cloning {}...".format(repo_source))
+                    clone_git_repo(GitUrl(repo_source), clone_target, on_output=emit_log)
+                    mind_dir = clone_target
 
-                log_queue.put("[minds] Cloning {}...".format(git_url))
-                clone_git_repo(GitUrl(git_url), mind_dir, on_output=emit_log)
-
-                # Check out the specified branch before setting up parent tracking
+                # Check out the specified branch if provided
                 if branch:
                     log_queue.put("[minds] Checking out branch '{}'...".format(branch))
                     checkout_branch(mind_dir, GitBranch(branch), on_output=emit_log)
 
-                log_queue.put("[minds] Setting up branch and parent tracking...")
-                setup_mind_branch_and_parent(mind_dir, AgentName(agent_name), GitUrl(git_url), on_output=emit_log)
-
-                log_queue.put("[minds] Configuring mngr settings...")
-                configure_mngr_settings(mind_dir, AgentName(agent_name), agent_id, on_output=emit_log)
-
-                settings = load_creation_settings(mind_dir)
-
-                vendor_configs = apply_vendor_overrides(
-                    settings.vendor if settings.vendor else default_vendor_configs()
-                )
-
-                log_queue.put("[minds] Vendoring {} repo(s)...".format(len(vendor_configs)))
-                vendor_repos(mind_dir, vendor_configs, on_output=emit_log)
-
-                agent_type = settings.agent_type if settings.agent_type is not None else DEFAULT_AGENT_TYPE
-                parsed_name = AgentName(agent_name)
-
+                # Create the agent
                 with self._lock:
                     self._statuses[aid] = AgentCreationStatus.CREATING
 
-                self._run_create_for_mode(
+                parsed_name = AgentName(agent_name)
+                log_queue.put(
+                    "[minds] Creating agent '{}' (mode: {})...".format(agent_name, launch_mode.value)
+                )
+                run_mngr_create(
                     launch_mode=launch_mode,
                     mind_dir=mind_dir,
                     agent_name=parsed_name,
                     agent_id=agent_id,
-                    agent_type=agent_type,
-                    log_queue=log_queue,
-                    emit_log=emit_log,
+                    on_output=emit_log,
                 )
+
+                # Post-creation: set up Cloudflare tunnel
+                self._setup_cloudflare_tunnel(agent_id, log_queue)
 
                 log_queue.put("[minds] Agent created successfully.")
 
@@ -410,47 +422,50 @@ class AgentCreator(MutableModel):
                     self._statuses[aid] = AgentCreationStatus.DONE
                     self._redirect_urls[aid] = "/agents/{}/".format(agent_id)
 
-        except (GitCloneError, MngrCommandError, GitOperationError, NotImplementedError, ValueError, OSError) as e:
+        except (GitCloneError, MngrCommandError, NotImplementedError, ValueError, OSError) as e:
             logger.error("Failed to create agent {}: {}", agent_id, e)
             log_queue.put("[minds] ERROR: {}".format(e))
             with self._lock:
                 self._statuses[aid] = AgentCreationStatus.FAILED
                 self._errors[aid] = str(e)
-            if mind_dir.exists():
-                shutil.rmtree(mind_dir, ignore_errors=True)
         finally:
+            # Clean up temp clone directory if we created one
+            if temp_clone_dir is not None and temp_clone_dir.exists():
+                shutil.rmtree(temp_clone_dir, ignore_errors=True)
             log_queue.put(LOG_SENTINEL)
 
-    def _run_create_for_mode(
+    def _setup_cloudflare_tunnel(
         self,
-        launch_mode: LaunchMode,
-        mind_dir: Path,
-        agent_name: AgentName,
         agent_id: AgentId,
-        agent_type: str,
         log_queue: queue.Queue[str],
-        emit_log: OutputCallback,
     ) -> None:
-        """Run mngr create for the given launch mode, then perform any post-creation cleanup."""
-        log_queue.put(
-            "[minds] Creating agent '{}' (type: {}, mode: {})...".format(agent_name, agent_type, launch_mode.value)
-        )
-        run_mngr_create(
-            launch_mode=launch_mode,
-            mind_dir=mind_dir,
-            agent_name=agent_name,
+        """Create a Cloudflare tunnel and inject its token into the agent.
+
+        Reads configuration from environment variables. Does nothing if the
+        required env vars are not set.
+        """
+        forwarding_url = os.environ.get("CLOUDFLARE_FORWARDING_URL")
+        username = os.environ.get("CLOUDFLARE_FORWARDING_USERNAME")
+        secret = os.environ.get("CLOUDFLARE_FORWARDING_SECRET")
+        owner_email = os.environ.get("OWNER_EMAIL")
+
+        if not all([forwarding_url, username, secret, owner_email]):
+            log_queue.put("[minds] Cloudflare forwarding not configured, skipping tunnel creation.")
+            return
+
+        assert forwarding_url is not None
+        assert username is not None
+        assert secret is not None
+        assert owner_email is not None
+
+        token = _create_cloudflare_tunnel(
             agent_id=agent_id,
-            agent_type=agent_type,
-            pass_env=self.pass_env,
-            on_output=emit_log,
+            forwarding_url=forwarding_url,
+            username=username,
+            secret=secret,
+            owner_email=owner_email,
+            log_queue=log_queue,
         )
-        match launch_mode:
-            case LaunchMode.LOCAL:
-                # The real data lives inside the Docker container, so clean up the
-                # local clone directory immediately.
-                log_queue.put("[minds] Cleaning up local clone directory...")
-                shutil.rmtree(mind_dir, ignore_errors=True)
-            case LaunchMode.DEV | LaunchMode.CLOUD:
-                pass
-            case _ as unreachable:
-                assert_never(unreachable)
+
+        if token is not None:
+            _inject_tunnel_token(agent_id, token, log_queue)

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import queue
@@ -309,8 +310,111 @@ def _handle_agent_servers_page(
         return Response(status_code=403, content="Not authenticated")
 
     server_names = backend_resolver.list_servers_for_agent(parsed_id)
-    html = render_agent_servers_page(agent_id=parsed_id, server_names=server_names)
+
+    # Query cloudflare forwarding API for global services
+    cf_services = _get_cloudflare_services(parsed_id)
+
+    html = render_agent_servers_page(agent_id=parsed_id, server_names=server_names, cf_services=cf_services)
     return HTMLResponse(content=html)
+
+
+def _get_cloudflare_services(agent_id: AgentId) -> dict[str, str] | None:
+    """Query cloudflare_forwarding API for services registered on this agent's tunnel.
+
+    Returns a dict mapping service_name -> hostname, or None if cloudflare is not configured.
+    """
+    forwarding_url = os.getenv("CLOUDFLARE_FORWARDING_URL")
+    username = os.getenv("CLOUDFLARE_FORWARDING_USERNAME")
+    secret = os.getenv("CLOUDFLARE_FORWARDING_SECRET")
+    if not all([forwarding_url, username, secret]):
+        return None
+
+    auth_header = "Basic " + base64.b64encode(f"{username}:{secret}".encode()).decode()
+    tunnel_name = f"{username}--{agent_id}"
+
+    try:
+        response = httpx.get(
+            f"{forwarding_url}/tunnels/{tunnel_name}/services",
+            headers={"Authorization": auth_header},
+            timeout=10.0,
+        )
+        if response.status_code != 200:
+            return None
+        services = response.json().get("services", [])
+        return {s["service_name"]: s["hostname"] for s in services if "service_name" in s and "hostname" in s}
+    except (httpx.HTTPError, KeyError):
+        return None
+
+
+async def _handle_toggle_global(
+    agent_id: str,
+    server_name: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """Toggle global cloudflare forwarding for a specific server on an agent."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content='{"error": "Not authenticated"}', media_type="application/json")
+
+    forwarding_url = os.getenv("CLOUDFLARE_FORWARDING_URL")
+    username = os.getenv("CLOUDFLARE_FORWARDING_USERNAME")
+    secret = os.getenv("CLOUDFLARE_FORWARDING_SECRET")
+    if not all([forwarding_url, username, secret]):
+        return Response(
+            status_code=501,
+            content='{"error": "Cloudflare forwarding not configured"}',
+            media_type="application/json",
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return Response(status_code=400, content='{"error": "Invalid JSON"}', media_type="application/json")
+
+    enabled = body.get("enabled", True)
+
+    auth_header = "Basic " + base64.b64encode(f"{username}:{secret}".encode()).decode()
+    tunnel_name = f"{username}--{agent_id}"
+
+    try:
+        if enabled:
+            # Get the local backend URL to know what to forward
+            backend_resolver: BackendResolverInterface = request.app.state.backend_resolver
+            parsed_id = AgentId(agent_id)
+            parsed_server = ServerName(server_name)
+            backend_url = backend_resolver.get_backend_url(parsed_id, parsed_server)
+            if backend_url is None:
+                return Response(
+                    status_code=404,
+                    content='{"error": "Server not found locally"}',
+                    media_type="application/json",
+                )
+            response = httpx.post(
+                f"{forwarding_url}/tunnels/{tunnel_name}/services",
+                headers={"Authorization": auth_header},
+                json={"service_name": server_name, "service_url": backend_url},
+                timeout=15.0,
+            )
+        else:
+            response = httpx.delete(
+                f"{forwarding_url}/tunnels/{tunnel_name}/services/{server_name}",
+                headers={"Authorization": auth_header},
+                timeout=15.0,
+            )
+
+        if response.status_code in (200, 201, 204):
+            return Response(content='{"ok": true}', media_type="application/json")
+        return Response(
+            status_code=response.status_code,
+            content=json.dumps({"error": response.text}),
+            media_type="application/json",
+        )
+    except httpx.HTTPError as e:
+        return Response(
+            status_code=502,
+            content=json.dumps({"error": str(e)}),
+            media_type="application/json",
+        )
 
 
 async def _forward_http_request(
@@ -944,6 +1048,9 @@ def create_forwarding_server(
 
     # Agent server listing page: /agents/{agent_id}/servers/
     app.get("/agents/{agent_id}/servers/")(_handle_agent_servers_page)
+
+    # Toggle global forwarding for a server
+    app.post("/agents/{agent_id}/servers/{server_name}/global")(_handle_toggle_global)
 
     # Proxy routes: /agents/{agent_id}/{server_name}/{path:path}
     app.api_route(

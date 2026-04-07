@@ -1,19 +1,22 @@
 import queue as queue_mod
 from pathlib import Path
-
 import pytest
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.minds.config.data_types import MindPaths
 from imbue.minds.errors import GitCloneError
-from imbue.minds.errors import GitOperationError
+from imbue.minds.errors import MngrCommandError
 from imbue.minds.forwarding_server.agent_creator import AgentCreationStatus
 from imbue.minds.forwarding_server.agent_creator import AgentCreator
 from imbue.minds.forwarding_server.agent_creator import checkout_branch
 from imbue.minds.forwarding_server.agent_creator import clone_git_repo
+from imbue.minds.forwarding_server.agent_creator import _build_mngr_create_command
+from imbue.minds.forwarding_server.agent_creator import _is_local_path
 from imbue.minds.forwarding_server.agent_creator import extract_repo_name
-from imbue.minds.forwarding_server.agent_creator import load_creation_settings
 from imbue.minds.forwarding_server.agent_creator import make_log_callback
+from imbue.minds.forwarding_server.agent_creator import run_mngr_create
+from imbue.minds.primitives import AgentName
+from imbue.minds.primitives import LaunchMode
 from imbue.minds.primitives import GitBranch
 from imbue.minds.primitives import GitUrl
 from imbue.minds.testing import add_and_commit_git_repo
@@ -47,34 +50,68 @@ def test_extract_repo_name_falls_back_to_mind() -> None:
     assert extract_repo_name(".git") == "mind"
 
 
-def test_load_creation_settings_returns_defaults_when_no_toml(tmp_path: Path) -> None:
-    settings = load_creation_settings(tmp_path)
-    assert settings.agent_type is None
+def test_extract_repo_name_from_local_path() -> None:
+    assert extract_repo_name("/home/user/my-template") == "my-template"
+    assert extract_repo_name("~/project/forever-claude") == "forever-claude"
 
 
-def test_load_creation_settings_reads_agent_type(tmp_path: Path) -> None:
-    (tmp_path / "minds.toml").write_text('agent_type = "custom-type"\n')
-    settings = load_creation_settings(tmp_path)
-    assert settings.agent_type == "custom-type"
+# -- _is_local_path tests --
 
 
-def test_load_creation_settings_returns_defaults_for_toml_without_agent_type(tmp_path: Path) -> None:
-    (tmp_path / "minds.toml").write_text('[chat]\nmodel = "claude-sonnet-4-6"\n')
-    settings = load_creation_settings(tmp_path)
-    assert settings.agent_type is None
+def test_is_local_path_absolute() -> None:
+    assert _is_local_path("/home/user/repo") is True
 
 
-def test_load_creation_settings_returns_defaults_for_malformed_toml(tmp_path: Path) -> None:
-    (tmp_path / "minds.toml").write_text("not valid toml {{{")
-    settings = load_creation_settings(tmp_path)
-    assert settings.agent_type is None
+def test_is_local_path_relative() -> None:
+    assert _is_local_path("./my-repo") is True
 
 
-def test_load_creation_settings_reads_vendor_config(tmp_path: Path) -> None:
-    (tmp_path / "minds.toml").write_text('[[vendor]]\nname = "mngr"\nurl = "https://github.com/imbue-ai/mngr.git"\n')
-    settings = load_creation_settings(tmp_path)
-    assert len(settings.vendor) == 1
-    assert settings.vendor[0].name == "mngr"
+def test_is_local_path_tilde() -> None:
+    assert _is_local_path("~/project/repo") is True
+
+
+def test_is_local_path_url() -> None:
+    assert _is_local_path("https://github.com/user/repo.git") is False
+    assert _is_local_path("git@github.com:user/repo.git") is False
+
+
+# -- _build_mngr_create_command tests --
+
+
+def test_build_mngr_create_command_dev_mode() -> None:
+    cmd = _build_mngr_create_command(
+        launch_mode=LaunchMode.DEV,
+        mind_dir=Path("/tmp/repo"),
+        agent_name=AgentName("test-agent"),
+        agent_id=AgentId(),
+    )
+    assert "--template" in cmd
+    assert "dev" in cmd
+    assert "main" in cmd
+    assert "--no-connect" in cmd
+    assert "docker" not in cmd
+
+
+def test_build_mngr_create_command_local_mode() -> None:
+    cmd = _build_mngr_create_command(
+        launch_mode=LaunchMode.LOCAL,
+        mind_dir=Path("/tmp/repo"),
+        agent_name=AgentName("test-agent"),
+        agent_id=AgentId(),
+    )
+    assert "--template" in cmd
+    assert "docker" in cmd
+    assert "main" in cmd
+
+
+def test_build_mngr_create_command_cloud_mode_raises() -> None:
+    with pytest.raises(NotImplementedError, match="Cloud launch mode"):
+        _build_mngr_create_command(
+            launch_mode=LaunchMode.CLOUD,
+            mind_dir=Path("/tmp/repo"),
+            agent_name=AgentName("test-agent"),
+            agent_id=AgentId(),
+        )
 
 
 # -- clone_git_repo tests --
@@ -139,7 +176,7 @@ def test_checkout_branch_switches_to_existing_branch(tmp_path: Path) -> None:
 
 
 def test_checkout_branch_raises_on_nonexistent_branch(tmp_path: Path) -> None:
-    """Verify checkout_branch raises GitOperationError for a missing branch."""
+    """Verify checkout_branch raises GitCloneError for a missing branch."""
     source = tmp_path / "source"
     source.mkdir()
     (source / "hello.txt").write_text("hello")
@@ -148,7 +185,7 @@ def test_checkout_branch_raises_on_nonexistent_branch(tmp_path: Path) -> None:
     dest = tmp_path / "dest"
     clone_git_repo(GitUrl(str(source)), dest)
 
-    with pytest.raises(GitOperationError, match="git checkout failed"):
+    with pytest.raises(GitCloneError, match="git checkout failed"):
         checkout_branch(dest, GitBranch("nonexistent/branch-72391"))
 
 
@@ -204,6 +241,64 @@ def test_agent_creator_get_log_queue_returns_queue_for_tracked() -> None:
     agent_id = creator.start_creation("file:///nonexistent-repo")
     q = creator.get_log_queue(agent_id)
     assert q is not None
+
+
+def test_agent_creator_start_creation_with_local_path(tmp_path: Path) -> None:
+    """Verify start_creation works with a local path that doesn't exist (fails but tracks status)."""
+    creator = AgentCreator(
+        paths=MindPaths(data_dir=tmp_path / "minds"),
+    )
+    agent_id = creator.start_creation("/nonexistent/local/path", agent_name="local-test")
+    info = creator.get_creation_info(agent_id)
+    assert info is not None
+    assert info.status == AgentCreationStatus.CLONING
+
+
+def test_setup_cloudflare_tunnel_skips_when_not_configured(tmp_path: Path) -> None:
+    """Verify _setup_cloudflare_tunnel does nothing when env vars are not set."""
+    creator = AgentCreator(
+        paths=MindPaths(data_dir=tmp_path / "minds"),
+    )
+    log_queue: queue_mod.Queue[str] = queue_mod.Queue()
+    creator._setup_cloudflare_tunnel(AgentId(), log_queue)
+    messages = []
+    while not log_queue.empty():
+        messages.append(log_queue.get_nowait())
+    assert any("not configured" in m for m in messages)
+
+
+def test_setup_cloudflare_tunnel_handles_connection_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify _setup_cloudflare_tunnel handles connection errors gracefully."""
+    monkeypatch.setenv("CLOUDFLARE_FORWARDING_URL", "http://127.0.0.1:1")
+    monkeypatch.setenv("CLOUDFLARE_FORWARDING_USERNAME", "testuser")
+    monkeypatch.setenv("CLOUDFLARE_FORWARDING_SECRET", "testsecret")
+    monkeypatch.setenv("OWNER_EMAIL", "test@example.com")
+
+    creator = AgentCreator(
+        paths=MindPaths(data_dir=tmp_path / "minds"),
+    )
+    log_queue: queue_mod.Queue[str] = queue_mod.Queue()
+    creator._setup_cloudflare_tunnel(AgentId(), log_queue)
+    messages = []
+    while not log_queue.empty():
+        messages.append(log_queue.get_nowait())
+    # Should have attempted to create the tunnel and logged a failure
+    assert any("Creating Cloudflare tunnel" in m for m in messages)
+    assert any("WARNING" in m or "Failed" in m for m in messages)
+
+
+def test_run_mngr_create_raises_on_failure(tmp_path: Path) -> None:
+    """Verify run_mngr_create raises MngrCommandError when mngr create fails."""
+    with pytest.raises(MngrCommandError, match="mngr create failed"):
+        run_mngr_create(
+            launch_mode=LaunchMode.DEV,
+            mind_dir=tmp_path,
+            agent_name=AgentName("test"),
+            agent_id=AgentId(),
+        )
 
 
 def test_make_log_callback_puts_lines_into_queue() -> None:
