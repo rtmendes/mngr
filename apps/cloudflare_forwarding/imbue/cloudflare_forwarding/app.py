@@ -657,6 +657,12 @@ class ForwardingCtx:
         for cf_policy in policy_to_cf_rules(policy):
             self.ops.create_access_policy(access_app["id"], cf_policy)
 
+    def list_services(self, tunnel_name: str, username: str) -> list[ServiceInfo]:
+        """List all services on a tunnel."""
+        self.verify_ownership(tunnel_name, username)
+        tunnel = self.get_tunnel_or_raise(tunnel_name)
+        return self._list_services(tunnel["id"], tunnel_name, username)
+
     def _list_services(self, tunnel_id: str, tunnel_name: str, username: str) -> list[ServiceInfo]:
         agent_id = extract_agent_id(tunnel_name, username)
         config = self.ops.get_tunnel_config(tunnel_id)
@@ -879,9 +885,7 @@ def list_services(request: Request, tunnel_name: str) -> list[dict[str, object]]
     with handle_endpoint_errors():
         auth = authenticate_request(request, get_ctx().ops)
         username = require_tunnel_access(auth, tunnel_name)
-        tunnel = get_ctx().get_tunnel_or_raise(tunnel_name)
-        services = get_ctx()._list_services(tunnel["id"], tunnel_name, username)
-        return [s.model_dump() for s in services]
+        return [s.model_dump() for s in get_ctx().list_services(tunnel_name, username)]
 
 
 @web_app.get("/tunnels/{tunnel_name}/auth")
