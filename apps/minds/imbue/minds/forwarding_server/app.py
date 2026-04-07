@@ -921,7 +921,8 @@ async def _stream_creation_logs(
                     result["redirect_url"] = info.redirect_url
                 if info.error is not None:
                     result["error"] = info.error
-                yield "event: done\ndata: {}\n\n".format(json.dumps(result))
+                result["_type"] = "done"
+                yield "data: {}\n\n".format(json.dumps(result))
         else:
             yield "data: {}\n\n".format(json.dumps({"log": line}))
 

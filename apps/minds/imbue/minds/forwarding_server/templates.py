@@ -175,32 +175,38 @@ _CREATING_PAGE_TEMPLATE: Final[str] = (
       logsEl.scrollTop = logsEl.scrollHeight;
     }
 
+    source.onopen = function() {
+      console.log('[minds] SSE connection opened');
+    };
+
     source.onmessage = function(event) {
-      var data = JSON.parse(event.data);
-      if (data.log) {
-        pendingLines.push(data.log);
-        if (!flushScheduled) {
-          flushScheduled = true;
-          requestAnimationFrame(flushLogs);
+      console.log('[minds] onmessage: ' + event.data.substring(0, 120));
+      try {
+        var data = JSON.parse(event.data);
+        if (data._type === 'done') {
+          source.close();
+          flushLogs();
+          if (data.status === 'DONE' && data.redirect_url) {
+            statusEl.textContent = 'Done! Redirecting...';
+            window.location.href = data.redirect_url;
+          } else if (data.status === 'FAILED') {
+            statusEl.textContent = 'Failed: ' + (data.error || 'unknown error');
+            statusEl.classList.add('error');
+          }
+        } else if (data.log) {
+          pendingLines.push(data.log);
+          if (!flushScheduled) {
+            flushScheduled = true;
+            requestAnimationFrame(flushLogs);
+          }
         }
+      } catch(e) {
+        console.log('[minds] SSE parse error: ' + e);
       }
     };
 
-    source.addEventListener('done', function(event) {
-      source.close();
-      flushLogs();
-      var data = JSON.parse(event.data);
-      if (data.status === 'DONE' && data.redirect_url) {
-        statusEl.textContent = 'Done! Redirecting...';
-        window.location.href = data.redirect_url;
-      } else if (data.status === 'FAILED') {
-        statusEl.textContent = 'Failed: ' + (data.error || 'unknown error');
-        statusEl.classList.add('error');
-      }
-    });
-
     source.onerror = function() {
-      source.close();
+      console.log('[minds] SSE error/close, readyState:', source.readyState);
     };
   </script>
 </body>

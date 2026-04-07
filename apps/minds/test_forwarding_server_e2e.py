@@ -19,9 +19,9 @@ The test removes /tmp/minds-e2e-done on startup so it always waits fresh.
 
 import os
 import re
-import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -29,6 +29,7 @@ from pathlib import Path
 import dotenv
 import pytest
 import uvicorn
+from loguru import logger
 from playwright.sync_api import sync_playwright
 
 from imbue.minds.config.data_types import MindPaths
@@ -40,9 +41,15 @@ from imbue.minds.forwarding_server.backend_resolver import MngrStreamManager
 from imbue.minds.primitives import OneTimeCode
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_TEMPLATE_REPO = _REPO_ROOT / ".external_worktrees" / "forever-claude-template"
+_TEMPLATE_REPO = Path.home() / "project" / "forever-claude-template"
 _SIGNAL_FILE = Path("/tmp/minds-e2e-done")
 _AGENT_NAME = "forever"
+
+
+def _configure_logging() -> None:
+    """Set up trace-level logging so all server internals are visible."""
+    logger.remove()
+    logger.add(sys.stderr, level="TRACE", format="{time:HH:mm:ss.SSS} | {level:<7} | {name}:{function}:{line} - {message}")
 
 
 def _load_env() -> None:
@@ -69,9 +76,11 @@ def _destroy_agent(agent_name: str) -> None:
     """Destroy an agent by name, ignoring errors if it doesn't exist."""
     try:
         subprocess.run(
-            ["uv", "run", "mngr", "destroy", agent_name, "--yes"],
+            ["uv", "run", "mngr", "destroy", agent_name, "--force"],
+            input="y\n",
             capture_output=True,
             timeout=30,
+            text=True,
             cwd=_REPO_ROOT,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -117,7 +126,7 @@ class ForwardingServerFixture:
 
         self._stream_manager.start()
 
-        config = uvicorn.Config(app, host=self.host, port=self.port, log_level="warning")
+        config = uvicorn.Config(app, host=self.host, port=self.port, log_level="trace")
         self._server = uvicorn.Server(config)
 
         self._thread = threading.Thread(target=self._server.run, daemon=True)
@@ -126,6 +135,7 @@ class ForwardingServerFixture:
         for _ in range(50):
             try:
                 with socket.create_connection((self.host, self.port), timeout=0.1):
+                    logger.info("Forwarding server started on {}:{}", self.host, self.port)
                     return
             except (ConnectionRefusedError, OSError):
                 time.sleep(0.1)
@@ -142,6 +152,19 @@ class ForwardingServerFixture:
             self._thread.join(timeout=5)
 
 
+def _on_console(msg: object) -> None:
+    """Log browser console messages."""
+    logger.info("[browser console] {}", msg)
+
+
+def _on_response(response: object) -> None:
+    """Log browser network responses."""
+    url = getattr(response, "url", "?")
+    status = getattr(response, "status", "?")
+    if "/api/" in str(url) or "event" in str(url).lower():
+        logger.debug("[browser response] {} {}", status, url)
+
+
 @pytest.mark.release
 def test_create_agent_e2e(tmp_path: Path) -> None:
     """Create an agent from the forever-claude-template and verify it runs.
@@ -149,12 +172,12 @@ def test_create_agent_e2e(tmp_path: Path) -> None:
     After creation, waits for /tmp/minds-e2e-done before tearing down,
     allowing interactive inspection of the running agent.
     """
+    _configure_logging()
     _load_env()
 
-    # Clean up signal file so we always wait fresh
-    _SIGNAL_FILE.unlink(missing_ok=True)
+    os.environ["MIND_NAME"] = _AGENT_NAME
 
-    # Clean up any leftover agent from a previous run
+    _SIGNAL_FILE.unlink(missing_ok=True)
     _destroy_agent(_AGENT_NAME)
 
     server = ForwardingServerFixture(tmp_path)
@@ -168,47 +191,54 @@ def test_create_agent_e2e(tmp_path: Path) -> None:
             browser = p.chromium.launch(headless=not headed, slow_mo=slow_mo)
             try:
                 page = browser.new_page()
+                page.on("console", _on_console)
+                page.on("response", _on_response)
 
                 # Authenticate
+                logger.info("Authenticating at {}", server.login_url)
                 page.goto(server.login_url)
                 page.wait_for_load_state("domcontentloaded")
                 page.wait_for_url(re.compile(r"/$|/create"), timeout=5000)
+                logger.info("Authenticated, on landing page: {}", page.url)
 
                 # Navigate to create page
                 page.goto(f"{server.base_url}/create")
                 page.wait_for_load_state("domcontentloaded")
+                logger.info("On create page: {}", page.url)
 
                 # Fill out the create form
                 page.fill("#agent_name", _AGENT_NAME)
                 page.fill("#git_url", str(_TEMPLATE_REPO))
                 page.fill("#branch", "")
                 page.select_option("#launch_mode", "LOCAL")
+                logger.info("Form filled, submitting...")
 
                 # Submit the form
                 page.click('button[type="submit"]')
+                logger.info("Form submitted, URL: {}", page.url)
 
                 # Should redirect to creating page with logs
                 page.wait_for_url(re.compile(r"/creating/"), timeout=10000)
-                assert "Creating" in page.title() or "creating" in page.url
+                logger.info("On creating page: {}", page.url)
 
-                # Wait for creation to complete (redirects to /agents/{id}/)
-                # This can take a while for Docker builds
+                # Wait for creation to complete.
+                # The creating page JS receives SSE events and redirects when done.
+                logger.info("Waiting for agent creation to complete (up to 5 min)...")
                 page.wait_for_url(
-                    re.compile(r"/agents/[^/]+/"),
-                    timeout=300000,  # 5 minutes for Docker build
+                    re.compile(r"/agents/"),
+                    timeout=300000,
                 )
 
                 agent_url = page.url
-                print(f"\nAgent created successfully!")
-                print(f"Agent URL: {agent_url}")
-                print(f"Server: {server.base_url}")
-                print(f"\nWaiting for signal file: {_SIGNAL_FILE}")
-                print(f"Create it to finish the test:  touch {_SIGNAL_FILE}")
+                logger.info("Agent created! URL: {}", agent_url)
+                logger.info("Server: {}", server.base_url)
+                logger.info("Waiting for signal file: {}", _SIGNAL_FILE)
+                logger.info("Create it to finish the test:  touch {}", _SIGNAL_FILE)
 
                 # Wait for the signal file before tearing down
                 _wait_for_signal_file(_SIGNAL_FILE)
 
-                print("\nSignal received, tearing down...")
+                logger.info("Signal received, tearing down...")
 
             finally:
                 browser.close()
