@@ -4,6 +4,7 @@ import termios
 from collections.abc import Generator
 from contextlib import ExitStack
 from contextlib import contextmanager
+from pathlib import Path
 
 from urwid.display.raw import Screen
 
@@ -11,7 +12,7 @@ from urwid.display.raw import Screen
 def has_interactive_terminal(
     *,
     stdin_is_tty: bool | None = None,
-    tty_path: str = "/dev/tty",
+    tty_path: Path = Path("/dev/tty"),
 ) -> bool:
     """Return True if a real terminal is available for interactive TUI input.
 
