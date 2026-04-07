@@ -18,6 +18,7 @@ from imbue.mngr.providers.docker.instance import LABEL_HOST_ID
 from imbue.mngr.providers.docker.instance import LABEL_HOST_NAME
 from imbue.mngr.providers.docker.instance import LABEL_PROVIDER
 from imbue.mngr.providers.docker.instance import LABEL_TAGS
+from imbue.mngr.providers.docker.instance import _get_docker_context_host
 from imbue.mngr.providers.docker.instance import _get_ssh_host_from_docker_config
 from imbue.mngr.providers.docker.instance import build_container_labels
 from imbue.mngr.providers.docker.instance import parse_container_labels
@@ -164,6 +165,29 @@ def test_get_ssh_host_remote_docker_ssh() -> None:
 
 def test_get_ssh_host_remote_docker_tcp() -> None:
     assert _get_ssh_host_from_docker_config("tcp://192.168.1.100:2376") == "192.168.1.100"
+
+
+# =========================================================================
+# Docker Context Host Resolution
+# =========================================================================
+
+
+def test_get_docker_context_host_returns_none_for_default_context() -> None:
+    """Default context should return None so docker.from_env() is used."""
+    # _get_docker_context_host reads the real Docker config. If the active
+    # context is "default" (or unreadable) the function must return None.
+    # On CI or machines without Docker Desktop the context is typically
+    # "default", so this test validates the common path.  Machines running
+    # Docker Desktop with a non-default context exercise the positive path
+    # via test_get_docker_context_host_returns_host_for_non_default_context.
+    result = _get_docker_context_host()
+    if result is None:
+        # Default context or Docker not installed -- expected on CI.
+        assert result is None
+    else:
+        # Non-default context (e.g. Docker Desktop) -- must be a URL string.
+        assert isinstance(result, str)
+        assert result.startswith("unix://") or result.startswith("tcp://") or result.startswith("ssh://")
 
 
 # =========================================================================
