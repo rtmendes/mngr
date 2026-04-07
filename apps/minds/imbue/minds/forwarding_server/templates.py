@@ -175,12 +175,7 @@ _CREATING_PAGE_TEMPLATE: Final[str] = (
       logsEl.scrollTop = logsEl.scrollHeight;
     }
 
-    source.onopen = function() {
-      console.log('[minds] SSE connection opened');
-    };
-
     source.onmessage = function(event) {
-      console.log('[minds] onmessage: ' + event.data.substring(0, 120));
       try {
         var data = JSON.parse(event.data);
         if (data._type === 'done') {
@@ -201,12 +196,12 @@ _CREATING_PAGE_TEMPLATE: Final[str] = (
           }
         }
       } catch(e) {
-        console.log('[minds] SSE parse error: ' + e);
+        // Ignore parse errors for keepalive comments
       }
     };
 
     source.onerror = function() {
-      console.log('[minds] SSE error/close, readyState:', source.readyState);
+      source.close();
     };
   </script>
 </body>
