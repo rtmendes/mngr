@@ -95,16 +95,6 @@ class HeadlessCommand(BaseAgent[HeadlessCommandConfig], StreamingHeadlessAgentMi
     def get_tui_ready_indicator(self) -> str | None:
         return None
 
-    def wait_for_ready_signal(
-        self, is_creating: bool, start_action: Callable[[], None], timeout: float | None = None
-    ) -> None:
-        """Start the agent without waiting for any readiness signal.
-
-        HeadlessCommand agents have no TUI, so there is nothing to wait for.
-        We still need to call start_action() so the tmux session starts.
-        """
-        start_action()
-
     def assemble_command(
         self,
         host: OnlineHostInterface,
