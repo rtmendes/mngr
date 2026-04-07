@@ -1,4 +1,3 @@
-import hashlib
 import json
 import subprocess
 from collections.abc import Generator
@@ -10,26 +9,6 @@ from imbue.mngr.providers.docker.testing import remove_all_containers_by_prefix
 from imbue.mngr.utils.testing import generate_test_environment_name
 from imbue.mngr.utils.testing import get_subprocess_test_env
 from imbue.mngr.utils.testing import run_mngr_subprocess
-
-
-def write_fake_docker_context(config_dir: Path, context_name: str, host_url: str) -> None:
-    """Write a fake Docker config and context metadata into *config_dir*.
-
-    Used by the ``fake_docker_config`` fixture to set up a deterministic
-    Docker context for tests that exercise ``_get_docker_context_host``.
-    """
-    (config_dir / "config.json").write_text(json.dumps({"currentContext": context_name}))
-    if context_name == "default":
-        return
-    ctx_id = hashlib.sha256(context_name.encode()).hexdigest()
-    meta_dir = config_dir / "contexts" / "meta" / ctx_id
-    meta_dir.mkdir(parents=True, exist_ok=True)
-    meta = {
-        "Name": context_name,
-        "Metadata": {},
-        "Endpoints": {"docker": {"Host": host_url, "SkipTLSVerify": False}},
-    }
-    (meta_dir / "meta.json").write_text(json.dumps(meta))
 
 
 @pytest.fixture
