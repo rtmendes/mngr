@@ -302,6 +302,9 @@ def _parse_providers(
 
     Uses model_construct to bypass validation and explicitly set None for unset fields.
     Provider blocks whose plugin is disabled are silently skipped.
+    Provider blocks with is_enabled=false are also skipped when the backend
+    plugin is not installed (unknown backend), since there is no need to resolve
+    the backend for a disabled provider.
     """
     providers: dict[ProviderInstanceName, ProviderInstanceConfig] = {}
 
@@ -313,6 +316,15 @@ def _parse_providers(
         try:
             config_class = get_provider_config_class(backend)
         except UnknownBackendError as e:
+            # If the provider is explicitly disabled via is_enabled=false, skip
+            # silently.  This allows config files to define provider blocks for
+            # backends whose plugin is not installed, as long as the provider is
+            # disabled.  We check here (inside the except) rather than before
+            # the try so that is_enabled=false is still preserved in the parsed
+            # config when the backend plugin IS installed -- enabling correct
+            # merge behaviour across config layers.
+            if raw_config.get("is_enabled") is False:
+                continue
             msg = f"Provider '{name}' references unknown backend '{backend}'."
             if backend in disabled_plugins:
                 msg += (
