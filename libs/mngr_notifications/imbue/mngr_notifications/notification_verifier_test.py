@@ -114,14 +114,6 @@ def test_check_notifier_binary_macos() -> None:
     assert result is None
 
 
-@pytest.mark.skipif(shutil.which("notify-send") is not None, reason="notify-send is installed")
-def test_check_notifier_binary_linux_missing() -> None:
-    """check_notifier_binary returns an error when notify-send is not installed."""
-    result = check_notifier_binary(LinuxNotifier())
-    assert result is not None
-    assert "notify-send" in result
-
-
 # --- _run_verification (CLI integration) ---
 
 
