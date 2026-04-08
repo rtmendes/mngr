@@ -669,9 +669,7 @@ def _create_agent(
                 # the existing agent's work_dir so we update in place.
                 # If they did set one, honor it (the agent moves to the new path).
                 resolved_target = (
-                    agent_opts.target_path
-                    if agent_opts.target_path is not None
-                    else existing_agent.work_dir
+                    agent_opts.target_path if agent_opts.target_path is not None else existing_agent.work_dir
                 )
                 agent_opts = agent_opts.model_copy_update(
                     to_update(agent_opts.field_ref().agent_id, existing_agent.id),
@@ -1182,11 +1180,8 @@ def _resolve_transfer_mode(
     is_git_repo = (
         _is_git_repo(source_location.path, mngr_ctx.concurrency_group) if source_location.host.is_local else True
     )
-    is_creating_new_host = _is_creating_new_host(address, opts.new_host)
     is_remote = (
-        is_creating_new_host
-        and address.provider_name is not None
-        and address.provider_name.lower() != LOCAL_PROVIDER_NAME
+        address.provider_name is not None and address.provider_name.lower() != LOCAL_PROVIDER_NAME
     ) or not source_location.host.is_local
 
     # Check if target path points to the same location as source
