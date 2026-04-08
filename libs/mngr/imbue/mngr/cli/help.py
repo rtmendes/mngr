@@ -8,10 +8,10 @@ Both commands and topics support aliases (e.g., ``mngr help c`` for create,
 ``mngr help addr`` for address).
 """
 
-import sys
 from io import StringIO
 
 import click
+from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.frozen_model import FrozenModel
@@ -265,8 +265,8 @@ def help_command(ctx: click.Context, topic: tuple[str, ...]) -> None:
         _show_topic_help(ctx, topic_page)
         return
 
-    sys.stderr.write(f"No help found for '{' '.join(topic)}'.\n")
-    sys.stderr.write("Run 'mngr help' for a list of commands and topics.\n")
+    logger.error("No help found for '{}'.", " ".join(topic))
+    logger.error("Run 'mngr help' for a list of commands and topics.")
     ctx.exit(1)
 
 
