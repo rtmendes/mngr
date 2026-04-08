@@ -49,6 +49,7 @@ from imbue.mngr.providers.ssh_utils import add_host_to_known_hosts
 from imbue.mngr.providers.ssh_utils import create_pyinfra_host
 from imbue.mngr.providers.ssh_utils import wait_for_sshd
 from imbue.mngr_lima.config import LimaProviderConfig
+from imbue.mngr_lima.constants import CLOUD_INIT_TIMEOUT_SECONDS
 from imbue.mngr_lima.errors import LimaCommandError
 from imbue.mngr_lima.errors import LimaHostCreationError
 from imbue.mngr_lima.errors import LimaHostRenameError
@@ -332,8 +333,6 @@ sudo poweroff
 
     def _wait_for_cloud_init(self, instance_name: str) -> None:
         """Wait for cloud-init to complete inside the VM."""
-        from imbue.mngr_lima.constants import CLOUD_INIT_TIMEOUT_SECONDS
-
         with log_span("Waiting for cloud-init to complete in {}", instance_name):
             exit_code, stdout, stderr = limactl_shell(
                 self.mngr_ctx.concurrency_group,
