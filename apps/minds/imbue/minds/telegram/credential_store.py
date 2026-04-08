@@ -10,6 +10,7 @@ from pathlib import Path
 
 from loguru import logger
 from pydantic import SecretStr
+from pydantic import ValidationError
 
 from imbue.imbue_common.logging import log_span
 from imbue.minds.telegram.data_types import TelegramBotCredentials
@@ -41,7 +42,11 @@ def load_telegram_user_credentials(data_dir: Path) -> TelegramUserCredentials | 
         logger.warning("Could not load Telegram user credentials from {}: {}", creds_path, exc)
         return None
 
-    return TelegramUserCredentials.model_validate(raw)
+    try:
+        return TelegramUserCredentials.model_validate(raw)
+    except ValidationError as exc:
+        logger.warning("Telegram user credentials file has invalid schema ({}): {}", creds_path, exc)
+        return None
 
 
 def save_telegram_user_credentials(
@@ -73,7 +78,12 @@ def load_agent_bot_credentials(
     # SecretStr needs special handling when loading from JSON
     if "bot_token" in raw and isinstance(raw["bot_token"], str):
         raw["bot_token"] = SecretStr(raw["bot_token"])
-    return TelegramBotCredentials.model_validate(raw)
+
+    try:
+        return TelegramBotCredentials.model_validate(raw)
+    except ValidationError as exc:
+        logger.warning("Bot credentials file has invalid schema for agent {} ({}): {}", agent_id, creds_path, exc)
+        return None
 
 
 def save_agent_bot_credentials(
