@@ -741,16 +741,16 @@ def test_find_user_claude_config_returns_default_path() -> None:
     assert result == config
 
 
-def test_find_user_claude_config_defaults_to_beside_dir_with_original_dir_but_no_files(
+def test_find_user_claude_config_defaults_to_inside_dir_with_original_dir_but_no_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With ORIGINAL_CLAUDE_CONFIG_DIR set but no config files, returns the beside-dir path."""
+    """With ORIGINAL_CLAUDE_CONFIG_DIR set but no config files, returns the inside-dir path."""
     user_dir = tmp_path / "user-claude"
     user_dir.mkdir()
     monkeypatch.setenv("ORIGINAL_CLAUDE_CONFIG_DIR", str(user_dir))
 
     result = find_user_claude_config()
-    assert result == tmp_path / ".claude.json"
+    assert result == user_dir / ".claude.json"
 
 
 def test_find_user_claude_config_finds_inside_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

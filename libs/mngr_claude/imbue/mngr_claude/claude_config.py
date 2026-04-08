@@ -143,7 +143,7 @@ def find_user_claude_config() -> Path:
     for candidate in candidates:
         if candidate.exists():
             return candidate
-    return candidates[-1]
+    return candidates[0]
 
 
 def get_claude_config_backup_path() -> Path:
