@@ -42,6 +42,8 @@ _AUTH_KEY_BYTE_LENGTH: Final[int] = 256
 
 _DEFAULT_PORT: Final[int] = 443
 
+_HTTP_TIMEOUT_SECONDS: Final[int] = 15
+
 _BOT_TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(r"(\d+:[A-Za-z0-9_-]+)")
 
 _BOT_USERNAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"t\.me/(\w+)")
@@ -80,14 +82,14 @@ def fetch_telegram_web_api_credentials() -> tuple[int, str]:
     JavaScript. Falls back to known defaults if extraction fails.
     """
     try:
-        html = urllib.request.urlopen(TELEGRAM_WEB_URL).read().decode()
+        html = urllib.request.urlopen(TELEGRAM_WEB_URL, timeout=_HTTP_TIMEOUT_SECONDS).read().decode()
 
         main_match = re.search(r"(main\.[a-f0-9]+\.js)", html)
         if not main_match:
             raise ValueError("Could not find main bundle in Telegram Web HTML")
 
         main_js_url = TELEGRAM_WEB_URL + main_match.group(1)
-        main_js = urllib.request.urlopen(main_js_url).read().decode()
+        main_js = urllib.request.urlopen(main_js_url, timeout=_HTTP_TIMEOUT_SECONDS).read().decode()
 
         cred_match = re.search(r'Number\("(\d+)"\),"([a-f0-9]{32})"', main_js)
         if cred_match:
@@ -98,7 +100,7 @@ def fetch_telegram_web_api_credentials() -> tuple[int, str]:
         for chunk_id, chunk_hash in chunk_entries:
             chunk_url = f"{TELEGRAM_WEB_URL}{chunk_id}.{chunk_hash}.js"
             try:
-                chunk_js = urllib.request.urlopen(chunk_url).read().decode()
+                chunk_js = urllib.request.urlopen(chunk_url, timeout=_HTTP_TIMEOUT_SECONDS).read().decode()
             except (urllib.error.URLError, urllib.error.HTTPError):
                 continue
             cred_match = re.search(r'Number\("(\d+)"\),"([a-f0-9]{32})"', chunk_js)
