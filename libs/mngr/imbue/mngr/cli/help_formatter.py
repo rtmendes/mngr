@@ -298,8 +298,8 @@ def _write_git_style_help(
     # SEE ALSO section (if provided)
     if metadata.see_also:
         output.write(f"{_format_section_title('See Also')}\n")
-        for command_name, description in metadata.see_also:
-            output.write(f"       mngr {command_name} --help - {description}\n")
+        for ref_name, description in metadata.see_also:
+            output.write(f"       mngr help {ref_name} - {description}\n")
         output.write("\n")
 
     # EXAMPLES section (if provided)

@@ -175,17 +175,13 @@ All agent fields from the "Available Fields" section can be used in filter expre
 - You can use Python-style list slicing for list fields (e.g., `host.snapshots[0]` for the first snapshot, `host.snapshots[:3]` for the first 3)
 
 
-
-## Related Documentation
-
-- [Multi-target Options](../generic/multi_target.md) - Behavior when some agents cannot be accessed
-- [Common Options](../generic/common.md) - Common CLI options for output format, logging, etc.
-
 ## See Also
 
 - [mngr create](./create.md) - Create a new agent
 - [mngr connect](./connect.md) - Connect to an existing agent
 - [mngr destroy](./destroy.md) - Destroy agents
+- [mngr help multi_target](../generic/multi_target.md) - Behavior when some agents cannot be accessed
+- [mngr help common](../generic/common.md) - Common CLI options for output format, logging, etc.
 
 ## Examples
 
