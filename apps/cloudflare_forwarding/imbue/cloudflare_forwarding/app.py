@@ -811,7 +811,14 @@ class ForwardingCtx:
 
 
 def authenticate_request(request: Request, ops: CloudflareOps) -> AuthResult:
-    """Authenticate a request. Returns AdminAuth or AgentAuth."""
+    """Authenticate a request. Returns AdminAuth or AgentAuth.
+
+    Supports three authentication methods:
+    - HTTP Basic Auth (admin credentials from USER_CREDENTIALS)
+    - Bearer token (agent tunnel token)
+    - Google OAuth via Cloudflare Access (Cf-Access-Authenticated-User-Email
+      header matched against GOOGLE_AUTH_USERS)
+    """
     auth_header = request.headers.get("authorization", "")
 
     if auth_header.lower().startswith("bearer "):
@@ -819,6 +826,11 @@ def authenticate_request(request: Request, ops: CloudflareOps) -> AuthResult:
 
     if auth_header.lower().startswith("basic "):
         return _authenticate_admin(auth_header)
+
+    # Check for Cloudflare Access Google OAuth header (no Authorization header required)
+    cf_email = request.headers.get("cf-access-authenticated-user-email")
+    if cf_email:
+        return _authenticate_google_oauth(cf_email)
 
     raise HTTPException(status_code=401, detail="Missing credentials")
 
@@ -840,6 +852,31 @@ def _authenticate_admin(auth_header: str) -> AdminAuth:
     if expected is None or not secrets_module.compare_digest(password.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return AdminAuth(username=username)
+
+
+def _authenticate_google_oauth(email: str) -> AdminAuth:
+    """Validate a Google OAuth email from Cloudflare Access.
+
+    Looks up the email (case-insensitive) in the GOOGLE_AUTH_USERS env var,
+    which is a JSON object mapping email addresses to usernames.
+    Returns AdminAuth with the mapped username.
+    """
+    raw = os.environ.get("GOOGLE_AUTH_USERS", "")
+    if not raw:
+        raise HTTPException(status_code=401, detail="Google OAuth not configured")
+
+    try:
+        users: dict[str, str] = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="GOOGLE_AUTH_USERS is not valid JSON") from exc
+
+    # Case-insensitive email lookup
+    email_lower = email.lower()
+    for configured_email, username in users.items():
+        if configured_email.lower() == email_lower:
+            return AdminAuth(username=username)
+
+    raise HTTPException(status_code=401, detail="Email not authorized")
 
 
 def _authenticate_agent(token: str, ops: CloudflareOps) -> AgentAuth:

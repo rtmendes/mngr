@@ -21,6 +21,7 @@ Requires the following Modal Secrets (env vars):
 - `CLOUDFLARE_ZONE_ID`: Cloudflare zone ID for DNS records
 - `CLOUDFLARE_DOMAIN`: Base domain for service subdomains (e.g. `example.com`)
 - `USER_CREDENTIALS`: JSON object mapping usernames to secrets (e.g. `{"alice": "secret1"}`)
+- `GOOGLE_AUTH_USERS` (optional): JSON object mapping Google email addresses to usernames (e.g. `{"alice@gmail.com": "alice"}`). Enables Google OAuth via Cloudflare Access.
 
 Deploy with:
 
@@ -30,12 +31,13 @@ modal deploy apps/cloudflare_forwarding/imbue/cloudflare_forwarding/app.py
 
 ## Authentication
 
-Endpoints accept two auth methods, distinguished by the Authorization header:
+Endpoints accept three auth methods:
 
 - **Admin (Basic Auth)**: `Authorization: Basic <base64(username:password)>` -- full access to all endpoints.
 - **Agent (Bearer token)**: `Authorization: Bearer <tunnel_token>` -- scoped to a single tunnel; can add/remove/list services but cannot create/delete tunnels or manage auth policies.
+- **Google OAuth (Cloudflare Access)**: requests with a `Cf-Access-Authenticated-User-Email` header (set by Cloudflare Access after Google OAuth) are authenticated as admin when the email matches an entry in `GOOGLE_AUTH_USERS`. No Authorization header required.
 
-Credentials are validated against a JSON object in the `USER_CREDENTIALS` env var. Agent tokens are the Cloudflare tunnel tokens returned when creating a tunnel.
+Admin credentials are validated against `USER_CREDENTIALS`. Agent tokens are the Cloudflare tunnel tokens returned when creating a tunnel. Google OAuth emails are mapped to usernames via `GOOGLE_AUTH_USERS` (JSON object, e.g. `{"alice@gmail.com": "alice"}`).
 
 ## API
 

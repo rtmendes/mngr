@@ -373,6 +373,57 @@ def test_route_bad_basic_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resp.status_code == 401
 
 
+def test_route_google_oauth_authenticates_with_valid_email(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_AUTH_USERS", json.dumps({"owner@example.com": "testuser"}))
+    client = _make_test_client(monkeypatch)
+    client.post("/tunnels", json={"agent_id": "agent1"}, headers=_admin_headers())
+    resp = client.get(
+        "/tunnels",
+        headers={"cf-access-authenticated-user-email": "owner@example.com"},
+    )
+    assert resp.status_code == 200
+
+
+def test_route_google_oauth_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_AUTH_USERS", json.dumps({"Owner@Example.COM": "testuser"}))
+    client = _make_test_client(monkeypatch)
+    resp = client.get(
+        "/tunnels",
+        headers={"cf-access-authenticated-user-email": "owner@example.com"},
+    )
+    assert resp.status_code == 200
+
+
+def test_route_google_oauth_rejects_unknown_email(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_AUTH_USERS", json.dumps({"owner@example.com": "testuser"}))
+    client = _make_test_client(monkeypatch)
+    resp = client.get(
+        "/tunnels",
+        headers={"cf-access-authenticated-user-email": "stranger@example.com"},
+    )
+    assert resp.status_code == 401
+
+
+def test_route_google_oauth_rejected_when_not_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _make_test_client(monkeypatch)
+    resp = client.get(
+        "/tunnels",
+        headers={"cf-access-authenticated-user-email": "anyone@example.com"},
+    )
+    assert resp.status_code == 401
+
+
+def test_route_google_oauth_scopes_tunnels_to_mapped_username(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Google OAuth uses the mapped username for tunnel ownership."""
+    monkeypatch.setenv("GOOGLE_AUTH_USERS", json.dumps({"owner@example.com": "testuser"}))
+    client = _make_test_client(monkeypatch)
+    oauth_headers = {"cf-access-authenticated-user-email": "owner@example.com"}
+    resp = client.post("/tunnels", json={"agent_id": "agent1"}, headers=oauth_headers)
+    assert resp.status_code in (200, 201)
+    tunnel_name = resp.json()["tunnel_name"]
+    assert tunnel_name == "testuser--agent1"
+
+
 def test_route_malformed_bearer_token(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _make_test_client(monkeypatch)
     resp = client.get("/tunnels/foo--bar/services", headers={"Authorization": "Bearer not-valid-base64!!!"})

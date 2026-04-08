@@ -14,7 +14,6 @@ Authentication is global (one session grants access to all agents). The forwardi
 - **Signing key**: generated once on first server start, stored at `{data_directory}/signing_key`. Used to sign all auth cookies.
 - **One-time codes**: a login code is generated and printed to the terminal when the server starts. Codes are stored in `{data_directory}/one_time_codes.json` and can only be used once.
 - **Session cookie**: after successful authentication, the server sets a signed `mind_session` cookie. This single cookie grants access to all agents and all server routes.
-- **Cloudflare Access (Google OAuth)**: when the `OWNER_EMAIL` environment variable is set and a request carries the `Cf-Access-Authenticated-User-Email` header (set by Cloudflare Access after Google OAuth), the email is compared against `OWNER_EMAIL`. A case-insensitive match grants access without requiring a session cookie. This enables the forwarding server to be exposed through Cloudflare Access for remote access.
 
 ## Local forwarding server routes
 
