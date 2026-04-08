@@ -33,9 +33,9 @@ from imbue.minds.forwarding_server.app import create_forwarding_server
 from imbue.minds.forwarding_server.auth import FileAuthStore
 from imbue.minds.forwarding_server.backend_resolver import MngrCliBackendResolver
 from imbue.minds.forwarding_server.backend_resolver import MngrStreamManager
+from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.testing import clean_env
-from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TEMPLATE_REPO = Path(os.environ.get("MINDS_TEMPLATE_REPO", str(Path.home() / "project" / "forever-claude-template")))
@@ -96,7 +96,6 @@ def _destroy_agent(agent_name: str) -> None:
 
 
 class ForwardingServerFixture:
-
     def __init__(self, tmp_dir: Path) -> None:
         self.host = "127.0.0.1"
         self.port = _find_free_port()
