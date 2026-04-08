@@ -1767,7 +1767,10 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         """
         # Preserve session files before the state dir is deleted
         if self.agent_config.preserve_sessions_on_destroy:
-            _preserve_session_files(self, host)
+            try:
+                _preserve_session_files(self, host)
+            except (MngrError, OSError) as e:
+                logger.warning("Failed to preserve session files for agent {}: {}", self.name, e)
 
         config_dir = self.get_claude_config_dir()
         per_agent_config_exists = host.execute_idempotent_command(
