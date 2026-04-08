@@ -49,8 +49,8 @@ class CommandHelpMetadata(FrozenModel):
     )
     see_also: tuple[tuple[str, str], ...] = Field(
         default=(),
-        description="See Also references as (command_name, description) tuples. "
-        "Command name is just the subcommand (e.g., 'create' not 'mngr create').",
+        description="See Also references as (name, description) tuples. "
+        "Name can be a command (e.g., 'create') or a topic (e.g., 'multi_target').",
     )
 
     @property
