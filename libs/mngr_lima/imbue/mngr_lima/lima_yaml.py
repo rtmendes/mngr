@@ -1,3 +1,4 @@
+import os
 import platform
 import tempfile
 from pathlib import Path
@@ -102,8 +103,6 @@ def write_lima_yaml(config: dict, output_path: Path | None = None) -> Path:
     if output_path is None:
         fd, path_str = tempfile.mkstemp(suffix=".yaml", prefix="mngr-lima-")
         output_path = Path(path_str)
-        import os
-
         os.close(fd)
 
     output_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
