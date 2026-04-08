@@ -116,33 +116,34 @@ def get_claude_config_path() -> Path:
 def find_user_claude_config() -> Path:
     """Find the user-scope Claude config file (.claude.json).
 
-    Searches candidate locations and returns the first that exists. If no
-    config file exists on disk yet, returns the default creation path
-    (~/.claude.json).
+    Returns the first candidate path that exists on disk. If none exist,
+    returns the last candidate as the default creation path.
 
     Inside an mngr agent, $CLAUDE_CONFIG_DIR points to the agent's isolated
     config dir. This function looks for the *user's* original config instead.
 
-    Search order when $ORIGINAL_CLAUDE_CONFIG_DIR is set:
+    Candidate paths when $ORIGINAL_CLAUDE_CONFIG_DIR is set:
     1. $ORIGINAL_CLAUDE_CONFIG_DIR/.claude.json (custom CLAUDE_CONFIG_DIR convention)
     2. Parent of $ORIGINAL_CLAUDE_CONFIG_DIR / .claude.json (default layout where the
        config file lives *beside* the config dir: ~/.claude/ dir -> ~/.claude.json file)
-    3. Falls through to ~/.claude.json (default creation path)
 
     Without $ORIGINAL_CLAUDE_CONFIG_DIR:
     1. ~/.claude.json (Claude Code's default location)
     """
+    candidates: list[Path] = []
+
     original = os.environ.get("ORIGINAL_CLAUDE_CONFIG_DIR")
     if original:
         original_path = Path(original)
-        inside = original_path / ".claude.json"
-        if inside.exists():
-            return inside
-        beside = original_path.parent / ".claude.json"
-        if beside.exists():
-            return beside
+        candidates.append(original_path / ".claude.json")
+        candidates.append(original_path.parent / ".claude.json")
 
-    return Path.home() / ".claude.json"
+    candidates.append(Path.home() / ".claude.json")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[-1]
 
 
 def get_claude_config_backup_path() -> Path:
