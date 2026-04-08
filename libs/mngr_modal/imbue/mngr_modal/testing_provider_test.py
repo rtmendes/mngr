@@ -41,6 +41,7 @@ from imbue.mngr_modal.backend import _lookup_persistent_app_with_env_retry
 from imbue.mngr_modal.backend import register_provider_backend
 from imbue.mngr_modal.config import ModalMode
 from imbue.mngr_modal.config import ModalProviderConfig
+from imbue.mngr_modal.errors import ModalMngrError
 from imbue.mngr_modal.errors import NoSnapshotsModalMngrError
 from imbue.mngr_modal.instance import HOST_VOLUME_INFIX
 from imbue.mngr_modal.instance import HostRecord
@@ -1250,9 +1251,9 @@ def test_modal_volume_wrapper(testing_provider: ModalProviderInstance) -> None:
 
 
 def test_modal_volume_translates_rate_limit_error_to_mngr_error() -> None:
-    """ModalProxyRateLimitError from the proxy layer is translated to MngrError."""
+    """ModalProxyRateLimitError from the proxy layer is translated to ModalMngrError."""
     vol = ModalVolume.model_construct(modal_volume=_RateLimitingVolumeStub())
-    with pytest.raises(MngrError, match="rate limit exceeded"):
+    with pytest.raises(ModalMngrError, match="rate limit exceeded"):
         vol.listdir("/any")
 
 
