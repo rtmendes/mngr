@@ -1,4 +1,3 @@
-import sys
 from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Iterator
@@ -65,7 +64,7 @@ def _ensure_observe(mngr_ctx: MngrContext) -> Iterator[RunningProcess | None]:
 
     write_human_line("Starting mngr observe in background...")
     process = mngr_ctx.concurrency_group.run_process_in_background(
-        [sys.executable, "-m", "imbue.mngr.main", "observe", "--quiet"],
+        ["mngr", "observe", "--quiet"],
     )
     try:
         yield process
