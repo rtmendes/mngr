@@ -8,6 +8,7 @@ import json
 import os
 import random
 import shlex
+import shutil
 import tempfile
 from abc import ABC
 from abc import abstractmethod
@@ -1844,7 +1845,7 @@ def _preserve_session_files(agent: ClaudeAgent, host: OnlineHostInterface) -> No
 
     dest_dir = _get_preserved_sessions_dir(agent)
 
-    # Get the local host for copy_directory (the CLI always runs locally)
+    # Get a local host reference for copy_directory (needed for remote agents)
     local_host = _get_local_host(agent.mngr_ctx)
 
     with log_span("Preserving session files for agent {}", agent.name):
@@ -1880,10 +1881,17 @@ def _copy_to_local(
     label: str,
     agent_name: str,
 ) -> None:
-    """Copy a directory from the source host to the local host."""
+    """Copy a directory from the source host to the local host.
+
+    For local agents, uses shutil.copytree (no rsync dependency).
+    For remote agents, uses copy_directory (rsync over SSH).
+    """
     try:
         dest_path.parent.mkdir(parents=True, exist_ok=True)
-        local_host.copy_directory(source_host, source_path, dest_path)
+        if source_host.is_local:
+            shutil.copytree(source_path, dest_path, dirs_exist_ok=True)
+        else:
+            local_host.copy_directory(source_host, source_path, dest_path)
         logger.debug("Preserved {} for agent {}", label, agent_name)
     except (MngrError, OSError) as e:
         logger.warning("Failed to preserve {} for agent {}: {}", label, agent_name, e)
