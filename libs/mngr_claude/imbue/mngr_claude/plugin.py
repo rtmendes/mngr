@@ -930,6 +930,27 @@ def _check_settings_local_gitignored(host: OnlineHostInterface, repo_path: Path)
     if not is_git_repo.success:
         return
 
+    # Resolve symlinks so git check-ignore doesn't fail with
+    # "fatal: pathspec '...' is beyond a symbolic link" when .claude is a symlink.
+    # Only runs when .claude is actually a symlink. Resolves both .claude and the
+    # repo root (in case repo_path itself contains symlinks) to compute the correct
+    # relative path for git check-ignore.
+    resolve_result = host.execute_idempotent_command(
+        "test -L .claude && realpath .claude && realpath .",
+        cwd=repo_path,
+        timeout_seconds=5.0,
+    )
+    if resolve_result.success:
+        lines = resolve_result.stdout.strip().splitlines()
+        if len(lines) == 2:
+            resolved_claude_dir = Path(lines[0])
+            resolved_repo_root = Path(lines[1])
+            try:
+                settings_relative = resolved_claude_dir.relative_to(resolved_repo_root) / "settings.local.json"
+            except ValueError:
+                # Symlink target is outside the repo -- git won't track it, so no gitignore needed.
+                return
+
     result = host.execute_idempotent_command(
         f"git check-ignore -q {shlex.quote(str(settings_relative))}",
         cwd=repo_path,
@@ -939,7 +960,7 @@ def _check_settings_local_gitignored(host: OnlineHostInterface, repo_path: Path)
         raise PluginMngrError(
             f".claude/settings.local.json is not gitignored in {repo_path}.\n"
             "mngr needs to write Claude hooks to this file, but it would appear as an unstaged change.\n"
-            f"Add '.claude/settings.local.json' to your .gitignore and try again. (original error: {result.stderr})"
+            f"Add '{settings_relative}' to your .gitignore and try again. (original error: {result.stderr})"
         )
 
 
