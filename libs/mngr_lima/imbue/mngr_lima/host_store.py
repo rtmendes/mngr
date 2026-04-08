@@ -127,7 +127,8 @@ class LimaHostStore(MutableModel):
         records: list[HostRecord] = []
         try:
             entries = self.volume.listdir("host_state")
-        except (FileNotFoundError, OSError):
+        except (FileNotFoundError, OSError) as e:
+            logger.trace("No host records directory found: {}", e)
             return []
 
         for entry in entries:
@@ -159,7 +160,8 @@ class LimaHostStore(MutableModel):
         agent_dir = self._agent_data_dir(host_id)
         try:
             entries = self.volume.listdir(agent_dir)
-        except (FileNotFoundError, OSError):
+        except (FileNotFoundError, OSError) as e:
+            logger.trace("No agent data directory for host {}: {}", host_id, e)
             return []
 
         agent_records: list[dict[str, Any]] = []
