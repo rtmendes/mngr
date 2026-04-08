@@ -66,6 +66,7 @@ mngr create [OPTIONS] [POSITIONAL_NAME] [POSITIONAL_AGENT_TYPE] [AGENT_ARGS]...
 | `--command` | text | Run a literal command using the generic agent type (mutually exclusive with --type) | None |
 | `-w`, `--extra-window` | text | Run extra command in additional window. Use name="command" to set window name. Note: ALL_UPPERCASE names (e.g., FOO="bar") are treated as env var assignments, not window names | None |
 | `--label` | text | Agent label KEY=VALUE [repeatable] [experimental] | None |
+| `--project` | text | Project name for the agent (sets the 'project' label) [default: derived from git remote origin or folder name] | None |
 
 ## Host Options
 
@@ -75,7 +76,6 @@ By default, `mngr create` uses the local host. Use the agent address to specify 
 | ---- | ---- | ----------- | ------- |
 | `--provider` | text | Provider for the host (alternative to .PROVIDER in the address, e.g. --provider docker) | None |
 | `--new-host` | boolean | Force creating a new host (requires a provider via address or --provider) | `False` |
-| `--project` | text | Project name for the agent (sets the 'project' label) [default: derived from git remote origin or folder name] | None |
 | `--host-label` | text | Host metadata label KEY=VALUE [repeatable] | None |
 | `--host-name-style` | choice (`coolname` &#x7C; `astronomy` &#x7C; `places` &#x7C; `cities` &#x7C; `fantasy` &#x7C; `scifi` &#x7C; `painters` &#x7C; `authors` &#x7C; `artists` &#x7C; `musicians` &#x7C; `scientists`) | Auto-generated host name style | `coolname` |
 
@@ -88,7 +88,7 @@ By default, `mngr create` uses the local host. Use the agent address to specify 
 | `--auto-start`, `--no-auto-start` | boolean | Automatically start offline hosts (source and target) before proceeding | `True` |
 | `--adopt-session` | text | Adopt an existing Claude Code session into this agent. Accepts a session ID or a path to a .jsonl file [repeatable]. | None |
 
-## Agent Source Data (what to include in the new agent)
+## Source Data (what to include in the new agent)
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
@@ -100,7 +100,7 @@ By default, `mngr create` uses the local host. Use the agent address to specify 
 | `--rsync-args` | text | Additional arguments to pass to rsync | None |
 | `--include-git`, `--no-include-git` | boolean | Include .git directory | `True` |
 
-## Agent Target (where to put the new agent)
+## Target (where to put the new agent)
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
@@ -108,7 +108,7 @@ By default, `mngr create` uses the local host. Use the agent address to specify 
 | `--target-path` | text | Directory to mount source inside agent host. Incompatible with --transfer=none | None |
 | `--transfer` | choice (`none` &#x7C; `rsync` &#x7C; `git-mirror` &#x7C; `git-worktree`) | How to transfer the project into the agent. none: run in-place (no transfer). rsync: copy via rsync (non-git projects). git-mirror: transfer via git push --mirror (git projects). git-worktree: create a git worktree (git projects, local only). [default: git-worktree for local git repos, git-mirror for remote git repos, rsync for non-git] | None |
 
-## Agent Git Configuration
+## Git Configuration
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
@@ -120,7 +120,7 @@ By default, `mngr create` uses the local host. Use the agent address to specify 
 | `--include-gitignored`, `--no-include-gitignored` | boolean | Include gitignored files | `False` |
 | `--worktree-base-folder` | path | Base folder for git worktrees [default: ~/.mngr/worktrees/] | None |
 
-## Agent Environment Variables
+## Environment Variables
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
@@ -128,9 +128,7 @@ By default, `mngr create` uses the local host. Use the agent address to specify 
 | `--env-file` | path | Load env | None |
 | `--pass-env` | text | Forward variable from shell | None |
 
-## Agent Provisioning
-
-See [Provision Options](../secondary/provision.md) for full details.
+## Provisioning
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |

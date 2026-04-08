@@ -229,6 +229,10 @@ class _CreateCommand(click.Command):
     help='Run extra command in additional window. Use name="command" to set window name. Note: ALL_UPPERCASE names (e.g., FOO="bar") are treated as env var assignments, not window names',
 )
 @optgroup.option("--label", multiple=True, help="Agent label KEY=VALUE [repeatable] [experimental]")
+@optgroup.option(
+    "--project",
+    help="Project name for the agent (sets the 'project' label) [default: derived from git remote origin or folder name]",
+)
 @optgroup.group("Host Options")
 @optgroup.option(
     "--provider",
@@ -239,10 +243,6 @@ class _CreateCommand(click.Command):
     is_flag=True,
     default=False,
     help="Force creating a new host (requires a provider via address or --provider)",
-)
-@optgroup.option(
-    "--project",
-    help="Project name for the agent (sets the 'project' label) [default: derived from git remote origin or folder name]",
 )
 @optgroup.option("--host-label", multiple=True, help="Host metadata label KEY=VALUE [repeatable]")
 @optgroup.option(
@@ -267,7 +267,7 @@ class _CreateCommand(click.Command):
     show_default=True,
     help="Automatically start offline hosts (source and target) before proceeding",
 )
-@optgroup.group("Agent Source Data (what to include in the new agent)")
+@optgroup.group("Source Data (what to include in the new agent)")
 @optgroup.option(
     "--from",
     "--source",
@@ -284,7 +284,7 @@ class _CreateCommand(click.Command):
 )
 @optgroup.option("--rsync-args", help="Additional arguments to pass to rsync")
 @optgroup.option("--include-git/--no-include-git", default=True, show_default=True, help="Include .git directory")
-@optgroup.group("Agent Target (where to put the new agent)")
+@optgroup.group("Target (where to put the new agent)")
 @optgroup.option("--target", help="Target [HOST][:PATH]. Defaults to current dir if no other target args are given")
 @optgroup.option(
     "--target-path", help="Directory to mount source inside agent host. Incompatible with --transfer=none"
@@ -300,7 +300,7 @@ class _CreateCommand(click.Command):
     "git-worktree: create a git worktree (git projects, local only). "
     "[default: git-worktree for local git repos, git-mirror for remote git repos, rsync for non-git]",
 )
-@optgroup.group("Agent Git Configuration")
+@optgroup.group("Git Configuration")
 @optgroup.option(
     "--branch",
     default=f":{_DEFAULT_NEW_BRANCH_PATTERN}",
@@ -334,7 +334,7 @@ class _CreateCommand(click.Command):
     type=click.Path(),
     help="Base folder for git worktrees [default: ~/.mngr/worktrees/]",
 )
-@optgroup.group("Agent Environment Variables")
+@optgroup.group("Environment Variables")
 @optgroup.option("--env", multiple=True, help="Set environment variable KEY=VALUE")
 @optgroup.option(
     "--env-file",
@@ -343,7 +343,7 @@ class _CreateCommand(click.Command):
     help="Load env",
 )
 @optgroup.option("--pass-env", multiple=True, help="Forward variable from shell")
-@optgroup.group("Agent Provisioning")
+@optgroup.group("Provisioning")
 @optgroup.option("--grant", "grant", multiple=True, help="Grant a permission to the agent [repeatable]")
 @optgroup.option(
     "--extra-provision-command",
