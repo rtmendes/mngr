@@ -80,20 +80,22 @@ self.addEventListener('fetch', (event) => {{
 
   url.pathname = PREFIX + url.pathname;
 
-  const init = {{
-    method: event.request.method,
-    headers: event.request.headers,
-    mode: event.request.mode,
-    credentials: event.request.credentials,
-    redirect: 'manual',
-  }};
+  async function forwardRequest() {{
+    const init = {{
+      method: event.request.method,
+      headers: event.request.headers,
+      credentials: event.request.credentials,
+      redirect: 'manual',
+    }};
 
-  if (!['GET', 'HEAD'].includes(event.request.method)) {{
-    init.body = event.request.body;
-    init.duplex = 'half';
+    if (!['GET', 'HEAD'].includes(event.request.method)) {{
+      init.body = await event.request.arrayBuffer();
+    }}
+
+    return fetch(url.toString(), init);
   }}
 
-  event.respondWith(fetch(new Request(url.toString(), init)));
+  event.respondWith(forwardRequest());
 }});
 """
 
