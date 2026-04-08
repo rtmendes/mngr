@@ -281,8 +281,11 @@ def test_cloudflare_email_header_rejects_wrong_email(
     assert "Login" in response.text
 
 
-def test_cloudflare_email_header_ignored_when_owner_email_unset(tmp_path: Path) -> None:
+def test_cloudflare_email_header_ignored_when_owner_email_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Without OWNER_EMAIL set, the Cloudflare header is ignored."""
+    monkeypatch.delenv("OWNER_EMAIL", raising=False)
     client, _, _ = _setup_test_server(tmp_path)
 
     response = client.get(
