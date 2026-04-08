@@ -469,6 +469,8 @@ async def _forward_http_request_streaming(
                     yield chunk
         except httpx.ConnectError:
             logger.debug("Backend connection lost during streaming for {} server {}", agent_id, server_name)
+        except httpx.ReadError:
+            logger.debug("Backend read error during streaming for {} server {}", agent_id, server_name)
         except httpx.TimeoutException:
             logger.debug("Backend stream timed out for {} server {}", agent_id, server_name)
 
