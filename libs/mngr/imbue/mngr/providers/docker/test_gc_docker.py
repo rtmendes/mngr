@@ -45,9 +45,8 @@ def docker_provider(temp_mngr_ctx: MngrContext) -> Generator[DockerProviderInsta
 def test_gc_completes_when_docker_daemon_offline(temp_mngr_ctx: MngrContext) -> None:
     """GC should complete without error when the Docker daemon is unreachable.
 
-    This validates the fix from the destroy-docker-offline PR: before the fix,
-    gc() crashed with an unhandled DockerException. Now Docker's discover_hosts
-    catches ProviderUnavailableError internally and returns an empty list.
+    Docker's discover_hosts() catches ProviderUnavailableError internally and
+    returns an empty list, so gc() processes the provider without errors.
     """
     offline_provider = make_offline_docker_provider(temp_mngr_ctx)
 
