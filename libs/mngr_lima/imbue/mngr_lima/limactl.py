@@ -8,11 +8,8 @@ from loguru import logger
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.logging import log_span
-from imbue.mngr.errors import HostNotFoundError
-from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import ProviderInstanceName
-from imbue.mngr_lima.constants import LIMA_INSTANCE_PREFIX
 from imbue.mngr_lima.constants import MINIMUM_LIMA_VERSION
 from imbue.mngr_lima.errors import LimaCommandError
 from imbue.mngr_lima.errors import LimaNotInstalledError
