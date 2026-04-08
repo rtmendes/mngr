@@ -77,8 +77,8 @@ def _destroy_agent(agent_name: str) -> None:
             cwd=_REPO_ROOT,
             env=clean_env(),
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.debug("mngr destroy {} failed (best-effort cleanup): {}", agent_name, exc)
 
     # Clean up any leftover worktree branch from dev-mode agents.
     # mngr destroy removes the worktree directory but not the git branch.
@@ -91,8 +91,8 @@ def _destroy_agent(agent_name: str) -> None:
             text=True,
             cwd=str(_TEMPLATE_REPO),
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        logger.debug("git branch -D {} failed (best-effort cleanup): {}", branch_name, exc)
 
 
 class ForwardingServerFixture:
