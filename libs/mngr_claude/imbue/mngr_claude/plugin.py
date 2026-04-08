@@ -320,7 +320,9 @@ def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, targ
                 persistent_path = _compute_persistent_plugin_path(install_path, source_claude_dir)
                 raise ConfigError(
                     f"Plugin {plugin_name!r} in {installed_plugins_path} has an installPath "
-                    f"pointing to a previous mngr agent's config directory:\n"
+                    f"pointing to a previous mngr agent's config directory "
+                    f"(contains '{_MNGR_AGENT_CONFIG_DIR_MARKER}' instead of "
+                    f"starting with '{source_prefix}'):\n"
                     f"  Current (stale): {install_path}\n"
                     f"  Expected:        {persistent_path or '<unknown>'}\n"
                     f"To fix, uninstall the plugin with '/plugin' and reinstall it."
