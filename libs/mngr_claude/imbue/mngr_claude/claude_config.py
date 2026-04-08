@@ -101,18 +101,6 @@ def get_user_claude_config_dir() -> Path:
     return get_claude_config_dir()
 
 
-def get_claude_config_path() -> Path:
-    """Return the path to the Claude config file (.claude.json).
-
-    When $CLAUDE_CONFIG_DIR is set, returns $CLAUDE_CONFIG_DIR/.claude.json.
-    Otherwise returns ~/.claude.json (Claude Code's default location).
-    """
-    env_dir = os.environ.get("CLAUDE_CONFIG_DIR")
-    if env_dir:
-        return Path(env_dir) / ".claude.json"
-    return Path.home() / ".claude.json"
-
-
 def find_user_claude_config() -> Path:
     """Find the user-scope Claude config file (.claude.json).
 
@@ -144,11 +132,6 @@ def find_user_claude_config() -> Path:
         if candidate.exists():
             return candidate
     return candidates[0]
-
-
-def get_claude_config_backup_path() -> Path:
-    """Return the path to the Claude config backup file (.claude.json.bak)."""
-    return get_claude_config_path().with_suffix(".json.bak")
 
 
 # =============================================================================
