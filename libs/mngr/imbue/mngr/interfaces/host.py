@@ -526,14 +526,6 @@ class AgentGitOptions(FrozenModel):
         default=None,
         description="Fully resolved name for the new branch, or None to use base_branch directly",
     )
-    depth: int | None = Field(
-        default=None,
-        description="Shallow clone depth (None for full clone)",
-    )
-    shallow_since: str | None = Field(
-        default=None,
-        description="Shallow clone since date",
-    )
     is_include_unclean: bool = Field(
         # the default is true because we should not assume that git is even being used
         default=True,
