@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Final
 
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import ProviderInstanceConfig
