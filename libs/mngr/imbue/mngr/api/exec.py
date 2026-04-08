@@ -73,12 +73,11 @@ def exec_command_on_agent(
     effective_cwd = Path(cwd) if cwd is not None else agent.work_dir
 
     logger.debug("Executing command on agent {}: {}", agent.name, command)
-    agent_env = agent.get_env_vars()
+    prefixed_command = host.build_source_env_prefix(agent) + command
     result = host.execute_stateful_command(
-        command,
+        prefixed_command,
         user=user,
         cwd=effective_cwd,
-        env=agent_env or None,
         timeout_seconds=timeout_seconds,
     )
 
@@ -170,29 +169,26 @@ def _execute_on_single_agent(
 ) -> bool:
     """Execute a command on a single agent. Returns True if the caller should abort."""
     try:
-        # Find the agent on the host to get its work_dir and env vars
+        # Find the agent on the host to get its work_dir and env prefix
         matched_agent: AgentInterface | None = None
         for agent in online_host.get_agents():
             if agent.id == match.agent_id:
                 matched_agent = agent
                 break
 
-        if cwd is not None:
-            effective_cwd: Path | None = Path(cwd)
-        elif matched_agent is not None:
-            effective_cwd = matched_agent.work_dir
-        else:
+        if matched_agent is None:
             return _record_failure(
                 result, match.agent_name, f"Agent {match.agent_name} not found on host", on_error, error_behavior
             )
 
+        effective_cwd = Path(cwd) if cwd is not None else matched_agent.work_dir
+        prefixed_command = online_host.build_source_env_prefix(matched_agent) + command
+
         with log_span("Executing command on agent {}", match.agent_name):
-            agent_env = matched_agent.get_env_vars() if matched_agent is not None else {}
             cmd_result = online_host.execute_stateful_command(
-                command,
+                prefixed_command,
                 user=user,
                 cwd=effective_cwd,
-                env=agent_env or None,
                 timeout_seconds=timeout_seconds,
             )
 

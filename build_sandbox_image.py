@@ -3,10 +3,10 @@
 Used as a control experiment to compare sandbox vs release image build times.
 """
 
-import os
 import signal
 import sys
 import time
+
 import modal
 
 DOCKERFILE = "libs/mngr/imbue/mngr/resources/Dockerfile.release"
@@ -15,8 +15,10 @@ TIMEOUT = 600  # 10 min — generous for fully uncached build with different bas
 
 def alarm_handler(signum, frame):
     elapsed = time.time() - start
-    print(f"\nKILLED after {elapsed:.1f}s (timeout={TIMEOUT}s). "
-          f"Dockerfile.release did NOT complete in 2X time.", flush=True)
+    print(
+        f"\nKILLED after {elapsed:.1f}s (timeout={TIMEOUT}s). Dockerfile.release did NOT complete in 2X time.",
+        flush=True,
+    )
     sys.exit(1)
 
 
