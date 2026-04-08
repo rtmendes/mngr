@@ -1,4 +1,5 @@
 import os
+import shlex
 import shutil
 import signal
 import stat
@@ -230,22 +231,22 @@ def _setup_test_profile(host_dir: Path) -> str:
     return user_id
 
 
-def _delete_modal_environment(prefix: str, user_id: str) -> None:
+def _delete_modal_environment(prefix: str, user_id: str, env: dict[str, str], cwd: Path) -> None:
     """Delete the Modal environment for this test."""
     environment_name = f"{prefix}{user_id}"
     logger.info("Deleting Modal environment: {}", environment_name)
     try:
-        result = subprocess.run(
-            ["uv", "run", "modal", "environment", "delete", environment_name, "--yes"],
-            capture_output=True,
-            text=True,
-            timeout=30,
+        result = run_command(
+            f"uv run modal environment delete {shlex.quote(environment_name)} --yes",
+            env=env,
+            cwd=cwd,
+            timeout=30.0,
         )
-        if result.returncode != 0:
+        if result.exit_code != 0:
             logger.warning("Failed to delete Modal environment {}: {}", environment_name, result.stderr.strip())
         else:
             logger.info("Deleted Modal environment: {}", environment_name)
-    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
+    except (FileNotFoundError, OSError) as exc:
         logger.warning("Error deleting Modal environment {}: {}", environment_name, exc)
 
 
@@ -426,7 +427,7 @@ def e2e(
     )
 
     # Delete the Modal environment (if one was created)
-    _delete_modal_environment("mngr_test-", test_user_id)
+    _delete_modal_environment("mngr_test-", test_user_id, env=env, cwd=temp_git_repo)
 
     # Kill the isolated tmux server
     tmux_tmpdir_str = str(tmux_tmpdir)
