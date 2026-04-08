@@ -295,19 +295,20 @@ def test_create_agent_dev_mode_e2e(tmp_path: Path) -> None:
     os.environ["UV_TOOL_DIR"] = uv_tool_dir
     os.environ["UV_TOOL_BIN_DIR"] = uv_tool_bin_dir
 
-    _destroy_agent(_DEV_AGENT_NAME)
-
     server = ForwardingServerFixture(tmp_path)
-    server.start()
-
-    client = httpx.Client(
-        base_url=server.base_url,
-        cookies={"mind_session": "skip"},
-        timeout=15.0,
-    )
-    os.environ["SKIP_AUTH"] = "1"
+    client: httpx.Client | None = None
 
     try:
+        _destroy_agent(_DEV_AGENT_NAME)
+        server.start()
+
+        client = httpx.Client(
+            base_url=server.base_url,
+            cookies={"mind_session": "skip"},
+            timeout=15.0,
+        )
+        os.environ["SKIP_AUTH"] = "1"
+
         agent_id = _create_agent_with_retry(
             client,
             max_attempts=2,
@@ -321,7 +322,8 @@ def test_create_agent_dev_mode_e2e(tmp_path: Path) -> None:
         _wait_for_web_server(client, agent_id, timeout_seconds=60)
 
     finally:
-        client.close()
+        if client is not None:
+            client.close()
         _destroy_agent(_DEV_AGENT_NAME)
         server.stop()
         shutil.rmtree(uv_tool_dir, ignore_errors=True)
