@@ -2166,6 +2166,21 @@ def test_get_files_for_deploy_includes_credentials(temp_mngr_ctx: MngrContext, t
     assert result[Path("~/.claude/.credentials.json")] == credentials
 
 
+def test_get_files_for_deploy_includes_keybindings(temp_mngr_ctx: MngrContext, tmp_path: Path) -> None:
+    """get_files_for_deploy includes ~/.claude/keybindings.json when it exists."""
+    claude_dir = Path.home() / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    keybindings = claude_dir / "keybindings.json"
+    keybindings.write_text('{"bindings": []}')
+
+    result = get_files_for_deploy(
+        mngr_ctx=temp_mngr_ctx, include_user_settings=True, include_project_settings=False, repo_root=tmp_path
+    )
+
+    assert Path("~/.claude/keybindings.json") in result
+    assert result[Path("~/.claude/keybindings.json")] == keybindings
+
+
 # =============================================================================
 # Version Pinning Tests
 # =============================================================================
