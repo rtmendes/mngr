@@ -39,7 +39,7 @@ def check_streaming_headless_agent_type(agent_type: str) -> None:
     if not issubclass(agent_class, StreamingHeadlessAgentMixin):
         raise MngrError(
             f"The '{agent_type}' agent type does not support streaming headless output. "
-            f"Only agent types implementing StreamingHeadlessAgentMixin can be used with 'run'."
+            f"Only agent types implementing StreamingHeadlessAgentMixin can be used."
         )
 
 
@@ -54,7 +54,7 @@ def get_local_host(mngr_ctx: MngrContext) -> OnlineHostInterface:
 
 def create_work_dir_on_host(host: OnlineHostInterface) -> Path:
     """Create a temporary work directory on the host and return its path."""
-    result = host.execute_stateful_command("mktemp -d /tmp/mngr-run-XXXXXXXXXX")
+    result = host.execute_stateful_command("mktemp -d /tmp/mngr-headless-XXXXXXXXXX")
     if not result.success:
         raise MngrError(f"Failed to create temp directory on host: {result.stderr}")
     return Path(result.stdout.strip())
