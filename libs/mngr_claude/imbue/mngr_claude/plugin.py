@@ -323,8 +323,7 @@ def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, targ
                     f"pointing to a previous mngr agent's config directory:\n"
                     f"  Current (stale): {install_path}\n"
                     f"  Expected:        {persistent_path or '<unknown>'}\n"
-                    f"To fix, update the installPath in {installed_plugins_path} to the expected path, "
-                    f"or reinstall the plugin outside of an agent context."
+                    f"To fix, uninstall the plugin with '/plugin' and reinstall it."
                 )
             else:
                 raise ConfigError(
