@@ -67,7 +67,6 @@ def _destroy_agent(agent_name: str) -> None:
     try:
         subprocess.run(
             ["uv", "run", "mngr", "destroy", agent_name, "--force"],
-            input="y\n",
             capture_output=True,
             timeout=30,
             text=True,
