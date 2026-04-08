@@ -176,6 +176,15 @@ class LimaSshConfig:
         self.identity_file = identity_file
 
 
+def _strip_ssh_config_quotes(value: str) -> str:
+    """Strip surrounding double quotes from an SSH config value.
+
+    SSH config format (used by limactl show-ssh --format config) wraps
+    values like IdentityFile in double quotes, e.g. IdentityFile "/path/to/key".
+    """
+    return value.strip().strip('"').strip()
+
+
 def limactl_show_ssh(
     cg: ConcurrencyGroup,
     instance_name: str,
@@ -198,13 +207,13 @@ def limactl_show_ssh(
     for line in result.stdout.splitlines():
         line = line.strip()
         if line.startswith("HostName "):
-            hostname = line.split(None, 1)[1]
+            hostname = _strip_ssh_config_quotes(line.split(None, 1)[1])
         elif line.startswith("Port "):
-            port = int(line.split(None, 1)[1])
+            port = int(_strip_ssh_config_quotes(line.split(None, 1)[1]))
         elif line.startswith("User "):
-            user = line.split(None, 1)[1]
+            user = _strip_ssh_config_quotes(line.split(None, 1)[1])
         elif line.startswith("IdentityFile "):
-            identity_file = Path(line.split(None, 1)[1])
+            identity_file = Path(_strip_ssh_config_quotes(line.split(None, 1)[1]))
 
     return LimaSshConfig(hostname=hostname, port=port, user=user, identity_file=identity_file)
 
