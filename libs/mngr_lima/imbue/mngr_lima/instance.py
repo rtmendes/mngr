@@ -43,6 +43,7 @@ from imbue.mngr.primitives import VolumeId
 from imbue.mngr.providers.base_provider import BaseProviderInstance
 from imbue.mngr.providers.local.volume import LocalVolume
 from imbue.mngr.providers.ssh_host_setup import build_add_authorized_keys_command
+from imbue.mngr.providers.ssh_host_setup import build_add_known_hosts_command
 from imbue.mngr.providers.ssh_host_setup import build_start_activity_watcher_command
 from imbue.mngr.providers.ssh_utils import add_host_to_known_hosts
 from imbue.mngr.providers.ssh_utils import create_pyinfra_host
@@ -495,6 +496,13 @@ sudo poweroff
             if add_authorized_keys_cmd is not None:
                 with log_span("Adding {} authorized_keys entries to VM", len(authorized_keys)):
                     host.execute_stateful_command(f"sh -c '{add_authorized_keys_cmd}'")
+
+        # Add known hosts entries if provided
+        if known_hosts:
+            add_known_hosts_cmd = build_add_known_hosts_command(ssh_config.user, tuple(known_hosts))
+            if add_known_hosts_cmd is not None:
+                with log_span("Adding {} known_hosts entries to VM", len(known_hosts)):
+                    host.execute_stateful_command(f"sh -c '{add_known_hosts_cmd}'")
 
         self._host_by_id_cache[host_id] = host
         return host
