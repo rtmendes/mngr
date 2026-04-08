@@ -300,7 +300,7 @@ def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, targ
         for entry in plugin_entries:
             install_path = entry.get("installPath", "")
             if install_path.startswith(source_prefix):
-                relative = install_path[len(source_prefix):]
+                relative = install_path[len(source_prefix) :]
                 entry["installPath"] = str(target_config_dir / relative)
             else:
                 # FIXME: installPath references a different agent's directory (stale entry).
@@ -309,18 +309,21 @@ def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, targ
                 plugins_marker = "/plugins/"
                 marker_idx = install_path.rfind(plugins_marker)
                 if marker_idx >= 0:
-                    relative = install_path[marker_idx + len(plugins_marker):]
+                    relative = install_path[marker_idx + len(plugins_marker) :]
                     entry["installPath"] = str(target_config_dir / "plugins" / relative)
                     logger.warning(
-                        "installed_plugins.json: plugin {} has unexpected installPath {}, "
-                        "rewrote best-effort to {}",
-                        plugin_name, install_path, entry["installPath"],
+                        "installed_plugins.json: plugin {} has unexpected installPath {}, rewrote best-effort to {}",
+                        plugin_name,
+                        install_path,
+                        entry["installPath"],
                     )
                 else:
                     logger.warning(
                         "installed_plugins.json: plugin {} has installPath {} "
                         "which could not be rebased onto {}; keeping as-is",
-                        plugin_name, install_path, target_config_dir,
+                        plugin_name,
+                        install_path,
+                        target_config_dir,
                     )
     return json.dumps(data, indent=2) + "\n"
 
@@ -691,7 +694,9 @@ def _provision_local_credentials(host: OnlineHostInterface, config_dir: Path, *,
             )
         else:
             host.execute_idempotent_command(
-                f"rm -f {shlex.quote(str(credentials_dest))} && cp {shlex.quote(str(credentials_source))} {shlex.quote(str(credentials_dest))}",
+                f"rm -f {shlex.quote(str(credentials_dest))}"
+                f" && cp {shlex.quote(str(credentials_source))} {shlex.quote(str(credentials_dest))}"
+                f" && chmod 600 {shlex.quote(str(credentials_dest))}",
                 timeout_seconds=5.0,
             )
     else:
