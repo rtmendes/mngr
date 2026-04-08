@@ -179,7 +179,9 @@ def _build_mngr_create_command(
     match launch_mode:
         case LaunchMode.DEV:
             address = str(agent_name)
-        case LaunchMode.LOCAL | LaunchMode.CLOUD:
+        case LaunchMode.LOCAL:
+            address = f"{agent_name}@{_make_host_name(agent_name)}.docker"
+        case LaunchMode.CLOUD:
             address = f"{agent_name}@{_make_host_name(agent_name)}"
         case _ as unreachable:
             assert_never(unreachable)

@@ -118,8 +118,8 @@ def test_build_mngr_create_command_local_mode() -> None:
     assert "main" in cmd
     assert "--reuse" in cmd
     assert "--update" in cmd
-    # LOCAL mode: address includes the host name
-    assert cmd[2] == "test-agent@test-agent-host"
+    # LOCAL mode: address includes host name with docker provider suffix
+    assert cmd[2] == "test-agent@test-agent-host.docker"
 
 
 def test_build_mngr_create_command_cloud_mode_raises() -> None:
