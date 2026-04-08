@@ -91,6 +91,23 @@ class LimaProviderInstance(BaseProviderInstance):
     config: LimaProviderConfig = Field(frozen=True, description="Lima provider configuration")
 
     _host_by_id_cache: dict[HostId, HostInterface] = PrivateAttr(default_factory=dict)
+    _lima_checked: bool = PrivateAttr(default=False)
+
+    def _ensure_lima_available(self) -> None:
+        """Lazily check that limactl is installed and meets version requirements.
+
+        Called on first operation that needs limactl. Raises ProviderUnavailableError
+        if limactl is not installed or is too old. This deferred check allows the
+        provider to be registered without limactl being present (e.g. in CI).
+        """
+        if self._lima_checked:
+            return
+        from imbue.mngr_lima.limactl import check_lima_installed
+        from imbue.mngr_lima.limactl import check_lima_version
+
+        check_lima_installed(self.name)
+        check_lima_version(self.mngr_ctx.concurrency_group, self.name, self.config.minimum_lima_version)
+        self._lima_checked = True
 
     @property
     def supports_snapshots(self) -> bool:
@@ -360,6 +377,7 @@ sudo poweroff
         snapshot: SnapshotName | None = None,
     ) -> Host:
         """Create a new Lima VM host."""
+        self._ensure_lima_available()
         host_id = HostId.generate()
         instance_name = lima_instance_name(name, self.mngr_ctx.config.prefix)
         logger.info("Creating Lima VM host {} ({}) ...", name, instance_name)
@@ -739,6 +757,7 @@ sudo poweroff
         include_destroyed: bool = False,
     ) -> list[DiscoveredHost]:
         """Discover all Lima hosts managed by this provider instance."""
+        self._ensure_lima_available()
         prefix = self.mngr_ctx.config.prefix
 
         # Get all Lima instances with our prefix

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Provision script for the mngr Lima base image.
 # Installs all packages required by mngr hosts.
-set -eux -o pipefail
+set -euo pipefail
 
 sudo apt-get update -qq
 sudo apt-get install -y -qq --no-install-recommends \
