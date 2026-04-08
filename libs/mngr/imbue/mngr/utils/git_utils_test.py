@@ -493,6 +493,14 @@ def test_mirror_push_refspecs_do_not_push_remote_tracking_refs(temp_git_repo: Pa
         capture_output=True,
     )
 
+    # Create a tag so we can verify tag refspecs work too
+    subprocess.run(
+        ["git", "tag", "v1.0.0"],
+        cwd=temp_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
     # Verify the source has remote-tracking refs (precondition for the test)
     ref_result = subprocess.run(
         ["git", "for-each-ref", "--format=%(refname)", "refs/remotes/"],
@@ -536,6 +544,15 @@ def test_mirror_push_refspecs_do_not_push_remote_tracking_refs(temp_git_repo: Pa
     assert source_branch in branch_result.stdout, (
         f"Branch '{source_branch}' should be pushed to the target, got: {branch_result.stdout}"
     )
+
+    # Verify tags were pushed
+    tag_result = subprocess.run(
+        ["git", "-C", str(target), "tag"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "v1.0.0" in tag_result.stdout, f"Tag 'v1.0.0' should be pushed to the target, got: {tag_result.stdout}"
 
     # Verify NO remote-tracking refs were pushed -- this is the key assertion.
     # Without explicit refspecs, git push --mirror pushes refs/remotes/* to
