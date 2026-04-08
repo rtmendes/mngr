@@ -129,6 +129,12 @@ class TelegramSetupOrchestrator(MutableModel):
             return
 
         with self._lock:
+            existing_status = self._statuses.get(aid)
+            if existing_status is not None and existing_status not in (
+                TelegramSetupStatus.DONE,
+                TelegramSetupStatus.FAILED,
+            ):
+                return
             self._statuses[aid] = TelegramSetupStatus.CHECKING_CREDENTIALS
 
         thread = threading.Thread(
