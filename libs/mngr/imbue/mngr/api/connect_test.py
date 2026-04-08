@@ -376,7 +376,7 @@ def _run_connect_to_agent(
     """Set up and run connect_to_agent with intercepted system calls."""
     host = _make_ssh_host(local_provider, mngr_ctx, ssh_known_hosts_file="/tmp/known_hosts")
     agent = _make_remote_agent(host, mngr_ctx, agent_name=agent_name)
-    opts = ConnectionOptions(is_unknown_host_allowed=False)
+    opts = ConnectionOptions(is_unknown_host_allowed=False, retry_count=0)
 
     result = _ConnectTestResult()
 
