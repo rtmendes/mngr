@@ -2688,8 +2688,8 @@ def test_rewrite_installed_plugins_paths_handles_multiple_plugins() -> None:
     assert result["plugins"]["plugin-b@org-b"][0]["installPath"] == "/remote/config/plugins/cache/org-b/plugin-b/2.0.0"
 
 
-def test_rewrite_installed_plugins_paths_raises_on_non_matching_prefix() -> None:
-    """installPath values that don't start with the expected prefix raise ConfigError."""
+def test_rewrite_installed_plugins_paths_rewrites_non_matching_prefix_best_effort() -> None:
+    """installPath values that don't start with the expected prefix are rewritten best-effort."""
     local_claude_dir = Path("/Users/testuser/.claude")
     remote_config_dir = Path("/remote/config")
     content = json.dumps(
@@ -2706,8 +2706,9 @@ def test_rewrite_installed_plugins_paths_raises_on_non_matching_prefix() -> None
         }
     )
 
-    with pytest.raises(ConfigError, match="does not start with expected prefix"):
-        _rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir)
+    result = json.loads(_rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir))
+    entry = result["plugins"]["other-plugin@other-org"][0]
+    assert entry["installPath"] == "/remote/config/plugins/cache/other-org/other-plugin/1.0.0"
 
 
 def test_rewrite_installed_plugins_paths_preserves_other_fields() -> None:
@@ -2753,8 +2754,8 @@ def test_rewrite_installed_plugins_paths_handles_empty_plugins() -> None:
     assert result["plugins"] == {}
 
 
-def test_rewrite_installed_plugins_paths_raises_on_similar_prefix() -> None:
-    """A path like /Users/testuser/.claude2/ raises because it doesn't match /Users/testuser/.claude/."""
+def test_rewrite_installed_plugins_paths_rewrites_similar_prefix_best_effort() -> None:
+    """A path like /Users/testuser/.claude2/ is rewritten best-effort via the plugins/ marker."""
     local_claude_dir = Path("/Users/testuser/.claude")
     remote_config_dir = Path("/remote/config")
     content = json.dumps(
@@ -2771,8 +2772,9 @@ def test_rewrite_installed_plugins_paths_raises_on_similar_prefix() -> None:
         }
     )
 
-    with pytest.raises(ConfigError, match="does not start with expected prefix"):
-        _rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir)
+    result = json.loads(_rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir))
+    entry = result["plugins"]["plugin@org"][0]
+    assert entry["installPath"] == "/remote/config/plugins/cache/org/plugin/1.0.0"
 
 
 # =============================================================================
