@@ -1452,7 +1452,7 @@ class Host(BaseHost, OnlineHostInterface):
                     config_commands.append(set_or_add)
 
                 # Copy .git/info/exclude from source to target. This file is not
-                # transferred by git mirror push since it lives outside the git
+                # transferred by the git push since it lives outside the git
                 # object store. We read it here and include it in the config command.
                 exclude_content = self._read_source_git_info_exclude(source_host, source_path)
                 if exclude_content is not None:
