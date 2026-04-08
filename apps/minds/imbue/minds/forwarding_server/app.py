@@ -420,6 +420,9 @@ async def _forward_http_request(
     except httpx.ConnectError:
         logger.debug("Backend connection refused for {} server {}", agent_id, server_name)
         return Response(status_code=502, content="Backend connection refused")
+    except httpx.ReadError:
+        logger.debug("Backend connection lost for {} server {}", agent_id, server_name)
+        return Response(status_code=502, content="Backend connection lost")
     except httpx.TimeoutException:
         logger.debug("Backend request timed out for {} server {}", agent_id, server_name)
         return Response(status_code=504, content="Backend request timed out")
