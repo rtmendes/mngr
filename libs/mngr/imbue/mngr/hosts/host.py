@@ -964,6 +964,7 @@ class Host(BaseHost, OnlineHostInterface):
                 # must write atomically, otherwise we can get in trouble
                 self.write_file,
                 kwargs=dict(path=data_path, content=serialized_data.encode("utf-8"), mode=None, is_atomic=True),
+                name="write_certified_data",
             )
             # Notify the provider so it can update any external storage (e.g., Modal volume)
             if self.on_updated_host_data:
@@ -1944,7 +1945,9 @@ class Host(BaseHost, OnlineHostInterface):
             with log_span("Updating git worktree", path=str(work_dir_path), branch=branch_label):
                 git_wt = f"git -C {shlex.quote(str(work_dir_path))}"
                 if new_branch_name:
-                    checkout_cmd = f"{git_wt} checkout -B {shlex.quote(new_branch_name)} {shlex.quote(base_branch or 'HEAD')}"
+                    checkout_cmd = (
+                        f"{git_wt} checkout -B {shlex.quote(new_branch_name)} {shlex.quote(base_branch or 'HEAD')}"
+                    )
                 else:
                     checkout_cmd = f"{git_wt} checkout {shlex.quote(base_branch or 'HEAD')}"
                 result = self.execute_idempotent_command(checkout_cmd)
