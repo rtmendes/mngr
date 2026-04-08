@@ -390,7 +390,6 @@ class AgentCreator(MutableModel):
         """Background thread that resolves the repo source and creates an mngr agent."""
         aid = str(agent_id)
         emit_log = make_log_callback(log_queue)
-        temp_clone_dir: Path | None = None
         try:
             with log_span("Creating agent {} from {} (mode: {})", agent_id, repo_source, launch_mode):
                 if _is_local_path(repo_source):
@@ -403,9 +402,12 @@ class AgentCreator(MutableModel):
                         # .git/worktrees/ dir, which breaks when copied into Docker.
                         # Clone locally to get a standalone repo. Use file:// protocol
                         # so --depth 1 is honored (git ignores --depth for local paths).
+                        # Use a stable path based on repo name so Docker layer caching works.
                         log_queue.put("[minds] Cloning local worktree: {}".format(resolved_path))
-                        temp_clone_dir = Path(tempfile.mkdtemp(prefix="minds-clone-"))
-                        clone_target = temp_clone_dir / extract_repo_name(repo_source)
+                        repo_name = extract_repo_name(repo_source)
+                        clone_target = Path(tempfile.gettempdir()) / f"minds-clone-{repo_name}"
+                        if clone_target.exists():
+                            shutil.rmtree(clone_target)
                         file_url = GitUrl("file://{}".format(resolved_path))
                         clone_git_repo(file_url, clone_target, on_output=emit_log, is_shallow=True)
                         mind_dir = clone_target
@@ -413,8 +415,10 @@ class AgentCreator(MutableModel):
                         mind_dir = resolved_path
                         log_queue.put(f"[minds] Using local directory: {mind_dir}")
                 else:
-                    temp_clone_dir = Path(tempfile.mkdtemp(prefix="minds-clone-"))
-                    clone_target = temp_clone_dir / extract_repo_name(repo_source)
+                    repo_name = extract_repo_name(repo_source)
+                    clone_target = Path(tempfile.gettempdir()) / f"minds-clone-{repo_name}"
+                    if clone_target.exists():
+                        shutil.rmtree(clone_target)
                     log_queue.put("[minds] Cloning {}...".format(repo_source))
                     clone_git_repo(GitUrl(repo_source), clone_target, on_output=emit_log, is_shallow=True)
                     mind_dir = clone_target
@@ -453,8 +457,6 @@ class AgentCreator(MutableModel):
                 self._statuses[aid] = AgentCreationStatus.FAILED
                 self._errors[aid] = str(e)
         finally:
-            if temp_clone_dir is not None and temp_clone_dir.exists():
-                shutil.rmtree(temp_clone_dir, ignore_errors=True)
             log_queue.put(LOG_SENTINEL)
 
     def _setup_cloudflare_tunnel(

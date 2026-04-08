@@ -323,6 +323,12 @@ def parse_url_host_port(url: str) -> tuple[str, int]:
     """
     parsed = urlparse(url)
     host = parsed.hostname or "127.0.0.1"
+    # Normalize localhost to 127.0.0.1 to avoid IPv6 resolution issues.
+    # SSH channels don't do dual-stack fallback like curl, so if the remote
+    # resolves localhost to ::1 but the server only listens on 127.0.0.1,
+    # the channel open fails.
+    if host == "localhost":
+        host = "127.0.0.1"
     if parsed.port is not None:
         port = parsed.port
     elif parsed.scheme == "https":

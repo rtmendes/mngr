@@ -151,9 +151,9 @@ def test_parse_url_host_port_defaults_to_port_443_for_https() -> None:
     assert port == 443
 
 
-def test_parse_url_host_port_handles_localhost() -> None:
+def test_parse_url_host_port_normalizes_localhost_to_ipv4() -> None:
     host, port = parse_url_host_port("http://localhost:8080")
-    assert host == "localhost"
+    assert host == "127.0.0.1"
     assert port == 8080
 
 
