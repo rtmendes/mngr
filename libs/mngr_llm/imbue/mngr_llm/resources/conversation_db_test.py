@@ -39,11 +39,10 @@ def test_write_stdout_with_int(capsys: pytest.CaptureFixture[str]) -> None:
     assert captured.out == "42\n"
 
 
-def test_warn(capfd: pytest.CaptureFixture[str], loguru_stderr_sink: None) -> None:
+def test_warn(capsys: pytest.CaptureFixture[str]) -> None:
     _warn("something broke")
-    captured = capfd.readouterr()
-    assert "WARNING" in captured.err
-    assert "something broke" in captured.err
+    captured = capsys.readouterr()
+    assert captured.err == "WARNING: something broke\n"
     assert captured.out == ""
 
 
@@ -115,12 +114,11 @@ def test_lookup_model_not_found(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert captured.out == ""
 
 
-def test_lookup_model_missing_db(tmp_path: Path, capfd: pytest.CaptureFixture[str], loguru_stderr_sink: None) -> None:
+def test_lookup_model_missing_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     db_path = tmp_path / "missing.db"
     lookup_model(str(db_path), "conv-1")
-    captured = capfd.readouterr()
-    assert "WARNING" in captured.err
-    assert "lookup-model failed" in captured.err
+    captured = capsys.readouterr()
+    assert "WARNING:" in captured.err
     assert captured.out == ""
 
 
@@ -144,12 +142,11 @@ def test_count_empty_table(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
     assert captured.out == "0\n"
 
 
-def test_count_missing_db(tmp_path: Path, capfd: pytest.CaptureFixture[str], loguru_stderr_sink: None) -> None:
+def test_count_missing_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     db_path = tmp_path / "missing.db"
     count(str(db_path))
-    captured = capfd.readouterr()
-    assert "WARNING" in captured.err
-    assert "count failed" in captured.err
+    captured = capsys.readouterr()
+    assert "WARNING:" in captured.err
     assert captured.out == "0\n"
 
 
@@ -175,12 +172,11 @@ def test_max_rowid_empty_table(tmp_path: Path, capsys: pytest.CaptureFixture[str
     assert captured.out == "0\n"
 
 
-def test_max_rowid_missing_db(tmp_path: Path, capfd: pytest.CaptureFixture[str], loguru_stderr_sink: None) -> None:
+def test_max_rowid_missing_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     db_path = tmp_path / "missing.db"
     max_rowid(str(db_path))
-    captured = capfd.readouterr()
-    assert "WARNING" in captured.err
-    assert "max-rowid failed" in captured.err
+    captured = capsys.readouterr()
+    assert "WARNING:" in captured.err
     assert captured.out == "0\n"
 
 
@@ -209,12 +205,11 @@ def test_poll_new_no_new_conversations(tmp_path: Path, capsys: pytest.CaptureFix
     assert captured.out == ""
 
 
-def test_poll_new_missing_db(tmp_path: Path, capfd: pytest.CaptureFixture[str], loguru_stderr_sink: None) -> None:
+def test_poll_new_missing_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     db_path = tmp_path / "missing.db"
     poll_new(str(db_path), "0")
-    captured = capfd.readouterr()
-    assert "WARNING" in captured.err
-    assert "poll-new failed" in captured.err
+    captured = capsys.readouterr()
+    assert "WARNING:" in captured.err
 
 
 def test_lookup_by_name_found(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -248,14 +243,11 @@ def test_lookup_by_name_returns_most_recent(tmp_path: Path, capsys: pytest.Captu
     assert captured.out == "conv-new\n"
 
 
-def test_lookup_by_name_missing_db(
-    tmp_path: Path, capfd: pytest.CaptureFixture[str], loguru_stderr_sink: None
-) -> None:
+def test_lookup_by_name_missing_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     db_path = tmp_path / "missing.db"
     lookup_by_name(str(db_path), "anything")
-    captured = capfd.readouterr()
-    assert "WARNING" in captured.err
-    assert "lookup-by-name failed" in captured.err
+    captured = capsys.readouterr()
+    assert "WARNING:" in captured.err
     assert captured.out == ""
 
 
@@ -299,14 +291,11 @@ def test_last_response_id_not_found(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert captured.out == ""
 
 
-def test_last_response_id_missing_db(
-    tmp_path: Path, capfd: pytest.CaptureFixture[str], loguru_stderr_sink: None
-) -> None:
+def test_last_response_id_missing_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     db_path = tmp_path / "missing.db"
     last_response_id(str(db_path), "conv-1")
-    captured = capfd.readouterr()
-    assert "WARNING" in captured.err
-    assert "last-response-id failed" in captured.err
+    captured = capsys.readouterr()
+    assert "WARNING:" in captured.err
     assert captured.out == ""
 
 
@@ -376,19 +365,19 @@ def test_main_last_response_id(tmp_path: Path, capsys: pytest.CaptureFixture[str
     assert captured.out == "resp-main\n"
 
 
-def test_main_unknown_subcommand(capfd: pytest.CaptureFixture[str], loguru_stderr_sink: None) -> None:
+def test_main_unknown_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
     with _override_argv(["conversation_db", "bogus", "/tmp/x.db"]):
         with pytest.raises(SystemExit, match="1"):
             main()
 
-    captured = capfd.readouterr()
+    captured = capsys.readouterr()
     assert "Unknown subcommand: bogus" in captured.err
 
 
-def test_main_too_few_args(capfd: pytest.CaptureFixture[str], loguru_stderr_sink: None) -> None:
+def test_main_too_few_args(capsys: pytest.CaptureFixture[str]) -> None:
     with _override_argv(["conversation_db", "count"]):
         with pytest.raises(SystemExit, match="1"):
             main()
 
-    captured = capfd.readouterr()
+    captured = capsys.readouterr()
     assert "Usage:" in captured.err

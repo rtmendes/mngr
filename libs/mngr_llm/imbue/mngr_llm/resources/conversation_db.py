@@ -27,8 +27,6 @@ Environment: None required (all paths passed as arguments).
 import sqlite3
 import sys
 
-from loguru import logger
-
 # SYNC: This schema MUST match MIND_CONVERSATIONS_TABLE_SQL in provisioning.py.
 # A test (test_conversation_db_schema_matches_provisioning) verifies they stay in sync.
 _CREATE_TABLE_SQL = (
@@ -44,8 +42,12 @@ def _write_stdout(value: object) -> None:
     sys.stdout.flush()
 
 
+# Uses sys.stderr.write rather than logger because this module is invoked as a
+# standalone CLI tool by shell scripts (chat.sh) where loguru may not be
+# configured with any handlers, causing warnings to be silently dropped.
 def _warn(message: str) -> None:
-    logger.warning(message)
+    sys.stderr.write(f"WARNING: {message}\n")
+    sys.stderr.flush()
 
 
 def insert(db_path: str, conversation_id: str, tags: str, created_at: str) -> None:
