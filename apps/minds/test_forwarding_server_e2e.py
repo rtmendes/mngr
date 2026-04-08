@@ -2,13 +2,16 @@
 
 Creates an agent from the forever-claude-template repo via the forwarding
 server API, verifies it starts and its web server is accessible through
-the forwarding server proxy, then waits for a signal file before tearing down.
+the forwarding server proxy.
+
+Requires a local checkout of the forever-claude-template repo. Set
+MINDS_TEMPLATE_REPO to point at it (defaults to ~/project/forever-claude-template).
 
 Run from the repo root:
     just test apps/minds/test_forwarding_server_e2e.py::test_create_agent_e2e
+    just test apps/minds/test_forwarding_server_e2e.py::test_create_agent_dev_mode_e2e
 
-The test waits for /tmp/minds-e2e-done to exist before tearing down.
-Create this file to signal the test to finish:
+The Docker E2E test waits for /tmp/minds-e2e-done before tearing down:
     touch /tmp/minds-e2e-done
 """
 
