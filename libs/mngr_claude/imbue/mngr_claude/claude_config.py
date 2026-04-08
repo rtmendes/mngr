@@ -117,7 +117,7 @@ def find_user_claude_config() -> Path:
     """Find the user-scope Claude config file (.claude.json).
 
     Returns the first candidate path that exists on disk. If none exist,
-    returns the last candidate as the default creation path.
+    returns the first candidate as the default creation path.
 
     Inside an mngr agent, $CLAUDE_CONFIG_DIR points to the agent's isolated
     config dir. This function looks for the *user's* original config instead.
