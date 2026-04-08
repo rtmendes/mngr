@@ -2431,9 +2431,7 @@ def test_on_after_provisioning_adopts_session_by_id(
     local_provider: LocalProviderInstance, tmp_path: Path, temp_mngr_ctx: MngrContext
 ) -> None:
     """on_after_provisioning should find session by ID, copy project dir, and write session ID."""
-    config = ClaudeAgentConfig(check_installation=False, auto_dismiss_dialogs=True)
-    agent, host = make_claude_agent(local_provider, tmp_path, temp_mngr_ctx, agent_config=config)
-    _init_git_with_gitignore(agent.work_dir)
+    agent, host = make_claude_agent(local_provider, tmp_path, temp_mngr_ctx)
 
     # Set up a session under ~/.claude/ (HOME is already a temp dir via autouse fixture)
     project_dir = Path.home() / ".claude" / "projects" / "test-project"
@@ -2451,7 +2449,6 @@ def test_on_after_provisioning_adopts_session_by_id(
     )
 
     with patch.dict("os.environ", {"CLAUDE_CONFIG_DIR": ""}):
-        agent.provision(host=host, options=options, mngr_ctx=temp_mngr_ctx)
         agent.on_after_provisioning(host=host, options=options, mngr_ctx=temp_mngr_ctx)
 
     # Session ID should be written
@@ -2503,9 +2500,7 @@ def test_on_after_provisioning_finds_session_despite_claude_config_dir(
     local_provider: LocalProviderInstance, tmp_path: Path, temp_mngr_ctx: MngrContext
 ) -> None:
     """Session lookup should find sessions in ~/.claude/ even when CLAUDE_CONFIG_DIR points elsewhere."""
-    config = ClaudeAgentConfig(check_installation=False, auto_dismiss_dialogs=True)
-    agent, host = make_claude_agent(local_provider, tmp_path, temp_mngr_ctx, agent_config=config)
-    _init_git_with_gitignore(agent.work_dir)
+    agent, host = make_claude_agent(local_provider, tmp_path, temp_mngr_ctx)
 
     # Session lives under ~/.claude/ (HOME is already a temp dir via autouse fixture)
     project_dir = Path.home() / ".claude" / "projects" / "test-project"
@@ -2529,7 +2524,6 @@ def test_on_after_provisioning_finds_session_despite_claude_config_dir(
     with patch.dict(
         "os.environ", {"CLAUDE_CONFIG_DIR": str(agent_config_dir), "ORIGINAL_CLAUDE_CONFIG_DIR": home_claude}
     ):
-        agent.provision(host=host, options=options, mngr_ctx=temp_mngr_ctx)
         agent.on_after_provisioning(host=host, options=options, mngr_ctx=temp_mngr_ctx)
 
     assert (agent_state_dir / "claude_session_id").read_text() == target_session_id
@@ -2545,9 +2539,7 @@ def test_on_after_provisioning_adopts_session_from_jsonl_path(
     local_provider: LocalProviderInstance, tmp_path: Path, temp_mngr_ctx: MngrContext
 ) -> None:
     """on_after_provisioning should accept a .jsonl file path and extract the session ID."""
-    config = ClaudeAgentConfig(check_installation=False, auto_dismiss_dialogs=True)
-    agent, host = make_claude_agent(local_provider, tmp_path, temp_mngr_ctx, agent_config=config)
-    _init_git_with_gitignore(agent.work_dir)
+    agent, host = make_claude_agent(local_provider, tmp_path, temp_mngr_ctx)
 
     # Create a session file at an arbitrary path
     project_dir = tmp_path / "my_sessions" / "some-project"
@@ -2563,7 +2555,6 @@ def test_on_after_provisioning_adopts_session_from_jsonl_path(
         plugin_data={"adopt_session": (str(session_file),)},
     )
 
-    agent.provision(host=host, options=options, mngr_ctx=temp_mngr_ctx)
     agent.on_after_provisioning(host=host, options=options, mngr_ctx=temp_mngr_ctx)
 
     # Session ID should be the stem of the file
