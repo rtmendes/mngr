@@ -400,7 +400,7 @@ class AgentObserver(MutableModel):
     def _start_discovery_stream(self) -> None:
         """Start the 'mngr observe --discovery-only' subprocess for host discovery."""
         self._discovery_stream_process = self._concurrency_group.run_process_in_background(
-            command=[self.mngr_binary, "observe", "--discovery-only", "--quiet"],
+            command=[self.mngr_binary, "observe", "--discovery-only", "--quiet", "--on-error", "continue"],
             on_output=self._on_discovery_stream_output,
         )
 
