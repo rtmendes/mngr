@@ -13,9 +13,11 @@ Create this file to signal the test to finish:
 """
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 
@@ -32,6 +34,7 @@ from imbue.minds.forwarding_server.auth import FileAuthStore
 from imbue.minds.forwarding_server.backend_resolver import MngrCliBackendResolver
 from imbue.minds.forwarding_server.backend_resolver import MngrStreamManager
 from imbue.minds.primitives import OneTimeCode
+from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TEMPLATE_REPO = Path(os.environ.get("MINDS_TEMPLATE_REPO", str(Path.home() / "project" / "forever-claude-template")))
@@ -63,6 +66,17 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
+def _clean_env() -> dict[str, str]:
+    """Build a subprocess environment without PYTEST_CURRENT_TEST.
+
+    mngr refuses to load project configs that set ``is_allowed_in_pytest = false``
+    when this variable is present, so we strip it for mngr subprocesses.
+    """
+    env = dict(os.environ)
+    env.pop("PYTEST_CURRENT_TEST", None)
+    return env
+
+
 def _destroy_agent(agent_name: str) -> None:
     try:
         subprocess.run(
@@ -71,6 +85,21 @@ def _destroy_agent(agent_name: str) -> None:
             timeout=30,
             text=True,
             cwd=_REPO_ROOT,
+            env=_clean_env(),
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+
+    # Clean up any leftover worktree branch from dev-mode agents.
+    # mngr destroy removes the worktree directory but not the git branch.
+    branch_name = f"mngr/{agent_name}"
+    try:
+        subprocess.run(
+            ["git", "branch", "-D", branch_name],
+            capture_output=True,
+            timeout=5,
+            text=True,
+            cwd=str(_TEMPLATE_REPO),
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
@@ -127,14 +156,23 @@ class ForwardingServerFixture:
 
     def stop(self) -> None:
         if self._stream_manager is not None:
-            self._stream_manager.stop()
+            try:
+                self._stream_manager.stop()
+            except ConcurrencyExceptionGroup:
+                # Stranded --follow processes may not terminate in time during teardown.
+                logger.debug("Stream manager stop raised (expected during teardown)")
         if self._server is not None:
             self._server.should_exit = True
         if self._thread is not None:
             self._thread.join(timeout=5)
 
 
-def _create_agent_with_retry(client: httpx.Client, max_attempts: int = 2) -> str:
+def _create_agent_with_retry(
+    client: httpx.Client,
+    max_attempts: int = 2,
+    agent_name: str = _AGENT_NAME,
+    launch_mode: str = "LOCAL",
+) -> str:
     """Create an agent via API, retrying on failure (e.g. provisioning timeout)."""
     for attempt in range(max_attempts):
         logger.info("Creating agent (attempt {}/{})", attempt + 1, max_attempts)
@@ -142,8 +180,8 @@ def _create_agent_with_retry(client: httpx.Client, max_attempts: int = 2) -> str
             "/api/create-agent",
             json={
                 "git_url": str(_TEMPLATE_REPO),
-                "agent_name": _AGENT_NAME,
-                "launch_mode": "LOCAL",
+                "agent_name": agent_name,
+                "launch_mode": launch_mode,
             },
         )
         assert resp.status_code == 200, f"Create API failed: {resp.status_code} {resp.text}"
@@ -162,14 +200,14 @@ def _create_agent_with_retry(client: httpx.Client, max_attempts: int = 2) -> str
                     logger.warning("Creation failed: {}", error)
                     if attempt < max_attempts - 1:
                         logger.info("Retrying...")
-                        _destroy_agent(_AGENT_NAME)
+                        _destroy_agent(agent_name)
                         break
                     pytest.fail(f"Agent creation failed after {max_attempts} attempts: {error}")
             threading.Event().wait(1)
         else:
             if attempt < max_attempts - 1:
                 logger.warning("Creation timed out, retrying...")
-                _destroy_agent(_AGENT_NAME)
+                _destroy_agent(agent_name)
                 continue
             pytest.fail(f"Agent creation timed out after {max_attempts} attempts")
 
@@ -241,3 +279,77 @@ def test_create_agent_e2e(tmp_path: Path) -> None:
         _destroy_agent(_AGENT_NAME)
         server.stop()
         _SIGNAL_FILE.unlink(missing_ok=True)
+
+
+_DEV_AGENT_NAME = "forever-dev"
+
+
+@pytest.mark.release
+@pytest.mark.timeout(120)
+def test_create_agent_dev_mode_e2e(tmp_path: Path) -> None:
+    """Create a DEV-mode agent (local provider, no Docker) and verify its web server is proxied.
+
+    This is faster than the Docker E2E test because it skips the Docker build.
+    The agent runs in a local git worktree with its own UV tool installation.
+    """
+    _configure_logging()
+    _load_env()
+    os.environ["MIND_NAME"] = _DEV_AGENT_NAME
+
+    # Set up isolated UV tool directories so the extra_provision_command
+    # installs mngr into a temp location instead of clobbering the host's install.
+    uv_tool_dir = tempfile.mkdtemp(prefix="minds-e2e-uv-tool-")
+    uv_tool_bin_dir = tempfile.mkdtemp(prefix="minds-e2e-uv-bin-")
+    os.environ["UV_TOOL_DIR"] = uv_tool_dir
+    os.environ["UV_TOOL_BIN_DIR"] = uv_tool_bin_dir
+
+    _destroy_agent(_DEV_AGENT_NAME)
+
+    server = ForwardingServerFixture(tmp_path)
+    server.start()
+
+    client = httpx.Client(
+        base_url=server.base_url,
+        cookies={"mind_session": "skip"},
+        timeout=15.0,
+    )
+    os.environ["SKIP_AUTH"] = "1"
+
+    try:
+        agent_id = _create_agent_with_retry(
+            client,
+            max_attempts=2,
+            agent_name=_DEV_AGENT_NAME,
+            launch_mode="DEV",
+        )
+        logger.info("Agent ready: {}", agent_id)
+
+        # DEV mode is fast but the MngrStreamManager still needs time to:
+        # 1. Discover the new agent via mngr observe (~10s polling interval)
+        # 2. Start an events stream for the new mind agent
+        # 3. Read the server events from the local filesystem
+        logger.info("Waiting for server discovery (up to 60s)...")
+        for i in range(60):
+            resp = client.get(f"/agents/{agent_id}/servers/")
+            if resp.status_code == 200 and "web" in resp.text:
+                logger.info("Web server discovered after {} seconds", i)
+                break
+            if i % 10 == 0 and i > 0:
+                logger.debug("Still waiting for discovery ({} seconds)...", i)
+            threading.Event().wait(1)
+        else:
+            resp = client.get(f"/agents/{agent_id}/servers/")
+            logger.error("Servers page ({}): {}", resp.status_code, resp.text[:500])
+            pytest.fail("Web server not discovered within 60 seconds")
+
+        # Verify the web server is accessible through the proxy
+        resp = client.get(f"/agents/{agent_id}/web/", follow_redirects=True)
+        assert resp.status_code == 200, f"Web proxy failed: {resp.status_code}"
+        logger.info("Web server accessible via proxy (status {})", resp.status_code)
+
+    finally:
+        client.close()
+        _destroy_agent(_DEV_AGENT_NAME)
+        server.stop()
+        shutil.rmtree(uv_tool_dir, ignore_errors=True)
+        shutil.rmtree(uv_tool_bin_dir, ignore_errors=True)

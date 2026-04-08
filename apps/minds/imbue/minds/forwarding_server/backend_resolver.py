@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 from abc import ABC
 from abc import abstractmethod
@@ -312,12 +313,24 @@ class MngrStreamManager(MutableModel):
     _events_processes: dict[str, RunningProcess] = PrivateAttr(default_factory=dict)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
+    @staticmethod
+    def _clean_subprocess_env() -> dict[str, str]:
+        """Build an environment for mngr subprocesses.
+
+        Strips PYTEST_CURRENT_TEST so that mngr does not refuse to load
+        project configs that set ``is_allowed_in_pytest = false``.
+        """
+        env = dict(os.environ)
+        env.pop("PYTEST_CURRENT_TEST", None)
+        return env
+
     def start(self) -> None:
         """Start the streaming subprocess for continuous agent discovery."""
         self._cg.__enter__()
         self._cg.run_process_in_background(
             command=[self.mngr_binary, "observe", "--discovery-only", "--quiet"],
             on_output=self._on_discovery_stream_output,
+            env=self._clean_subprocess_env(),
         )
 
     def stop(self) -> None:
@@ -530,5 +543,6 @@ class MngrStreamManager(MutableModel):
         process = self._cg.run_process_in_background(
             command=[self.mngr_binary, "events", aid_str, SERVERS_EVENT_SOURCE_NAME, "--follow", "--quiet"],
             on_output=lambda line, is_stdout: self._on_events_stream_output(line, is_stdout, agent_id),
+            env=self._clean_subprocess_env(),
         )
         self._events_processes[aid_str] = process
