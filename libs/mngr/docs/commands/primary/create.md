@@ -93,10 +93,7 @@ By default, `mngr create` uses the local host. Use the agent address to specify 
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--from`, `--source` | text | Directory to use as work_dir root [AGENT &#x7C; AGENT@HOST &#x7C; AGENT@HOST.PROVIDER:PATH &#x7C; @HOST:PATH]. Defaults to current dir if no other source args are given | None |
-| `--source-agent`, `--from-agent` | text | Source agent for cloning work_dir | None |
-| `--source-host` | text | Source host | None |
-| `--source-path` | text | Source path | None |
+| `--from`, `--source` | text | Source data for the agent [AGENT[@HOST[.PROVIDER]][:PATH] &#x7C; @HOST:PATH &#x7C; :PATH]. A bare name refers to an agent; use :PATH for a directory. Defaults to git root if omitted | None |
 | `--rsync`, `--no-rsync` | boolean | Use rsync for file transfer [default: yes if rsync-args are present or if git is disabled] | None |
 | `--rsync-args` | text | Additional arguments to pass to rsync | None |
 | `--include-git`, `--no-include-git` | boolean | Include .git directory | `True` |

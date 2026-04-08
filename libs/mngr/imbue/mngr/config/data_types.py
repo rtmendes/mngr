@@ -790,9 +790,6 @@ class CreateCliOptions(CommonCliOptions):
     command: str | None
     extra_window: tuple[str, ...]
     source: str | None
-    source_agent: str | None
-    source_host: str | None
-    source_path: str | None
     target: str | None
     target_path: str | None
     transfer: str | None

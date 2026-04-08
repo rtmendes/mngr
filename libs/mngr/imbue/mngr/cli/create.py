@@ -30,12 +30,12 @@ from imbue.mngr.api.connect import run_connect_command
 from imbue.mngr.api.create import create as api_create
 from imbue.mngr.api.data_types import ConnectionOptions
 from imbue.mngr.api.data_types import CreateAgentResult
-from imbue.mngr.api.data_types import SourceLocation
 from imbue.mngr.api.discover import discover_hosts_and_agents
 from imbue.mngr.api.find import ResolvedSource
 from imbue.mngr.api.find import ensure_agent_started
 from imbue.mngr.api.find import ensure_host_started
 from imbue.mngr.api.find import get_host_from_list_by_id
+from imbue.mngr.api.find import parse_source_string
 from imbue.mngr.api.find import resolve_source_location
 from imbue.mngr.api.providers import get_provider_instance
 from imbue.mngr.cli.common_opts import add_common_options
@@ -278,11 +278,8 @@ class _CreateCommand(click.Command):
     "--from",
     "--source",
     "source",
-    help="Directory to use as work_dir root [AGENT | AGENT@HOST | AGENT@HOST.PROVIDER:PATH | @HOST:PATH]. Defaults to current dir if no other source args are given",
+    help="Source data for the agent [AGENT[@HOST[.PROVIDER]][:PATH] | @HOST:PATH | :PATH]. A bare name refers to an agent; use :PATH for a directory. Defaults to git root if omitted",
 )
-@optgroup.option("--source-agent", "--from-agent", "source_agent", help="Source agent for cloning work_dir")
-@optgroup.option("--source-host", help="Source host")
-@optgroup.option("--source-path", help="Source path")
 @optgroup.option(
     "--rsync/--no-rsync",
     default=None,
@@ -1016,7 +1013,7 @@ def _check_source_does_not_contain_state_dir(source_path: Path, mngr_ctx: MngrCo
             f"Source directory '{source_path}' contains the mngr state directory "
             f"('{state_dir}'). Copying this directory would recursively copy agent "
             f"data (including the copy destination itself). "
-            f"Use --source-path to specify a more specific directory."
+            f"Use --from with a more specific path (e.g. --from :path/to/subdir)."
         )
 
 
@@ -1028,44 +1025,31 @@ def _resolve_source_location(
     is_start_desired: bool,
 ) -> ResolvedSource:
     """Resolve the source location and optionally the source agent ID and labels."""
-    # figure out the agent source data
-    if opts.source is None and opts.source_agent is None and opts.source_host is None:
-        # easy, source location is on current host
-        source_path = opts.source_path
-        if source_path is None:
-            git_root = find_git_worktree_root(None, mngr_ctx.concurrency_group)
-            if git_root is not None:
-                source_path = str(git_root)
-            else:
-                raise UserInputError(
-                    "Not inside a git repository. Either run from within a git repo, "
-                    "or specify --source-path to set the source directory explicitly."
-                )
+    if opts.source is None:
+        # No --from specified: default to git root
+        git_root = find_git_worktree_root(None, mngr_ctx.concurrency_group)
+        if git_root is not None:
+            source_path = str(git_root)
+        else:
+            raise UserInputError(
+                "Not inside a git repository. Either run from within a git repo, "
+                "or specify --from to set the source explicitly."
+            )
         _check_source_does_not_contain_state_dir(Path(source_path), mngr_ctx)
         provider = get_provider_instance(LOCAL_PROVIDER_NAME, mngr_ctx)
         host = provider.get_host(HostName(LOCAL_HOST_NAME))
         online_host, _ = ensure_host_started(host, is_start_desired=is_start_desired, provider=provider)
         return ResolvedSource(location=HostLocation(host=online_host, path=Path(source_path)))
 
-    # Parse the source first to check if it's just a local path.
-    # When --source is a plain filesystem path (no agent or host component),
-    # we can resolve it locally without loading all providers. Loading all
+    # Parse the --from string once
+    parsed = parse_source_string(opts.source)
+
+    # When --from is just a local path (no agent or host component),
+    # resolve it locally without loading all providers. Loading all
     # providers is expensive and can fail if a provider's external service
     # (e.g. Docker daemon, Modal credentials) is unavailable.
-    parsed = _parse_source_string(opts.source) if opts.source else None
-    has_agent_or_host = (
-        (parsed is not None and (parsed.agent_name is not None or parsed.host_name is not None))
-        or opts.source_agent is not None
-        or opts.source_host is not None
-    )
-    if not has_agent_or_host:
-        # Just a local path -- use the fast local-provider path
-        if parsed is not None and parsed.path is not None:
-            source_path = str(parsed.path)
-        elif opts.source_path is not None:
-            source_path = opts.source_path
-        else:
-            source_path = os.getcwd()
+    if parsed.agent is None and parsed.host is None:
+        source_path = parsed.path if parsed.path is not None else os.getcwd()
         _check_source_does_not_contain_state_dir(Path(source_path), mngr_ctx)
         provider = get_provider_instance(LOCAL_PROVIDER_NAME, mngr_ctx)
         host = provider.get_host(HostName(LOCAL_HOST_NAME))
@@ -1075,10 +1059,7 @@ def _resolve_source_location(
     # Need full resolution across providers
     agents_by_host = agent_and_host_loader()
     return resolve_source_location(
-        opts.source,
-        opts.source_agent,
-        opts.source_host,
-        opts.source_path,
+        parsed,
         agents_by_host,
         mngr_ctx,
         is_start_desired=is_start_desired,
@@ -1104,34 +1085,6 @@ def _resolve_target_host(
     else:
         resolved_target_host = target_host
     return resolved_target_host
-
-
-def _find_source_location(
-    source: str | None, source_agent: str | None, source_host: str | None, source_path: str | None
-) -> SourceLocation:
-    # Assemble source - parse the unified --source string if provided
-    parsed_source_path: Path | None = None
-    parsed_source_agent = source_agent
-    parsed_source_host = source_host
-
-    if source:
-        # Parse [AGENT[@HOST[.PROVIDER]]]:PATH format
-        parsed = _parse_source_string(source)
-        parsed_source_path = parsed.path
-        parsed_source_agent = parsed.agent_name
-        parsed_source_host = parsed.host_name
-
-    # Override with explicit options if provided
-    if source_path:
-        parsed_source_path = Path(source_path)
-
-    # Build location first so we can use it for validation
-    source_location = SourceLocation(
-        path=parsed_source_path,
-        agent_name=AgentName(parsed_source_agent) if parsed_source_agent else None,
-        host_name=HostName(parsed_source_host) if parsed_source_host else None,
-    )
-    return source_location
 
 
 def _get_current_git_branch(source_location: HostLocation, mngr_ctx: MngrContext) -> str | None:
@@ -1357,7 +1310,7 @@ def _parse_agent_opts(
         # Automatically use the "generic" agent type when --command is provided
         resolved_agent_type = "generic"
 
-    is_clone = opts.source_agent is not None
+    is_clone = source_agent_state_dir is not None
 
     # Parse worktree base folder
     parsed_worktree_base_folder = Path(opts.worktree_base_folder).expanduser() if opts.worktree_base_folder else None
@@ -1540,67 +1493,6 @@ def _parse_branch_flag(branch: str, agent_name: AgentName) -> tuple[str | None, 
 
     resolved_new = new.replace("*", str(agent_name))
     return (base or None, resolved_new, bool(base))
-
-
-class ParsedSourceString(FrozenModel):
-    """Result of parsing a source string in [AGENT[@HOST[.PROVIDER]]]:PATH format."""
-
-    path: Path | None = Field(description="Path component")
-    agent_name: str | None = Field(description="Agent name component")
-    host_name: str | None = Field(description="Host name component (may include .PROVIDER suffix)")
-
-
-@pure
-def _parse_source_string(source_str: str) -> ParsedSourceString:
-    """Parse [AGENT[@[HOST][.PROVIDER]]][:PATH] format into components.
-
-    Without a colon and without '@', the string is treated as a plain path
-    (the common case for --source ./some/dir). When '@' is present, the string
-    is parsed as an agent address regardless of whether a colon follows. With a
-    colon, the part before the colon is the address and the part after is the path.
-
-    The host_name field may include a .PROVIDER suffix (e.g. "myhost.modal").
-    """
-    if ":" not in source_str:
-        if "@" in source_str:
-            # Agent address without a path (e.g. "my-agent@my-host")
-            address = parse_agent_address(source_str)
-            host_str = _host_str_from_address_components(address.host_name, address.provider_name)
-            return ParsedSourceString(
-                path=None,
-                agent_name=str(address.agent_name) if address.agent_name else None,
-                host_name=host_str,
-            )
-        # No colon or @ -- treat as a plain path (most common case: --source ./dir)
-        return ParsedSourceString(path=Path(source_str), agent_name=None, host_name=None)
-
-    prefix, path_str = source_str.split(":", 1)
-    path = Path(path_str) if path_str else None
-
-    if not prefix:
-        return ParsedSourceString(path=path, agent_name=None, host_name=None)
-
-    address = parse_agent_address(prefix)
-    host_str = _host_str_from_address_components(address.host_name, address.provider_name)
-    return ParsedSourceString(
-        path=path,
-        agent_name=str(address.agent_name) if address.agent_name else None,
-        host_name=host_str,
-    )
-
-
-@pure
-def _host_str_from_address_components(
-    host_name: HostName | None, provider_name: ProviderInstanceName | None
-) -> str | None:
-    """Combine host and provider name components into a single host string."""
-    if host_name is not None and provider_name is not None:
-        return f"{host_name}.{provider_name}"
-    if host_name is not None:
-        return str(host_name)
-    if provider_name is not None:
-        return f".{provider_name}"
-    return None
 
 
 # === Helper Functions (stubs) ===
