@@ -1,6 +1,5 @@
 import pytest
 
-from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import SnapshotsNotSupportedError
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import SnapshotId
