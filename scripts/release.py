@@ -26,6 +26,7 @@ from typing import Any
 from typing import Final
 from typing import cast
 
+import httpx
 import semver
 import tomlkit
 from utils import PACKAGES
@@ -68,8 +69,6 @@ def _find_last_release_tag() -> str:
 
 def _get_pypi_version() -> str | None:
     """Query PyPI for the latest published version of mngr. Returns None if the query fails."""
-    import httpx
-
     try:
         response = httpx.get("https://pypi.org/pypi/imbue-mngr/json", timeout=10)
         response.raise_for_status()
@@ -95,8 +94,6 @@ def _detect_changed_packages(since_tag: str) -> set[str]:
 
 def _is_published_on_pypi(pypi_name: str) -> bool:
     """Check whether a package has ever been published on PyPI."""
-    import httpx
-
     try:
         response = httpx.head(f"https://pypi.org/pypi/{pypi_name}/json", timeout=10)
         return response.status_code == 200
