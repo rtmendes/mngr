@@ -112,17 +112,24 @@ def clone_git_repo(
     git_url: GitUrl,
     clone_dir: Path,
     on_output: OutputCallback | None = None,
+    *,
+    is_shallow: bool = False,
 ) -> None:
     """Clone a git repository into the specified directory.
 
     The clone_dir must not already exist -- git clone will create it.
+    When is_shallow is True, clones with --depth 1 to skip history.
     Raises GitCloneError if the clone fails.
     """
     logger.debug("Cloning {} to {}", git_url, clone_dir)
+    command = ["git", "clone"]
+    if is_shallow:
+        command.extend(["--depth", "1"])
+    command.extend([str(git_url), str(clone_dir)])
     cg = ConcurrencyGroup(name="git-clone")
     with cg:
         result = cg.run_process_to_completion(
-            command=["git", "clone", str(git_url), str(clone_dir)],
+            command=command,
             is_checked_after=False,
             on_output=on_output,
         )
@@ -398,7 +405,7 @@ class AgentCreator(MutableModel):
                         log_queue.put("[minds] Cloning local worktree: {}".format(resolved_path))
                         temp_clone_dir = Path(tempfile.mkdtemp(prefix="minds-clone-"))
                         clone_target = temp_clone_dir / extract_repo_name(repo_source)
-                        clone_git_repo(GitUrl(str(resolved_path)), clone_target, on_output=emit_log)
+                        clone_git_repo(GitUrl(str(resolved_path)), clone_target, on_output=emit_log, is_shallow=True)
                         mind_dir = clone_target
                     else:
                         mind_dir = resolved_path
@@ -407,7 +414,7 @@ class AgentCreator(MutableModel):
                     temp_clone_dir = Path(tempfile.mkdtemp(prefix="minds-clone-"))
                     clone_target = temp_clone_dir / extract_repo_name(repo_source)
                     log_queue.put("[minds] Cloning {}...".format(repo_source))
-                    clone_git_repo(GitUrl(repo_source), clone_target, on_output=emit_log)
+                    clone_git_repo(GitUrl(repo_source), clone_target, on_output=emit_log, is_shallow=True)
                     mind_dir = clone_target
 
                 if branch:
