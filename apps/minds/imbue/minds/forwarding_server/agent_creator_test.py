@@ -219,6 +219,7 @@ def test_agent_creator_start_creation_returns_agent_id_and_tracks_status(tmp_pat
     assert info is not None
     assert info.agent_id == agent_id
     assert info.status == AgentCreationStatus.CLONING
+    creator.wait_for_all()
 
 
 def test_agent_creator_start_creation_with_custom_name(tmp_path: Path) -> None:
@@ -229,6 +230,7 @@ def test_agent_creator_start_creation_with_custom_name(tmp_path: Path) -> None:
     agent_id = creator.start_creation("file:///nonexistent-repo", agent_name="my-agent")
     info = creator.get_creation_info(agent_id)
     assert info is not None
+    creator.wait_for_all()
 
 
 def test_agent_creator_get_log_queue_returns_none_for_unknown() -> None:
@@ -245,6 +247,7 @@ def test_agent_creator_get_log_queue_returns_queue_for_tracked() -> None:
     agent_id = creator.start_creation("file:///nonexistent-repo")
     q = creator.get_log_queue(agent_id)
     assert q is not None
+    creator.wait_for_all()
 
 
 def test_agent_creator_start_creation_with_local_path(tmp_path: Path) -> None:
