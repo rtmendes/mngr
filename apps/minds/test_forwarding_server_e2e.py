@@ -203,16 +203,24 @@ def test_create_agent_e2e(tmp_path: Path) -> None:
         agent_id = _create_agent_with_retry(client, max_attempts=2)
         logger.info("Agent ready: {}", agent_id)
 
-        # Wait for the forwarding server to discover the agent's servers
-        logger.info("Waiting for server discovery...")
-        for i in range(60):
+        # Wait for the forwarding server to discover the agent's servers.
+        # The MngrStreamManager needs to: discover the agent via `mngr observe`,
+        # then start `mngr events` to stream server events from the Docker container.
+        # This can take 30-90 seconds depending on SSH key exchange and event polling.
+        logger.info("Waiting for server discovery (up to 120s)...")
+        for i in range(120):
             resp = client.get(f"/agents/{agent_id}/servers/")
             if resp.status_code == 200 and "web" in resp.text:
                 logger.info("Web server discovered after {} seconds", i)
                 break
+            if i % 10 == 0 and i > 0:
+                logger.debug("Still waiting for discovery ({} seconds)...", i)
             threading.Event().wait(1)
         else:
-            pytest.fail("Web server not discovered within 60 seconds")
+            # Dump diagnostic info before failing
+            resp = client.get(f"/agents/{agent_id}/servers/")
+            logger.error("Servers page ({}): {}", resp.status_code, resp.text[:500])
+            pytest.fail("Web server not discovered within 120 seconds")
 
         # Verify the web server is accessible through the proxy
         resp = client.get(f"/agents/{agent_id}/web/", follow_redirects=True)
