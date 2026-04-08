@@ -8,13 +8,11 @@ to main. To run them locally:
         libs/mngr_claude/imbue/mngr_claude/test_claude_agent_modal.py
 """
 
-import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from imbue.mngr.utils.polling import poll_until
 from imbue.mngr.utils.testing import ModalSubprocessTestEnv
 from imbue.mngr.utils.testing import get_short_random_string
 
@@ -65,33 +63,6 @@ def _create_modal_agent(
         timeout=600,
         env=env.env,
     )
-
-
-def _wait_for_agent_idle(agent_name: str, env: ModalSubprocessTestEnv, timeout_seconds: float = 120.0) -> None:
-    """Poll until the agent reaches WAITING or STOPPED state (indicating it finished processing)."""
-
-    def _is_agent_idle() -> bool:
-        result = subprocess.run(
-            ["uv", "run", "mngr", "list", "--format", "json"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env.env,
-        )
-        if result.returncode != 0:
-            return False
-        for line in result.stdout.strip().splitlines():
-            try:
-                agent_data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if agent_data.get("name") == agent_name and agent_data.get("state") in ("WAITING", "STOPPED"):
-                return True
-        return False
-
-    is_idle = poll_until(_is_agent_idle, timeout=timeout_seconds, poll_interval=5.0)
-    if not is_idle:
-        pytest.fail(f"Agent {agent_name} did not reach idle state within {timeout_seconds}s")
 
 
 def _destroy_modal_agent(agent_name: str, env: ModalSubprocessTestEnv) -> subprocess.CompletedProcess[str]:
@@ -163,12 +134,11 @@ def test_destroy_modal_agent_preserves_sessions_locally(
         f"Create failed with stderr: {create_result.stderr}\nstdout: {create_result.stdout}"
     )
 
-    # Wait for Claude to process the prompt and generate session data
-    _wait_for_agent_idle(agent_name, modal_subprocess_env)
-
-    # Destroy the agent (this should preserve session files locally)
+    # Destroy the agent (this should preserve session files locally).
+    # No need to wait for idle -- mngr create with -p already waits for the
+    # message to be sent, and Claude creates the session file at session start.
     destroy_result = _destroy_modal_agent(agent_name, modal_subprocess_env)
-    assert destroy_result.returncode == 0 or "Destroyed agent" in destroy_result.stdout, (
+    assert destroy_result.returncode == 0, (
         f"Destroy failed with stderr: {destroy_result.stderr}\nstdout: {destroy_result.stdout}"
     )
 
