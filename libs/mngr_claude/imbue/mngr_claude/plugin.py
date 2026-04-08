@@ -1865,8 +1865,7 @@ def _preserve_session_files(agent: ClaudeAgent, host: OnlineHostInterface) -> No
             )
 
         if "history" in available:
-            # Session history is a single file -- copy its parent dir and it comes along
-            # Use a targeted approach: read the file content and write it locally
+            # Session history is a single file -- read its content and write it locally
             _copy_single_file_to_local(host, history_path, dest_dir / "claude_session_id_history", agent.name)
 
 
