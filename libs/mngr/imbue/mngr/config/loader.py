@@ -182,6 +182,10 @@ def load_config(
     # CLI-level --disable-plugin flags that weren't known at startup.
     block_disabled_plugins(pm, config_dict["disabled_plugins"], is_strict=True)
 
+    # Include retry if not None
+    if config.retry is not None:
+        config_dict["retry"] = config.retry
+
     # Include logging if not None
     if config.logging is not None:
         config_dict["logging"] = config.logging
