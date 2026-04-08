@@ -32,10 +32,9 @@ def test_prevent_while_true() -> None:
 
 
 def test_prevent_time_sleep() -> None:
-    # Ratchet at 6: launch_all_test_agents (1 launch-delay)
+    # Ratchet at 5: launch_all_test_agents (1 launch-delay)
     # + launch_and_poll_agents (2 poll sleeps) + wait_for_integrator (2 poll sleeps)
-    # + read_agent_result (1 retry delay) -- all human-sanctioned
-    rc.check_time_sleep(_DIR, snapshot(7))
+    rc.check_time_sleep(_DIR, snapshot(5))
 
 
 def test_prevent_global_keyword() -> None:
@@ -118,6 +117,10 @@ def test_prevent_yaml_usage() -> None:
 
 def test_prevent_functools_partial() -> None:
     rc.check_functools_partial(_DIR, snapshot(0))
+
+
+def test_prevent_exit_stack() -> None:
+    rc.check_exit_stack(_DIR, snapshot(0))
 
 
 # --- Hardcoded paths ---
@@ -216,6 +219,10 @@ def test_prevent_pytest_mark_integration() -> None:
 
 def test_prevent_os_fork() -> None:
     rc.check_os_fork(_DIR, snapshot(0))
+
+
+def test_prevent_bare_urwid_tty_signal_keys() -> None:
+    rc.check_bare_urwid_tty_signal_keys(_DIR, snapshot(0))
 
 
 def test_prevent_direct_subprocess() -> None:

@@ -20,6 +20,7 @@ _REPO_ROOT = Path(__file__).parent
 _EXCLUDED_PROJECTS: frozenset[str] = frozenset({"flexmux"})
 
 _SELF_EXCLUSION: tuple[str, ...] = ("test_meta_ratchets.py",)
+_BINARY_FILE_EXCLUSION: tuple[str, ...] = ("*.png", "*.ico", "*.jpg", "*.jpeg", "*.gif", "*.webp")
 _MIGRATION_SCRIPT_EXCLUSION: tuple[str, ...] = (
     "migrate_code_mng_to_mngr.sh",
     "migrate_state_mng_to_mngr.sh",
@@ -155,7 +156,7 @@ _PREVENT_OLD_MNG_NAME = RegexRatchetRule(
 
 def test_prevent_old_mng_name_in_file_contents() -> None:
     """Ensure the old 'mng' name (not followed by 'r') is not reintroduced in file contents."""
-    exclusions = _SELF_EXCLUSION + _MIGRATION_SCRIPT_EXCLUSION
+    exclusions = _SELF_EXCLUSION + _BINARY_FILE_EXCLUSION + _MIGRATION_SCRIPT_EXCLUSION
     chunks = check_ratchet_rule_all_files(_PREVENT_OLD_MNG_NAME, _REPO_ROOT, exclusions)
     assert len(chunks) <= snapshot(0), _PREVENT_OLD_MNG_NAME.format_failure(chunks)
 
@@ -248,6 +249,36 @@ def test_no_gitignored_files_are_tracked() -> None:
     assert len(offending) == 0, (
         "The following tracked files match .gitignore patterns (remove with `git rm --cached`):\n"
         + "\n".join(f"  - {f}" for f in offending)
+    )
+
+
+def test_gitignore_patterns_use_double_star() -> None:
+    """Ensure every active .gitignore pattern starts with **/ or contains a path separator.
+
+    All patterns must use **/ so they are directly compatible with .dockerignore
+    syntax (where bare names only match at root). Patterns with an interior /
+    (like */*/_tasks/) are already path-qualified and are allowed.
+
+    The offload justfile copies .gitignore to .dockerignore at build time,
+    so keeping the formats compatible avoids a separate generation step.
+    """
+    gitignore = (_REPO_ROOT / ".gitignore").read_text()
+    violations: list[str] = []
+    for lineno, line in enumerate(gitignore.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        pattern = stripped.lstrip("!")
+        if pattern.startswith("**/"):
+            continue
+        # Contains a / before the last char (e.g. */*/_tasks/)
+        core = pattern.rstrip("/")
+        if "/" in core:
+            continue
+        violations.append(f"  line {lineno}: {stripped}")
+    assert len(violations) == 0, (
+        "The following .gitignore patterns need a **/ prefix.\n"
+        "This keeps .gitignore directly compatible with .dockerignore:\n" + "\n".join(violations)
     )
 
 

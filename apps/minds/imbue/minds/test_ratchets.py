@@ -117,6 +117,10 @@ def test_prevent_functools_partial() -> None:
     rc.check_functools_partial(_DIR, snapshot(0))
 
 
+def test_prevent_exit_stack() -> None:
+    rc.check_exit_stack(_DIR, snapshot(0))
+
+
 # --- Hardcoded paths ---
 
 
@@ -215,8 +219,12 @@ def test_prevent_os_fork() -> None:
     rc.check_os_fork(_DIR, snapshot(0))
 
 
+def test_prevent_bare_urwid_tty_signal_keys() -> None:
+    rc.check_bare_urwid_tty_signal_keys(_DIR, snapshot(0))
+
+
 def test_prevent_direct_subprocess() -> None:
-    excluded = TEST_FILE_PATTERNS + ("testing.py",)
+    excluded = TEST_FILE_PATTERNS + ("testing.py", "scripts/*.py")
     rc.check_direct_subprocess(_DIR, snapshot(0), excluded_patterns=excluded)
 
 
