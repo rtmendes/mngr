@@ -871,7 +871,7 @@ def _resolve_installed_plugins_sentinel(host: OnlineHostInterface) -> None:
 
 
 def _load_claude_resource_script(filename: str) -> str:
-    """Load a shell script from the mngr_claude resources package."""
+    """Load a resource script from the mngr_claude resources package."""
     resource_files = importlib.resources.files(_claude_resources)
     script_path = resource_files.joinpath(filename)
     return script_path.read_text()
