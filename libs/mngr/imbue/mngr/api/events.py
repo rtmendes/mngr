@@ -1055,11 +1055,8 @@ def _consume_event_queue(
         except queue.Empty:
             now = time.monotonic()
 
-            # Re-scan for new source directories. Use a faster interval when
-            # no sources have been discovered yet (e.g. agent just created, events
-            # file doesn't exist yet) so we pick up new files within ~1 second.
-            scan_interval = FOLLOW_POLL_INTERVAL_SECONDS if not state.known_source_paths else SOURCE_SCAN_INTERVAL_SECONDS
-            if now - state.last_source_scan_time > scan_interval:
+            # Periodically re-scan for new source directories
+            if now - state.last_source_scan_time > SOURCE_SCAN_INTERVAL_SECONDS:
                 _rescan_and_start_new_tail_threads(
                     target=target_holder[0],
                     state=state,
