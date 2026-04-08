@@ -34,6 +34,7 @@ from imbue.minds.forwarding_server.auth import FileAuthStore
 from imbue.minds.forwarding_server.backend_resolver import MngrCliBackendResolver
 from imbue.minds.forwarding_server.backend_resolver import MngrStreamManager
 from imbue.minds.primitives import OneTimeCode
+from imbue.minds.testing import clean_env
 from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -66,17 +67,6 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _clean_env() -> dict[str, str]:
-    """Build a subprocess environment without PYTEST_CURRENT_TEST.
-
-    mngr refuses to load project configs that set ``is_allowed_in_pytest = false``
-    when this variable is present, so we strip it for mngr subprocesses.
-    """
-    env = dict(os.environ)
-    env.pop("PYTEST_CURRENT_TEST", None)
-    return env
-
-
 def _destroy_agent(agent_name: str) -> None:
     try:
         subprocess.run(
@@ -85,7 +75,7 @@ def _destroy_agent(agent_name: str) -> None:
             timeout=30,
             text=True,
             cwd=_REPO_ROOT,
-            env=_clean_env(),
+            env=clean_env(),
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
