@@ -99,17 +99,6 @@ def _extract_result_error(line: str) -> str | None:
     return None
 
 
-def _yield_text_deltas_from_lines(lines: list[str]) -> Iterator[str]:
-    """Yield text deltas parsed from stream-json lines, skipping blanks and non-delta events."""
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        text = extract_text_delta(stripped)
-        if text is not None:
-            yield text
-
-
 class _StreamTailState(MutableModel):
     """Encapsulates mutable state for tailing a file via the host interface.
 
