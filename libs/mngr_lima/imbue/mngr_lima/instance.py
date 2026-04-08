@@ -18,6 +18,7 @@ from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.model_update import to_update
 from imbue.mngr.errors import HostNotFoundError
 from imbue.mngr.errors import MngrError
+from imbue.mngr.errors import ProviderUnavailableError
 from imbue.mngr.errors import SnapshotsNotSupportedError
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.hosts.offline_host import OfflineHost
@@ -756,16 +757,23 @@ sudo poweroff
         cg: ConcurrencyGroup,
         include_destroyed: bool = False,
     ) -> list[DiscoveredHost]:
-        """Discover all Lima hosts managed by this provider instance."""
-        self._ensure_lima_available()
+        """Discover all Lima hosts managed by this provider instance.
+
+        If limactl is not installed, returns host records from local state only
+        (all marked as offline). This allows discovery to succeed gracefully
+        in environments without Lima.
+        """
         prefix = self.mngr_ctx.config.prefix
 
-        # Get all Lima instances with our prefix
+        # Get all Lima instances with our prefix (gracefully handle missing limactl)
+        instances: list[dict[str, Any]] = []
         try:
+            self._ensure_lima_available()
             instances = limactl_list(cg)
         except (LimaCommandError, OSError) as e:
             logger.warning("Failed to list Lima instances: {}", e)
-            instances = []
+        except ProviderUnavailableError as e:
+            logger.debug("Lima provider not available for discovery: {}", e)
 
         # Build a map of instance_name -> status
         instance_status: dict[str, str] = {}
