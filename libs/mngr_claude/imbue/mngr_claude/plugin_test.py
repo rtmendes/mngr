@@ -3010,7 +3010,7 @@ def test_write_generated_files_writes_through_symlink_safely(tmp_path: Path, tem
     symlink = plugins_dir / "installed_plugins.json"
     symlink.symlink_to(source_file)
 
-    host = FakeHost()
+    host = cast(OnlineHostInterface, FakeHost())
     # Only settings.json, no installed_plugins.json (as happens for local hosts)
     generated_files = {Path("settings.json"): '{"some": "setting"}'}
 
