@@ -167,9 +167,13 @@ function startBackend(onProgress) {
         }
       });
 
-      // Stderr is human-readable logging -- capture to log file
+      // Stderr is human-readable logging -- capture to log file and console
       child.stderr.on('data', (data) => {
-        logStream.write(data.toString());
+        const text = data.toString();
+        logStream.write(text);
+        if (paths.isDev()) {
+          process.stderr.write(text);
+        }
       });
 
       child.on('error', (err) => {

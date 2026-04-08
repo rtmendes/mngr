@@ -1088,6 +1088,11 @@ def create_forwarding_server(
 
     app = FastAPI(lifespan=_lifespan)
 
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception) -> Response:
+        logger.error("Unhandled exception on {} {}: {}", request.method, request.url.path, exc, exc_info=exc)
+        return Response(status_code=500, content=f"Internal Server Error: {exc}")
+
     app.state.auth_store = auth_store
     app.state.backend_resolver = backend_resolver
     app.state.tunnel_manager = tunnel_manager

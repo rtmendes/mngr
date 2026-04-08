@@ -1343,3 +1343,24 @@ def test_create_form_shows_launch_mode_dropdown(tmp_path: Path) -> None:
     assert "local" in response.text
     assert "cloud" in response.text
     assert "dev" in response.text
+
+
+def test_unhandled_exception_returns_500_with_message(tmp_path: Path) -> None:
+    """Unhandled exceptions in routes produce a 500 response with the error message."""
+    backend_resolver = StaticBackendResolver(url_by_agent_and_server={})
+    auth_dir = tmp_path / "auth"
+    auth_store = FileAuthStore(data_directory=auth_dir)
+    app = create_forwarding_server(
+        auth_store=auth_store,
+        backend_resolver=backend_resolver,
+        http_client=None,
+    )
+
+    @app.get("/explode")
+    def explode() -> None:
+        raise RuntimeError("test boom")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get("/explode")
+    assert response.status_code == 500
+    assert "test boom" in response.text
