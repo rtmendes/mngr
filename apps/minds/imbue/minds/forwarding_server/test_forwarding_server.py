@@ -231,6 +231,68 @@ def test_landing_page_redirects_when_single_agent_known(tmp_path: Path) -> None:
     assert response.headers["location"] == "/agents/{}/".format(agent_id)
 
 
+# -- Cloudflare Access header auth tests --
+
+
+def test_cloudflare_email_header_authenticates_when_owner_email_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requests with a matching Cf-Access-Authenticated-User-Email header are authenticated."""
+    monkeypatch.setenv("OWNER_EMAIL", "owner@example.com")
+    client, _, agent_id = _setup_test_server(tmp_path)
+
+    response = client.get(
+        "/",
+        headers={"cf-access-authenticated-user-email": "owner@example.com"},
+        follow_redirects=False,
+    )
+    # Authenticated, so should redirect to the single agent
+    assert response.status_code == 307
+
+
+def test_cloudflare_email_header_case_insensitive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cloudflare email comparison is case-insensitive."""
+    monkeypatch.setenv("OWNER_EMAIL", "Owner@Example.COM")
+    client, _, agent_id = _setup_test_server(tmp_path)
+
+    response = client.get(
+        "/",
+        headers={"cf-access-authenticated-user-email": "owner@example.com"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 307
+
+
+def test_cloudflare_email_header_rejects_wrong_email(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Cf-Access-Authenticated-User-Email that does not match OWNER_EMAIL is rejected."""
+    monkeypatch.setenv("OWNER_EMAIL", "owner@example.com")
+    client, _, agent_id = _setup_test_server(tmp_path)
+
+    response = client.get(
+        "/",
+        headers={"cf-access-authenticated-user-email": "stranger@example.com"},
+    )
+    # Not authenticated, should show login page
+    assert response.status_code == 200
+    assert "Login" in response.text
+
+
+def test_cloudflare_email_header_ignored_when_owner_email_unset(tmp_path: Path) -> None:
+    """Without OWNER_EMAIL set, the Cloudflare header is ignored."""
+    client, _, agent_id = _setup_test_server(tmp_path)
+
+    response = client.get(
+        "/",
+        headers={"cf-access-authenticated-user-email": "anyone@example.com"},
+    )
+    assert response.status_code == 200
+    assert "Login" in response.text
+
+
 # -- Agent default redirect tests --
 
 

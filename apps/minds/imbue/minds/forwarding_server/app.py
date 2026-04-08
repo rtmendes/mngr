@@ -111,13 +111,32 @@ BackendResolverDep = Annotated[BackendResolverInterface, Depends(_get_backend_re
 # -- Auth helpers --
 
 
+_CF_EMAIL_HEADER: Final[str] = "cf-access-authenticated-user-email"
+
+
 def _is_authenticated(
     cookies: Mapping[str, str],
     auth_store: AuthStoreInterface,
+    headers: Mapping[str, str] | None = None,
 ) -> bool:
-    """Check whether the user has a valid global session cookie."""
+    """Check whether the user has a valid session.
+
+    Authentication succeeds if any of the following are true:
+    - ``SKIP_AUTH=1`` is set in the environment
+    - The request carries a valid signed session cookie (one-time code flow)
+    - The request was forwarded through Cloudflare Access with Google OAuth
+      and the authenticated email matches ``OWNER_EMAIL``
+    """
     if os.getenv("SKIP_AUTH", "0") == "1":
         return True
+
+    # Cloudflare Access sets this header after successful Google OAuth login.
+    if headers is not None:
+        owner_email = os.getenv("OWNER_EMAIL")
+        cf_email = headers.get(_CF_EMAIL_HEADER)
+        if owner_email and cf_email and cf_email.lower() == owner_email.lower():
+            return True
+
     signing_key = auth_store.get_signing_key()
     cookie_value = cookies.get(SESSION_COOKIE_NAME)
     if cookie_value is None:
@@ -224,7 +243,7 @@ def _handle_login(
     code = OneTimeCode(one_time_code)
 
     # If user already has a valid session, redirect to landing page
-    if _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=307, headers={"Location": "/"})
 
     # Render JS redirect to /authenticate (prevents prefetch consumption)
@@ -264,7 +283,7 @@ def _handle_landing_page(
     auth_store: AuthStoreDep,
     backend_resolver: BackendResolverDep,
 ) -> Response:
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         html = render_login_page()
         return HTMLResponse(content=html)
 
@@ -291,7 +310,7 @@ def _handle_agent_default_redirect(
     auth_store: AuthStoreDep,
 ) -> Response:
     """Redirect to the agent's web server by default."""
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=403, content="Not authenticated")
 
     return Response(status_code=307, headers={"Location": f"/agents/{agent_id}/web/"})
@@ -306,7 +325,7 @@ async def _handle_agent_servers_page(
     """Show a listing of all available servers for a given agent."""
     parsed_id = AgentId(agent_id)
 
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=403, content="Not authenticated")
 
     server_names = backend_resolver.list_servers_for_agent(parsed_id)
@@ -330,7 +349,7 @@ async def _handle_toggle_global(
     backend_resolver: BackendResolverDep,
 ) -> Response:
     """Toggle global cloudflare forwarding for a specific server on an agent."""
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=403, content='{"error": "Not authenticated"}', media_type="application/json")
 
     cf_client: CloudflareForwardingClient | None = request.app.state.cloudflare_client
@@ -519,7 +538,7 @@ async def _handle_proxy_http(
     parsed_id = AgentId(agent_id)
     parsed_server = ServerName(server_name)
 
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=403, content="Not authenticated")
 
     # Serve the service worker script
@@ -614,7 +633,7 @@ async def _handle_proxy_websocket(
     parsed_id = AgentId(agent_id)
     parsed_server = ServerName(server_name)
 
-    if not _is_authenticated(cookies=websocket.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=websocket.cookies, auth_store=auth_store, headers=websocket.headers):
         await websocket.close(code=4003, reason="Not authenticated")
         return
 
@@ -761,7 +780,7 @@ def _get_tunnel_http_client(
 
 async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep) -> Response:
     """Handle form submission to create a new agent."""
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=403, content="Not authenticated")
 
     agent_creator: AgentCreator | None = request.app.state.agent_creator
@@ -789,7 +808,7 @@ def _handle_create_page(
     auth_store: AuthStoreDep,
 ) -> Response:
     """Show the create form page (GET /create)."""
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=403, content="Not authenticated")
 
     git_url = request.query_params.get("git_url", "")
@@ -803,7 +822,7 @@ async def _handle_create_agent_api(request: Request, auth_store: AuthStoreDep) -
 
     Accepts JSON body with git_url. Returns JSON with agent_id and status.
     """
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=403, content='{"error": "Not authenticated"}', media_type="application/json")
 
     agent_creator: AgentCreator | None = request.app.state.agent_creator
@@ -849,7 +868,7 @@ def _handle_creation_status_api(
     auth_store: AuthStoreDep,
 ) -> Response:
     """API endpoint for checking agent creation status."""
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=403, content='{"error": "Not authenticated"}', media_type="application/json")
 
     agent_creator: AgentCreator | None = request.app.state.agent_creator
@@ -879,7 +898,7 @@ def _handle_creating_page(
     auth_store: AuthStoreDep,
 ) -> Response:
     """Show the creating progress page (GET /creating/{agent_id})."""
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=403, content="Not authenticated")
 
     agent_creator: AgentCreator | None = request.app.state.agent_creator
@@ -936,7 +955,7 @@ async def _handle_creation_logs_sse(
     auth_store: AuthStoreDep,
 ) -> Response:
     """SSE endpoint that streams creation logs for an agent."""
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store, headers=request.headers):
         return Response(status_code=403, content="Not authenticated")
 
     agent_creator: AgentCreator | None = request.app.state.agent_creator
