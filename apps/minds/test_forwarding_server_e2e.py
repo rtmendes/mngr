@@ -4,8 +4,9 @@ Creates an agent from the forever-claude-template repo via the forwarding
 server API, verifies it starts and its web server is accessible through
 the forwarding server proxy.
 
-Requires a local checkout of the forever-claude-template repo. Set
-MINDS_TEMPLATE_REPO to point at it (defaults to ~/project/forever-claude-template).
+Set MINDS_TEMPLATE_REPO to a local checkout of the forever-claude-template
+repo for faster iteration (avoids cloning). If unset, the tests clone
+from the GitHub repo into a temporary directory.
 
 Run from the repo root:
     just test apps/minds/test_forwarding_server_e2e.py::test_create_agent_e2e
@@ -41,9 +42,21 @@ from imbue.minds.primitives import OneTimeCode
 from imbue.minds.testing import clean_env
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_TEMPLATE_REPO = Path(os.environ.get("MINDS_TEMPLATE_REPO", str(Path.home() / "project" / "forever-claude-template")))
+_TEMPLATE_GIT_URL = "https://github.com/imbue-ai/forever-claude-template.git"
 _SIGNAL_FILE = Path("/tmp/minds-e2e-done")
 _AGENT_NAME = "forever"
+
+
+def _get_template_repo() -> str:
+    """Return the template repo source: a local path (from MINDS_TEMPLATE_REPO) or the git URL.
+
+    When MINDS_TEMPLATE_REPO is set, returns the expanded local path.
+    Otherwise returns the GitHub URL so the AgentCreator clones it into a temp directory.
+    """
+    env_value = os.environ.get("MINDS_TEMPLATE_REPO")
+    if env_value is not None:
+        return str(Path(env_value).expanduser())
+    return _TEMPLATE_GIT_URL
 
 
 def _configure_logging() -> None:
@@ -85,17 +98,20 @@ def _destroy_agent(agent_name: str) -> None:
 
     # Clean up any leftover worktree branch from dev-mode agents.
     # mngr destroy removes the worktree directory but not the git branch.
-    branch_name = f"mngr/{agent_name}"
-    try:
-        subprocess.run(
-            ["git", "branch", "-D", branch_name],
-            capture_output=True,
-            timeout=5,
-            text=True,
-            cwd=str(_TEMPLATE_REPO),
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-        logger.debug("git branch -D {} failed (best-effort cleanup): {}", branch_name, exc)
+    # Only relevant when using a local checkout (not a cloned URL).
+    template_repo = os.environ.get("MINDS_TEMPLATE_REPO")
+    if template_repo is not None:
+        branch_name = f"mngr/{agent_name}"
+        try:
+            subprocess.run(
+                ["git", "branch", "-D", branch_name],
+                capture_output=True,
+                timeout=5,
+                text=True,
+                cwd=str(Path(template_repo).expanduser()),
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+            logger.debug("git branch -D {} failed (best-effort cleanup): {}", branch_name, exc)
 
 
 class ForwardingServerFixture:
@@ -171,7 +187,7 @@ def _create_agent_with_retry(
         resp = client.post(
             "/api/create-agent",
             json={
-                "git_url": str(_TEMPLATE_REPO),
+                "git_url": _get_template_repo(),
                 "agent_name": agent_name,
                 "launch_mode": launch_mode,
             },
