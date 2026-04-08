@@ -60,6 +60,7 @@ from imbue.mngr_claude.plugin import _get_claude_version
 from imbue.mngr_claude.plugin import _has_api_credentials_available
 from imbue.mngr_claude.plugin import _install_claude
 from imbue.mngr_claude.plugin import _parse_claude_version_output
+from imbue.mngr_claude.plugin import _provision_local_credentials
 from imbue.mngr_claude.plugin import _read_macos_keychain_credential
 from imbue.mngr_claude.plugin import _rewrite_installed_plugins_paths
 from imbue.mngr_claude.plugin import agent_field_generators
@@ -1028,6 +1029,60 @@ def test_configure_agent_hooks_skips_credential_sync_when_disabled(
     notification_hooks = settings["hooks"]["Notification"]
     auth_hooks = [h for h in notification_hooks if h.get("matcher") == "auth_success"]
     assert len(auth_hooks) == 0
+
+
+def test_provision_local_credentials_symlink(local_provider: LocalProviderInstance, tmp_path: Path) -> None:
+    """_provision_local_credentials with symlink=True should create a symlink to the source credentials."""
+    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
+    source_dir = tmp_path / "source_claude"
+    source_dir.mkdir()
+    (source_dir / ".credentials.json").write_text('{"token": "test"}')
+
+    config_dir = tmp_path / "agent_config"
+    config_dir.mkdir()
+
+    with patch(f"{_CLAUDE_AGENT_MODULE}.get_user_claude_config_dir", return_value=source_dir):
+        _provision_local_credentials(host, config_dir, symlink=True)
+
+    dest = config_dir / ".credentials.json"
+    assert dest.is_symlink()
+    assert dest.resolve() == (source_dir / ".credentials.json").resolve()
+
+
+def test_provision_local_credentials_copy(local_provider: LocalProviderInstance, tmp_path: Path) -> None:
+    """_provision_local_credentials with symlink=False should copy the credentials file."""
+    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
+    source_dir = tmp_path / "source_claude"
+    source_dir.mkdir()
+    (source_dir / ".credentials.json").write_text('{"token": "test"}')
+
+    config_dir = tmp_path / "agent_config"
+    config_dir.mkdir()
+
+    with patch(f"{_CLAUDE_AGENT_MODULE}.get_user_claude_config_dir", return_value=source_dir):
+        _provision_local_credentials(host, config_dir, symlink=False)
+
+    dest = config_dir / ".credentials.json"
+    assert dest.exists()
+    assert not dest.is_symlink()
+    assert dest.read_text() == '{"token": "test"}'
+    assert oct(dest.stat().st_mode & 0o777) == oct(0o600)
+
+
+def test_provision_local_credentials_missing_source(local_provider: LocalProviderInstance, tmp_path: Path) -> None:
+    """_provision_local_credentials should be a no-op when the source credentials file does not exist."""
+    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
+    source_dir = tmp_path / "source_claude"
+    source_dir.mkdir()
+    # Deliberately do NOT create .credentials.json
+
+    config_dir = tmp_path / "agent_config"
+    config_dir.mkdir()
+
+    with patch(f"{_CLAUDE_AGENT_MODULE}.get_user_claude_config_dir", return_value=source_dir):
+        _provision_local_credentials(host, config_dir, symlink=True)
+
+    assert not (config_dir / ".credentials.json").exists()
 
 
 def test_provision_configures_agent_hooks(
