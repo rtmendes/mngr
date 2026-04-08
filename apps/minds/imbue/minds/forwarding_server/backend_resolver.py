@@ -495,15 +495,21 @@ class MngrStreamManager(MutableModel):
             previously_known = set(self._known_agent_ids)
             self._known_agent_ids = new_agent_ids
 
+            removed = previously_known - new_agent_ids
+            added = new_agent_ids - previously_known
+            if removed or added:
+                logger.info("Syncing events streams: added={}, removed={}", added, removed)
+
             # Stop streams for agents that are no longer present
-            for aid_str in previously_known - new_agent_ids:
+            for aid_str in removed:
                 process = self._events_processes.pop(aid_str, None)
                 if process is not None:
+                    logger.info("Stopping events stream for removed agent {}", aid_str)
                     process.terminate()
                 self._events_servers.pop(aid_str, None)
 
             # Start streams for newly discovered agents
-            for aid_str in new_agent_ids - previously_known:
+            for aid_str in added:
                 self._start_events_stream(AgentId(aid_str))
 
     def _on_events_stream_output(self, line: str, is_stdout: bool, agent_id: AgentId) -> None:
@@ -536,6 +542,7 @@ class MngrStreamManager(MutableModel):
         aid_str = str(agent_id)
         self._events_servers[aid_str] = {}
 
+        logger.info("Starting events stream for agent {}", aid_str)
         process = self._cg.run_process_in_background(
             command=[self.mngr_binary, "events", aid_str, SERVERS_EVENT_SOURCE_NAME, "--follow", "--quiet"],
             on_output=lambda line, is_stdout: self._on_events_stream_output(line, is_stdout, agent_id),
