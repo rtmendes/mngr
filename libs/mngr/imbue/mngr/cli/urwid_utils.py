@@ -3,6 +3,7 @@ import sys
 import termios
 from collections.abc import Generator
 from contextlib import contextmanager
+from contextlib import nullcontext
 from pathlib import Path
 
 from urwid.display.raw import Screen
@@ -46,14 +47,8 @@ def create_urwid_screen_preserving_terminal() -> Generator[Screen, None, None]:
     Screen reads input from /dev/tty instead so the TUI still works as
     long as a controlling terminal exists.
     """
-    tty_file = None
-    try:
-        if sys.stdin.isatty():
-            tty_input = sys.stdin
-        else:
-            tty_file = open("/dev/tty")
-            tty_input = tty_file
-
+    tty_source = open("/dev/tty") if not sys.stdin.isatty() else nullcontext(sys.stdin)
+    with tty_source as tty_input:
         saved_tty_attrs = termios.tcgetattr(tty_input)
         screen = Screen(input=tty_input)
         screen.tty_signal_keys(intr="undefined")
@@ -61,6 +56,3 @@ def create_urwid_screen_preserving_terminal() -> Generator[Screen, None, None]:
             yield screen
         finally:
             termios.tcsetattr(tty_input, termios.TCSADRAIN, saved_tty_attrs)
-    finally:
-        if tty_file is not None:
-            tty_file.close()
