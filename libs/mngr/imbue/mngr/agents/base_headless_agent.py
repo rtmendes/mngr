@@ -92,7 +92,7 @@ class BaseHeadlessAgent(BaseAgent[AgentConfigT], StreamingHeadlessAgentMixin):
         # Phase 2: file didn't appear during grace period, now also check lifecycle
         poll_until(
             lambda: self._file_exists_on_host(stdout_path) or self._is_agent_finished(),
-            timeout=TAIL_POLL_TIMEOUT - self._startup_grace_seconds,
+            timeout=max(0.0, TAIL_POLL_TIMEOUT - self._startup_grace_seconds),
             poll_interval=TAIL_POLL_INTERVAL,
         )
         return self._file_exists_on_host(stdout_path)
@@ -144,9 +144,9 @@ class BaseHeadlessAgent(BaseAgent[AgentConfigT], StreamingHeadlessAgentMixin):
         parts.extend(self._get_extra_error_sources())
 
         if not parts:
-            stderr_exists = self._file_exists_on_host(self._get_stderr_path())
-            stdout_exists = self._file_exists_on_host(self._get_stdout_path())
-            if not stderr_exists and not stdout_exists:
+            is_stderr_present = self._file_exists_on_host(self._get_stderr_path())
+            is_stdout_present = self._file_exists_on_host(self._get_stdout_path())
+            if not is_stderr_present and not is_stdout_present:
                 pane_error = self._get_pane_error_message()
                 if pane_error:
                     parts.append(pane_error)
