@@ -9,7 +9,6 @@ const { startBackend, shutdown, getBackendProcess } = require('./backend');
 todesktop.init();
 
 let mainWindow = null;
-let backendPort = null;
 
 const isMac = process.platform === 'darwin';
 
@@ -261,8 +260,6 @@ async function startBackendWithRetry() {
         mainWindow.webContents.send('status-update', status);
       }
     });
-
-    backendPort = port;
 
     // Navigate directly to the login URL (same origin = cookies work)
     if (mainWindow && !mainWindow.isDestroyed()) {
