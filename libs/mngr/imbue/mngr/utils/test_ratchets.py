@@ -4,6 +4,8 @@ import pytest
 from inline_snapshot import snapshot
 
 from imbue.imbue_common.ratchet_testing import standard_ratchet_checks as rc
+from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_BARE_PRINT
+from imbue.imbue_common.ratchet_testing.common_ratchets import check_ratchet_rule
 from imbue.imbue_common.ratchet_testing.ratchets import TEST_FILE_PATTERNS
 from imbue.imbue_common.ratchet_testing.ratchets import check_no_ruff_errors
 from imbue.imbue_common.ratchet_testing.ratchets import check_no_type_errors
@@ -43,7 +45,11 @@ def test_prevent_global_keyword() -> None:
 
 
 def test_prevent_bare_print() -> None:
-    rc.check_bare_print(_DIR, snapshot(4))
+    # _kqueue_tty_test_script.py is a test resource script that communicates
+    # results via stdout -- print() is the correct mechanism there.
+    excluded = ("test_ratchets.py", "standard_ratchet_checks.py", "_kqueue_tty_test_script.py")
+    chunks = check_ratchet_rule(PREVENT_BARE_PRINT, _DIR, excluded)
+    assert len(chunks) <= snapshot(0), PREVENT_BARE_PRINT.format_failure(chunks)
 
 
 # --- Exception handling ---
