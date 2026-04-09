@@ -258,6 +258,7 @@ def _cleanup_modal_app(app_name: str, env: dict[str, str], monorepo_root: Path |
                             capture_output=True,
                             timeout=30,
                             env=env,
+                            cwd=monorepo_root,
                         )
     except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
         pass
