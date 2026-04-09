@@ -299,12 +299,6 @@
 
     // -- State management --
 
-    function showLoading() {
-      loadingView.style.display = 'flex';
-      errorView.style.display = 'none';
-      frame.style.display = 'none';
-    }
-
     function showError(message, details) {
       loadingView.style.display = 'none';
       errorView.style.display = 'flex';
