@@ -548,9 +548,9 @@ def apply_create_template(
                 updated_params[param_name] = template_value
 
     # Handle target_path from templates: append :PATH to the positional_name
-    # (or name) parameter. This converts the legacy template field to the new
-    # address :PATH syntax. Only applies if the user hasn't already specified
-    # a target path in their address.
+    # (or name) parameter. Templates specify target_path as a separate field,
+    # which gets converted to a :PATH suffix on the address. Only applies if
+    # the user hasn't already specified a target path in their address.
     template_target_path = _extract_template_target_path(template_names, config)
     if template_target_path is not None:
         updated_params = _apply_template_target_path(ctx, updated_params, template_target_path)
