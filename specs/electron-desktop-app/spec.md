@@ -34,7 +34,7 @@ The goal of this project is to package Minds as a standalone desktop app that a 
 |               --port <random>                    |
 |               --log-format jsonl                 |
 |                                                  |
-|  FastAPI forwarding server                       |
+|  FastAPI desktop client                          |
 |  Auth (one-time code, signed cookies)            |
 |  Agent discovery (mngr list, mngr events)          |
 |  HTTP/WebSocket proxying to agents               |
