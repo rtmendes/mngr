@@ -2044,13 +2044,21 @@ def _preserve_session_files_from_volume(
             str(agent_name),
         )
 
-        # Session history (single file)
-        _copy_volume_file_to_local(
-            agent_volume,
-            "claude_session_id_history",
-            dest_dir / "claude_session_id_history",
-            str(agent_name),
-        )
+        # Session history (single file) -- check existence via listdir before
+        # attempting read, to avoid warning-level logs for the expected case
+        # where the file doesn't exist yet
+        try:
+            root_entries = agent_volume.listdir(".")
+            has_history = any(e.path == "claude_session_id_history" for e in root_entries)
+        except (MngrError, OSError):
+            has_history = False
+        if has_history:
+            _copy_volume_file_to_local(
+                agent_volume,
+                "claude_session_id_history",
+                dest_dir / "claude_session_id_history",
+                str(agent_name),
+            )
 
 
 def _generate_claude_home_settings() -> dict[str, Any]:
