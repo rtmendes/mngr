@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from imbue.mngr.utils.polling import poll_until
+from imbue.mngr.utils.polling import wait_for
 
 _SENTINEL = "URWID_TTY_TEST_DONE"
 
@@ -60,7 +60,12 @@ def _run_in_tmux_and_capture(
         captured = result.stdout
         return _SENTINEL in captured
 
-    poll_until(_sentinel_appeared, timeout=timeout, poll_interval=0.5)
+    wait_for(
+        _sentinel_appeared,
+        timeout=timeout,
+        poll_interval=0.5,
+        error_message=f"Sentinel {_SENTINEL!r} did not appear in tmux session {session_name!r} within {timeout}s",
+    )
 
     subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
     return captured
