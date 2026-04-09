@@ -70,7 +70,6 @@ from imbue.mngr.interfaces.data_types import CommandResult
 from imbue.mngr.interfaces.data_types import FileTransferSpec
 from imbue.mngr.interfaces.data_types import HostResources
 from imbue.mngr.interfaces.data_types import PyinfraConnector
-from imbue.mngr.interfaces.host import AgentEnvironmentOptions
 from imbue.mngr.interfaces.host import CreateAgentOptions
 from imbue.mngr.interfaces.host import CreateWorkDirResult
 from imbue.mngr.interfaces.host import FileModificationSpec
@@ -138,16 +137,13 @@ def _merge_agent_type_provisioning(
                 options.provisioning.model_copy_update(*prov_updates),
             )
         )
-    if env_vars or env_files:
-        updates.append(
-            (
-                "environment",
-                AgentEnvironmentOptions(
-                    env_vars=env_vars + options.environment.env_vars,
-                    env_files=env_files + options.environment.env_files,
-                ),
-            )
-        )
+    env_updates: list[tuple[str, Any]] = []
+    if env_vars:
+        env_updates.append(("env_vars", env_vars + options.environment.env_vars))
+    if env_files:
+        env_updates.append(("env_files", env_files + options.environment.env_files))
+    if env_updates:
+        updates.append(("environment", options.environment.model_copy_update(*env_updates)))
     return options.model_copy_update(*updates)
 
 
