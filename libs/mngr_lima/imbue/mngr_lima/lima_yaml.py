@@ -104,13 +104,17 @@ fi
 
 mkdir -p /run/sshd
 
-# Increase MaxSessions so pyinfra can open enough concurrent SSH channels.
-# The default (10) causes "channel open FAILED" errors during provisioning.
-# Docker and Modal providers pass -o MaxSessions=100 when starting sshd directly;
-# Lima VMs run sshd via systemd so we configure it in sshd_config instead.
+# Increase SSH limits so pyinfra can open enough concurrent channels and
+# connections. The defaults (MaxSessions=10, MaxStartups=10:30:100) cause
+# "channel open FAILED" and "no more sessions" errors during provisioning.
+# Docker and Modal providers pass -o MaxSessions=100 when starting sshd
+# directly; Lima VMs run sshd via systemd so we configure sshd_config.
 if ! grep -q '^MaxSessions' /etc/ssh/sshd_config 2>/dev/null; then
-    echo 'MaxSessions 100' >> /etc/ssh/sshd_config
-    systemctl restart sshd 2>/dev/null || true
+    cat >> /etc/ssh/sshd_config <<SSHD_EOF
+MaxSessions 100
+MaxStartups 100:30:200
+SSHD_EOF
+    systemctl restart sshd 2>/dev/null || service ssh restart 2>/dev/null || true
 fi
 """
 
