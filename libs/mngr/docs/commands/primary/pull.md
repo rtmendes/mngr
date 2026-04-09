@@ -115,16 +115,13 @@ mngr pull [OPTIONS] SOURCE DESTINATION
 | `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
 | `-h`, `--help` | boolean | Show this message and exit. | `False` |
 
-## Multi-target Behavior
-
-See [multi_target](../generic/multi_target.md) for options controlling behavior when some agents cannot be processed.
-
 ## See Also
 
 - [mngr create](./create.md) - Create a new agent
 - [mngr list](./list.md) - List agents to find one to pull from
 - [mngr connect](./connect.md) - Connect to an agent interactively
 - [mngr push](./push.md) - Push files or git commits to an agent
+- [mngr help multi_target](../generic/multi_target.md) - Behavior when some agents cannot be processed
 
 ## Examples
 

@@ -1707,6 +1707,7 @@ via git push --mirror. Use --transfer to override the default.""",
         ("connect", "Connect to an existing agent"),
         ("list", "List existing agents"),
         ("destroy", "Destroy agents"),
+        ("limit", "Configure agent resource limits"),
     ),
     group_intros=(
         (
@@ -1720,12 +1721,6 @@ via git push --mirror. Use --transfer to override the default.""",
         (
             "Host Options",
             "By default, `mngr create` uses the local host. Use the agent address to specify a different host.",
-        ),
-    ),
-    additional_sections=(
-        (
-            "Agent Limits",
-            "See [Limit Options](../secondary/limit.md)",
         ),
     ),
 )

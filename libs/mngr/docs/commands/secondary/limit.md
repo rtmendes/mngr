@@ -88,15 +88,12 @@ mngr limit [OPTIONS] [AGENTS]...
 | `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
 | `-h`, `--help` | boolean | Show this message and exit. | `False` |
 
-## Idle Modes
-
-See [Idle Detection](../../concepts/idle_detection.md) for details on idle modes and activity sources.
-
 ## See Also
 
 - [mngr create](../primary/create.md) - Create a new agent
 - [mngr list](../primary/list.md) - List existing agents
 - [mngr stop](../primary/stop.md) - Stop running agents
+- [mngr help idle_detection](../../concepts/idle_detection.md) - Idle detection modes and activity sources
 
 ## Examples
 

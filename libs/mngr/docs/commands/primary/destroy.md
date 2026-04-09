@@ -69,16 +69,13 @@ mngr destroy [OPTIONS] [AGENTS]...
 | `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
 | `-h`, `--help` | boolean | Show this message and exit. | `False` |
 
-## Related Documentation
-
-- [Resource Cleanup Options](../generic/resource_cleanup.md) - Control which associated resources are destroyed
-- [Multi-target Options](../generic/multi_target.md) - Behavior when targeting multiple agents
-
 ## See Also
 
 - [mngr create](./create.md) - Create a new agent
 - [mngr list](./list.md) - List existing agents
 - [mngr gc](../secondary/gc.md) - Garbage collect orphaned resources
+- [mngr help resource_cleanup](../generic/resource_cleanup.md) - Control which associated resources are destroyed
+- [mngr help multi_target](../generic/multi_target.md) - Behavior when targeting multiple agents
 
 ## Examples
 

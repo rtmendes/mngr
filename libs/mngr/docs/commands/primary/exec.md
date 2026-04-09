@@ -77,15 +77,12 @@ mngr exec [OPTIONS] [AGENTS]... COMMAND
 | `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
 | `-h`, `--help` | boolean | Show this message and exit. | `False` |
 
-## Related Documentation
-
-- [Multi-target Options](../generic/multi_target.md) - Behavior when targeting multiple agents
-
 ## See Also
 
 - [mngr connect](./connect.md) - Connect to an agent interactively
 - [mngr message](../secondary/message.md) - Send a message to an agent
 - [mngr list](./list.md) - List available agents
+- [mngr help multi_target](../generic/multi_target.md) - Behavior when targeting multiple agents
 
 ## Examples
 

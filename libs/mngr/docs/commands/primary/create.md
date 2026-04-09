@@ -194,11 +194,6 @@ See [connect options](./connect.md) for full details (only applies if `--connect
 | `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
 | `-h`, `--help` | boolean | Show this message and exit. | `False` |
 
-## Agent Limits
-
-See [Limit Options](../secondary/limit.md)
-
-
 ## Provider Build/Start Arguments
 
 Provider: docker
@@ -265,6 +260,7 @@ Provider: vultr
 - [mngr connect](./connect.md) - Connect to an existing agent
 - [mngr list](./list.md) - List existing agents
 - [mngr destroy](./destroy.md) - Destroy agents
+- [mngr limit](../secondary/limit.md) - Configure agent resource limits
 
 ## Examples
 

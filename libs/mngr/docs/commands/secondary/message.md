@@ -69,14 +69,11 @@ mngr message [OPTIONS] [AGENTS]...
 | `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
 | `-h`, `--help` | boolean | Show this message and exit. | `False` |
 
-## Related Documentation
-
-- [Multi-target Options](../generic/multi_target.md) - Behavior when some agents fail to receive the message
-
 ## See Also
 
 - [mngr connect](../primary/connect.md) - Connect to an agent interactively
 - [mngr list](../primary/list.md) - List available agents
+- [mngr help multi_target](../generic/multi_target.md) - Behavior when some agents fail to receive the message
 
 ## Examples
 
