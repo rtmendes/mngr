@@ -322,7 +322,10 @@ def _handle_landing_page(
     # No agents discovered yet. The stream manager may still be starting up,
     # so retry a few times before falling through to the create form. The
     # _discovery_wait counter tracks how many retries have happened.
-    discovery_wait = int(request.query_params.get("_discovery_wait", "0"))
+    try:
+        discovery_wait = int(request.query_params.get("_discovery_wait", "0"))
+    except ValueError:
+        discovery_wait = 0
     if discovery_wait < 3:
         return HTMLResponse(
             content=_DISCOVERY_LOADING_HTML.format(next_wait=discovery_wait + 1),
