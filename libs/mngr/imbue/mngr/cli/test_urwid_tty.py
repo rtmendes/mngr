@@ -24,7 +24,7 @@ _SENTINEL = "URWID_TTY_TEST_DONE"
 
 _REPO_ROOT = str(Path(__file__).resolve().parents[4])
 
-_TEST_SCRIPT = Path(__file__).with_name("_kqueue_tty_test_script.py")
+_KQUEUE_TEST_SCRIPT = Path(__file__).with_name("_kqueue_tty_test_script.py")
 
 
 def _write_shell_wrapper(shell_path: Path, py_path: Path) -> None:
@@ -79,7 +79,7 @@ def test_kqueue_tty_registration_with_piped_stdin(
     stdin is a pipe, not a tty.
     """
     sh_script = tmp_path / "kqueue_test.sh"
-    _write_shell_wrapper(sh_script, _TEST_SCRIPT)
+    _write_shell_wrapper(sh_script, _KQUEUE_TEST_SCRIPT)
 
     # Pipe through bash (stdin becomes the pipe, not a tty)
     output = _run_in_tmux_and_capture(
@@ -103,7 +103,7 @@ def test_kqueue_tty_registration_with_direct_stdin(
     the /dev/tty fix.
     """
     sh_script = tmp_path / "kqueue_test.sh"
-    _write_shell_wrapper(sh_script, _TEST_SCRIPT)
+    _write_shell_wrapper(sh_script, _KQUEUE_TEST_SCRIPT)
 
     # Run directly (stdin is the tty)
     output = _run_in_tmux_and_capture(

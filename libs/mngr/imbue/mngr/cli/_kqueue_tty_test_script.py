@@ -13,9 +13,9 @@ import selectors
 import socket
 import sys
 
-from imbue.mngr.cli.urwid_utils import _resolve_real_tty_path
+from imbue.mngr.cli.urwid_utils import resolve_real_tty_path
 
-path = _resolve_real_tty_path()
+path = resolve_real_tty_path()
 sys.stdout.write(f"resolved_tty_path={path}\n")
 sys.stdout.flush()
 

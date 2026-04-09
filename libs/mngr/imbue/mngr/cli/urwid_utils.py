@@ -33,7 +33,7 @@ def has_interactive_terminal(
         return False
 
 
-def _resolve_real_tty_path() -> str:
+def resolve_real_tty_path() -> str:
     """Return the path to the real pty device for the controlling terminal.
 
     macOS kqueue does not support EVFILT_READ on ``/dev/tty`` (the virtual
@@ -67,7 +67,7 @@ def create_urwid_screen_preserving_terminal() -> Generator[Screen, None, None]:
     Screen reads input from the real pty device so the TUI still works as
     long as a controlling terminal exists.
     """
-    tty_source = open(_resolve_real_tty_path()) if not sys.stdin.isatty() else nullcontext(sys.stdin)
+    tty_source = open(resolve_real_tty_path()) if not sys.stdin.isatty() else nullcontext(sys.stdin)
     with tty_source as tty_input:
         saved_tty_attrs = termios.tcgetattr(tty_input)
         screen = Screen(input=tty_input)

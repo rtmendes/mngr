@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from imbue.mngr.cli.urwid_utils import _resolve_real_tty_path
 from imbue.mngr.cli.urwid_utils import has_interactive_terminal
+from imbue.mngr.cli.urwid_utils import resolve_real_tty_path
 
 
 def test_has_interactive_terminal_when_stdin_is_tty() -> None:
@@ -34,7 +34,7 @@ class _FakeStream(io.BytesIO):
         return 99
 
 
-def test_resolve_real_tty_path_uses_stdout_ttyname() -> None:
+def testresolve_real_tty_path_uses_stdout_ttyname() -> None:
     """Resolves the real pty device path from stdout when available."""
     fake_stdout = _FakeStream()
     with (
@@ -44,15 +44,15 @@ def test_resolve_real_tty_path_uses_stdout_ttyname() -> None:
     ):
         mock_sys.stdout = fake_stdout
         mock_sys.stderr = io.BytesIO()
-        result = _resolve_real_tty_path()
+        result = resolve_real_tty_path()
     assert result == "/dev/ttys042"
 
 
-def test_resolve_real_tty_path_falls_back_to_dev_tty() -> None:
+def testresolve_real_tty_path_falls_back_to_dev_tty() -> None:
     """Falls back to /dev/tty when stdout and stderr are not ttys."""
     non_tty = io.BytesIO()
     with patch("imbue.mngr.cli.urwid_utils.sys") as mock_sys:
         mock_sys.stdout = non_tty
         mock_sys.stderr = non_tty
-        result = _resolve_real_tty_path()
+        result = resolve_real_tty_path()
     assert result == "/dev/tty"
