@@ -4,7 +4,8 @@
 # https://modal.com/docs/guide/docker-in-sandboxes
 #
 # This script is idempotent: if dockerd is already running, it exits early.
-set -euxo pipefail
+set -euo pipefail
+set -x
 
 # Guard: skip if dockerd is already running
 if /usr/local/bin/docker info >/dev/null 2>&1; then
