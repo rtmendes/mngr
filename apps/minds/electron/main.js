@@ -260,7 +260,7 @@ async function startBackendWithRetry() {
   }
 
   try {
-    const { loginUrl, port } = await startBackend((status) => {
+    const { loginUrl } = await startBackend((status) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('status-update', status);
       }
