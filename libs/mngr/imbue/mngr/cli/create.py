@@ -716,9 +716,10 @@ def _create_agent(
                 existing_agent, existing_host = reuse_result
                 logger.info("Updating existing agent: {}", existing_agent.name)
                 existing_host.stop_agents([existing_agent.id])
-                # If the user didn't specify a target path (via :PATH in the address),
-                # default to the existing agent's work_dir so we update in place.
-                # If they did set one, honor it (the agent moves to the new path).
+                # If the user didn't specify a target path (via :PATH in the address
+                # or --target-path), default to the existing agent's work_dir so we
+                # update in place. If they did set one, honor it (the agent moves
+                # to the new path).
                 resolved_target = (
                     agent_opts.target_path if agent_opts.target_path is not None else existing_agent.work_dir
                 )
