@@ -549,7 +549,7 @@ async def _handle_proxy_http(
 
     if is_navigation and not is_electron_client(user_agent) and not is_embed:
         agent_info = backend_resolver.get_agent_display_info(parsed_id)
-        agent_display_name = agent_info.agent_name if agent_info else str(agent_id)
+        agent_display_name = agent_info.agent_name if agent_info else str(parsed_id)
         host_id = agent_info.host_id if agent_info else "localhost"
         html = generate_browser_info_bar_html(
             agent_id=parsed_id,
