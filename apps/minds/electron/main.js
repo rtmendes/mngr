@@ -87,8 +87,9 @@ function registerShortcuts() {
 }
 
 async function runStartupSequence() {
-  // Load the shell (custom title bar + content area)
-  mainWindow.loadFile(path.join(__dirname, 'shell.html'));
+  // Load the shell (custom title bar + content area).
+  // Await to ensure IPC listeners in the renderer are registered before we send messages.
+  await mainWindow.loadFile(path.join(__dirname, 'shell.html'));
 
   // Step 1: Run env setup (uv sync)
   try {
