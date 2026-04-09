@@ -274,6 +274,17 @@ body {{ display: flex; flex-direction: column; font-family: system-ui, -apple-sy
   height: 16px;
   background: rgba(255, 255, 255, 0.2);
 }}
+#info-bar a.home-link {{
+  color: rgba(255, 255, 255, 0.7);
+  text-decoration: none;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}}
+#info-bar a.home-link:hover {{
+  color: white;
+  background: rgba(255, 255, 255, 0.1);
+}}
 #content-frame {{
   flex: 1;
   width: 100%;
@@ -283,6 +294,8 @@ body {{ display: flex; flex-direction: column; font-family: system-ui, -apple-sy
 </head>
 <body>
 <div id="info-bar">
+  <a href="/" class="home-link" target="_top" title="All minds">Home</a>
+  <span class="separator"></span>
   <span><span class="label">Agent: </span><span class="value">{safe_name}</span></span>
   <span class="separator"></span>
   <span><span class="label">Host: </span><span class="value">{safe_host}</span></span>

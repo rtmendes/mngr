@@ -78,6 +78,9 @@ const TITLEBAR_CSS_MAC = `
 
 const TITLEBAR_HTML = `
 <div class="minds-nav">
+  <button id="minds-home" title="Home">
+    <svg viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0h4"/></svg>
+  </button>
   <button id="minds-back" title="Back">
     <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
   </button>
@@ -121,6 +124,7 @@ const TITLEBAR_JS = `(function() {
   }
 
   // Navigation
+  document.getElementById('minds-home').onclick = function() { location.href = '/'; };
   document.getElementById('minds-back').onclick = function() { history.back(); };
   document.getElementById('minds-forward').onclick = function() { history.forward(); };
 
@@ -193,6 +197,12 @@ function createWindow() {
 
   mainWindow = new BrowserWindow(windowOptions);
   mainWindow.removeMenu();
+
+  // Track maximize state explicitly because some Linux window managers
+  // (e.g. awesome-wm) don't report isMaximized() correctly.
+  mainWindow._maximizedByUs = false;
+  mainWindow.on('maximize', () => { mainWindow._maximizedByUs = true; });
+  mainWindow.on('unmaximize', () => { mainWindow._maximizedByUs = false; });
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -357,7 +367,7 @@ ipcMain.on('window-minimize', () => {
 
 ipcMain.on('window-maximize', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMaximized()) {
+    if (mainWindow.isMaximized() || mainWindow._maximizedByUs) {
       mainWindow.unmaximize();
     } else {
       mainWindow.maximize();

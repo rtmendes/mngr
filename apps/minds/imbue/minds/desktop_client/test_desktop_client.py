@@ -940,8 +940,8 @@ def test_proxy_works_with_backend_url_without_query_string(tmp_path: Path) -> No
 # -- Landing page agent creation tests --
 
 
-def test_landing_page_shows_create_form_when_no_agents_exist(tmp_path: Path) -> None:
-    """When authenticated and no agents exist, the landing page shows the agent creation form."""
+def test_landing_page_shows_discovery_loading_when_no_agents_yet(tmp_path: Path) -> None:
+    """When authenticated and no agents exist, the landing page first shows a discovery loading page."""
     backend_resolver = StaticBackendResolver(url_by_agent_and_server={})
     client, auth_store = _create_test_desktop_client(
         tmp_path=tmp_path,
@@ -951,6 +951,21 @@ def test_landing_page_shows_create_form_when_no_agents_exist(tmp_path: Path) -> 
     _authenticate_client(client=client, auth_store=auth_store)
 
     response = client.get("/")
+    assert response.status_code == 200
+    assert "Discovering agents" in response.text
+
+
+def test_landing_page_shows_create_form_after_discovery_retries(tmp_path: Path) -> None:
+    """After discovery retries complete with no agents, the create form is shown."""
+    backend_resolver = StaticBackendResolver(url_by_agent_and_server={})
+    client, auth_store = _create_test_desktop_client(
+        tmp_path=tmp_path,
+        backend_resolver=backend_resolver,
+        http_client=None,
+    )
+    _authenticate_client(client=client, auth_store=auth_store)
+
+    response = client.get("/", params={"_discovery_wait": "3"})
     assert response.status_code == 200
     assert "Create a Mind" in response.text
     assert "git_url" in response.text
@@ -966,7 +981,7 @@ def test_landing_page_prefills_git_url_from_query_param(tmp_path: Path) -> None:
     )
     _authenticate_client(client=client, auth_store=auth_store)
 
-    response = client.get("/", params={"git_url": "file:///nonexistent-repo"})
+    response = client.get("/", params={"git_url": "file:///nonexistent-repo", "_discovery_wait": "3"})
     assert response.status_code == 200
     assert "file:///nonexistent-repo" in response.text
 

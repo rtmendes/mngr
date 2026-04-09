@@ -60,6 +60,36 @@ from imbue.mngr.primitives import AgentId
 
 _PROXY_TIMEOUT_SECONDS: Final[float] = 30.0
 
+_DISCOVERY_LOADING_HTML: Final[str] = """<!DOCTYPE html>
+<html>
+<head>
+<title>Minds</title>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{
+  font-family: system-ui, -apple-system, sans-serif;
+  display: flex; justify-content: center; align-items: center;
+  height: 100vh; background: whitesmoke; color: rgb(60, 60, 80);
+}}
+.container {{ text-align: center; }}
+.spinner {{
+  display: inline-block; width: 24px; height: 24px;
+  border: 3px solid rgb(200, 200, 210); border-top: 3px solid rgb(26, 26, 46);
+  border-radius: 50%; animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}}
+@keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="spinner"></div>
+  <p>Discovering agents...</p>
+</div>
+<script>setTimeout(function() {{ location.href = '/?_discovery_wait={next_wait}'; }}, 1500);</script>
+</body>
+</html>"""
+
 
 def _split_backend_url(backend_url: str) -> tuple[str, str]:
     """Split a backend URL into base URL and stored query string.
@@ -289,7 +319,16 @@ def _handle_landing_page(
         )
         return HTMLResponse(content=html)
 
-    # No agents exist: show the create form
+    # No agents discovered yet. The stream manager may still be starting up,
+    # so retry a few times before falling through to the create form. The
+    # _discovery_wait counter tracks how many retries have happened.
+    discovery_wait = int(request.query_params.get("_discovery_wait", "0"))
+    if discovery_wait < 3:
+        return HTMLResponse(
+            content=_DISCOVERY_LOADING_HTML.format(next_wait=discovery_wait + 1),
+        )
+
+    # After retries, no agents found: show the create form
     git_url = request.query_params.get("git_url", "")
     branch = request.query_params.get("branch", "")
     html = render_create_form(git_url=git_url, branch=branch)
