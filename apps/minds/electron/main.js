@@ -337,7 +337,14 @@ ipcMain.on('open-log-file', () => {
 
 ipcMain.on('open-external', (_event, url) => {
   if (url && typeof url === 'string') {
-    shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        shell.openExternal(url);
+      }
+    } catch {
+      // Invalid URL, ignore
+    }
   }
 });
 
