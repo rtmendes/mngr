@@ -2989,3 +2989,54 @@ def test_provision_agent_type_provisioning_stacks_with_cli(
     env_path = host.get_agent_env_path(agent)
     env_content = env_path.read_text()
     assert "STACKING_VAR=from_cli" in env_content
+
+
+def test_provision_agent_inherits_parent_type_provisioning(
+    host_with_temp_dir: tuple[Host, Path],
+) -> None:
+    """Child agent types should inherit provisioning fields from their parent type.
+
+    When [agent_types.generic] has extra_provision_command, a child type
+    with parent_type = "generic" should inherit those commands even if
+    the child doesn't define its own provisioning fields.
+    """
+    host, temp_dir = host_with_temp_dir
+
+    parent_type = AgentTypeName("generic")
+    child_type = AgentTypeName("child-of-generic")
+    marker_file = temp_dir / "parent_inherit_test" / "marker.txt"
+
+    parent_config = AgentTypeConfig(
+        extra_provision_command=(f"echo 'from_parent' > {marker_file}",),
+        create_directory=(str(marker_file.parent),),
+    )
+    child_config = AgentTypeConfig(
+        parent_type=parent_type,
+        cli_args=("--some-flag",),
+    )
+
+    updated_agent_types = {
+        **host.mngr_ctx.config.agent_types,
+        parent_type: parent_config,
+        child_type: child_config,
+    }
+    updated_config = host.mngr_ctx.config.model_copy_update(
+        to_update(host.mngr_ctx.config.field_ref().agent_types, updated_agent_types),
+    )
+    updated_ctx = host.mngr_ctx.model_copy_update(
+        to_update(host.mngr_ctx.field_ref().config, updated_config),
+    )
+
+    agent = _create_minimal_agent(host, temp_dir)
+
+    options = CreateAgentOptions(
+        name=AgentName("prov-inherit"),
+        agent_type=child_type,
+        command=CommandString("sleep 1"),
+    )
+
+    host.provision_agent(agent, options, updated_ctx)
+
+    # Parent's provisioning commands should have been executed
+    assert marker_file.exists()
+    assert "from_parent" in marker_file.read_text()

@@ -2275,11 +2275,12 @@ class Host(BaseHost, OnlineHostInterface):
         Run extra provision commands (user-level setup, with env vars sourced)
         Call agent.on_after_provisioning() (finalization)
         """
-        # Merge agent type provisioning fields into options before any other logic
+        # Merge agent type provisioning fields into options before any other logic.
+        # Use resolve_agent_type to get the parent-merged config so that
+        # provisioning fields defined on a parent type are inherited by children.
         if options.agent_type is not None:
-            agent_config = mngr_ctx.config.agent_types.get(options.agent_type)
-            if agent_config is not None:
-                options = _merge_agent_type_provisioning(agent_config, options)
+            resolved = resolve_agent_type(options.agent_type, mngr_ctx.config)
+            options = _merge_agent_type_provisioning(resolved.agent_config, options)
 
         with self.mngr_ctx.concurrency_group.make_concurrency_group("provision_agent") as concurrency_group:
             # Call pre-provisioning validation on agent
