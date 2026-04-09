@@ -49,7 +49,7 @@ If the backend exits unexpectedly, Electron shows an error screen with the last 
 
 ### Environment variables
 
-- `MINDS_HIDE_MENU=1`: Hides the application menu bar entirely.
+- `MINDS_HIDE_MENU=1`: Hides the application menu bar (macOS only; Linux/Windows frameless windows have no menu bar).
 
 ## Output and logging conventions
 
