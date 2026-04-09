@@ -538,7 +538,7 @@ def apply_create_template(
         for param_name, template_value in template.options.items():
             if template_value is None:
                 continue
-            # target_path is no longer a Click parameter; it's handled below
+            # target_path is not a Click parameter; it's handled separately below
             if param_name == "target_path":
                 continue
             if param_name not in params:
