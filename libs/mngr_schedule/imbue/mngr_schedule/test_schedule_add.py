@@ -14,16 +14,27 @@ import pytest
 from imbue.mngr.utils.testing import generate_test_environment_name
 from imbue.mngr_schedule.implementations.modal.deploy import get_modal_app_name
 
+# Read the real home directory BEFORE the autouse fixture overrides HOME.
+# When running locally, the subprocess needs the real HOME to find
+# ~/.modal.toml. In CI/offload, credentials come from env vars instead.
+_REAL_HOME = Path.home()
+
 
 def _build_subprocess_env() -> dict[str, str]:
     """Build environment for subprocess calls that need Modal credentials.
 
-    Keeps the test HOME (which has git config from the setup_git_config
-    fixture) and inherits the current environment. Modal credentials come
-    from env vars (MODAL_TOKEN_ID/MODAL_TOKEN_SECRET) which are set by CI
-    and by the offload --env flags -- NOT from ~/.modal.toml.
+    In CI/offload: Modal credentials come from env vars
+    (MODAL_TOKEN_ID/MODAL_TOKEN_SECRET), so we keep the test HOME.
+    Locally: we restore the real HOME so the subprocess can find
+    ~/.modal.toml, and remove test isolation vars so it uses the
+    real mngr configuration.
     """
     env = os.environ.copy()
+    has_modal_env_creds = "MODAL_TOKEN_ID" in env and "MODAL_TOKEN_SECRET" in env
+    if not has_modal_env_creds:
+        env["HOME"] = str(_REAL_HOME)
+        env.pop("MNGR_HOST_DIR", None)
+        env.pop("MNGR_ROOT_NAME", None)
     # Remove pytest marker so mngr doesn't reject the call
     env.pop("PYTEST_CURRENT_TEST", None)
     # Ensure the prefix starts with mngr_test- so the Modal backend's guard
