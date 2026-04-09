@@ -68,7 +68,6 @@ def default_create_cli_opts() -> CreateCliOptions:
         command=None,
         extra_window=(),
         source=None,
-        target=None,
         target_path=None,
         transfer=None,
         rsync=None,

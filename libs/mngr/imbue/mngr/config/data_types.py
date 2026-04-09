@@ -787,7 +787,6 @@ class CreateCliOptions(CommonCliOptions):
     command: str | None
     extra_window: tuple[str, ...]
     source: str | None
-    target: str | None
     target_path: str | None
     transfer: str | None
     rsync: bool | None
