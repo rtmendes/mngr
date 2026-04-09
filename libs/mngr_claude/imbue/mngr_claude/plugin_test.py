@@ -21,7 +21,6 @@ from imbue.mngr.api.testing import FakeHost
 from imbue.mngr.config.data_types import EnvVar
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
-from imbue.mngr.errors import ConfigError
 from imbue.mngr.errors import NoCommandDefinedError
 from imbue.mngr.errors import PluginMngrError
 from imbue.mngr.errors import UserInputError
@@ -55,7 +54,6 @@ from imbue.mngr_claude.plugin import WaitingReason
 from imbue.mngr_claude.plugin import _build_install_command_hint
 from imbue.mngr_claude.plugin import _build_settings_json
 from imbue.mngr_claude.plugin import _claude_json_has_primary_api_key
-from imbue.mngr_claude.plugin import _compute_persistent_plugin_path
 from imbue.mngr_claude.plugin import _generate_installed_plugins_content
 from imbue.mngr_claude.plugin import _get_claude_version
 from imbue.mngr_claude.plugin import _has_api_credentials_available
@@ -2690,8 +2688,8 @@ def test_rewrite_installed_plugins_paths_handles_multiple_plugins() -> None:
     assert result["plugins"]["plugin-b@org-b"][0]["installPath"] == "/remote/config/plugins/cache/org-b/plugin-b/2.0.0"
 
 
-def test_rewrite_installed_plugins_paths_raises_on_non_matching_prefix() -> None:
-    """installPath values that don't start with the expected prefix raise ConfigError."""
+def test_rewrite_installed_plugins_paths_best_effort_for_non_matching_prefix() -> None:
+    """installPath not under source_claude_dir is rewritten best-effort via /plugins/ marker."""
     local_claude_dir = Path("/Users/testuser/.claude")
     remote_config_dir = Path("/remote/config")
     content = json.dumps(
@@ -2708,8 +2706,12 @@ def test_rewrite_installed_plugins_paths_raises_on_non_matching_prefix() -> None
         }
     )
 
-    with pytest.raises(ConfigError, match="does not start with expected prefix"):
-        _rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir)
+    result = json.loads(_rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir))
+
+    assert (
+        result["plugins"]["other-plugin@other-org"][0]["installPath"]
+        == "/remote/config/plugins/cache/other-org/other-plugin/1.0.0"
+    )
 
 
 def test_rewrite_installed_plugins_paths_preserves_other_fields() -> None:
@@ -2755,8 +2757,8 @@ def test_rewrite_installed_plugins_paths_handles_empty_plugins() -> None:
     assert result["plugins"] == {}
 
 
-def test_rewrite_installed_plugins_paths_raises_on_similar_prefix() -> None:
-    """A path like /Users/testuser/.claude2/ raises because it doesn't match /Users/testuser/.claude/."""
+def test_rewrite_installed_plugins_paths_best_effort_for_similar_prefix() -> None:
+    """A path like /Users/testuser/.claude2/ is rewritten best-effort via /plugins/ marker."""
     local_claude_dir = Path("/Users/testuser/.claude")
     remote_config_dir = Path("/remote/config")
     content = json.dumps(
@@ -2773,12 +2775,13 @@ def test_rewrite_installed_plugins_paths_raises_on_similar_prefix() -> None:
         }
     )
 
-    with pytest.raises(ConfigError, match="does not start with expected prefix"):
-        _rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir)
+    result = json.loads(_rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir))
+
+    assert result["plugins"]["plugin@org"][0]["installPath"] == "/remote/config/plugins/cache/org/plugin/1.0.0"
 
 
-def test_rewrite_installed_plugins_paths_raises_actionable_error_for_mngr_agent_path() -> None:
-    """installPath from an mngr agent raises ConfigError with the expected persistent path."""
+def test_rewrite_installed_plugins_paths_best_effort_for_mngr_agent_path() -> None:
+    """installPath from an mngr agent is rewritten best-effort via /plugins/ marker."""
     local_claude_dir = Path("/Users/testuser/.claude")
     remote_config_dir = Path("/remote/config")
     stale_path = (
@@ -2798,26 +2801,12 @@ def test_rewrite_installed_plugins_paths_raises_actionable_error_for_mngr_agent_
         }
     )
 
-    with pytest.raises(ConfigError, match="previous mngr agent") as exc_info:
-        _rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir)
+    result = json.loads(_rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir))
 
-    error_msg = str(exc_info.value)
-    assert stale_path in error_msg
-    assert "/Users/testuser/.claude/plugins/cache/my-org/my-plugin/1.0.0" in error_msg
-
-
-def test_compute_persistent_plugin_path_extracts_relative_path() -> None:
-    """Extracts relative path using the /plugin/claude/anthropic/ marker."""
-    stale = "/home/user/.mngr/agents/agent-abc/plugin/claude/anthropic/plugins/cache/org/name/1.0.0"
-    source_dir = Path("/home/user/.claude")
-    assert _compute_persistent_plugin_path(stale, source_dir) == "/home/user/.claude/plugins/cache/org/name/1.0.0"
-
-
-def test_compute_persistent_plugin_path_returns_none_without_marker() -> None:
-    """Returns None if the path has no recognizable agent config dir marker."""
-    stale = "/some/random/path/plugins/cache/org/name/1.0.0"
-    source_dir = Path("/home/user/.claude")
-    assert _compute_persistent_plugin_path(stale, source_dir) is None
+    assert (
+        result["plugins"]["my-plugin@my-org"][0]["installPath"]
+        == "/remote/config/plugins/cache/my-org/my-plugin/1.0.0"
+    )
 
 
 # =============================================================================

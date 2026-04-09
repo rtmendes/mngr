@@ -38,7 +38,6 @@ from imbue.mngr.api.providers import get_provider_instance
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import AgentStartError
-from imbue.mngr.errors import ConfigError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import NoCommandDefinedError
 from imbue.mngr.errors import PluginMngrError
@@ -284,28 +283,24 @@ Finding this segment in an installPath means the plugin was installed inside
 an mngr agent rather than in the user's persistent ~/.claude/ directory.
 """
 
+_PLUGINS_DIR_MARKER: Final[str] = "/plugins/"
+"""Generic marker for extracting relative plugin paths.
 
-@pure
-def _compute_persistent_plugin_path(stale_path: str, source_claude_dir: Path) -> str | None:
-    """Extract the relative plugin path from a stale mngr agent installPath.
-
-    Returns the expected persistent path under source_claude_dir, or None if the
-    relative path cannot be determined (the marker segment is not found).
-    """
-    idx = stale_path.find(_MNGR_AGENT_CONFIG_DIR_MARKER)
-    if idx != -1:
-        relative = stale_path[idx + len(_MNGR_AGENT_CONFIG_DIR_MARKER) :]
-        return str(source_claude_dir / relative)
-    return None
+Used as a fallback when the installPath doesn't start with the expected
+source_claude_dir prefix. The path after the last '/plugins/' occurrence
+is used as the relative path under the target config dir's plugins/ directory.
+"""
 
 
-@pure
 def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, target_config_dir: Path) -> str:
     """Rewrite installPath values in installed_plugins.json for a target config dir.
 
     Rebases absolute paths from source_claude_dir onto target_config_dir
     so that Claude Code can find plugin files in the per-agent config dir.
-    Raises ConfigError if any installPath doesn't start with the expected prefix.
+
+    For paths that don't start with source_claude_dir, attempts a best-effort
+    rewrite using the last '/plugins/' segment as a marker. Logs a warning
+    with the expected persistent path so the user can fix their config.
     """
     data: dict[str, Any] = json.loads(content)
     source_prefix = str(source_claude_dir) + "/"
@@ -316,26 +311,52 @@ def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, targ
             if install_path.startswith(source_prefix):
                 relative = install_path[len(source_prefix) :]
                 entry["installPath"] = str(target_config_dir / relative)
-            elif _MNGR_AGENT_CONFIG_DIR_MARKER in install_path:
-                persistent_path = _compute_persistent_plugin_path(install_path, source_claude_dir)
-                raise ConfigError(
-                    f"Plugin {plugin_name!r} in {installed_plugins_path} has an installPath "
-                    f"pointing to a previous mngr agent's config directory "
-                    f"(contains '{_MNGR_AGENT_CONFIG_DIR_MARKER}' instead of "
-                    f"starting with '{source_prefix}'):\n"
-                    f"  Current (stale): {install_path}\n"
-                    f"  Expected:        {persistent_path or '<unknown>'}\n"
-                    f"To fix, uninstall the plugin with '/plugin' and reinstall it."
-                )
             else:
-                raise ConfigError(
-                    f"installed_plugins.json: plugin {plugin_name!r} has installPath {install_path!r} "
-                    f"which does not start with expected prefix {source_prefix!r}.\n"
-                    f"Plugins installed from local paths are not yet supported for remote agents. "
-                    f"As a workaround, create a symlink under {source_claude_dir}/plugins/cache/ "
-                    f"pointing to the local plugin directory, then update the installPath in "
-                    f"{installed_plugins_path} to use the symlink path."
-                )
+                # Best-effort rewrite: extract relative path from last /plugins/ segment.
+                marker_idx = install_path.rfind(_PLUGINS_DIR_MARKER)
+                if marker_idx != -1:
+                    relative = "plugins/" + install_path[marker_idx + len(_PLUGINS_DIR_MARKER) :]
+                    expected_path = str(source_claude_dir / relative)
+                    entry["installPath"] = str(target_config_dir / relative)
+                    if _MNGR_AGENT_CONFIG_DIR_MARKER in install_path:
+                        logger.warning(
+                            "Plugin {!r} in {} has installPath pointing to a previous mngr agent's "
+                            "config directory. Rewrote best-effort for remote provisioning.\n"
+                            "  Current (stale): {}\n"
+                            "  Expected:        {}\n"
+                            "To fix, uninstall the plugin with '/plugin' and reinstall it.",
+                            plugin_name,
+                            installed_plugins_path,
+                            install_path,
+                            expected_path,
+                        )
+                    else:
+                        logger.warning(
+                            "Plugin {!r} in {} has installPath that does not start with {}. "
+                            "Rewrote best-effort for remote provisioning.\n"
+                            "  Current: {}\n"
+                            "  Expected: {}\n"
+                            "To fix, create a symlink under {}/plugins/cache/ pointing to "
+                            "the local plugin directory, then update the installPath in {} "
+                            "to use the symlink path.",
+                            plugin_name,
+                            installed_plugins_path,
+                            source_prefix,
+                            install_path,
+                            expected_path,
+                            source_claude_dir,
+                            installed_plugins_path,
+                        )
+                else:
+                    logger.warning(
+                        "Plugin {!r} in {} has installPath {!r} that could not be rewritten "
+                        "(no '{}' segment found). Keeping path as-is; the plugin may not "
+                        "work on the remote host.",
+                        plugin_name,
+                        installed_plugins_path,
+                        install_path,
+                        _PLUGINS_DIR_MARKER,
+                    )
     return json.dumps(data, indent=2) + "\n"
 
 
