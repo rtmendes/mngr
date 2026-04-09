@@ -580,8 +580,9 @@ def _apply_template_target_path(
 ) -> dict[str, Any]:
     """Append :PATH to the address parameter from a template's target_path.
 
-    Only applies if the user hasn't already specified a target path (via :PATH)
-    or a positional name / --name on the command line.
+    Skips if the user's address already contains a :PATH suffix. Otherwise,
+    appends :PATH to whichever name parameter is active (positional_name,
+    --name, or creates a new positional_name with just the path).
     """
     updated = params.copy()
 
