@@ -1943,12 +1943,11 @@ def _recursive_list_volume_files(volume: Volume, path: str) -> list[str]:
         return result
 
     for entry in entries:
-        if entry.file_type == VolumeFileType.FILE:
-            result.append(entry.path)
-        elif entry.file_type == VolumeFileType.DIRECTORY:
-            result.extend(_recursive_list_volume_files(volume, entry.path))
-        else:
-            pass
+        match entry.file_type:
+            case VolumeFileType.FILE:
+                result.append(entry.path)
+            case VolumeFileType.DIRECTORY:
+                result.extend(_recursive_list_volume_files(volume, entry.path))
 
     return result
 
