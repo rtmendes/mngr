@@ -18,11 +18,10 @@ from imbue.mngr_schedule.implementations.modal.deploy import get_modal_app_name
 def _build_subprocess_env() -> dict[str, str]:
     """Build environment for subprocess calls that need Modal credentials.
 
-    Removes test isolation vars (MNGR_HOST_DIR, etc.) so the subprocess uses
-    real mngr configuration, while keeping the test HOME (which has git config
-    from the setup_git_config fixture). Modal credentials come from env vars
-    (MODAL_TOKEN_ID/MODAL_TOKEN_SECRET) which are set by CI and by the offload
-    --env flags -- NOT from ~/.modal.toml.
+    Keeps the test HOME (which has git config from the setup_git_config
+    fixture) and inherits the current environment. Modal credentials come
+    from env vars (MODAL_TOKEN_ID/MODAL_TOKEN_SECRET) which are set by CI
+    and by the offload --env flags -- NOT from ~/.modal.toml.
     """
     env = os.environ.copy()
     # Remove pytest marker so mngr doesn't reject the call
