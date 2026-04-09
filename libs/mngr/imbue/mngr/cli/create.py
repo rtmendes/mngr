@@ -1629,19 +1629,6 @@ def _apply_host_labels(host: OnlineHostInterface, label_strings: tuple[str, ...]
         host.add_tags(labels_to_add)
 
 
-def _apply_host_lifecycle(host: OnlineHostInterface, lifecycle: HostLifecycleOptions) -> None:
-    """Apply lifecycle options (idle timeout, activity sources) to an existing host."""
-    if lifecycle.idle_timeout_seconds is None and lifecycle.idle_mode is None and lifecycle.activity_sources is None:
-        return
-    current = host.get_activity_config()
-    new_config = lifecycle.to_activity_config(
-        default_idle_timeout_seconds=current.idle_timeout_seconds,
-        default_idle_mode=IdleMode.IO,
-        default_activity_sources=current.activity_sources,
-    )
-    host.set_activity_config(new_config)
-
-
 def _ensure_clean_work_dir(location: HostLocation) -> None:
     """Verify the source work_dir has no uncommitted changes."""
     result = location.host.execute_idempotent_command("git status --porcelain", cwd=location.path)
