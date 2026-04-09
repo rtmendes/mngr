@@ -1978,10 +1978,11 @@ def _copy_volume_tree_to_local(volume: Volume, volume_path: str, dest_dir: Path,
         return False
 
     copied_any = False
+    # Normalize once before the loop (strip trailing slash for prefix matching)
+    volume_path_normalized = volume_path.rstrip("/")
     for file_path in files:
         # file_path is relative to volume root (e.g. "plugin/claude/.../foo.jsonl")
         # We want to preserve structure under volume_path, so strip the volume_path prefix
-        volume_path_normalized = volume_path.rstrip("/")
         if file_path.startswith(volume_path_normalized + "/"):
             relative = file_path[len(volume_path_normalized) + 1 :]
         else:
