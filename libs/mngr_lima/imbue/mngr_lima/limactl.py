@@ -9,6 +9,7 @@ from loguru import logger
 from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.concurrency_group.local_process import RunningProcess
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.mutable_model import MutableModel
@@ -66,16 +67,30 @@ def _log_boot_output(line: str, is_stdout: bool) -> None:
         logger.log(LogLevel.BUILD.value, "{}", stripped, source="boot")
 
 
-def _start_serial_tailer(cg: ConcurrencyGroup, serial_log_path: str) -> None:
-    """Start tailing a serial log file via a background ``tail -f`` process.
+_active_serial_tailer: RunningProcess | None = None
 
-    The tail process is started as a daemon and will be cleaned up
-    automatically when the concurrency group exits.
+
+def _start_serial_tailer(cg: ConcurrencyGroup, serial_log_path: str) -> None:
+    """Start tailing a serial log file in the background.
+
+    Uses ``run_process_in_background`` with ``is_checked_by_group=False``
+    so the ConcurrencyGroup won't wait for it on exit. The process is
+    terminated explicitly via ``_stop_serial_tailer``.
     """
-    cg.run_process_in_background(
+    global _active_serial_tailer
+    _active_serial_tailer = cg.run_process_in_background(
         ["tail", "--follow=name", "--retry", serial_log_path],
+        is_checked_by_group=False,
         on_output=_log_boot_output,
     )
+
+
+def _stop_serial_tailer() -> None:
+    """Kill the serial log tailer process if running."""
+    global _active_serial_tailer
+    if _active_serial_tailer is not None:
+        _active_serial_tailer.terminate(force_kill_seconds=2.0)
+        _active_serial_tailer = None
 
 
 def check_lima_installed(provider_name: ProviderInstanceName) -> None:
@@ -147,13 +162,16 @@ def limactl_start_new(
     """
     cmd = ["limactl", "--log-level=info", "start", f"--name={instance_name}", str(yaml_path)] + list(start_args)
     effective_callback = on_output or _SerialLogTailerCallback(cg=cg)
-    with log_span("Running limactl start for new instance: {}", instance_name):
-        result = cg.run_process_to_completion(
-            cmd,
-            timeout=timeout,
-            on_output=effective_callback,
-            is_checked_after=False,
-        )
+    try:
+        with log_span("Running limactl start for new instance: {}", instance_name):
+            result = cg.run_process_to_completion(
+                cmd,
+                timeout=timeout,
+                on_output=effective_callback,
+                is_checked_after=False,
+            )
+    finally:
+        _stop_serial_tailer()
     if result.returncode != 0:
         raise LimaCommandError("start", result.returncode, result.stderr)
 
