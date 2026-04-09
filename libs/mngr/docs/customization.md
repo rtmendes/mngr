@@ -108,11 +108,13 @@ Templates provide named presets of create command arguments that can be quickly 
 # Template for running agents in Modal
 [create_templates.modal]
 provider = "modal"
+target_path = "/root/workspace"
 idle_timeout = 3600
 
 # Template for running agents in Docker
 [create_templates.docker]
 provider = "docker"
+target_path = "/workspace"
 
 # Template with extra commands for development
 [create_templates.dev]
