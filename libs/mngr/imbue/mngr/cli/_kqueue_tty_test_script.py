@@ -11,13 +11,11 @@ harness knows when execution has finished.
 
 import selectors
 import socket
-import sys
 
 from imbue.mngr.cli.urwid_utils import resolve_real_tty_path
 
 path = resolve_real_tty_path()
-sys.stdout.write(f"resolved_tty_path={path}\n")
-sys.stdout.flush()
+print(f"resolved_tty_path={path}")
 
 tty_file = open(path)
 
@@ -28,14 +26,13 @@ sel = selectors.DefaultSelector()
 try:
     sel.register(rd, selectors.EVENT_READ)
     sel.register(tty_file, selectors.EVENT_READ)
-    sys.stdout.write("kqueue_register=OK\n")
+    print("kqueue_register=OK")
 except OSError as e:
-    sys.stdout.write(f"kqueue_register=FAILED: {e}\n")
+    print(f"kqueue_register=FAILED: {e}")
 finally:
     sel.close()
     rd.close()
     wr.close()
     tty_file.close()
 
-sys.stdout.write("URWID_TTY_TEST_DONE\n")
-sys.stdout.flush()
+print("URWID_TTY_TEST_DONE")
