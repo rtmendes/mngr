@@ -7,6 +7,9 @@ direct-stdin contexts.
 
 The sentinel ``URWID_TTY_TEST_DONE`` is printed at the end so the test
 harness knows when execution has finished.
+
+This script communicates results via stdout using print() -- it is excluded
+from the bare-print ratchet for this reason.
 """
 
 import selectors

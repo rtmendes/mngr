@@ -43,8 +43,6 @@ def test_prevent_global_keyword() -> None:
 
 
 def test_prevent_bare_print() -> None:
-    # _kqueue_tty_test_script.py is a test resource script that communicates
-    # results via stdout -- print() is the correct mechanism there.
     rc.check_bare_print(_DIR, snapshot(0), excluded_patterns=("_kqueue_tty_test_script.py",))
 
 
