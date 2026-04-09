@@ -1,7 +1,7 @@
 """End-to-end test for the minds desktop client.
 
-Creates an agent from the forever-claude-template repo via the forwarding
-server API, verifies it starts and its web server is accessible through
+Creates an agent from the forever-claude-template repo via the desktop
+client API, verifies it starts and its web server is accessible through
 the desktop client proxy.
 
 Set MINDS_TEMPLATE_REPO to a local checkout of the forever-claude-template
