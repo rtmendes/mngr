@@ -17,8 +17,7 @@ from imbue.mngr.cli.urwid_utils import resolve_real_tty_path
 path = resolve_real_tty_path()
 print(f"resolved_tty_path={path}")
 
-tty_file = open(path)
-try:
+with open(path) as tty_file:
     rd, wr = socket.socketpair()
     rd.setblocking(False)
     sel = selectors.DefaultSelector()
@@ -32,7 +31,5 @@ try:
         sel.close()
         rd.close()
         wr.close()
-finally:
-    tty_file.close()
 
 print("URWID_TTY_TEST_DONE")
