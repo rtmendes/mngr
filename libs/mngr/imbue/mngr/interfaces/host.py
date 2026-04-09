@@ -798,7 +798,7 @@ class CreateAgentOptions(FrozenModel):
     source_agent_state_dir: Path | None = Field(
         default=None,
         description="Agent state directory of the source agent, used to transfer "
-        "per-agent data during clone operations (set when cloning via --from-agent)",
+        "per-agent data during clone operations (set when cloning via --from with an agent source)",
     )
     is_update: bool = Field(
         default=False,
