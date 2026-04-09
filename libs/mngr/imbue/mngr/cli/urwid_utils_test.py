@@ -34,7 +34,7 @@ class _FakeStream(io.BytesIO):
         return 99
 
 
-def testresolve_real_tty_path_uses_stdout_ttyname() -> None:
+def test_resolve_real_tty_path_uses_stdout_ttyname() -> None:
     """Resolves the real pty device path from stdout when available."""
     fake_stdout = _FakeStream()
     with (
@@ -48,7 +48,7 @@ def testresolve_real_tty_path_uses_stdout_ttyname() -> None:
     assert result == "/dev/ttys042"
 
 
-def testresolve_real_tty_path_falls_back_to_dev_tty() -> None:
+def test_resolve_real_tty_path_falls_back_to_dev_tty() -> None:
     """Falls back to /dev/tty when stdout and stderr are not ttys."""
     non_tty = io.BytesIO()
     with patch("imbue.mngr.cli.urwid_utils.sys") as mock_sys:
