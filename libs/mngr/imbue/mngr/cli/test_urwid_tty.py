@@ -14,7 +14,6 @@ kqueue interacts with actual device file descriptors -- mocks cannot catch it.
 """
 
 import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -25,43 +24,7 @@ _SENTINEL = "URWID_TTY_TEST_DONE"
 
 _REPO_ROOT = str(Path(__file__).resolve().parents[4])
 
-# The Python script is written to a temp file at test time (not embedded as
-# a string constant in this module) to avoid tripping ratchet regexes that
-# scan raw source for patterns like bare ``print`` and ``time.sleep``.
-_SCRIPT_TEMPLATE = textwrap.dedent("""\
-    import os, sys, selectors, socket
-    from imbue.mngr.cli.urwid_utils import _resolve_real_tty_path
-
-    path = _resolve_real_tty_path()
-    sys.stdout.write(f"resolved_tty_path={{path}}\\n")
-    sys.stdout.flush()
-
-    tty_file = open(path)
-
-    rd, wr = socket.socketpair()
-    rd.setblocking(False)
-
-    sel = selectors.DefaultSelector()
-    try:
-        sel.register(rd, selectors.EVENT_READ)
-        sel.register(tty_file, selectors.EVENT_READ)
-        sys.stdout.write("kqueue_register=OK\\n")
-    except OSError as e:
-        sys.stdout.write(f"kqueue_register=FAILED: {{e}}\\n")
-    finally:
-        sel.close()
-        rd.close()
-        wr.close()
-        tty_file.close()
-
-    sys.stdout.write("{sentinel}\\n")
-    sys.stdout.flush()
-""")
-
-
-def _write_test_script(path: Path) -> None:
-    """Write the kqueue test script to *path*."""
-    path.write_text(_SCRIPT_TEMPLATE.format(sentinel=_SENTINEL))
+_TEST_SCRIPT = Path(__file__).with_name("_kqueue_tty_test_script.py")
 
 
 def _write_shell_wrapper(shell_path: Path, py_path: Path) -> None:
@@ -115,10 +78,8 @@ def test_kqueue_tty_registration_with_piped_stdin(
     Regression test for the ``curl -fsSL ... | bash`` install path where
     stdin is a pipe, not a tty.
     """
-    py_script = tmp_path / "kqueue_test.py"
     sh_script = tmp_path / "kqueue_test.sh"
-    _write_test_script(py_script)
-    _write_shell_wrapper(sh_script, py_script)
+    _write_shell_wrapper(sh_script, _TEST_SCRIPT)
 
     # Pipe through bash (stdin becomes the pipe, not a tty)
     output = _run_in_tmux_and_capture(
@@ -141,10 +102,8 @@ def test_kqueue_tty_registration_with_direct_stdin(
     Verifies that the normal (non-piped) execution path still works after
     the /dev/tty fix.
     """
-    py_script = tmp_path / "kqueue_test.py"
     sh_script = tmp_path / "kqueue_test.sh"
-    _write_test_script(py_script)
-    _write_shell_wrapper(sh_script, py_script)
+    _write_shell_wrapper(sh_script, _TEST_SCRIPT)
 
     # Run directly (stdin is the tty)
     output = _run_in_tmux_and_capture(
