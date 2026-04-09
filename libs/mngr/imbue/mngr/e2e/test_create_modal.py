@@ -192,6 +192,11 @@ def test_create_modal_dockerfile_and_context(e2e: E2eSession) -> None:
     # that command builds a Modal host using the Dockerfile at ./Dockerfile.agent and the build context at ./agent-context
     # (which is where the Dockerfile can COPY files from, and also where build args are evaluated from)
     """)
+    # Create the Dockerfile and context directory so the build args have real targets
+    e2e.run(
+        "echo 'FROM python:3.11-slim' > Dockerfile.agent && mkdir -p agent-context",
+        comment="create Dockerfile and context",
+    )
     result = e2e.run(
         "mngr create my-task --provider modal -b file=./Dockerfile.agent -b context-dir=./agent-context --no-connect --no-ensure-clean",
         comment="the most important build args for Modal are --file and --context-dir",
@@ -231,17 +236,24 @@ def test_create_modal_volume(e2e: E2eSession) -> None:
     expect(result).to_succeed()
 
 
+@pytest.mark.modal
 def test_create_modal_snapshot(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # you can use an existing snapshot instead of building a new host from scratch:
     mngr create my-task --provider modal --snapshot snap-123abc
     """)
+    # snap-123abc is a fake snapshot ID that does not exist. The test verifies
+    # that the --snapshot flag is accepted and produces a meaningful error.
     result = e2e.run(
         "mngr create my-task --provider modal --snapshot snap-123abc --no-connect --no-ensure-clean",
         comment="you can use an existing snapshot instead of building a new host from scratch",
         timeout=_REMOTE_TIMEOUT,
     )
-    expect(result).to_succeed()
+    expect(result).to_fail()
+    combined = result.stdout + result.stderr
+    expect(combined).to_match(
+        r"(?i)snapshot.*not found|no.*snapshot|snapshot.*snap-123abc|snap-123abc|host creation failed"
+    )
 
 
 @pytest.mark.modal
@@ -264,11 +276,13 @@ def test_create_modal_target_path(e2e: E2eSession) -> None:
 def test_create_modal_upload_and_extra_provision_command(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # you can upload files and run custom commands during host provisioning:
-    mngr create my-task --provider modal --upload-file ~/.ssh/config:/root/.ssh/config --extra-provision-command "pip install foo"
+    mngr create my-task --provider modal --upload-file ~/.ssh/config:/root/.ssh/config --extra-provision-command "echo provisioned"
     # (--append-to-file and --prepend-to-file are also available)
     """)
+    # Create ~/.ssh/config so the upload-file flag has a real file to work with
+    e2e.run("mkdir -p ~/.ssh && touch ~/.ssh/config", comment="create ssh config for upload test")
     result = e2e.run(
-        'mngr create my-task --provider modal --upload-file ~/.ssh/config:/root/.ssh/config --extra-provision-command "pip install foo" --no-connect --no-ensure-clean',
+        'mngr create my-task --provider modal --upload-file ~/.ssh/config:/root/.ssh/config --extra-provision-command "echo provisioned" --no-connect --no-ensure-clean',
         comment="you can upload files and run custom commands during host provisioning",
         timeout=_REMOTE_TIMEOUT,
     )
