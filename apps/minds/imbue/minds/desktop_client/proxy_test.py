@@ -44,6 +44,18 @@ def test_generate_browser_info_bar_html_contains_info() -> None:
     assert "content-frame" in html
 
 
+def test_generate_browser_info_bar_html_preserves_path() -> None:
+    html = generate_browser_info_bar_html(
+        agent_id=_TEST_AGENT,
+        server_name=_TEST_SERVER,
+        agent_display_name="my-agent",
+        host_id="remote-host-1",
+        path="some/deep/path",
+    )
+    expected_src = f"/agents/{_TEST_AGENT}/{_TEST_SERVER}/some/deep/path?_embed=1"
+    assert expected_src in html
+
+
 def test_generate_bootstrap_html_contains_service_worker_registration() -> None:
     html = generate_bootstrap_html(_TEST_AGENT, _TEST_SERVER)
     assert "serviceWorker.register" in html

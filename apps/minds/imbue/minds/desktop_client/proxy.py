@@ -218,18 +218,22 @@ def generate_browser_info_bar_html(
     server_name: ServerName,
     agent_display_name: str,
     host_id: str,
+    path: str = "",
 ) -> str:
     """Generate an HTML wrapper page with an info bar and iframe for browser clients.
 
     When the user accesses a forwarded agent URL in a regular browser (not the
     Electron app), this wrapper shows which agent, host, and application they are
-    viewing. The actual proxied content loads inside the iframe.
+    viewing. The actual proxied content loads inside the iframe at the same path
+    the user originally requested.
     """
     prefix = _get_server_prefix(agent_id, server_name)
     safe_name = html.escape(agent_display_name)
     safe_host = html.escape(host_id)
     safe_server = html.escape(str(server_name))
-    safe_prefix = html.escape(prefix)
+    # Build the iframe src preserving the user's requested path
+    iframe_path = f"{prefix}/{path}" if path else f"{prefix}/"
+    safe_iframe_src = html.escape(iframe_path)
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -280,7 +284,7 @@ body {{ display: flex; flex-direction: column; font-family: system-ui, -apple-sy
   <span class="separator"></span>
   <span><span class="label">Application: </span><span class="value">{safe_server}</span></span>
 </div>
-<iframe id="content-frame" src="{safe_prefix}/?_embed=1"></iframe>
+<iframe id="content-frame" src="{safe_iframe_src}?_embed=1"></iframe>
 </body>
 </html>"""
 

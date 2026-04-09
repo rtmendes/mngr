@@ -556,6 +556,7 @@ async def _handle_proxy_http(
             server_name=parsed_server,
             agent_display_name=agent_display_name,
             host_id=host_id,
+            path=path,
         )
         return HTMLResponse(content=html)
 
