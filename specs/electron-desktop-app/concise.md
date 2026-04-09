@@ -87,7 +87,7 @@ Package apps/minds as a standalone, installable Electron desktop app.
 
 **Changes to existing Python code:**
 
-* `forwarding_server/runner.py` -- Skip the automatic `webbrowser.open()` call when launched in "electron mode" (detected via environment variable like `MINDS_ELECTRON=1`). Auth itself remains fully intact -- the one-time code is still generated and emitted as a structured JSONL event on stderr so Electron can capture and use it.
+* `desktop_client/runner.py` -- Skip the automatic `webbrowser.open()` call when launched in "electron mode" (detected via environment variable like `MINDS_ELECTRON=1`). Auth itself remains fully intact -- the one-time code is still generated and emitted as a structured JSONL event on stderr so Electron can capture and use it.
 * `cli/forward.py` -- Add a `--log-format` option (default: `text`, also supports `jsonl`) following the same pattern as `mngr`'s logging options. When `jsonl`, structured events (including the login URL) are emitted to stderr as parseable JSONL lines. Electron launches with `--log-format jsonl` to reliably parse events.
 * `cli/forward.py` -- No other changes needed; the existing `--host` and `--port` flags are sufficient for Electron to control binding.
 

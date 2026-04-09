@@ -264,7 +264,7 @@ When `jsonl` is selected, `setup_logging()` is called with a format parameter th
 
 The JSONL events use the same envelope structure as mngr's file logs: `timestamp`, `type`, `level`, `message`, plus any `extra` context. This allows Electron to parse specific event types from the stream.
 
-### forwarding_server/runner.py -- Electron Mode
+### desktop_client/runner.py -- Electron Mode
 
 When the environment variable `MINDS_ELECTRON=1` is set:
 
