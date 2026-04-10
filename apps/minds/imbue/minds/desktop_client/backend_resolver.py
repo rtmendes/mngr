@@ -97,7 +97,7 @@ class BackendResolverInterface(MutableModel, ABC):
         return None
 
     def has_completed_initial_discovery(self) -> bool:
-        """Whether the first full discovery snapshot has been received.
+        """Whether any agent discovery data has been received.
 
         Before this returns True, the agent list may be incomplete. The landing
         page uses this to distinguish "still discovering" from "no agents exist."
