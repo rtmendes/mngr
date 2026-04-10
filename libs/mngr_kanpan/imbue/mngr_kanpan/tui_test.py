@@ -502,6 +502,9 @@ def test_build_data_source_column_defs() -> None:
     names = [d.name for d in defs]
     assert "mock_field" in names
     assert "empty_header" not in names
+    # All visible columns get url_fn so any field can provide a hyperlink URL.
+    mock_def = next(d for d in defs if d.name == "mock_field")
+    assert mock_def.url_fn is not None
 
 
 def test_build_data_source_column_defs_deduplicates() -> None:
