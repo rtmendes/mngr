@@ -45,6 +45,8 @@ from imbue.mngr_kanpan.fetcher import collect_data_sources
 from imbue.mngr_kanpan.fetcher import compute_section
 from imbue.mngr_kanpan.fetcher import fetch_board_snapshot
 from imbue.mngr_kanpan.fetcher import fetch_local_snapshot
+from imbue.mngr_kanpan.fetcher import load_field_cache
+from imbue.mngr_kanpan.fetcher import save_field_cache
 from imbue.mngr_kanpan.fetcher import toggle_agent_mute
 
 DEFAULT_REFRESH_INTERVAL_SECONDS: float = 600.0
@@ -925,6 +927,9 @@ def _finish_refresh(loop: MainLoop, state: _KanpanState) -> None:
         new_snapshot = fetch_result.snapshot
         # Update in-memory field cache
         state.cached_fields = fetch_result.cached_fields
+        # Persist cache to disk after full refreshes
+        if not was_local_only:
+            save_field_cache(state.mngr_ctx, state.cached_fields, state.data_sources)
         # For local-only refreshes, carry forward fields from previous snapshot
         if was_local_only and state.snapshot is not None:
             new_snapshot = _carry_forward_fields(state.snapshot, new_snapshot)
@@ -1409,8 +1414,9 @@ def run_kanpan(
     commands = _build_command_map(mngr_ctx)
     plugin_config = mngr_ctx.get_plugin_config("kanpan", KanpanPluginConfig)
 
-    # Collect data sources
+    # Collect data sources and load cached fields from disk
     data_sources = collect_data_sources(mngr_ctx)
+    initial_cached_fields = load_field_cache(mngr_ctx, data_sources)
 
     # Build footer keybindings
     mark_keys = {_BUILTIN_COMMAND_KEY_UNMARK}
@@ -1459,6 +1465,7 @@ def run_kanpan(
         mark_attr_names=mark_attr_names,
         column_defs=column_defs,
         data_sources=data_sources,
+        cached_fields=initial_cached_fields,
         include_filters=include_filters,
         exclude_filters=exclude_filters,
     )

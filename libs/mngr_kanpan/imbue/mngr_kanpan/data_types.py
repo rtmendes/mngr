@@ -118,10 +118,10 @@ class KanpanPluginConfig(PluginConfig):
         description="Shell command data sources keyed by field key",
     )
 
-    # Deprecated fields kept for backward compatibility during migration
     columns: dict[str, Any] = Field(
         default_factory=dict,
-        description="[deprecated] Custom columns - use data sources instead",
+        description="Label-backed columns keyed by field key. "
+        "Each entry should have 'header' (str) and optionally 'colors' (dict[str, str]).",
     )
     on_before_refresh: dict[str, Any] = Field(
         default_factory=dict,

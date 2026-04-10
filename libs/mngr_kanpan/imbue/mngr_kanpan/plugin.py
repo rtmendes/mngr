@@ -10,6 +10,8 @@ from imbue.mngr_kanpan.cli import kanpan
 from imbue.mngr_kanpan.data_sources.git_info import GitInfoDataSource
 from imbue.mngr_kanpan.data_sources.github import GitHubDataSource
 from imbue.mngr_kanpan.data_sources.github import GitHubDataSourceConfig
+from imbue.mngr_kanpan.data_sources.labels import LabelColumnConfig
+from imbue.mngr_kanpan.data_sources.labels import LabelsDataSource
 from imbue.mngr_kanpan.data_sources.repo_paths import RepoPathsDataSource
 from imbue.mngr_kanpan.data_sources.shell import ShellCommandConfig
 from imbue.mngr_kanpan.data_sources.shell import ShellCommandDataSource
@@ -42,6 +44,21 @@ def kanpan_data_sources(mngr_ctx: MngrContext) -> Sequence[Any] | None:
     else:
         github_ds_config = GitHubDataSourceConfig()
     sources.append(GitHubDataSource(config=github_ds_config))
+
+    # Label-backed columns from config
+    for field_key, col_config in config.columns.items():
+        if isinstance(col_config, dict):
+            header = col_config.get("header", field_key.upper())
+            colors = col_config.get("colors", {})
+            label_key = col_config.get("label_key", field_key)
+        else:
+            continue
+        sources.append(
+            LabelsDataSource(
+                field_key=field_key,
+                config=LabelColumnConfig(header=header, label_key=label_key, colors=colors),
+            )
+        )
 
     # Shell command data sources from config
     for field_key, shell_config in config.shell_commands.items():
