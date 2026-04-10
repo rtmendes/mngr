@@ -1,6 +1,6 @@
 /**
- * Chat panel for dockview. Wraps the existing MessageList content and
- * MessageInput into a single panel that can be mounted inside a dockview tab.
+ * Chat panel for dockview. Contains the main message list and message input
+ * for an agent, mounted as a tab within the dockview workspace.
  */
 
 import m from "mithril";
@@ -13,12 +13,11 @@ import {
   isConversationNotFound,
   isBackfillComplete,
   type TranscriptEvent,
-  type ToolCall,
 } from "../models/Response";
 import { connectToStream, disconnectFromStream } from "../models/StreamingMessage";
 import { EmptySlot } from "./EmptySlot";
 import { MessageInput } from "./MessageInput";
-import { renderAssistantMessageChildren } from "./message-renderers";
+import { renderUserMessage, renderAssistantMessage } from "./message-renderers";
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 40;
 
@@ -28,117 +27,6 @@ function isNearBottom(element: HTMLElement): boolean {
 
 function scrollToBottom(element: HTMLElement): void {
   element.scrollTop = element.scrollHeight;
-}
-
-function isCollapsibleUserMessage(content: string): { label: string } | null {
-  if (content.startsWith("Stop hook feedback:\n")) {
-    return { label: "Stop hook feedback" };
-  }
-  if (content.startsWith("Base directory for this skill:")) {
-    const match = content.match(/skills\/([^\n/]+)/);
-    return { label: match ? `Skill: ${match[1]}` : "Skill expansion" };
-  }
-  return null;
-}
-
-function StableUserMessage(): m.Component<{ event: TranscriptEvent }> {
-  let renderedEventId: string | null = null;
-  return {
-    onbeforeupdate(vnode) {
-      return vnode.attrs.event.event_id !== renderedEventId;
-    },
-    view(vnode) {
-      const event = vnode.attrs.event;
-      renderedEventId = event.event_id;
-      const content = event.content || "";
-      const collapsible = isCollapsibleUserMessage(content);
-
-      if (collapsible) {
-        return m("div", { class: "tool-call-block" }, [
-          m(
-            "div",
-            {
-              class: "tool-call-header",
-              onclick(e: Event) {
-                const block = (e.currentTarget as HTMLElement).parentElement;
-                if (block) {
-                  block.classList.toggle("tool-call-block--expanded");
-                }
-              },
-            },
-            [m("span", { class: "tool-call-chevron" }, "\u25B8"), m("span", collapsible.label)],
-          ),
-          m("div", { class: "tool-call-details" }, [
-            m("div", { class: "tool-call-input" }, [m("pre", m("code", content))]),
-          ]),
-        ]);
-      }
-
-      return m("div", { class: "message-user-bubble" }, [
-        m("div", { class: "message-content whitespace-pre-wrap" }, content),
-      ]);
-    },
-  };
-}
-
-function renderUserMessage(event: TranscriptEvent): m.Vnode {
-  const content = event.content || "";
-  const collapsible = isCollapsibleUserMessage(content);
-  const messageClass = collapsible ? "message message-system-collapsed" : "message message-user";
-  return m("div", { class: messageClass, key: event.event_id }, [m(StableUserMessage, { event })]);
-}
-
-function countResolvedToolResults(
-  toolCalls: ToolCall[] | undefined,
-  toolResults: Map<string, TranscriptEvent>,
-): number {
-  if (!toolCalls) return 0;
-  let count = 0;
-  for (const tc of toolCalls) {
-    if (toolResults.has(tc.tool_call_id)) count++;
-  }
-  return count;
-}
-
-function StableAssistantMessage(): m.Component<{
-  event: TranscriptEvent;
-  toolResults: Map<string, TranscriptEvent>;
-  agentId: string;
-}> {
-  let renderedEventId: string | null = null;
-  let renderedToolResultCount = 0;
-  return {
-    onbeforeupdate(vnode) {
-      const { event, toolResults } = vnode.attrs;
-      const currentToolResultCount = countResolvedToolResults(event.tool_calls, toolResults);
-      return event.event_id !== renderedEventId || currentToolResultCount !== renderedToolResultCount;
-    },
-    view(vnode) {
-      const event = vnode.attrs.event;
-      const toolResults = vnode.attrs.toolResults;
-      const agentId = vnode.attrs.agentId;
-      renderedEventId = event.event_id;
-      renderedToolResultCount = countResolvedToolResults(event.tool_calls, toolResults);
-
-      return m("div", renderAssistantMessageChildren(event, toolResults, agentId));
-    },
-  };
-}
-
-function renderAssistantMessage(
-  event: TranscriptEvent,
-  toolResults: Map<string, TranscriptEvent>,
-  agentId: string,
-): m.Vnode {
-  return m(
-    "div",
-    {
-      id: event.event_id,
-      class: "message message-assistant",
-      key: event.event_id,
-    },
-    m(StableAssistantMessage, { event, toolResults, agentId }),
-  );
 }
 
 export function ChatPanel(): m.Component<{ agentId: string }> {
