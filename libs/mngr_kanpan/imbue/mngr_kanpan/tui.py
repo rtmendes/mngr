@@ -1363,9 +1363,11 @@ def _refresh_display(state: _KanpanState) -> None:
     if focused_entry is not None:
         state.focused_agent_name = focused_entry.name
 
-    # Update field color palette from snapshot
+    # Update field color palette from snapshot and register new entries with the screen
     field_palette, field_attr_names = _build_field_color_palette(state.snapshot)
     state.col_attr_names = field_attr_names
+    if state.loop is not None and field_palette:
+        state.loop.screen.register_palette(field_palette)
 
     walker, state.index_to_entry = _build_board_widgets(
         state.snapshot,
