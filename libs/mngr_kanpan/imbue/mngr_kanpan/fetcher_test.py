@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -284,23 +285,22 @@ def test_run_data_sources_parallel_multiple_sources() -> None:
 # === collect_data_sources ===
 
 
-def _make_mock_mngr_ctx(config: KanpanPluginConfig, sources: list[object]) -> object:
+def _make_mock_mngr_ctx(config: KanpanPluginConfig, sources: list[object]) -> Any:
     """Build a minimal mock MngrContext for collect_data_sources tests."""
     hook = MagicMock()
     hook.kanpan_data_sources.return_value = [sources]
     pm = MagicMock()
     pm.hook = hook
-    ctx = SimpleNamespace(
+    return SimpleNamespace(
         get_plugin_config=lambda name, cls: config,
         pm=pm,
     )
-    return ctx
 
 
 def test_collect_data_sources_returns_all_enabled() -> None:
     source = _MockDataSource("github", {})
     ctx = _make_mock_mngr_ctx(KanpanPluginConfig(), [source])
-    sources = collect_data_sources(ctx)  # type: ignore[arg-type]
+    sources = collect_data_sources(ctx)
     assert any(s.name == "github" for s in sources)
 
 
@@ -308,7 +308,7 @@ def test_collect_data_sources_excludes_disabled() -> None:
     source = _MockDataSource("github", {})
     config = KanpanPluginConfig(data_sources={"github": DataSourceConfig(enabled=False)})
     ctx = _make_mock_mngr_ctx(config, [source])
-    sources = collect_data_sources(ctx)  # type: ignore[arg-type]
+    sources = collect_data_sources(ctx)
     assert not any(s.name == "github" for s in sources)
 
 
@@ -316,7 +316,7 @@ def test_collect_data_sources_includes_enabled_source() -> None:
     source = _MockDataSource("git_info", {})
     config = KanpanPluginConfig(data_sources={"git_info": DataSourceConfig(enabled=True)})
     ctx = _make_mock_mngr_ctx(config, [source])
-    sources = collect_data_sources(ctx)  # type: ignore[arg-type]
+    sources = collect_data_sources(ctx)
     assert any(s.name == "git_info" for s in sources)
 
 
@@ -325,18 +325,18 @@ def test_collect_data_sources_skips_none_results() -> None:
     hook.kanpan_data_sources.return_value = [None]
     pm = MagicMock()
     pm.hook = hook
-    ctx = SimpleNamespace(
+    ctx: Any = SimpleNamespace(
         get_plugin_config=lambda name, cls: KanpanPluginConfig(),
         pm=pm,
     )
-    sources = collect_data_sources(ctx)  # type: ignore[arg-type]
+    sources = collect_data_sources(ctx)
     assert sources == []
 
 
 # === plugin.kanpan_data_sources ===
 
 
-def _make_plugin_mngr_ctx(config: KanpanPluginConfig) -> object:
+def _make_plugin_mngr_ctx(config: KanpanPluginConfig) -> Any:
     return SimpleNamespace(get_plugin_config=lambda name, cls: config)
 
 
