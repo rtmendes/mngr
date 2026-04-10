@@ -377,7 +377,7 @@ def _build_rsync_command(
 @pure
 def _build_ssh_transport_args(ssh_info: SshConnectionInfo, known_hosts_file: Path | None) -> str:
     """Build the SSH transport string for rsync -e or GIT_SSH_COMMAND."""
-    user, hostname, port, key_path = ssh_info
+    _, _, port, key_path = ssh_info
     return build_ssh_transport_command(key_path, port, known_hosts_file)
 
 
