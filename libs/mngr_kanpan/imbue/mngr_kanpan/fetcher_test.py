@@ -18,6 +18,7 @@ from imbue.mngr_kanpan.data_source import FIELD_CI
 from imbue.mngr_kanpan.data_source import FIELD_MUTED
 from imbue.mngr_kanpan.data_source import FIELD_PR
 from imbue.mngr_kanpan.data_source import FieldValue
+from imbue.mngr_kanpan.data_source import KanpanDataSource
 from imbue.mngr_kanpan.data_source import KanpanFieldTypeError
 from imbue.mngr_kanpan.data_source import PrField
 from imbue.mngr_kanpan.data_source import PrState
@@ -692,9 +693,12 @@ def _make_cache_ctx(profile_dir: Path) -> MngrContext:
     return cast(MngrContext, ctx)
 
 
-def _make_mock_data_source(field_key: str, field_type: type[FieldValue]) -> object:
-    return SimpleNamespace(
-        field_types={field_key: field_type},
+def _make_mock_data_source(field_key: str, field_type: type[FieldValue]) -> KanpanDataSource:
+    return cast(
+        KanpanDataSource,
+        SimpleNamespace(
+            field_types={field_key: field_type},
+        ),
     )
 
 
@@ -760,13 +764,11 @@ def test_load_field_cache_skips_unknown_types(tmp_path: Path) -> None:
 
 def test_save_field_cache_swallows_errors(tmp_path: Path) -> None:
     """save_field_cache does not raise even when the write fails."""
-    ctx = _make_cache_ctx(tmp_path / "nonexistent_but_readonly")
-    # Make a non-writable parent directory to force mkdir to fail
     readonly_dir = tmp_path / "readonly"
     readonly_dir.mkdir()
     readonly_dir.chmod(0o444)
-    ctx2 = _make_cache_ctx(readonly_dir / "subdir_that_cannot_exist")
+    ctx = _make_cache_ctx(readonly_dir / "subdir_that_cannot_exist")
     try:
-        save_field_cache(ctx2, {}, [])  # should not raise
+        save_field_cache(ctx, {}, [])
     finally:
         readonly_dir.chmod(0o755)

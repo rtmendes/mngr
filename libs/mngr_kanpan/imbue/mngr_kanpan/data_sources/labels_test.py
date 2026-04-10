@@ -1,9 +1,8 @@
+from types import SimpleNamespace
 from typing import cast
-from unittest.mock import MagicMock
 
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr_kanpan.data_source import CellDisplay
-from imbue.mngr_kanpan.data_source import FieldValue
 from imbue.mngr_kanpan.data_sources.labels import LabelColumnConfig
 from imbue.mngr_kanpan.data_sources.labels import LabelsDataSource
 from imbue.mngr_kanpan.data_sources.labels import _ColoredStringField
@@ -11,7 +10,7 @@ from imbue.mngr_kanpan.testing import make_agent_details
 
 
 def _make_ctx() -> MngrContext:
-    return cast(MngrContext, MagicMock())
+    return cast(MngrContext, SimpleNamespace())
 
 
 def test_labels_data_source_name() -> None:
@@ -173,5 +172,5 @@ def test_labels_compute_multiple_agents() -> None:
     assert agent_a.name in fields
     assert agent_b.name not in fields
     assert agent_c.name in fields
-    assert cast(FieldValue, fields[agent_a.name]["status"]).display().text == "active"
-    assert cast(FieldValue, fields[agent_c.name]["status"]).display().text == "idle"
+    assert fields[agent_a.name]["status"].display().text == "active"
+    assert fields[agent_c.name]["status"].display().text == "idle"
