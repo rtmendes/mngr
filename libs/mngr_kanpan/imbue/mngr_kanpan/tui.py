@@ -1446,7 +1446,7 @@ def run_kanpan(
     footer = Pile([Divider(), footer_columns])
 
     is_filtered = bool(include_filters or exclude_filters)
-    header_title = "Kanpan - all-seeing agent tracker - kan pan"
+    header_title = "Kanpan - all-seeing agent tracker - \u770b \u03c0\u1fb6\u03bd"
     if is_filtered:
         header_title += "  [filtered]"
     header = Pile(
