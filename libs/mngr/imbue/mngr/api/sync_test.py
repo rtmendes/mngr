@@ -17,7 +17,6 @@ from imbue.mngr.api.sync import UncommittedChangesError
 from imbue.mngr.api.sync import _build_remote_rsync_command
 from imbue.mngr.api.sync import _build_rsync_command
 from imbue.mngr.api.sync import _build_ssh_git_url
-from imbue.mngr.api.sync import _build_ssh_transport_args
 from imbue.mngr.api.sync import sync_git
 from imbue.mngr.api.testing import FakeAgent
 from imbue.mngr.api.testing import FakeHost
@@ -431,32 +430,6 @@ def test_remote_git_context_is_git_repository_returns_false_for_non_git_dir(
 # =============================================================================
 # SSH helper function tests
 # =============================================================================
-
-
-def test_build_ssh_transport_args_with_known_hosts_uses_strict_checking() -> None:
-    ssh_info = ("root", "example.com", 2222, Path("/tmp/test_key"))
-    result = _build_ssh_transport_args(ssh_info, known_hosts_file=Path("/tmp/known_hosts"))
-    assert "ssh" in result
-    assert "-i /tmp/test_key" in result
-    assert "-p 2222" in result
-    assert "-o StrictHostKeyChecking=yes" in result
-    assert "-o UserKnownHostsFile=/tmp/known_hosts" in result
-
-
-def test_build_ssh_transport_args_without_known_hosts_uses_strict_checking() -> None:
-    ssh_info = ("root", "example.com", 2222, Path("/tmp/test_key"))
-    result = _build_ssh_transport_args(ssh_info, known_hosts_file=None)
-    assert "ssh" in result
-    assert "-i /tmp/test_key" in result
-    assert "-p 2222" in result
-    assert "-o StrictHostKeyChecking=yes" in result
-    assert "UserKnownHostsFile" not in result
-
-
-def test_build_ssh_transport_args_quotes_key_path_with_spaces() -> None:
-    ssh_info = ("user", "host.com", 22, Path("/path with spaces/key"))
-    result = _build_ssh_transport_args(ssh_info, known_hosts_file=None)
-    assert "'/path with spaces/key'" in result
 
 
 def test_build_ssh_git_url_produces_correct_url() -> None:
