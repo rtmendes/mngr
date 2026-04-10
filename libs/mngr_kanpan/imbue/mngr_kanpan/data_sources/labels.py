@@ -14,7 +14,7 @@ class LabelColumnConfig(FrozenModel):
     """Configuration for a single label-backed column."""
 
     header: str = Field(description="Column header text")
-    label_key: str = Field(description="Agent label key to read (defaults to field_key if not set)")
+    label_key: str = Field(description="Agent label key to read from agent labels dict")
     colors: dict[str, str] = Field(default_factory=dict, description="Mapping from label value to urwid color name")
 
 
