@@ -1,5 +1,10 @@
 """Unit tests for the kanpan TUI."""
 
+import subprocess
+import threading
+from concurrent.futures import Future
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from typing import cast
@@ -30,7 +35,9 @@ from imbue.mngr_kanpan.data_types import BoardSnapshot
 from imbue.mngr_kanpan.data_types import CustomCommand
 from imbue.mngr_kanpan.data_types import KanpanPluginConfig
 from imbue.mngr_kanpan.tui import _BUILTIN_COLUMN_DEFS
+from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_DELETE
 from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_EXECUTE
+from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_PUSH
 from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_REFRESH
 from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_UNMARK
 from imbue.mngr_kanpan.tui import _BatchWorkItem
@@ -51,18 +58,25 @@ from imbue.mngr_kanpan.tui import _clear_focus
 from imbue.mngr_kanpan.tui import _compute_board_column_widths
 from imbue.mngr_kanpan.tui import _dispatch_command
 from imbue.mngr_kanpan.tui import _execute_marks
+from imbue.mngr_kanpan.tui import _execute_next_in_batch
 from imbue.mngr_kanpan.tui import _field_cell_markup
 from imbue.mngr_kanpan.tui import _field_cell_text
 from imbue.mngr_kanpan.tui import _field_cell_url
+from imbue.mngr_kanpan.tui import _finish_batch_execution
 from imbue.mngr_kanpan.tui import _flatten_markup_to_muted
 from imbue.mngr_kanpan.tui import _format_section_heading
+from imbue.mngr_kanpan.tui import _get_focused_entry
 from imbue.mngr_kanpan.tui import _get_name_cell_markup
 from imbue.mngr_kanpan.tui import _get_state_attr
+from imbue.mngr_kanpan.tui import _is_focus_on_first_selectable
 from imbue.mngr_kanpan.tui import _load_user_commands
+from imbue.mngr_kanpan.tui import _on_batch_item_poll
 from imbue.mngr_kanpan.tui import _prune_orphaned_marks
 from imbue.mngr_kanpan.tui import _refresh_display
 from imbue.mngr_kanpan.tui import _restore_footer
+from imbue.mngr_kanpan.tui import _run_shell_command
 from imbue.mngr_kanpan.tui import _show_transient_message
+from imbue.mngr_kanpan.tui import _submit_batch_item
 from imbue.mngr_kanpan.tui import _toggle_mark
 from imbue.mngr_kanpan.tui import _unmark_all
 from imbue.mngr_kanpan.tui import _unmark_focused
@@ -995,3 +1009,375 @@ def test_assemble_column_defs_empty_order_falls_back_to_builtins() -> None:
     result = _assemble_column_defs(_BUILTIN_COLUMN_DEFS, [], ["nonexistent"])
     # All names unknown => result is empty => falls back to builtins
     assert len(result) == len(_BUILTIN_COLUMN_DEFS)
+
+
+# =============================================================================
+# _KanpanInputHandler: "U" key, command dispatch, up/down keys
+# =============================================================================
+
+
+def test_input_handler_U_key_clears_marks() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    state.marks = {AgentName("agent-a"): "d"}
+    handler = _KanpanInputHandler(state=state)
+    result = handler("U")
+    assert result is True
+    assert state.marks == {}
+
+
+def test_input_handler_command_key_dispatches() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    agent_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(agent_idx)
+    handler = _KanpanInputHandler(state=state)
+    result = handler("d")
+    assert result is True
+    assert AgentName("agent-a") in state.marks
+
+
+def test_input_handler_up_key_not_first_passes_through() -> None:
+    entry1 = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    entry2 = _make_entry(name="agent-b", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry1, entry2))
+    b_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-b"))
+    state.list_walker.set_focus(b_idx)
+    handler = _KanpanInputHandler(state=state)
+    result = handler("up")
+    assert result is None
+
+
+def test_input_handler_up_key_on_first_clears_focus() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    a_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(a_idx)
+    handler = _KanpanInputHandler(state=state)
+    result = handler("up")
+    assert result is True
+    assert state.focused_agent_name is None
+
+
+def test_input_handler_down_key_passes_through() -> None:
+    state = _make_state()
+    handler = _KanpanInputHandler(state=state)
+    assert handler("down") is None
+
+
+def test_input_handler_page_up_passes_through() -> None:
+    state = _make_state()
+    handler = _KanpanInputHandler(state=state)
+    assert handler("page up") is None
+
+
+# =============================================================================
+# _is_focus_on_first_selectable
+# =============================================================================
+
+
+def test_is_focus_on_first_selectable_no_walker() -> None:
+    state = _make_state()
+    assert _is_focus_on_first_selectable(state) is False
+
+
+def test_is_focus_on_first_selectable_at_first() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    a_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(a_idx)
+    assert _is_focus_on_first_selectable(state) is True
+
+
+def test_is_focus_on_first_selectable_at_non_first() -> None:
+    entry1 = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    entry2 = _make_entry(name="agent-b", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry1, entry2))
+    b_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-b"))
+    state.list_walker.set_focus(b_idx)
+    assert _is_focus_on_first_selectable(state) is False
+
+
+# =============================================================================
+# _get_focused_entry
+# =============================================================================
+
+
+def test_get_focused_entry_no_walker() -> None:
+    state = _make_state()
+    assert _get_focused_entry(state) is None
+
+
+def test_get_focused_entry_with_focus() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    a_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(a_idx)
+    result = _get_focused_entry(state)
+    assert result is not None
+    assert result.name == AgentName("agent-a")
+
+
+def test_get_focused_entry_no_entry_at_index() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    state.list_walker.set_focus(0)
+    if not state.index_to_entry.get(0):
+        assert _get_focused_entry(state) is None
+
+
+# =============================================================================
+# _update_row_mark: muted entry path
+# =============================================================================
+
+
+def test_update_row_mark_muted_entry() -> None:
+    entry = _make_entry(name="muted-agent", is_muted=True, section=BoardSection.MUTED)
+    snapshot = _make_snapshot(entries=(entry,))
+    state = _make_state(snapshot=snapshot)
+    walker, idx_map = _build_board_widgets(snapshot, _BUILTIN_COLUMN_DEFS)
+    state.list_walker = walker
+    state.index_to_entry = idx_map
+    agent_idx = next(k for k, v in idx_map.items() if v.name == AgentName("muted-agent"))
+    _update_row_mark(state, agent_idx, "d")
+
+
+# =============================================================================
+# _toggle_mark: push with no work_dir
+# =============================================================================
+
+
+def test_toggle_mark_push_no_work_dir_shows_message() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    commands = {
+        _BUILTIN_COMMAND_KEY_PUSH: CustomCommand(name="mark push", markable="yellow"),
+    }
+    state = _make_state(snapshot=_make_snapshot(entries=(entry,)), commands=commands)
+    state.mark_attr_names = ("mark_p",)
+    walker, idx_map = _build_board_widgets(_make_snapshot(entries=(entry,)), _BUILTIN_COLUMN_DEFS)
+    state.list_walker = walker
+    state.index_to_entry = idx_map
+    a_idx = next(k for k, v in idx_map.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(a_idx)
+    _toggle_mark(state, _BUILTIN_COMMAND_KEY_PUSH)
+    assert AgentName("agent-a") not in state.marks
+    assert "Cannot push" in state.footer_left_text.text
+
+
+# =============================================================================
+# _finish_batch_execution
+# =============================================================================
+
+
+def test_finish_batch_execution_all_ok() -> None:
+    state = _make_state()
+    state.executing = True
+    _finish_batch_execution(state, ["op1: ok", "op2: ok"])
+    assert state.executing is False
+    assert "2" in state.footer_left_text.text
+
+
+def test_finish_batch_execution_with_failures() -> None:
+    state = _make_state()
+    state.executing = True
+    _finish_batch_execution(state, ["op1: ok", "op2: failed (err)"])
+    assert state.executing is False
+    assert "failed" in state.footer_left_text.text or "1 failed" in state.footer_left_text.text
+
+
+def test_finish_batch_execution_empty_results() -> None:
+    state = _make_state()
+    state.executing = True
+    _finish_batch_execution(state, [])
+    assert state.executing is False
+
+
+# =============================================================================
+# _on_batch_item_poll
+# =============================================================================
+
+
+def _make_done_future(result: subprocess.CompletedProcess[str]) -> "Future[subprocess.CompletedProcess[str]]":
+    """Create an already-completed future with a given result."""
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut: Future[subprocess.CompletedProcess[str]] = pool.submit(lambda: result)
+        fut.result()
+    return fut
+
+
+def test_on_batch_item_poll_future_done_success() -> None:
+    state = _make_state()
+    state.executing = True
+    item = _BatchWorkItem(
+        name=AgentName("agent-a"),
+        key="c",
+        cmd=CustomCommand(name="custom"),
+        entry=None,
+    )
+    state.marks = {AgentName("agent-a"): "c"}
+    proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    future = _make_done_future(proc)
+    mock_loop = _make_mock_loop()
+    _on_batch_item_poll(mock_loop, (state, future, [item], [], 0, item))
+    assert state.executing is False
+    assert AgentName("agent-a") not in state.marks
+
+
+def test_on_batch_item_poll_future_done_failure() -> None:
+    state = _make_state()
+    state.executing = True
+    item = _BatchWorkItem(
+        name=AgentName("agent-a"),
+        key="c",
+        cmd=CustomCommand(name="custom"),
+        entry=None,
+    )
+    state.marks = {AgentName("agent-a"): "c"}
+    proc = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="something bad")
+    future = _make_done_future(proc)
+    mock_loop = _make_mock_loop()
+    results: list[str] = []
+    _on_batch_item_poll(mock_loop, (state, future, [item], results, 0, item))
+    assert any("failed" in r for r in results)
+
+
+def test_on_batch_item_poll_future_done_batch_names() -> None:
+    state = _make_state()
+    state.executing = True
+    item = _BatchWorkItem(
+        name=AgentName("a"),
+        key=_BUILTIN_COMMAND_KEY_DELETE,
+        cmd=CustomCommand(name="delete"),
+        entry=None,
+        batch_names=(AgentName("a"), AgentName("b")),
+    )
+    state.marks = {AgentName("a"): _BUILTIN_COMMAND_KEY_DELETE, AgentName("b"): _BUILTIN_COMMAND_KEY_DELETE}
+    proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    future = _make_done_future(proc)
+    mock_loop = _make_mock_loop()
+    results: list[str] = []
+    _on_batch_item_poll(mock_loop, (state, future, [item], results, 0, item))
+    assert AgentName("a") not in state.marks
+    assert AgentName("b") not in state.marks
+
+
+def test_on_batch_item_poll_future_not_done() -> None:
+    state = _make_state()
+    state.executing = True
+    item = _BatchWorkItem(
+        name=AgentName("agent-a"),
+        key="c",
+        cmd=CustomCommand(name="custom"),
+        entry=None,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        barrier = threading.Barrier(2)
+
+        def _wait() -> subprocess.CompletedProcess[str]:
+            barrier.wait()
+            return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        future: Future[subprocess.CompletedProcess[str]] = pool.submit(_wait)
+        mock_loop = _make_mock_loop()
+        _on_batch_item_poll(mock_loop, (state, future, [item], [], 0, item))
+        assert mock_loop._alarm_tracker.call_count >= 1
+        barrier.wait()
+
+
+# =============================================================================
+# _submit_batch_item
+# =============================================================================
+
+
+def test_submit_batch_item_push_with_work_dir(tmp_path: Path) -> None:
+    entry = AgentBoardEntry(
+        name=AgentName("agent-a"),
+        state=AgentLifecycleState.RUNNING,
+        provider_name=ProviderInstanceName("local"),
+        work_dir=tmp_path,
+    )
+    item = _BatchWorkItem(
+        name=AgentName("agent-a"),
+        key=_BUILTIN_COMMAND_KEY_PUSH,
+        cmd=CustomCommand(name="push"),
+        entry=entry,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = _submit_batch_item(pool, item)
+        assert future is not None
+        future.cancel()
+
+
+def test_submit_batch_item_push_no_work_dir() -> None:
+    entry = _make_entry(name="agent-a")
+    item = _BatchWorkItem(
+        name=AgentName("agent-a"),
+        key=_BUILTIN_COMMAND_KEY_PUSH,
+        cmd=CustomCommand(name="push"),
+        entry=entry,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = _submit_batch_item(pool, item)
+    assert future is None
+
+
+def test_submit_batch_item_shell_command() -> None:
+    item = _BatchWorkItem(
+        name=AgentName("agent-a"),
+        key="c",
+        cmd=CustomCommand(name="custom", command="true"),
+        entry=None,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = _submit_batch_item(pool, item)
+        assert future is not None
+        future.result(timeout=5)
+
+
+def test_submit_batch_item_no_command_returns_none() -> None:
+    item = _BatchWorkItem(
+        name=AgentName("agent-a"),
+        key="c",
+        cmd=CustomCommand(name="custom"),
+        entry=None,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = _submit_batch_item(pool, item)
+    assert future is None
+
+
+# =============================================================================
+# _run_shell_command (loop=None, no alarm)
+# =============================================================================
+
+
+def test_run_shell_command_submits_future() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    a_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(a_idx)
+    cmd = CustomCommand(name="say-hi", command="true")
+    _run_shell_command(state, cmd)
+    assert state.executor is not None
+    assert state.executor is not None
+    state.executor.shutdown(wait=True)
+
+
+# =============================================================================
+# _execute_next_in_batch: skipped item (future is None)
+# =============================================================================
+
+
+def test_execute_next_in_batch_skipped_item() -> None:
+    state = _make_state()
+    state.executor = ThreadPoolExecutor(max_workers=1)
+    item = _BatchWorkItem(
+        name=AgentName("agent-a"),
+        key="c",
+        cmd=CustomCommand(name="noop"),
+        entry=None,
+    )
+    results: list[str] = []
+    _execute_next_in_batch(state, [item], results, 0)
+    assert any("skipped" in r for r in results)
+    state.executor.shutdown(wait=False)
