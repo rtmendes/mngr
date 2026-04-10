@@ -6,6 +6,7 @@
 import m from "mithril";
 import {
   DockviewComponent,
+  themeLight,
   type IContentRenderer,
   type GroupPanelPartInitParameters,
   type IHeaderActionsRenderer,
@@ -341,6 +342,7 @@ function createDockviewForAgent(agentId: string, parentElement: HTMLElement): Ag
   };
 
   const dockview = new DockviewComponent(container, {
+    theme: themeLight,
     createComponent(options) {
       const params = (options as unknown as { params?: PanelParams }).params ?? panelParams.get(options.id);
 
