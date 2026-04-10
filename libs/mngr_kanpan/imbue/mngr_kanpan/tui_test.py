@@ -43,7 +43,6 @@ from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_UNMARK
 from imbue.mngr_kanpan.tui import _BatchWorkItem
 from imbue.mngr_kanpan.tui import _FieldCellMarkupFn
 from imbue.mngr_kanpan.tui import _FieldCellTextFn
-from imbue.mngr_kanpan.tui import _FieldCellUrlFn
 from imbue.mngr_kanpan.tui import _KanpanInputHandler
 from imbue.mngr_kanpan.tui import _KanpanState
 from imbue.mngr_kanpan.tui import _assemble_column_defs
@@ -61,7 +60,6 @@ from imbue.mngr_kanpan.tui import _execute_marks
 from imbue.mngr_kanpan.tui import _execute_next_in_batch
 from imbue.mngr_kanpan.tui import _field_cell_markup
 from imbue.mngr_kanpan.tui import _field_cell_text
-from imbue.mngr_kanpan.tui import _field_cell_url
 from imbue.mngr_kanpan.tui import _finish_batch_execution
 from imbue.mngr_kanpan.tui import _flatten_markup_to_muted
 from imbue.mngr_kanpan.tui import _format_section_heading
@@ -451,21 +449,6 @@ def test_field_cell_markup_absent() -> None:
     assert _field_cell_markup(entry, "pr") == ""
 
 
-def test_field_cell_url_present() -> None:
-    entry = _make_entry(cells={"pr": CellDisplay(text="#42", url="https://github.com/pull/42")})
-    assert _field_cell_url(entry, "pr") == "https://github.com/pull/42"
-
-
-def test_field_cell_url_absent() -> None:
-    entry = _make_entry()
-    assert _field_cell_url(entry, "pr") == ""
-
-
-def test_field_cell_url_no_url() -> None:
-    entry = _make_entry(cells={"ci": CellDisplay(text="passing")})
-    assert _field_cell_url(entry, "ci") == ""
-
-
 # =============================================================================
 # Data source column defs
 # =============================================================================
@@ -502,9 +485,6 @@ def test_build_data_source_column_defs() -> None:
     names = [d.name for d in defs]
     assert "mock_field" in names
     assert "empty_header" not in names
-    # All visible columns get url_fn so any field can provide a hyperlink URL.
-    mock_def = next(d for d in defs if d.name == "mock_field")
-    assert mock_def.url_fn is not None
 
 
 def test_build_data_source_column_defs_deduplicates() -> None:
@@ -596,7 +576,7 @@ def test_carry_forward_fields_new_agent() -> None:
 
 
 # =============================================================================
-# _FieldCellTextFn, _FieldCellMarkupFn, _FieldCellUrlFn
+# _FieldCellTextFn, _FieldCellMarkupFn
 # =============================================================================
 
 
@@ -610,12 +590,6 @@ def test_field_cell_markup_fn_call() -> None:
     entry = _make_entry(cells={"pr": CellDisplay(text="#1")})
     fn = _FieldCellMarkupFn(field_key="pr")
     assert fn(entry) == "#1"
-
-
-def test_field_cell_url_fn_call() -> None:
-    entry = _make_entry(cells={"pr": CellDisplay(text="#1", url="https://example.com/pull/1")})
-    fn = _FieldCellUrlFn(field_key="pr")
-    assert fn(entry) == "https://example.com/pull/1"
 
 
 # =============================================================================

@@ -1063,14 +1063,6 @@ def _field_cell_markup(entry: AgentBoardEntry, field_key: str) -> str | tuple[Ha
     return cell.text
 
 
-def _field_cell_url(entry: AgentBoardEntry, field_key: str) -> str:
-    """Get the URL for a field-based column hyperlink."""
-    cell = entry.cells.get(field_key)
-    if cell is None:
-        return ""
-    return cell.url or ""
-
-
 class _ColumnDef(FrozenModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -1079,7 +1071,6 @@ class _ColumnDef(FrozenModel):
     text_fn: Callable[[AgentBoardEntry], str]
     markup_fn: Callable[[AgentBoardEntry], str | tuple[Hashable, str]]
     flexible: bool
-    url_fn: Callable[[AgentBoardEntry], str] | None = None
 
 
 class _FieldCellTextFn(FrozenModel):
@@ -1098,15 +1089,6 @@ class _FieldCellMarkupFn(FrozenModel):
 
     def __call__(self, entry: AgentBoardEntry) -> str | tuple[Hashable, str]:
         return _field_cell_markup(entry, self.field_key)
-
-
-class _FieldCellUrlFn(FrozenModel):
-    """Callable that returns a URL for a field cell."""
-
-    field_key: str
-
-    def __call__(self, entry: AgentBoardEntry) -> str:
-        return _field_cell_url(entry, self.field_key)
 
 
 # Built-in column definitions for name and state (always present)
@@ -1142,7 +1124,6 @@ def _build_data_source_column_defs(
                     text_fn=_FieldCellTextFn(field_key=field_key),
                     markup_fn=_FieldCellMarkupFn(field_key=field_key),
                     flexible=False,
-                    url_fn=_FieldCellUrlFn(field_key=field_key),
                 )
             )
     return defs
@@ -1250,10 +1231,11 @@ def _build_agent_row(
 
     cols: list[tuple[int, Text] | Text] = []
     for defn in column_defs:
-        if defn.url_fn is not None:
-            url = defn.url_fn(entry)
+        cell = entry.cells.get(defn.name)
+        cell_url = cell.url if cell is not None else None
+        if cell_url:
             hyperlink_widget = _HyperlinkText(cell_markup[defn.name])
-            hyperlink_widget._hyperlink_url = url
+            hyperlink_widget._hyperlink_url = cell_url
             widget = hyperlink_widget
         else:
             widget = Text(cell_markup[defn.name])
