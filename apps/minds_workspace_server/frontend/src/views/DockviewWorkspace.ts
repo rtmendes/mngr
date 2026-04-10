@@ -326,7 +326,7 @@ async function loadLayout(agentId: string): Promise<SavedLayout | null> {
 
 function createDockviewForAgent(agentId: string, parentElement: HTMLElement): AgentDockviewState {
   const container = document.createElement("div");
-  container.className = "dockview-agent-container dockview-theme-dark";
+  container.className = "dockview-agent-container dockview-theme-light";
   container.style.width = "100%";
   container.style.height = "100%";
   parentElement.appendChild(container);
