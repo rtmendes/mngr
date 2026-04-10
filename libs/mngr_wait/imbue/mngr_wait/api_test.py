@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from imbue.mngr.api.lifecycle_events import get_lifecycle_events_path
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import UserInputError
 from imbue.mngr.primitives import AgentId
@@ -28,6 +27,7 @@ from imbue.mngr_wait.data_types import CombinedState
 from imbue.mngr_wait.data_types import StateChange
 from imbue.mngr_wait.data_types import WaitTarget
 from imbue.mngr_wait.primitives import WaitTargetType
+from imbue.mngr_wait.testing import write_lifecycle_event
 
 
 def _make_agents_by_host(
@@ -616,21 +616,12 @@ def _make_resolved_agent_target_with_local_provider(
     return resolved, agent_id
 
 
-def _write_lifecycle_event(host_dir: Path, agent_id: AgentId, event_type: str) -> None:
-    """Write a lifecycle event to the agent's events file on disk."""
-    events_file = get_lifecycle_events_path(host_dir, agent_id)
-    events_file.parent.mkdir(parents=True, exist_ok=True)
-    event_data = json.dumps({"type": event_type, "start_id": "start-test"})
-    with open(events_file, "a") as f:
-        f.write(event_data + "\n")
-
-
 def test_wait_for_event_returns_immediately_when_event_exists(
     temp_host_dir: Path,
     local_provider: LocalProviderInstance,
 ) -> None:
     resolved, agent_id = _make_resolved_agent_target_with_local_provider(temp_host_dir, local_provider)
-    _write_lifecycle_event(temp_host_dir, agent_id, "AGENT_READY")
+    write_lifecycle_event(temp_host_dir, agent_id, "AGENT_READY")
 
     result = wait_for_event(resolved, "AGENT_READY", timeout_seconds=5.0, interval_seconds=0.01)
     assert result.is_matched is True
@@ -670,8 +661,8 @@ def test_wait_for_event_does_not_match_stale_ready_after_starting(
 ) -> None:
     """If the last event is AGENT_STARTING, it should not match AGENT_READY."""
     resolved, agent_id = _make_resolved_agent_target_with_local_provider(temp_host_dir, local_provider)
-    _write_lifecycle_event(temp_host_dir, agent_id, "AGENT_READY")
-    _write_lifecycle_event(temp_host_dir, agent_id, "AGENT_STARTING")
+    write_lifecycle_event(temp_host_dir, agent_id, "AGENT_READY")
+    write_lifecycle_event(temp_host_dir, agent_id, "AGENT_STARTING")
 
     result = wait_for_event(resolved, "AGENT_READY", timeout_seconds=0.1, interval_seconds=0.02)
     assert result.is_matched is False

@@ -7,7 +7,6 @@ import pluggy
 import pytest
 from click.testing import CliRunner
 
-from imbue.mngr.api.lifecycle_events import get_lifecycle_events_path
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import OutputOptions
 from imbue.mngr.primitives import AgentId
@@ -25,6 +24,7 @@ from imbue.mngr_wait.data_types import StateChange
 from imbue.mngr_wait.data_types import WaitResult
 from imbue.mngr_wait.data_types import WaitTarget
 from imbue.mngr_wait.primitives import WaitTargetType
+from imbue.mngr_wait.testing import write_lifecycle_event
 
 
 def _make_matched_result() -> WaitResult:
@@ -271,15 +271,6 @@ def test_validate_event_type_rejects_lifecycle_state_as_event() -> None:
 # === CLI integration tests ===
 
 
-def _write_lifecycle_event(host_dir: Path, agent_id: AgentId, event_type: str) -> None:
-    """Write a lifecycle event to the agent's events file on disk."""
-    events_file = get_lifecycle_events_path(host_dir, agent_id)
-    events_file.parent.mkdir(parents=True, exist_ok=True)
-    event_data = json.dumps({"type": event_type, "start_id": "start-test"})
-    with open(events_file, "a") as f:
-        f.write(event_data + "\n")
-
-
 def _create_local_agent_dir(host_dir: Path, agent_id: AgentId) -> None:
     """Create the agent directory structure needed for local provider to discover the agent."""
     agent_dir = host_dir / "agents" / str(agent_id)
@@ -308,7 +299,7 @@ def test_wait_cli_event_flag_returns_success_when_event_exists(
     """Test that `mngr wait <agent> --event AGENT_READY` returns 0 when the event exists."""
     agent_id = AgentId.generate()
     _create_local_agent_dir(temp_host_dir, agent_id)
-    _write_lifecycle_event(temp_host_dir, agent_id, "AGENT_READY")
+    write_lifecycle_event(temp_host_dir, agent_id, "AGENT_READY")
 
     result = cli_runner.invoke(wait, [str(agent_id), "--event", "AGENT_READY", "--interval", "1s"], obj=plugin_manager)
     assert result.exit_code == 0
