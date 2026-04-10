@@ -528,9 +528,9 @@ def test_wait_for_state_detects_destroyed_after_connection_errors() -> None:
 # === _check_latest_lifecycle_event ===
 
 
-def _write_events_file(tmp_path: Path, lines: list[str]) -> str:
+def _write_events_file(directory: Path, lines: list[str]) -> str:
     """Write event lines to a temporary events.jsonl file and return the path string."""
-    events_file = tmp_path / "events.jsonl"
+    events_file = directory / "events.jsonl"
     events_file.write_text("\n".join(lines) + "\n" if lines else "")
     return str(events_file)
 
