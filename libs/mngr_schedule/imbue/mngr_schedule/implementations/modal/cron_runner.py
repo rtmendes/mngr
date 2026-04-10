@@ -157,10 +157,11 @@ def _run_and_stream(
         sys.stdout.flush()
         captured_lines.append(line)
     process.wait()
+    full_output = "".join(captured_lines)
     tail = "".join(captured_lines[-50:])
     if is_checked and process.returncode != 0:
         raise RuntimeError(f"Command failed with exit code {process.returncode}: {cmd}\nLast output:\n{tail}")
-    return process.returncode, tail
+    return process.returncode, full_output
 
 
 @app.function(
@@ -234,3 +235,33 @@ def run_scheduled_trigger() -> None:
     exit_code, output_tail = _run_and_stream(cmd, is_checked=False)
     if exit_code != 0:
         raise RuntimeError(f"mngr {command} failed with exit code {exit_code}\nLast output:\n{output_tail}")
+
+    # For create commands, extract the agent name from output and wait for
+    # it to finish. Without this, the container exits before the agent
+    # completes its work (the agent runs in a local tmux session).
+    if command == "create":
+        import re
+
+        agent_match = re.search(r"Starting agent\s+(\S+)", output_tail)
+        if agent_match is not None:
+            agent_name = agent_match.group(1)
+            print(f"Waiting for agent '{agent_name}' to finish...")
+            wait_exit, _ = _run_and_stream(
+                ["mngr", "wait", agent_name, "DONE", "--timeout", "30m"],
+                is_checked=False,
+            )
+            if wait_exit == 2:
+                print(f"Agent '{agent_name}' timed out (30m)")
+            elif wait_exit != 0:
+                print(f"mngr wait exited with code {wait_exit}")
+
+            # Capture transcript and tmux scrollback before the container exits
+            print(f"Capturing output for agent '{agent_name}'...")
+            _run_and_stream(
+                ["mngr", "transcript", agent_name, "--format", "human"],
+                is_checked=False,
+            )
+            _run_and_stream(
+                ["mngr", "capture", agent_name, "--full"],
+                is_checked=False,
+            )
