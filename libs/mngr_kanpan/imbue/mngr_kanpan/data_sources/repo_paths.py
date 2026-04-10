@@ -21,6 +21,10 @@ class RepoPathsDataSource:
         return "repo_paths"
 
     @property
+    def is_remote(self) -> bool:
+        return False
+
+    @property
     def columns(self) -> dict[str, str]:
         return {FIELD_REPO_PATH: "REPO"}
 

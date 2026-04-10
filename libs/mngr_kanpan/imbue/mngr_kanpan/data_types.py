@@ -1,4 +1,5 @@
 from enum import auto
+from pathlib import Path
 from typing import Any
 
 from pydantic import Field
@@ -30,6 +31,7 @@ class AgentBoardEntry(FrozenModel):
     name: AgentName = Field(description="Agent name")
     state: AgentLifecycleState = Field(description="Agent lifecycle state")
     provider_name: ProviderInstanceName = Field(description="Provider instance name")
+    work_dir: Path | None = Field(default=None, description="Local work directory (None for remote agents)")
     branch: str | None = Field(default=None, description="Git branch for this agent")
     is_muted: bool = Field(default=False, description="Whether the agent is muted (relegated to bottom)")
     fields: dict[str, FieldValue] = Field(default_factory=dict, description="Field values from data sources")
@@ -52,15 +54,13 @@ class BoardSnapshot(FrozenModel):
 
 
 class DataSourceConfig(FrozenModel):
-    """Configuration for a single data source."""
+    """Generic configuration for a data source (enable/disable only).
+
+    Source-specific configuration (e.g. GitHub field toggles) is owned by
+    each data source implementation and read directly from the config dict.
+    """
 
     enabled: bool = Field(default=True, description="Whether this data source is enabled")
-    # GitHub-specific toggles (ignored by other sources)
-    pr: bool = Field(default=True, description="Fetch PR data")
-    ci: bool = Field(default=True, description="Fetch CI check status")
-    create_pr_url: bool = Field(default=True, description="Generate URL to create PR")
-    conflicts: bool = Field(default=True, description="Check merge conflict status")
-    unresolved: bool = Field(default=True, description="Check unresolved PR comments")
 
 
 class ShellCommandSourceConfig(FrozenModel):

@@ -163,11 +163,10 @@ def test_kanpan_config_merge_with_data_sources() -> None:
         data_sources={"github": DataSourceConfig(enabled=True)},
     )
     override = KanpanPluginConfig(
-        data_sources={"github": DataSourceConfig(enabled=False, conflicts=False)},
+        data_sources={"github": DataSourceConfig(enabled=False)},
     )
     merged = base.merge_with(override)
     assert merged.data_sources["github"].enabled is False
-    assert merged.data_sources["github"].conflicts is False
 
 
 def test_kanpan_config_merge_with_shell_commands() -> None:

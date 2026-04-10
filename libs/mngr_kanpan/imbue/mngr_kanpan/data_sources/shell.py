@@ -42,6 +42,10 @@ class ShellCommandDataSource(FrozenModel):
         return f"shell_{self.field_key}"
 
     @property
+    def is_remote(self) -> bool:
+        return True
+
+    @property
     def columns(self) -> dict[str, str]:
         return {self.field_key: self.config.header}
 

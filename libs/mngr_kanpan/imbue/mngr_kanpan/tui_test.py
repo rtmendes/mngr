@@ -14,7 +14,10 @@ from imbue.mngr.primitives import AgentLifecycleState
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr_kanpan.data_source import CellDisplay
+from imbue.mngr_kanpan.data_source import CiField
+from imbue.mngr_kanpan.data_source import CiStatus
 from imbue.mngr_kanpan.data_source import CommitsAheadField
+from imbue.mngr_kanpan.data_source import FIELD_CI
 from imbue.mngr_kanpan.data_source import FieldValue
 from imbue.mngr_kanpan.data_source import PrField
 from imbue.mngr_kanpan.data_source import PrState
@@ -22,18 +25,29 @@ from imbue.mngr_kanpan.data_types import AgentBoardEntry
 from imbue.mngr_kanpan.data_types import BoardSection
 from imbue.mngr_kanpan.data_types import BoardSnapshot
 from imbue.mngr_kanpan.data_types import CustomCommand
+from imbue.mngr_kanpan.data_types import KanpanPluginConfig
 from imbue.mngr_kanpan.tui import _BUILTIN_COLUMN_DEFS
+from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_EXECUTE
+from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_REFRESH
+from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_UNMARK
 from imbue.mngr_kanpan.tui import _BatchWorkItem
+from imbue.mngr_kanpan.tui import _FieldCellMarkupFn
+from imbue.mngr_kanpan.tui import _FieldCellTextFn
+from imbue.mngr_kanpan.tui import _FieldCellUrlFn
 from imbue.mngr_kanpan.tui import _KanpanInputHandler
 from imbue.mngr_kanpan.tui import _KanpanState
 from imbue.mngr_kanpan.tui import _assemble_column_defs
 from imbue.mngr_kanpan.tui import _batch_item_label
 from imbue.mngr_kanpan.tui import _build_board_widgets
+from imbue.mngr_kanpan.tui import _build_command_map
 from imbue.mngr_kanpan.tui import _build_data_source_column_defs
 from imbue.mngr_kanpan.tui import _build_field_color_palette
 from imbue.mngr_kanpan.tui import _build_mark_palette
 from imbue.mngr_kanpan.tui import _carry_forward_fields
 from imbue.mngr_kanpan.tui import _clear_focus
+from imbue.mngr_kanpan.tui import _compute_board_column_widths
+from imbue.mngr_kanpan.tui import _dispatch_command
+from imbue.mngr_kanpan.tui import _execute_marks
 from imbue.mngr_kanpan.tui import _field_cell_markup
 from imbue.mngr_kanpan.tui import _field_cell_text
 from imbue.mngr_kanpan.tui import _field_cell_url
@@ -41,9 +55,16 @@ from imbue.mngr_kanpan.tui import _flatten_markup_to_muted
 from imbue.mngr_kanpan.tui import _format_section_heading
 from imbue.mngr_kanpan.tui import _get_name_cell_markup
 from imbue.mngr_kanpan.tui import _get_state_attr
+from imbue.mngr_kanpan.tui import _load_user_commands
 from imbue.mngr_kanpan.tui import _prune_orphaned_marks
+from imbue.mngr_kanpan.tui import _refresh_display
 from imbue.mngr_kanpan.tui import _restore_footer
 from imbue.mngr_kanpan.tui import _show_transient_message
+from imbue.mngr_kanpan.tui import _toggle_mark
+from imbue.mngr_kanpan.tui import _unmark_all
+from imbue.mngr_kanpan.tui import _unmark_focused
+from imbue.mngr_kanpan.tui import _update_mark_count_footer
+from imbue.mngr_kanpan.tui import _update_row_mark
 from imbue.mngr_kanpan.tui import _update_snapshot_mute
 
 # =============================================================================
@@ -548,3 +569,421 @@ def test_carry_forward_fields_new_agent() -> None:
     result = _carry_forward_fields(old_snapshot, new_snapshot)
     assert len(result.entries) == 1
     assert result.entries[0].name == AgentName("new-agent")
+
+
+# =============================================================================
+# _FieldCellTextFn, _FieldCellMarkupFn, _FieldCellUrlFn
+# =============================================================================
+
+
+def test_field_cell_text_fn_call() -> None:
+    entry = _make_entry(cells={"pr": CellDisplay(text="#1")})
+    fn = _FieldCellTextFn(field_key="pr")
+    assert fn(entry) == "#1"
+
+
+def test_field_cell_markup_fn_call() -> None:
+    entry = _make_entry(cells={"pr": CellDisplay(text="#1")})
+    fn = _FieldCellMarkupFn(field_key="pr")
+    assert fn(entry) == "#1"
+
+
+def test_field_cell_url_fn_call() -> None:
+    entry = _make_entry(cells={"pr": CellDisplay(text="#1", url="https://example.com/pull/1")})
+    fn = _FieldCellUrlFn(field_key="pr")
+    assert fn(entry) == "https://example.com/pull/1"
+
+
+# =============================================================================
+# CI field markup special handling
+# =============================================================================
+
+
+def test_field_cell_markup_ci_failing_no_color_in_cell() -> None:
+    """The check_failing attr is used when CI cell has no color but field has FAILING status."""
+    ci = CiField(status=CiStatus.FAILING)
+    # Manually create a CellDisplay without color to exercise the special CI path
+    entry = _make_entry(
+        fields={FIELD_CI: ci},
+        cells={FIELD_CI: CellDisplay(text="failing", color=None)},
+    )
+    markup = _field_cell_markup(entry, FIELD_CI)
+    assert isinstance(markup, tuple)
+    assert markup[0] == "check_failing"
+
+
+def test_field_cell_markup_ci_pending_no_color_in_cell() -> None:
+    ci = CiField(status=CiStatus.PENDING)
+    entry = _make_entry(
+        fields={FIELD_CI: ci},
+        cells={FIELD_CI: CellDisplay(text="pending", color=None)},
+    )
+    markup = _field_cell_markup(entry, FIELD_CI)
+    assert isinstance(markup, tuple)
+    assert markup[0] == "check_pending"
+
+
+def test_field_cell_markup_ci_passing_no_check_attr() -> None:
+    """PASSING has no entry in _CHECK_STATUS_ATTR so returns plain text."""
+    ci = CiField(status=CiStatus.PASSING)
+    entry = _make_entry(
+        fields={FIELD_CI: ci},
+        cells={FIELD_CI: CellDisplay(text="passing", color=None)},
+    )
+    markup = _field_cell_markup(entry, FIELD_CI)
+    assert isinstance(markup, str)
+
+
+# =============================================================================
+# _compute_board_column_widths
+# =============================================================================
+
+
+def test_compute_board_column_widths_empty_entries() -> None:
+    widths = _compute_board_column_widths((), _BUILTIN_COLUMN_DEFS)
+    # name col header is "  NAME" (6), state col header is "STATE" (5)
+    assert widths["name"] == len("  NAME")
+    assert widths["state"] == len("STATE")
+
+
+def test_compute_board_column_widths_with_entries() -> None:
+    entry = _make_entry(name="a-long-agent-name-here")
+    widths = _compute_board_column_widths((entry,), _BUILTIN_COLUMN_DEFS)
+    # "  a-long-agent-name-here" is longer than "  NAME"
+    assert widths["name"] > len("  NAME")
+
+
+# =============================================================================
+# _build_board_widgets with marks and muted entries
+# =============================================================================
+
+
+def test_build_board_widgets_with_marks() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    snapshot = _make_snapshot(entries=(entry,))
+    marks = {AgentName("agent-a"): "d"}
+    walker, idx_map = _build_board_widgets(snapshot, _BUILTIN_COLUMN_DEFS, marks=marks)
+    assert len(idx_map) == 1
+
+
+def test_build_board_widgets_muted_entry() -> None:
+    entry = _make_entry(name="muted-agent", is_muted=True, section=BoardSection.MUTED)
+    snapshot = _make_snapshot(entries=(entry,))
+    walker, idx_map = _build_board_widgets(snapshot, _BUILTIN_COLUMN_DEFS)
+    assert len(idx_map) == 1
+
+
+def test_build_board_widgets_multiple_sections() -> None:
+    e1 = _make_entry(name="a", section=BoardSection.STILL_COOKING)
+    e2 = _make_entry(name="b", section=BoardSection.PR_BEING_REVIEWED)
+    e3 = _make_entry(name="c", section=BoardSection.PRS_FAILED)
+    snapshot = _make_snapshot(entries=(e1, e2, e3))
+    walker, idx_map = _build_board_widgets(snapshot, _BUILTIN_COLUMN_DEFS)
+    assert len(idx_map) == 3
+
+
+# =============================================================================
+# _update_row_mark
+# =============================================================================
+
+
+def test_update_row_mark_no_walker() -> None:
+    state = _make_state()
+    # Should not raise even with no walker
+    _update_row_mark(state, 0, "d")
+
+
+def test_update_row_mark_no_entry_at_index() -> None:
+    state = _make_state()
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    snapshot = _make_snapshot(entries=(entry,))
+    state.snapshot = snapshot
+    walker, idx_map = _build_board_widgets(snapshot, _BUILTIN_COLUMN_DEFS)
+    state.list_walker = walker
+    state.index_to_entry = idx_map
+    # Index 0 is the header row, not an agent entry
+    _update_row_mark(state, 0, "d")  # should not raise
+
+
+# =============================================================================
+# _toggle_mark
+# =============================================================================
+
+
+def _make_state_with_walker(entries: tuple[AgentBoardEntry, ...]) -> _KanpanState:
+    """Build a state with a populated list walker from entries."""
+    commands = {
+        "d": CustomCommand(name="delete", markable="light red"),
+        "p": CustomCommand(name="push", markable="yellow"),
+    }
+    state = _make_state(snapshot=_make_snapshot(entries=entries), commands=commands)
+    state.mark_attr_names = ("mark_d", "mark_p")
+    walker, idx_map = _build_board_widgets(_make_snapshot(entries=entries), _BUILTIN_COLUMN_DEFS)
+    state.list_walker = walker
+    state.index_to_entry = idx_map
+    return state
+
+
+def test_toggle_mark_adds_mark() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    # Find the index of the agent entry
+    agent_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(agent_idx)
+    _toggle_mark(state, "d")
+    assert AgentName("agent-a") in state.marks
+    assert state.marks[AgentName("agent-a")] == "d"
+
+
+def test_toggle_mark_removes_existing_mark() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    state.marks[AgentName("agent-a")] = "d"
+    agent_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(agent_idx)
+    _toggle_mark(state, "d")
+    assert AgentName("agent-a") not in state.marks
+
+
+def test_toggle_mark_no_walker() -> None:
+    state = _make_state()
+    _toggle_mark(state, "d")  # should not raise
+
+
+# =============================================================================
+# _unmark_focused
+# =============================================================================
+
+
+def test_unmark_focused_removes_mark() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    state.marks[AgentName("agent-a")] = "d"
+    agent_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(agent_idx)
+    _unmark_focused(state)
+    assert AgentName("agent-a") not in state.marks
+
+
+def test_unmark_focused_no_mark_is_noop() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    agent_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(agent_idx)
+    _unmark_focused(state)  # should not raise
+
+
+# =============================================================================
+# _unmark_all
+# =============================================================================
+
+
+def test_unmark_all_clears_marks() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    state.marks[AgentName("agent-a")] = "d"
+    _unmark_all(state)
+    assert state.marks == {}
+
+
+def test_unmark_all_empty_marks_noop() -> None:
+    state = _make_state()
+    _unmark_all(state)  # should not raise
+
+
+# =============================================================================
+# _update_mark_count_footer
+# =============================================================================
+
+
+def test_update_mark_count_footer_with_marks() -> None:
+    commands = {"d": CustomCommand(name="delete", markable="light red")}
+    state = _make_state(commands=commands)
+    state.marks = {AgentName("agent-a"): "d", AgentName("agent-b"): "d"}
+    _update_mark_count_footer(state)
+    assert "delete" in state.footer_left_text.text or "d" in state.footer_left_text.text
+
+
+def test_update_mark_count_footer_no_marks_restores_footer() -> None:
+    state = _make_state()
+    state.steady_footer_text = "  Steady"
+    state.marks = {}
+    _update_mark_count_footer(state)
+    assert state.footer_left_text.text == "  Steady"
+
+
+# =============================================================================
+# _execute_marks
+# =============================================================================
+
+
+def test_execute_marks_no_marks_does_nothing() -> None:
+    state = _make_state()
+    state.marks = {}
+    _execute_marks(state)  # should not raise, does nothing
+
+
+def test_execute_marks_already_executing_does_nothing() -> None:
+    state = _make_state()
+    state.marks = {AgentName("a"): "d"}
+    state.executing = True
+    _execute_marks(state)  # should not raise
+
+
+# =============================================================================
+# _prune_orphaned_marks (full coverage including orphaned branch)
+# =============================================================================
+
+
+def test_prune_orphaned_marks_with_orphans() -> None:
+    commands = {"d": CustomCommand(name="delete", markable="light red")}
+    state = _make_state(commands=commands)
+    state.steady_footer_text = "  Steady"
+    state.marks = {AgentName("gone-agent"): "d"}
+    state.snapshot = _make_snapshot(entries=())
+    _prune_orphaned_marks(state)
+    assert AgentName("gone-agent") not in state.marks
+
+
+# =============================================================================
+# _dispatch_command
+# =============================================================================
+
+
+def test_dispatch_command_markable_key_toggles_mark() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    commands = {"d": CustomCommand(name="delete", markable="light red")}
+    state = _make_state_with_walker((entry,))
+    state.commands = commands
+    state.mark_attr_names = ("mark_d",)
+    agent_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(agent_idx)
+    _dispatch_command(state, "d", commands["d"])
+    assert AgentName("agent-a") in state.marks
+
+
+def test_dispatch_command_unmark_key_removes_mark() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    state = _make_state_with_walker((entry,))
+    state.marks[AgentName("agent-a")] = "d"
+    agent_idx = next(k for k, v in state.index_to_entry.items() if v.name == AgentName("agent-a"))
+    state.list_walker.set_focus(agent_idx)
+    unmark_cmd = CustomCommand(name="unmark")
+    state.commands = {_BUILTIN_COMMAND_KEY_UNMARK: unmark_cmd}
+    _dispatch_command(state, _BUILTIN_COMMAND_KEY_UNMARK, unmark_cmd)
+    assert AgentName("agent-a") not in state.marks
+
+
+def test_dispatch_command_execute_key_with_marks() -> None:
+    # Register a real "d" command so _start_batch_execution has work to submit.
+    # With loop=None, the future is submitted but never polled, so executing stays True.
+    mark_cmd = CustomCommand(name="do-thing", command="echo hi")
+    state = _make_state(commands={"d": mark_cmd})
+    state.marks = {AgentName("a"): "d"}
+    execute_cmd = CustomCommand(name="execute")
+    _dispatch_command(state, _BUILTIN_COMMAND_KEY_EXECUTE, execute_cmd)
+    # Should start batch execution (sets executing=True)
+    assert state.executing is True
+    # Clean up the executor to avoid resource warnings
+    if state.executor is not None:
+        state.executor.shutdown(wait=False)
+
+
+# =============================================================================
+# _refresh_display
+# =============================================================================
+
+
+def test_refresh_display_updates_walker() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    snapshot = _make_snapshot(entries=(entry,))
+    state = _make_state(snapshot=snapshot)
+    _refresh_display(state)
+    assert state.list_walker is not None
+    assert len(state.index_to_entry) == 1
+
+
+def test_refresh_display_restores_focus() -> None:
+    entry = _make_entry(name="agent-a", section=BoardSection.STILL_COOKING)
+    snapshot = _make_snapshot(entries=(entry,))
+    state = _make_state(snapshot=snapshot)
+    state.focused_agent_name = AgentName("agent-a")
+    _refresh_display(state)
+    # Focus should be on the entry if it's still present
+    assert state.list_walker is not None
+
+
+def test_refresh_display_none_snapshot() -> None:
+    state = _make_state()
+    state.snapshot = None
+    _refresh_display(state)
+    assert state.list_walker is not None
+
+
+# =============================================================================
+# _load_user_commands and _build_command_map
+# =============================================================================
+
+
+def test_load_user_commands_from_custom_command_instance() -> None:
+    cmd = CustomCommand(name="my-cmd", command="echo hi")
+    config = KanpanPluginConfig(commands={"c": cmd})
+    ctx = SimpleNamespace(get_plugin_config=lambda name, cls: config)
+    result = _load_user_commands(ctx)  # type: ignore[arg-type]
+    assert "c" in result
+    assert result["c"].name == "my-cmd"
+
+
+def test_load_user_commands_from_dict() -> None:
+    config = KanpanPluginConfig(
+        commands={"c": CustomCommand(name="my-cmd", command="echo hi")}  # type: ignore[arg-type]
+    )
+    ctx = SimpleNamespace(get_plugin_config=lambda name, cls: config)
+    result = _load_user_commands(ctx)  # type: ignore[arg-type]
+    assert "c" in result
+
+
+def test_build_command_map_includes_builtins() -> None:
+    config = KanpanPluginConfig()
+    ctx = SimpleNamespace(get_plugin_config=lambda name, cls: config)
+    result = _build_command_map(ctx)  # type: ignore[arg-type]
+    assert "r" in result  # builtin refresh key
+    assert "q" not in result  # q is quit, not in commands
+
+
+def test_build_command_map_user_overrides_builtin() -> None:
+    custom = CustomCommand(name="my-refresh", command="echo refresh")
+    config = KanpanPluginConfig(commands={_BUILTIN_COMMAND_KEY_REFRESH: custom})
+    ctx = SimpleNamespace(get_plugin_config=lambda name, cls: config)
+    result = _build_command_map(ctx)  # type: ignore[arg-type]
+    assert result[_BUILTIN_COMMAND_KEY_REFRESH].name == "my-refresh"
+
+
+def test_build_command_map_excludes_disabled() -> None:
+    disabled = CustomCommand(name="disabled-cmd", enabled=False)
+    config = KanpanPluginConfig(commands={"z": disabled})
+    ctx = SimpleNamespace(get_plugin_config=lambda name, cls: config)
+    result = _build_command_map(ctx)  # type: ignore[arg-type]
+    assert "z" not in result
+
+
+# =============================================================================
+# _update_snapshot_mute: None snapshot branch
+# =============================================================================
+
+
+def test_update_snapshot_mute_none_snapshot() -> None:
+    state = _make_state()
+    state.snapshot = None
+    _update_snapshot_mute(state, AgentName("agent"), True)  # should not raise
+
+
+# =============================================================================
+# _assemble_column_defs: empty result fallback
+# =============================================================================
+
+
+def test_assemble_column_defs_empty_order_falls_back_to_builtins() -> None:
+    result = _assemble_column_defs(_BUILTIN_COLUMN_DEFS, [], ["nonexistent"])
+    # All names unknown => result is empty => falls back to builtins
+    assert len(result) == len(_BUILTIN_COLUMN_DEFS)

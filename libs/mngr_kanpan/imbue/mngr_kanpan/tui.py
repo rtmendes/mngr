@@ -38,12 +38,14 @@ from imbue.mngr_kanpan.data_source import CiStatus
 from imbue.mngr_kanpan.data_source import FIELD_CI
 from imbue.mngr_kanpan.data_source import FIELD_CREATE_PR_URL
 from imbue.mngr_kanpan.data_source import FIELD_PR
+from imbue.mngr_kanpan.data_source import FieldValue
 from imbue.mngr_kanpan.data_source import KanpanDataSource
 from imbue.mngr_kanpan.data_types import AgentBoardEntry
 from imbue.mngr_kanpan.data_types import BoardSection
 from imbue.mngr_kanpan.data_types import BoardSnapshot
 from imbue.mngr_kanpan.data_types import CustomCommand
 from imbue.mngr_kanpan.data_types import KanpanPluginConfig
+from imbue.mngr_kanpan.fetcher import FetchResult
 from imbue.mngr_kanpan.fetcher import collect_data_sources
 from imbue.mngr_kanpan.fetcher import compute_section
 from imbue.mngr_kanpan.fetcher import fetch_board_snapshot
@@ -275,7 +277,9 @@ class _KanpanState(MutableModel):
     footer_right: Any  # urwid Text widget (right side of footer)
     loop: Any = None  # urwid MainLoop, set after construction
     spinner_index: int = 0
-    refresh_future: Future[BoardSnapshot] | None = None
+    refresh_future: Future[FetchResult] | None = None
+    # In-memory cache of fields from previous refresh cycle
+    cached_fields: dict[AgentName, dict[str, FieldValue]] = {}
     executor: ThreadPoolExecutor | None = None
     # Dired-style marks: agents flagged for batch operations, keyed by command key
     marks: dict[AgentName, str] = {}
@@ -418,6 +422,10 @@ def _toggle_mark(state: _KanpanState, key: str) -> None:
         return
     entry = state.index_to_entry.get(focus_idx)
     if entry is None:
+        return
+
+    if key == _BUILTIN_COMMAND_KEY_PUSH and entry.work_dir is None:
+        _show_transient_message(state, f"  Cannot push: {entry.name} has no local work_dir")
         return
 
     existing = state.marks.get(entry.name)
@@ -574,14 +582,9 @@ def _submit_batch_item(
         names = [str(n) for n in item.batch_names] if item.batch_names else [str(item.name)]
         return executor.submit(_run_destroy, names)
     if item.key == _BUILTIN_COMMAND_KEY_PUSH:
-        # For push, we need a work_dir. Check if agent has one via its fields.
-        if item.entry is None:
+        if item.entry is None or item.entry.work_dir is None:
             return None
-        # The entry no longer has work_dir directly; we get it from the branch presence.
-        # Push is driven by the branch name via git push in the original work dir.
-        # Since we no longer track work_dir in AgentBoardEntry, push via batch is
-        # not supported in the new model. We'd need to look up the agent's work_dir.
-        return None
+        return executor.submit(_run_git_push, str(item.entry.work_dir))
     if item.cmd.command:
         return executor.submit(_run_shell_command_sync, item.cmd.command, str(item.name))
     return None
@@ -874,6 +877,7 @@ def _start_local_refresh(loop: MainLoop, state: _KanpanState) -> None:
         fetch_local_snapshot,
         state.mngr_ctx,
         state.data_sources,
+        state.cached_fields,
         state.include_filters,
         state.exclude_filters,
     )
@@ -891,6 +895,7 @@ def _start_refresh(loop: MainLoop, state: _KanpanState) -> None:
         fetch_board_snapshot,
         state.mngr_ctx,
         state.data_sources,
+        state.cached_fields,
         state.include_filters,
         state.exclude_filters,
     )
@@ -926,7 +931,10 @@ def _finish_refresh(loop: MainLoop, state: _KanpanState) -> None:
     was_local_only = state.refresh_is_local_only
     failed = False
     try:
-        new_snapshot = state.refresh_future.result()
+        fetch_result = state.refresh_future.result()
+        new_snapshot = fetch_result.snapshot
+        # Update in-memory field cache
+        state.cached_fields = fetch_result.cached_fields
         # For local-only refreshes, carry forward fields from previous snapshot
         if was_local_only and state.snapshot is not None:
             new_snapshot = _carry_forward_fields(state.snapshot, new_snapshot)

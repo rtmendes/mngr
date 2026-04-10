@@ -59,6 +59,10 @@ class GitHubDataSource(FrozenModel):
         return "github"
 
     @property
+    def is_remote(self) -> bool:
+        return True
+
+    @property
     def columns(self) -> dict[str, str]:
         cols: dict[str, str] = {}
         if self.config.pr:

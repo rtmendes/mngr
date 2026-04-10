@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 
 from imbue.mngr.primitives import AgentName
@@ -13,10 +16,16 @@ from imbue.mngr_kanpan.data_source import PrField
 from imbue.mngr_kanpan.data_source import PrState
 from imbue.mngr_kanpan.data_source import StringField
 from imbue.mngr_kanpan.data_types import BoardSection
-from imbue.mngr_kanpan.fetcher import _merge_cached_fields
+from imbue.mngr_kanpan.data_types import DataSourceConfig
+from imbue.mngr_kanpan.data_types import KanpanPluginConfig
+from imbue.mngr_kanpan.data_types import ShellCommandSourceConfig
+from imbue.mngr_kanpan.fetcher import _is_agent_muted
 from imbue.mngr_kanpan.fetcher import _parse_github_repo_path
+from imbue.mngr_kanpan.fetcher import _run_data_sources_parallel
+from imbue.mngr_kanpan.fetcher import collect_data_sources
 from imbue.mngr_kanpan.fetcher import compute_section
 from imbue.mngr_kanpan.fetcher import repo_path_from_labels
+from imbue.mngr_kanpan.plugin import kanpan_data_sources
 
 # === repo path parsing ===
 
@@ -151,31 +160,214 @@ def test_compute_section_wrong_ci_type() -> None:
         compute_section(fields)
 
 
-# === _merge_cached_fields ===
+# === _is_agent_muted ===
 
 
-def test_merge_cached_fields_empty() -> None:
-    assert _merge_cached_fields({}) == {}
+def test_is_agent_muted_true() -> None:
+    certified_data = {"plugin": {"kanpan": {"muted": True}}}
+    assert _is_agent_muted(certified_data) is True
 
 
-def test_merge_cached_fields_single_source() -> None:
-    cached: dict[str, dict[AgentName, dict[str, FieldValue]]] = {
-        "github": {
-            AgentName("a1"): {"pr": _make_pr()},
-        },
-    }
-    merged = _merge_cached_fields(cached)
-    assert AgentName("a1") in merged
-    assert "pr" in merged[AgentName("a1")]
+def test_is_agent_muted_false() -> None:
+    certified_data = {"plugin": {"kanpan": {"muted": False}}}
+    assert _is_agent_muted(certified_data) is False
 
 
-def test_merge_cached_fields_multiple_sources() -> None:
+def test_is_agent_muted_missing_key() -> None:
+    assert _is_agent_muted({}) is False
+
+
+def test_is_agent_muted_no_kanpan_key() -> None:
+    certified_data = {"plugin": {}}
+    assert _is_agent_muted(certified_data) is False
+
+
+def test_is_agent_muted_no_muted_key() -> None:
+    certified_data = {"plugin": {"kanpan": {}}}
+    assert _is_agent_muted(certified_data) is False
+
+
+# === _run_data_sources_parallel ===
+
+
+class _MockDataSource:
+    def __init__(
+        self, name: str, result: dict[AgentName, dict[str, FieldValue]], errors: list[str] | None = None
+    ) -> None:
+        self._name = name
+        self._result = result
+        self._errors: list[str] = errors or []
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def columns(self) -> dict[str, str]:
+        return {}
+
+    @property
+    def field_types(self) -> dict[str, type[FieldValue]]:
+        return {}
+
+    def compute(
+        self,
+        agents: object,
+        cached_fields: object,
+        mngr_ctx: object,
+    ) -> tuple[dict[AgentName, dict[str, FieldValue]], list[str]]:
+        return self._result, self._errors
+
+
+class _FailingDataSource:
+    @property
+    def name(self) -> str:
+        return "failing"
+
+    @property
+    def columns(self) -> dict[str, str]:
+        return {}
+
+    @property
+    def field_types(self) -> dict[str, type[FieldValue]]:
+        return {}
+
+    def compute(
+        self,
+        agents: object,
+        cached_fields: object,
+        mngr_ctx: object,
+    ) -> tuple[dict[AgentName, dict[str, FieldValue]], list[str]]:
+        raise RuntimeError("data source crashed")
+
+
+def test_run_data_sources_parallel_empty() -> None:
+    results, errors = _run_data_sources_parallel([], (), {}, MagicMock())
+    assert results == {}
+    assert errors == []
+
+
+def test_run_data_sources_parallel_single_source() -> None:
+    agent = AgentName("agent-1")
+    pr = _make_pr()
+    source = _MockDataSource("github", {agent: {"pr": pr}})
+    results, errors = _run_data_sources_parallel([source], (), {}, MagicMock())
+    assert "github" in results
+    assert agent in results["github"]
+    assert errors == []
+
+
+def test_run_data_sources_parallel_source_with_errors() -> None:
+    source = _MockDataSource("github", {}, errors=["some error"])
+    results, errors = _run_data_sources_parallel([source], (), {}, MagicMock())
+    assert "some error" in errors
+
+
+def test_run_data_sources_parallel_source_raises_exception() -> None:
+    source = _FailingDataSource()
+    results, errors = _run_data_sources_parallel([source], (), {}, MagicMock())
+    assert any("failing" in e and "failed" in e for e in errors)
+
+
+def test_run_data_sources_parallel_multiple_sources() -> None:
+    a1 = AgentName("a1")
     pr = _make_pr()
     ci = CiField(status=CiStatus.PASSING)
-    cached: dict[str, dict[AgentName, dict[str, FieldValue]]] = {
-        "github": {AgentName("a1"): {"pr": pr}},
-        "git_info": {AgentName("a1"): {"ci": ci}},
-    }
-    merged = _merge_cached_fields(cached)
-    assert "pr" in merged[AgentName("a1")]
-    assert "ci" in merged[AgentName("a1")]
+    s1 = _MockDataSource("github", {a1: {"pr": pr}})
+    s2 = _MockDataSource("git_info", {a1: {"ci": ci}})
+    results, errors = _run_data_sources_parallel([s1, s2], (), {}, MagicMock())
+    assert "github" in results
+    assert "git_info" in results
+    assert errors == []
+
+
+# === collect_data_sources ===
+
+
+def _make_mock_mngr_ctx(config: KanpanPluginConfig, sources: list[object]) -> object:
+    """Build a minimal mock MngrContext for collect_data_sources tests."""
+    hook = MagicMock()
+    hook.kanpan_data_sources.return_value = [sources]
+    pm = MagicMock()
+    pm.hook = hook
+    ctx = SimpleNamespace(
+        get_plugin_config=lambda name, cls: config,
+        pm=pm,
+    )
+    return ctx
+
+
+def test_collect_data_sources_returns_all_enabled() -> None:
+    source = _MockDataSource("github", {})
+    ctx = _make_mock_mngr_ctx(KanpanPluginConfig(), [source])
+    sources = collect_data_sources(ctx)  # type: ignore[arg-type]
+    assert any(s.name == "github" for s in sources)
+
+
+def test_collect_data_sources_excludes_disabled() -> None:
+    source = _MockDataSource("github", {})
+    config = KanpanPluginConfig(data_sources={"github": DataSourceConfig(enabled=False)})
+    ctx = _make_mock_mngr_ctx(config, [source])
+    sources = collect_data_sources(ctx)  # type: ignore[arg-type]
+    assert not any(s.name == "github" for s in sources)
+
+
+def test_collect_data_sources_includes_enabled_source() -> None:
+    source = _MockDataSource("git_info", {})
+    config = KanpanPluginConfig(data_sources={"git_info": DataSourceConfig(enabled=True)})
+    ctx = _make_mock_mngr_ctx(config, [source])
+    sources = collect_data_sources(ctx)  # type: ignore[arg-type]
+    assert any(s.name == "git_info" for s in sources)
+
+
+def test_collect_data_sources_skips_none_results() -> None:
+    hook = MagicMock()
+    hook.kanpan_data_sources.return_value = [None]
+    pm = MagicMock()
+    pm.hook = hook
+    ctx = SimpleNamespace(
+        get_plugin_config=lambda name, cls: KanpanPluginConfig(),
+        pm=pm,
+    )
+    sources = collect_data_sources(ctx)  # type: ignore[arg-type]
+    assert sources == []
+
+
+# === plugin.kanpan_data_sources ===
+
+
+def _make_plugin_mngr_ctx(config: KanpanPluginConfig) -> object:
+    return SimpleNamespace(get_plugin_config=lambda name, cls: config)
+
+
+def test_plugin_kanpan_data_sources_default() -> None:
+    ctx = _make_plugin_mngr_ctx(KanpanPluginConfig())
+    result = kanpan_data_sources(mngr_ctx=ctx)  # type: ignore[arg-type]
+    assert result is not None
+    names = [s.name for s in result]
+    assert "repo_paths" in names
+    assert "git_info" in names
+    assert "github" in names
+
+
+def test_plugin_kanpan_data_sources_with_shell_commands() -> None:
+    config = KanpanPluginConfig(
+        shell_commands={"my_cmd": ShellCommandSourceConfig(name="My Command", header="CMD", command="echo hi")}
+    )
+    ctx = _make_plugin_mngr_ctx(config)
+    result = kanpan_data_sources(mngr_ctx=ctx)  # type: ignore[arg-type]
+    assert result is not None
+    names = [s.name for s in result]
+    assert "shell_my_cmd" in names
+
+
+def test_plugin_kanpan_data_sources_github_config_as_dict() -> None:
+    # GitHub config as a raw dict (tests the isinstance dict branch)
+    ctx = SimpleNamespace(
+        get_plugin_config=lambda name, cls: SimpleNamespace(
+            data_sources={},
+            shell_commands={},
+        )
+    )
+    result = kanpan_data_sources(mngr_ctx=ctx)  # type: ignore[arg-type]
+    assert result is not None

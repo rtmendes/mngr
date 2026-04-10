@@ -1,5 +1,10 @@
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.mngr_kanpan.data_source import CiField
 from imbue.mngr_kanpan.data_source import CiStatus
+from imbue.mngr_kanpan.data_source import CommitsAheadField
 from imbue.mngr_kanpan.data_source import FieldValue
 from imbue.mngr_kanpan.data_source import PrField
 from imbue.mngr_kanpan.data_source import PrState
@@ -81,3 +86,109 @@ def test_build_shell_env_no_branch() -> None:
     agent = make_agent_details(name="agent-1", initial_branch=None)
     env = _build_shell_env(agent, {})
     assert env["MNGR_AGENT_BRANCH"] == ""
+
+
+def test_build_shell_env_with_other_field() -> None:
+    """Non-PrField, non-CiField, non-StringField falls back to display().text."""
+    agent = make_agent_details(name="agent-1")
+    field = CommitsAheadField(count=3, has_work_dir=True)
+    env = _build_shell_env(agent, {"commits_ahead": field})
+    assert env["MNGR_FIELD_COMMITS_AHEAD"] == "[3 unpushed]"
+
+
+# === compute ===
+
+
+def _make_mock_proc(stdout: str = "", returncode: int = 0, stderr: str = "") -> MagicMock:
+    proc = MagicMock()
+    proc.read_stdout.return_value = stdout
+    proc.read_stderr.return_value = stderr
+    proc.returncode = returncode
+    return proc
+
+
+def _make_mock_mngr_ctx(procs: list[MagicMock]) -> object:
+    """Build a minimal mock mngr_ctx with a ConcurrencyGroup that returns the given processes."""
+    child_cg = MagicMock()
+    child_cg.__enter__ = MagicMock(return_value=child_cg)
+    child_cg.__exit__ = MagicMock(return_value=False)
+    child_cg.run_process_in_background.side_effect = procs
+
+    cg = MagicMock()
+    cg.make_concurrency_group.return_value = child_cg
+
+    return SimpleNamespace(concurrency_group=cg)
+
+
+def test_compute_success() -> None:
+    ds = ShellCommandDataSource(
+        field_key="custom",
+        config=ShellCommandConfig(name="Custom", header="CUSTOM", command="echo hi"),
+    )
+    agent = make_agent_details(name="agent-1")
+    proc = _make_mock_proc(stdout="output text\n", returncode=0)
+    ctx = _make_mock_mngr_ctx([proc])
+    fields, errors = ds.compute(agents=(agent,), cached_fields={}, mngr_ctx=ctx)  # type: ignore[arg-type]
+    assert errors == []
+    assert agent.name in fields
+    assert fields[agent.name]["custom"].value == "output text"  # type: ignore[union-attr]
+
+
+def test_compute_empty_stdout_not_included() -> None:
+    ds = ShellCommandDataSource(
+        field_key="custom",
+        config=ShellCommandConfig(name="Custom", header="CUSTOM", command="echo"),
+    )
+    agent = make_agent_details(name="agent-1")
+    proc = _make_mock_proc(stdout="   \n", returncode=0)
+    ctx = _make_mock_mngr_ctx([proc])
+    fields, errors = ds.compute(agents=(agent,), cached_fields={}, mngr_ctx=ctx)  # type: ignore[arg-type]
+    assert errors == []
+    assert agent.name not in fields
+
+
+def test_compute_nonzero_exit_produces_error() -> None:
+    ds = ShellCommandDataSource(
+        field_key="custom",
+        config=ShellCommandConfig(name="Custom", header="CUSTOM", command="exit 1"),
+    )
+    agent = make_agent_details(name="agent-1")
+    proc = _make_mock_proc(stdout="", returncode=1, stderr="something failed")
+    ctx = _make_mock_mngr_ctx([proc])
+    fields, errors = ds.compute(agents=(agent,), cached_fields={}, mngr_ctx=ctx)  # type: ignore[arg-type]
+    assert agent.name not in fields
+    assert any("Custom" in e and "agent-1" in e for e in errors)
+
+
+def test_compute_process_returncode_none_skipped() -> None:
+    """Process with returncode None (still running) should be skipped."""
+    ds = ShellCommandDataSource(
+        field_key="custom",
+        config=ShellCommandConfig(name="Custom", header="CUSTOM", command="sleep 1"),
+    )
+    agent = make_agent_details(name="agent-1")
+    proc = _make_mock_proc(stdout="output", returncode=None)  # type: ignore[arg-type]
+    ctx = _make_mock_mngr_ctx([proc])
+    fields, errors = ds.compute(agents=(agent,), cached_fields={}, mngr_ctx=ctx)  # type: ignore[arg-type]
+    assert agent.name not in fields
+    assert errors == []
+
+
+def test_compute_concurrency_exception_group_produces_error() -> None:
+    ds = ShellCommandDataSource(
+        field_key="custom",
+        config=ShellCommandConfig(name="Custom", header="CUSTOM", command="exit 1"),
+    )
+    agent = make_agent_details(name="agent-1")
+
+    child_cg = MagicMock()
+    child_cg.__enter__ = MagicMock(return_value=child_cg)
+    child_cg.__exit__ = MagicMock(side_effect=ConcurrencyExceptionGroup("timeout", [RuntimeError("timed out")]))
+    child_cg.run_process_in_background.return_value = _make_mock_proc(stdout="x", returncode=0)
+
+    cg = MagicMock()
+    cg.make_concurrency_group.return_value = child_cg
+
+    ctx = SimpleNamespace(concurrency_group=cg)
+    fields, errors = ds.compute(agents=(agent,), cached_fields={}, mngr_ctx=ctx)  # type: ignore[arg-type]
+    assert any("Custom" in e for e in errors)

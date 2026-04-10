@@ -169,12 +169,21 @@ class KanpanDataSource(Protocol):
     """Protocol for kanpan data sources.
 
     Each data source produces typed fields for agents on the board.
-    Fields are persisted per-source and loaded as cached input for subsequent cycles.
+    Cached fields from the previous cycle are passed in-memory via the TUI state.
     """
 
     @property
     def name(self) -> str:
         """Unique identifier for this data source."""
+        ...
+
+    @property
+    def is_remote(self) -> bool:
+        """Whether this data source requires network access (e.g. GitHub API).
+
+        Local-only refreshes skip remote data sources for speed.
+        Defaults to False (local).
+        """
         ...
 
     @property

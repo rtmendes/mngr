@@ -13,7 +13,6 @@ from imbue.mngr_kanpan.data_sources.github import GitHubDataSourceConfig
 from imbue.mngr_kanpan.data_sources.repo_paths import RepoPathsDataSource
 from imbue.mngr_kanpan.data_sources.shell import ShellCommandConfig
 from imbue.mngr_kanpan.data_sources.shell import ShellCommandDataSource
-from imbue.mngr_kanpan.data_types import DataSourceConfig
 from imbue.mngr_kanpan.data_types import KanpanPluginConfig
 from imbue.mngr_kanpan.data_types import ShellCommandSourceConfig
 
@@ -36,18 +35,10 @@ def kanpan_data_sources(mngr_ctx: MngrContext) -> Sequence[Any] | None:
         GitInfoDataSource(),
     ]
 
-    # GitHub data source with optional config toggles
+    # GitHub data source reads its own config directly
     github_config_raw = config.data_sources.get("github")
-    if isinstance(github_config_raw, DataSourceConfig):
-        github_ds_config = GitHubDataSourceConfig(
-            pr=github_config_raw.pr,
-            ci=github_config_raw.ci,
-            create_pr_url=github_config_raw.create_pr_url,
-            conflicts=github_config_raw.conflicts,
-            unresolved=github_config_raw.unresolved,
-        )
-    elif isinstance(github_config_raw, dict):
-        github_ds_config = GitHubDataSourceConfig(**github_config_raw)
+    if isinstance(github_config_raw, dict):
+        github_ds_config = GitHubDataSourceConfig(**{k: v for k, v in github_config_raw.items() if k != "enabled"})
     else:
         github_ds_config = GitHubDataSourceConfig()
     sources.append(GitHubDataSource(config=github_ds_config))

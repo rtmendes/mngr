@@ -24,6 +24,10 @@ class GitInfoDataSource:
         return "git_info"
 
     @property
+    def is_remote(self) -> bool:
+        return False
+
+    @property
     def columns(self) -> dict[str, str]:
         return {FIELD_COMMITS_AHEAD: "GIT"}
 
