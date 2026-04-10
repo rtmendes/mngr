@@ -165,6 +165,7 @@ function addChatPanel(agentId: string, state: AgentDockviewState): void {
     component: "chat",
     title: "Chat",
     params,
+    renderer: "always",
   });
 }
 
@@ -337,6 +338,7 @@ function createDockviewForAgent(agentId: string, parentElement: HTMLElement): Ag
 
   const dockview = new DockviewComponent(container, {
     theme: themeLight,
+    defaultRenderer: "always",
     createComponent(options) {
       const params = (options as unknown as { params?: PanelParams }).params ?? panelParams.get(options.id);
 
