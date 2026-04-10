@@ -689,7 +689,7 @@ def _ensure_dockerd_for_release() -> None:
                 is_checked_after=False,
             )
             if start_result.returncode != 0:
-                logger.warning(
+                logger.error(
                     "Docker daemon failed to start (exit {}). stdout: {} stderr: {}",
                     start_result.returncode,
                     start_result.stdout,
