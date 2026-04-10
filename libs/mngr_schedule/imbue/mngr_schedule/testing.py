@@ -69,20 +69,23 @@ def build_subprocess_env() -> dict[str, str]:
     return env
 
 
-def resolve_modal_environment(deploy_output: str) -> str:
+def resolve_modal_environment(deploy_output: str) -> str | None:
     """Extract the Modal environment name from schedule add output.
 
-    Parses the 'env: <name>' from the deploy log line. Falls back to
-    'main' if not found.
+    Parses the 'env: <name>' from the deploy log line. Returns None
+    if the environment cannot be determined.
     """
     match = re.search(r"env:\s*(\S+)\)", deploy_output)
     if match:
         return match.group(1)
-    return "main"
+    return None
 
 
-def cleanup_modal_app(app_name: str, env: dict[str, str], modal_environment: str) -> None:
+def cleanup_modal_app(app_name: str, env: dict[str, str], modal_environment: str | None) -> None:
     """Stop and clean up a Modal app created during testing."""
+    if modal_environment is None:
+        logger.warning("Cannot clean up Modal app '{}': environment unknown", app_name)
+        return
     try:
         list_result = subprocess.run(
             ["uv", "run", "modal", "app", "list", "--json", "--env", modal_environment],

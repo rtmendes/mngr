@@ -35,6 +35,7 @@ def test_schedule_add_deploys_to_modal() -> None:
     app_name = get_modal_app_name(trigger_name)
     env = build_subprocess_env()
 
+    result = None
     try:
         result = subprocess.run(
             [
@@ -71,7 +72,7 @@ def test_schedule_add_deploys_to_modal() -> None:
             f"Expected app name '{app_name}' in output\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
     finally:
-        cleanup_modal_app(app_name, env, resolve_modal_environment(result.stderr))
+        cleanup_modal_app(app_name, env, resolve_modal_environment(result.stderr if result is not None else ""))
 
 
 @pytest.mark.release
@@ -90,6 +91,7 @@ def test_schedule_add_with_verification() -> None:
     app_name = get_modal_app_name(trigger_name)
     env = build_subprocess_env()
 
+    result = None
     try:
         result = subprocess.run(
             [
@@ -126,7 +128,7 @@ def test_schedule_add_with_verification() -> None:
             f"Expected app name '{app_name}' in output\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
     finally:
-        cleanup_modal_app(app_name, env, resolve_modal_environment(result.stderr))
+        cleanup_modal_app(app_name, env, resolve_modal_environment(result.stderr if result is not None else ""))
 
 
 @pytest.mark.release
@@ -143,6 +145,7 @@ def test_schedule_list_shows_deployed_schedule() -> None:
     app_name = get_modal_app_name(trigger_name)
     env = build_subprocess_env()
 
+    add_result = None
     try:
         # Deploy a schedule
         add_result = subprocess.run(
@@ -212,4 +215,6 @@ def test_schedule_list_shows_deployed_schedule() -> None:
         assert record["working_directory"] != ""
         assert record["full_commandline"] != ""
     finally:
-        cleanup_modal_app(app_name, env, resolve_modal_environment(add_result.stderr))
+        cleanup_modal_app(
+            app_name, env, resolve_modal_environment(add_result.stderr if add_result is not None else "")
+        )
