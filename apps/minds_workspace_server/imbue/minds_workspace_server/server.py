@@ -1,6 +1,7 @@
 import json
 import queue
 import signal
+import socket
 import threading
 from collections.abc import AsyncIterator
 from collections.abc import Iterator
@@ -111,8 +112,6 @@ def _inject_base_path_meta_tag(html_content: str, root_path: str) -> str:
 
 
 def _inject_hostname_meta_tag(html_content: str) -> str:
-    import socket
-
     hostname = socket.gethostname()
     meta_tag = f'<meta name="minds-workspace-server-hostname" content="{hostname}">'
     return html_content.replace("</head>", f"{meta_tag}\n</head>")
