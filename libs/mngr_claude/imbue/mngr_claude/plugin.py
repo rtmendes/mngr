@@ -293,16 +293,36 @@ def should_trust_work_dir(config: ClaudeAgentConfig, ctx: ProvisioningContext) -
     return ctx.is_unattended or config.auto_dismiss_dialogs
 
 
-@pure
+_MNGR_AGENT_CONFIG_DIR_MARKER: Final[str] = "/plugin/claude/anthropic/"
+"""Path segment that identifies an mngr agent's Claude config directory.
+
+Agent config dirs follow the pattern: <agent_state_dir>/plugin/claude/anthropic/.
+Finding this segment in an installPath means the plugin was installed inside
+an mngr agent rather than in the user's persistent ~/.claude/ directory.
+"""
+
+_PLUGINS_DIR_MARKER: Final[str] = "/plugins/"
+"""Generic marker for extracting relative plugin paths.
+
+Used as a fallback when the installPath doesn't start with the expected
+source_claude_dir prefix. The path after the last '/plugins/' occurrence
+is used as the relative path under the target config dir's plugins/ directory.
+"""
+
+
 def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, target_config_dir: Path) -> str:
     """Rewrite installPath values in installed_plugins.json for a target config dir.
 
     Rebases absolute paths from source_claude_dir onto target_config_dir
     so that Claude Code can find plugin files in the per-agent config dir.
-    Paths that don't match the expected prefix are rewritten best-effort.
+
+    For paths that don't start with source_claude_dir, attempts a best-effort
+    rewrite using the last '/plugins/' segment as a marker. Logs a warning
+    with the expected persistent path so the user can fix their config.
     """
     data: dict[str, Any] = json.loads(content)
     source_prefix = str(source_claude_dir) + "/"
+    installed_plugins_path = source_claude_dir / _INSTALLED_PLUGINS_RELATIVE_PATH
     for plugin_name, plugin_entries in data.get("plugins", {}).items():
         for entry in plugin_entries:
             install_path = entry.get("installPath", "")
@@ -310,27 +330,50 @@ def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, targ
                 relative = install_path[len(source_prefix) :]
                 entry["installPath"] = str(target_config_dir / relative)
             else:
-                # FIXME: installPath references a different agent's directory (stale entry).
-                # Ideally we'd clean these up, but for now just rewrite them best-effort
-                # by extracting the relative path after the last "plugins/" segment.
-                plugins_marker = "/plugins/"
-                marker_idx = install_path.rfind(plugins_marker)
-                if marker_idx >= 0:
-                    relative = install_path[marker_idx + len(plugins_marker) :]
-                    entry["installPath"] = str(target_config_dir / "plugins" / relative)
-                    logger.warning(
-                        "installed_plugins.json: plugin {} has unexpected installPath {}, rewrote best-effort to {}",
-                        plugin_name,
-                        install_path,
-                        entry["installPath"],
-                    )
+                # Best-effort rewrite: extract relative path from last /plugins/ segment.
+                marker_idx = install_path.rfind(_PLUGINS_DIR_MARKER)
+                if marker_idx != -1:
+                    relative = "plugins/" + install_path[marker_idx + len(_PLUGINS_DIR_MARKER) :]
+                    expected_path = str(source_claude_dir / relative)
+                    entry["installPath"] = str(target_config_dir / relative)
+                    if _MNGR_AGENT_CONFIG_DIR_MARKER in install_path:
+                        logger.warning(
+                            "Plugin {!r} in {} has installPath pointing to a previous mngr agent's "
+                            "config directory. Rewrote best-effort for remote provisioning.\n"
+                            "  Current (stale): {}\n"
+                            "  Expected:        {}\n"
+                            "To fix, uninstall the plugin with '/plugin' and reinstall it.",
+                            plugin_name,
+                            installed_plugins_path,
+                            install_path,
+                            expected_path,
+                        )
+                    else:
+                        logger.warning(
+                            "Plugin {!r} in {} has installPath that does not start with {}. "
+                            "Rewrote best-effort for remote provisioning.\n"
+                            "  Current: {}\n"
+                            "  Expected: {}\n"
+                            "To fix, create a symlink under {}/plugins/cache/ pointing to "
+                            "the local plugin directory, then update the installPath in {} "
+                            "to use the symlink path.",
+                            plugin_name,
+                            installed_plugins_path,
+                            source_prefix,
+                            install_path,
+                            expected_path,
+                            source_claude_dir,
+                            installed_plugins_path,
+                        )
                 else:
                     logger.warning(
-                        "installed_plugins.json: plugin {} has installPath {} "
-                        "which could not be rebased onto {}; keeping as-is",
+                        "Plugin {!r} in {} has installPath {!r} that could not be rewritten "
+                        "(no '{}' segment found). Keeping path as-is; the plugin may not "
+                        "work on the remote host.",
                         plugin_name,
+                        installed_plugins_path,
                         install_path,
-                        target_config_dir,
+                        _PLUGINS_DIR_MARKER,
                     )
     return json.dumps(data, indent=2) + "\n"
 
@@ -1569,7 +1612,11 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
             Path("settings.json"): settings_json,
             Path(".claude.json"): json.dumps(claude_json_data, indent=2) + "\n",
         }
-        if config.sync_home_settings:
+        if config.sync_home_settings and not host.is_local:
+            # Rewrite plugin paths for remote hosts where ~/.claude/ doesn't exist.
+            # Local hosts don't need rewriting: the original absolute paths under
+            # ~/.claude/ are directly accessible, and _sync_user_resources already
+            # provides the file (via symlink or copy).
             installed_plugins = _generate_installed_plugins_content(source_claude_dir, config_dir)
             if installed_plugins:
                 generated_files[_INSTALLED_PLUGINS_RELATIVE_PATH] = installed_plugins

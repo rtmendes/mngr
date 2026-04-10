@@ -70,6 +70,7 @@ from imbue.mngr_claude.plugin import _preserve_session_files_from_volume
 from imbue.mngr_claude.plugin import _read_macos_keychain_credential
 from imbue.mngr_claude.plugin import _rewrite_installed_plugins_paths
 from imbue.mngr_claude.plugin import _should_preserve_sessions
+from imbue.mngr_claude.plugin import _write_generated_files
 from imbue.mngr_claude.plugin import agent_field_generators
 from imbue.mngr_claude.plugin import get_files_for_deploy
 from imbue.mngr_claude.plugin import on_before_create
@@ -2993,6 +2994,35 @@ def test_rewrite_installed_plugins_paths_rewrites_similar_prefix_best_effort() -
     assert entry["installPath"] == "/remote/config/plugins/cache/org/plugin/1.0.0"
 
 
+def test_rewrite_installed_plugins_paths_best_effort_for_mngr_agent_path() -> None:
+    """installPath from an mngr agent is rewritten best-effort via /plugins/ marker."""
+    local_claude_dir = Path("/Users/testuser/.claude")
+    remote_config_dir = Path("/remote/config")
+    stale_path = (
+        "/Users/testuser/.mngr/agents/agent-abc123/plugin/claude/anthropic/plugins/cache/my-org/my-plugin/1.0.0"
+    )
+    content = json.dumps(
+        {
+            "version": 2,
+            "plugins": {
+                "my-plugin@my-org": [
+                    {
+                        "installPath": stale_path,
+                        "version": "1.0.0",
+                    }
+                ]
+            },
+        }
+    )
+
+    result = json.loads(_rewrite_installed_plugins_paths(content, local_claude_dir, remote_config_dir))
+
+    assert (
+        result["plugins"]["my-plugin@my-org"][0]["installPath"]
+        == "/remote/config/plugins/cache/my-org/my-plugin/1.0.0"
+    )
+
+
 # =============================================================================
 # _generate_installed_plugins_content Tests
 # =============================================================================
@@ -3333,3 +3363,32 @@ def test_should_preserve_sessions_false_for_non_claude_agent() -> None:
         certified_data={"type": "echo"},
     )
     assert _should_preserve_sessions(ref) is False
+
+
+# =============================================================================
+# _write_generated_files Tests
+# =============================================================================
+
+
+def test_write_generated_files_writes_through_symlink_safely(tmp_path: Path, temp_mngr_ctx: MngrContext) -> None:
+    """generated_files that don't include installed_plugins.json should not touch symlinked plugins."""
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source_file = source_dir / "installed_plugins.json"
+    source_file.write_text('{"original": true}')
+
+    config_dir = tmp_path / "config"
+    plugins_dir = config_dir / "plugins"
+    plugins_dir.mkdir(parents=True)
+    symlink = plugins_dir / "installed_plugins.json"
+    symlink.symlink_to(source_file)
+
+    host = cast(OnlineHostInterface, FakeHost())
+    # Only settings.json, no installed_plugins.json (as happens for local hosts)
+    generated_files = {Path("settings.json"): '{"some": "setting"}'}
+
+    _write_generated_files(host, config_dir, generated_files, temp_mngr_ctx)
+
+    # The symlink and source file should both be untouched
+    assert symlink.is_symlink()
+    assert json.loads(source_file.read_text()) == {"original": True}
