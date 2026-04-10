@@ -105,8 +105,12 @@ function createWindow() {
     }
   });
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+  // BaseWindow doesn't emit ready-to-show (no built-in webContents),
+  // so show the window once the content view finishes its initial load.
+  contentView.webContents.once('did-finish-load', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+    }
   });
 
   mainWindow.on('closed', () => {
