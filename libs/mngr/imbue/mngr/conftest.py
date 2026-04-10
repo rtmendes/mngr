@@ -14,6 +14,7 @@ import pluggy
 import psutil
 import pytest
 from click.testing import CliRunner
+from loguru import logger
 from urwid.widget.listbox import SimpleFocusListWalker
 
 import imbue.mngr.main
@@ -683,10 +684,17 @@ def _ensure_dockerd_for_release() -> None:
             is_checked_after=False,
         )
         if result.returncode != 0:
-            cg.run_process_to_completion(
+            start_result = cg.run_process_to_completion(
                 [str(start_script)],
                 is_checked_after=False,
             )
+            if start_result.returncode != 0:
+                logger.warning(
+                    "Docker daemon failed to start (exit {}). stdout: {} stderr: {}",
+                    start_result.returncode,
+                    start_result.stdout,
+                    start_result.stderr,
+                )
 
 
 @pytest.fixture(scope="session", autouse=True)
