@@ -287,7 +287,7 @@ def _handle_landing_page(
 
     # No agents discovered yet. If discovery is still in progress, show a
     # "Discovering agents..." page with auto-refresh. Once discovery has
-    # completed (or on first run), show the create form so the user can
+    # completed with no agents found, show the create form so the user can
     # create their first agent instead of polling forever.
     if not backend_resolver.has_completed_initial_discovery():
         html = render_landing_page(accessible_agent_ids=(), is_discovering=True)
