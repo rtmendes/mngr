@@ -218,6 +218,8 @@ def compute_section(fields: dict[str, FieldValue]) -> BoardSection:
                     return BoardSection.PRS_FAILED
                 case CiStatus.PASSING | CiStatus.PENDING | CiStatus.UNKNOWN:
                     return BoardSection.PR_BEING_REVIEWED
+            raise AssertionError(f"Unhandled CI status: {ci.status}")
+    raise AssertionError(f"Unhandled PR state: {pr.state}")
 
 
 def toggle_agent_mute(mngr_ctx: MngrContext, agent_name: AgentName) -> bool:
