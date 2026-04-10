@@ -29,12 +29,14 @@ const TITLEBAR_CSS = `
   display: flex;
   align-items: center;
   user-select: none;
+  -webkit-app-region: drag;
   z-index: 2147483647;
   border-bottom: 1px solid #334155;
   padding: 0 4px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 #minds-titlebar button {
+  -webkit-app-region: no-drag;
   background: none;
   border: none;
   color: #94a3b8;
@@ -169,6 +171,13 @@ function createWindow() {
       nodeIntegration: false,
     },
   };
+
+  if (isMac) {
+    windowOptions.titleBarStyle = 'hiddenInset';
+    windowOptions.trafficLightPosition = { x: 12, y: (TITLEBAR_HEIGHT - 16) / 2 };
+  } else {
+    windowOptions.frame = false;
+  }
 
   mainWindow = new BrowserWindow(windowOptions);
 
