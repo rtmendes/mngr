@@ -162,7 +162,6 @@ function createWindow() {
     minHeight: 600,
     title: 'Minds',
     show: false,
-    frame: false,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -171,15 +170,7 @@ function createWindow() {
     },
   };
 
-  if (isMac) {
-    delete windowOptions.frame;
-    windowOptions.titleBarStyle = 'hiddenInset';
-  } else {
-    windowOptions.titleBarStyle = 'hidden';
-  }
-
   mainWindow = new BrowserWindow(windowOptions);
-  mainWindow.removeMenu();
 
   mainWindow._maximizedByUs = false;
   mainWindow._boundsBeforeMaximize = null;
@@ -194,18 +185,17 @@ function createWindow() {
     mainWindow = null;
   });
 
-  // Inject the custom title bar into every backend page.
-  // Skip file:// pages (loading/error screens).
-  mainWindow.webContents.on('dom-ready', () => {
-    const url = mainWindow.webContents.getURL();
-    if (url.startsWith('file://')) return;
-
-    const css = TITLEBAR_CSS + (isMac ? TITLEBAR_CSS_MAC : '');
-    mainWindow.webContents.insertCSS(css);
-    mainWindow.webContents.executeJavaScript(TITLEBAR_JS).catch((err) => {
-      console.error('Failed to inject title bar JS:', err);
-    });
-  });
+  // Title bar injection temporarily disabled for debugging.
+  // Uncomment to re-enable:
+  // mainWindow.webContents.on('dom-ready', () => {
+  //   const url = mainWindow.webContents.getURL();
+  //   if (url.startsWith('file://')) return;
+  //   const css = TITLEBAR_CSS + (isMac ? TITLEBAR_CSS_MAC : '');
+  //   mainWindow.webContents.insertCSS(css);
+  //   mainWindow.webContents.executeJavaScript(TITLEBAR_JS).catch((err) => {
+  //     console.error('Failed to inject title bar JS:', err);
+  //   });
+  // });
 }
 
 function registerShortcuts() {
