@@ -19,6 +19,7 @@ from imbue.imbue_common.mutable_model import MutableModel
 from imbue.mngr.config.data_types import EnvVar
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import ParseSpecError
+from imbue.mngr.errors import UserInputError
 from imbue.mngr.interfaces.agent import AgentInterface
 from imbue.mngr.interfaces.data_types import ActivityConfig
 from imbue.mngr.interfaces.data_types import CertifiedHostData
@@ -56,7 +57,10 @@ def get_agent_ready_timeout() -> float:
     """
     env_val = os.environ.get("MNGR_AGENT_READY_TIMEOUT")
     if env_val is not None:
-        return float(env_val)
+        try:
+            return float(env_val)
+        except ValueError as e:
+            raise UserInputError(f"MNGR_AGENT_READY_TIMEOUT must be a number, got: {env_val!r}") from e
     return DEFAULT_AGENT_READY_TIMEOUT_SECONDS
 
 
