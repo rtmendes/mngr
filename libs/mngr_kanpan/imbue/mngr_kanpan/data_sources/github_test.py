@@ -40,7 +40,7 @@ def _make_internal_pr(
 ) -> _PrFieldInternal:
     return _PrFieldInternal(
         number=number,
-        title=f"PR #{number}",
+        title=f"PR {number}",
         state=state,
         url=f"https://github.com/org/repo/pull/{number}",
         head_branch=branch,
@@ -270,7 +270,7 @@ def _make_open_pr_json(number: int = 1, branch: str = "test-branch") -> str:
         [
             {
                 "number": number,
-                "title": f"PR #{number}",
+                "title": f"PR {number}",
                 "state": "OPEN",
                 "url": f"https://github.com/org/repo/pull/{number}",
                 "headRefName": branch,

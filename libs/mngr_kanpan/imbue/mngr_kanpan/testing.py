@@ -61,7 +61,7 @@ def make_pr_field(
     """Create a minimal PrField for testing."""
     return PrField(
         number=number,
-        title=f"PR #{number}",
+        title=f"PR {number}",
         state=state,
         url=f"https://github.com/org/repo/pull/{number}",
         head_branch=head_branch,
