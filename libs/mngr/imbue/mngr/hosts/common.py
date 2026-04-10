@@ -41,9 +41,10 @@ def build_ssh_transport_command(
 ) -> str:
     """Build an SSH transport command string for use with rsync -e or GIT_SSH_COMMAND.
 
-    When a known_hosts_file is provided, uses StrictHostKeyChecking=yes to verify
-    the remote host's identity. Otherwise uses StrictHostKeyChecking=yes with the
-    system default known_hosts (which will reject unknown hosts).
+    Always uses StrictHostKeyChecking=yes, which refuses connections to hosts not
+    present in the known_hosts file. When known_hosts_file is provided, that file is
+    used via UserKnownHostsFile. When None, the system default (~/.ssh/known_hosts)
+    is used without setting UserKnownHostsFile.
     """
     parts = ["ssh", "-i", shlex.quote(str(key_path)), "-p", str(port)]
     if known_hosts_file is not None:
