@@ -11,7 +11,6 @@ import {
   type IHeaderActionsRenderer,
   type SerializedDockview,
 } from "dockview-core";
-import "dockview-core/dist/styles/dockview.css";
 import { ChatPanel } from "./ChatPanel";
 import { IframePanel } from "./IframePanel";
 import { SubagentView } from "./SubagentView";
