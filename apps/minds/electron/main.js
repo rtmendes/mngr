@@ -66,7 +66,8 @@ const TITLEBAR_CSS = `
 #minds-titlebar .minds-wc button { border-radius: 0; width: 36px; height: ${TITLEBAR_HEIGHT}px; }
 #minds-titlebar .minds-wc button:hover { background: rgba(255,255,255,0.08); border-radius: 0; }
 #minds-titlebar .minds-wc #minds-close:hover { background: #dc2626; color: white; }
-body { padding-top: ${TITLEBAR_HEIGHT}px !important; box-sizing: border-box !important; }
+html { overflow: hidden !important; }
+body { overflow: auto !important; height: 100vh !important; padding-top: ${TITLEBAR_HEIGHT}px !important; }
 `;
 
 // On macOS: hide custom window controls (native traffic lights handle it),
@@ -124,7 +125,7 @@ const TITLEBAR_JS = `(function() {
   }
 
   // Navigation
-  document.getElementById('minds-home').onclick = function() { location.href = '/'; };
+  document.getElementById('minds-home').onclick = function() { location.href = '/?show_list=1'; };
   document.getElementById('minds-back').onclick = function() { history.back(); };
   document.getElementById('minds-forward').onclick = function() { history.forward(); };
 
@@ -369,7 +370,15 @@ ipcMain.on('window-maximize', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMaximized() || mainWindow._maximizedByUs) {
       mainWindow.unmaximize();
+      // Fallback: if unmaximize() doesn't work (some WMs ignore it),
+      // restore saved bounds manually
+      if (mainWindow._boundsBeforeMaximize) {
+        mainWindow.setBounds(mainWindow._boundsBeforeMaximize);
+        mainWindow._boundsBeforeMaximize = null;
+      }
+      mainWindow._maximizedByUs = false;
     } else {
+      mainWindow._boundsBeforeMaximize = mainWindow.getBounds();
       mainWindow.maximize();
     }
   }
