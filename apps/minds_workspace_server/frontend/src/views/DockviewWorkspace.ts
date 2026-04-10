@@ -55,7 +55,8 @@ function createMithrilRenderer(
   const element = document.createElement("div");
   element.style.width = "100%";
   element.style.height = "100%";
-  element.style.overflow = "hidden";
+  element.style.display = "flex";
+  element.style.flexDirection = "column";
 
   return {
     element,
