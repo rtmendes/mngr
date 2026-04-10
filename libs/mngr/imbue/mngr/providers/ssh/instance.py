@@ -86,6 +86,8 @@ class SSHProviderInstance(BaseProviderInstance):
         }
         if host_config.key_file is not None:
             host_data["ssh_key"] = str(host_config.key_file)
+        if host_config.known_hosts_file is not None:
+            host_data["ssh_known_hosts_file"] = str(host_config.known_hosts_file)
 
         names_data = ([(host_config.address, host_data)], {})
         inventory = Inventory(names_data)

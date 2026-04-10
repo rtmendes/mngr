@@ -29,7 +29,13 @@ def ssh_provider(
     private_key, public_key = generate_ssh_keypair(tmp_path)
     public_key_content = public_key.read_text()
 
-    with local_sshd(public_key_content, tmp_path) as (port, _host_key):
+    with local_sshd(public_key_content, tmp_path) as (port, host_key_path):
+        # Build a known_hosts file from the sshd's host key so that
+        # StrictHostKeyChecking=yes can verify the connection
+        host_pub_key = host_key_path.with_suffix(".pub").read_text().strip()
+        known_hosts_path = tmp_path / "known_hosts"
+        known_hosts_path.write_text(f"[127.0.0.1]:{port} {host_pub_key}\n")
+
         current_user = os.environ.get("USER", "root")
         provider = SSHProviderInstance(
             name=ProviderInstanceName("ssh-test"),
@@ -41,6 +47,7 @@ def ssh_provider(
                     port=port,
                     user=current_user,
                     key_file=private_key,
+                    known_hosts_file=known_hosts_path,
                 ),
             },
         )
