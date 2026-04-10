@@ -461,6 +461,7 @@ def test_plugin_kanpan_data_sources_github_config_as_dict() -> None:
             get_plugin_config=lambda name, cls: SimpleNamespace(
                 data_sources={"github": {"enabled": True, "pr": True}},
                 shell_commands={},
+                columns={},
             )
         ),
     )
@@ -476,6 +477,7 @@ def test_plugin_kanpan_data_sources_shell_config_as_dict() -> None:
             get_plugin_config=lambda name, cls: SimpleNamespace(
                 data_sources={},
                 shell_commands={"my_cmd": {"name": "My Command", "header": "CMD", "command": "echo hi"}},
+                columns={},
             )
         ),
     )

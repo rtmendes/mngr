@@ -1,3 +1,5 @@
+import json
+import tempfile
 import time
 from collections.abc import Sequence
 from concurrent.futures import Future
@@ -336,3 +338,82 @@ def collect_data_sources(
         enabled_sources.append(source)
 
     return enabled_sources
+
+
+def _cache_file_path(mngr_ctx: MngrContext) -> Path:
+    """Get the path to the kanpan field cache file."""
+    return mngr_ctx.profile_dir / "kanpan" / "field_cache.json"
+
+
+def save_field_cache(
+    mngr_ctx: MngrContext,
+    cached_fields: dict[AgentName, dict[str, FieldValue]],
+    data_sources: Sequence[KanpanDataSource],
+) -> None:
+    """Persist cached fields to a local JSON file atomically.
+
+    Writes a temporary file then renames it to avoid partial reads.
+    Each field is stored as {field_key: {type: class_name, data: model_dump}}.
+    """
+    cache_path = _cache_file_path(mngr_ctx)
+    tmp_path: str | None = None
+    try:
+        serialized: dict[str, dict[str, Any]] = {}
+        for agent_name, agent_fields in cached_fields.items():
+            agent_data: dict[str, Any] = {}
+            for key, field in agent_fields.items():
+                agent_data[key] = {
+                    "type": type(field).__name__,
+                    "data": field.model_dump(),
+                }
+            serialized[str(agent_name)] = agent_data
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=cache_path.parent, suffix=".tmp")
+        with open(fd, "w") as f:
+            json.dump(serialized, f)
+        Path(tmp_path).rename(cache_path)
+        tmp_path = None
+    except Exception as e:
+        logger.debug("Failed to save field cache: {}", e)
+    finally:
+        if tmp_path is not None:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
+def load_field_cache(
+    mngr_ctx: MngrContext,
+    data_sources: Sequence[KanpanDataSource],
+) -> dict[AgentName, dict[str, FieldValue]]:
+    """Load cached fields from the local JSON file.
+
+    Uses field_types from data sources to deserialize each field value.
+    Returns an empty dict if the cache file doesn't exist or is corrupt.
+    """
+    cache_path = _cache_file_path(mngr_ctx)
+    if not cache_path.exists():
+        return {}
+
+    # Build type registry from all data sources
+    type_registry: dict[str, type[FieldValue]] = {}
+    for source in data_sources:
+        for _key, field_type in source.field_types.items():
+            type_registry[field_type.__name__] = field_type
+
+    try:
+        raw = json.loads(cache_path.read_text())
+        result: dict[AgentName, dict[str, FieldValue]] = {}
+        for agent_name_str, agent_data in raw.items():
+            agent_fields: dict[str, FieldValue] = {}
+            for key, field_info in agent_data.items():
+                type_name = field_info.get("type")
+                data = field_info.get("data")
+                field_type = type_registry.get(type_name or "")
+                if field_type is not None and data is not None:
+                    agent_fields[key] = field_type.model_validate(data)
+            if agent_fields:
+                result[AgentName(agent_name_str)] = agent_fields
+        return result
+    except Exception as e:
+        logger.debug("Failed to load field cache: {}", e)
+        return {}
