@@ -24,6 +24,7 @@ from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
 from imbue.minds.primitives import ServerName
+from imbue.minds.telegram.credential_store import load_agent_bot_credentials
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
 from imbue.minds.telegram.setup import TelegramSetupStatus
 from imbue.mngr.primitives import AgentId
@@ -178,10 +179,15 @@ def _handle_telegram_status(
     if info is None:
         is_active = telegram_orchestrator.agent_has_telegram(parsed_id)
         if is_active:
-            return _json_response({
+            paths: WorkspacePaths = request.app.state.api_v1_paths
+            credentials = load_agent_bot_credentials(paths.data_dir, parsed_id)
+            result: dict[str, object] = {
                 "agent_id": str(parsed_id),
                 "status": str(TelegramSetupStatus.DONE),
-            })
+            }
+            if credentials is not None and credentials.bot_username is not None:
+                result["bot_username"] = credentials.bot_username
+            return _json_response(result)
         return _json_error("No Telegram setup in progress for this agent", 404)
 
     result: dict[str, object] = {

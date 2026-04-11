@@ -483,6 +483,33 @@ def test_telegram_status_returns_done_when_agent_has_telegram(tmp_path: Path) ->
     assert data["status"] == str(TelegramSetupStatus.DONE)
 
 
+def test_telegram_status_includes_bot_username_without_active_setup(tmp_path: Path) -> None:
+    """When an agent has stored bot credentials but no active setup, bot_username is returned.
+
+    This covers the case where a previous session stored credentials and the
+    orchestrator has no in-memory setup info (get_setup_info returns None),
+    but the credential file exists on disk.
+    """
+    client, agent_id, api_key, paths = _create_test_api_client_with_telegram(tmp_path)
+
+    credentials = TelegramBotCredentials(
+        bot_token=SecretStr("123:fake_token_for_status_test"),
+        bot_username="status_test_bot",
+    )
+    save_agent_bot_credentials(paths.data_dir, agent_id, credentials)
+
+    # Query status directly without calling start_setup first.
+    # The orchestrator has no in-memory info, but credentials exist on disk.
+    response = client.get(
+        f"/api/v1/agents/{agent_id}/telegram",
+        headers=_auth_headers(api_key),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == str(TelegramSetupStatus.DONE)
+    assert data.get("bot_username") == "status_test_bot"
+
+
 def test_telegram_status_returns_in_progress_info(tmp_path: Path) -> None:
     """When setup is in progress, status endpoint returns current status info."""
     paths = WorkspacePaths(data_dir=tmp_path / "minds")
