@@ -31,6 +31,7 @@ from imbue.mngr_kanpan.data_types import PrInfo
 from imbue.mngr_kanpan.data_types import PrState
 from imbue.mngr_kanpan.data_types import RefreshHook
 from imbue.mngr_kanpan.testing import make_pr_info
+from imbue.mngr_kanpan.tui import BOARD_SECTION_ORDER
 from imbue.mngr_kanpan.tui import DEFAULT_REFRESH_INTERVAL_SECONDS
 from imbue.mngr_kanpan.tui import _BOARD_COLUMN_DEFS
 from imbue.mngr_kanpan.tui import _BatchWorkItem
@@ -68,6 +69,7 @@ from imbue.mngr_kanpan.tui import _on_spinner_tick
 from imbue.mngr_kanpan.tui import _prune_orphaned_marks
 from imbue.mngr_kanpan.tui import _refresh_display
 from imbue.mngr_kanpan.tui import _request_refresh
+from imbue.mngr_kanpan.tui import _resolve_section_order
 from imbue.mngr_kanpan.tui import _restore_footer
 from imbue.mngr_kanpan.tui import _run_shell_command
 from imbue.mngr_kanpan.tui import _schedule_next_refresh
@@ -2035,3 +2037,18 @@ def test_build_board_widgets_section_order_omits_unlisted() -> None:
     assert len(headings) == 1
     assert "Done" in headings[0]
     assert len(index_to_entry) == 1
+
+
+# =============================================================================
+# Tests for _resolve_section_order
+# =============================================================================
+
+
+def test_resolve_section_order_none_returns_default() -> None:
+    assert _resolve_section_order(None) == BOARD_SECTION_ORDER
+
+
+def test_resolve_section_order_custom_list() -> None:
+    custom = [BoardSection.STILL_COOKING, BoardSection.MUTED]
+    result = _resolve_section_order(custom)
+    assert result == (BoardSection.STILL_COOKING, BoardSection.MUTED)

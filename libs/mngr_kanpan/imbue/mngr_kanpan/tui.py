@@ -1301,6 +1301,16 @@ def _assemble_column_defs(
 
 
 @pure
+def _resolve_section_order(
+    config_order: list[BoardSection] | None,
+) -> tuple[BoardSection, ...]:
+    """Resolve the configured section order, falling back to the default."""
+    if config_order is None:
+        return BOARD_SECTION_ORDER
+    return tuple(config_order)
+
+
+@pure
 def _build_column_palette(
     columns_config: dict[str, CustomColumnConfig],
 ) -> tuple[list[tuple[str, str, str]], tuple[str, ...]]:
@@ -1660,9 +1670,7 @@ def run_kanpan(
     on_before_refresh = _load_refresh_hooks(plugin_config.on_before_refresh)
     on_after_refresh = _load_refresh_hooks(plugin_config.on_after_refresh)
 
-    section_order = (
-        tuple(plugin_config.section_order) if plugin_config.section_order is not None else BOARD_SECTION_ORDER
-    )
+    section_order = _resolve_section_order(plugin_config.section_order)
 
     state = _KanpanState(
         mngr_ctx=mngr_ctx,
