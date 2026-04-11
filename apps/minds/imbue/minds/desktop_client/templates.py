@@ -35,123 +35,169 @@ _LANDING_PAGE_TEMPLATE: Final[str] = (
     """
     + _COMMON_STYLES
     + """
-    .agent-list { list-style: none; }
-    .agent-list li {
-      margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
+    body { background: #f8fafc; padding: 0; }
+    .page { max-width: 800px; margin: 0 auto; padding: 48px 32px; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
+    .header h1 { font-size: 20px; font-weight: 600; color: #1e293b; margin: 0; }
+    .create-btn {
+      padding: 8px 20px; background: #1e293b; color: white; border: none;
+      border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer;
+      text-decoration: none; display: inline-block;
     }
-    .agent-list a { """
-    + """
-      display: inline-block; padding: 12px 20px;
-      background: rgb(26, 26, 46); color: white; text-decoration: none;
-      border-radius: 6px; font-size: 16px;
+    .create-btn:hover { background: #334155; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      text-align: left; padding: 8px 16px; font-size: 11px; font-weight: 600;
+      color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;
+      border-bottom: 1px solid #e2e8f0;
     }
-    .agent-list a:hover { background: rgb(42, 42, 78); }
-    .telegram-btn {
-      padding: 8px 14px; border-radius: 6px; font-size: 13px;
-      border: 1px solid rgb(200, 200, 210); cursor: pointer;
-      background: white; color: rgb(60, 60, 80);
+    thead th:last-child { text-align: right; }
+    tbody tr { cursor: pointer; transition: background 0.1s; }
+    tbody tr:hover { background: #f1f5f9; }
+    tbody td {
+      padding: 20px 16px; font-size: 14px; color: #334155;
+      border-bottom: 1px solid #f1f5f9; vertical-align: middle;
     }
-    .telegram-btn:hover { background: rgb(240, 240, 245); }
-    .telegram-btn.active {
-      background: rgb(220, 252, 231); border-color: rgb(134, 239, 172);
-      color: rgb(22, 101, 52); cursor: default;
+    tbody td:last-child { text-align: right; }
+    .ws-name { font-weight: 500; color: #0f172a; font-size: 15px; }
+    .shared-with { color: #94a3b8; font-size: 13px; }
+    .menu-wrapper { position: relative; display: inline-block; }
+    .menu-btn {
+      background: none; border: 1px solid transparent; border-radius: 4px;
+      cursor: pointer; padding: 4px 8px; font-size: 18px; color: #64748b;
+      line-height: 1;
     }
-    .telegram-btn:disabled { cursor: wait; opacity: 0.7; }
-    .empty-state { color: gray; font-size: 16px; }
-    .create-section { margin-top: 32px; }
-    .create-section a { color: rgb(26, 26, 46); text-decoration: underline; }
+    .menu-btn:hover { background: #e2e8f0; border-color: #cbd5e1; }
+    .menu-dropdown {
+      display: none; position: absolute; right: 0; top: 100%; margin-top: 4px;
+      background: white; border: 1px solid #e2e8f0; border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08); min-width: 160px; z-index: 10;
+      padding: 4px 0;
+    }
+    .menu-dropdown.open { display: block; }
+    .menu-item {
+      display: block; width: 100%; padding: 8px 14px; font-size: 13px;
+      text-align: left; background: none; border: none; cursor: pointer;
+      color: #334155;
+    }
+    .menu-item:hover { background: #f1f5f9; }
+    .menu-item.destructive { color: #dc2626; }
+    .menu-item.destructive:hover { background: #fef2f2; }
+    .empty-state { color: #94a3b8; font-size: 15px; text-align: center; padding: 48px 0; }
   </style>
 </head>
 <body>
-  <h1>Your Workspaces</h1>
-  {% if agent_ids %}
-  <ul class="agent-list">
-    {% for agent_id in agent_ids %}
-    <li>
-      <a href="/agents/{{ agent_id }}/">{{ agent_id }}</a>
-      {% if telegram_enabled %}
-        {% if telegram_status_by_agent_id.get(agent_id | string, false) %}
-      <span class="telegram-btn active">Telegram active</span>
-        {% else %}
-      <button class="telegram-btn" id="tg-btn-{{ agent_id }}"
-              onclick="setupTelegram('{{ agent_id }}')">Setup Telegram</button>
-        {% endif %}
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  <div class="create-section">
-    <a href="/create">Create another workspace</a>
-  </div>
-  <script>
-  async function setupTelegram(agentId) {
-    var btn = document.getElementById('tg-btn-' + agentId);
-    btn.disabled = true;
-    btn.textContent = 'Setting up...';
-    try {
-      var resp = await fetch('/api/agents/' + agentId + '/telegram/setup', {method: 'POST'});
-      if (!resp.ok) {
-        var data = await resp.json();
-        alert('Failed to start Telegram setup: ' + (data.error || resp.statusText));
+  <div class="page">
+    <div class="header">
+      <h1>Workspaces</h1>
+      <a href="/create" class="create-btn">Create</a>
+    </div>
+    {% if agent_ids %}
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Shared with</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for agent_id in agent_ids %}
+        <tr onclick="window.location='/agents/{{ agent_id }}/'" data-agent-id="{{ agent_id }}">
+          <td><span class="ws-name">{{ agent_names.get(agent_id | string, agent_id) }}</span></td>
+          <td><span class="shared-with">No one</span></td>
+          <td>
+            <div class="menu-wrapper">
+              <button class="menu-btn" onclick="event.stopPropagation(); toggleMenu('{{ agent_id }}')">&middot;&middot;&middot;</button>
+              <div class="menu-dropdown" id="menu-{{ agent_id }}">
+                {% if telegram_enabled %}
+                  {% if telegram_status_by_agent_id.get(agent_id | string, false) %}
+                <span class="menu-item" style="color: #16a34a; cursor: default;">Telegram active</span>
+                  {% else %}
+                <button class="menu-item" id="tg-btn-{{ agent_id }}"
+                        onclick="event.stopPropagation(); setupTelegram('{{ agent_id }}')">Setup Telegram</button>
+                  {% endif %}
+                {% endif %}
+                <button class="menu-item destructive"
+                        onclick="event.stopPropagation(); alert('Not implemented')">Delete</button>
+              </div>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <script>
+    function toggleMenu(agentId) {
+      document.querySelectorAll('.menu-dropdown.open').forEach(function(el) {
+        if (el.id !== 'menu-' + agentId) el.classList.remove('open');
+      });
+      document.getElementById('menu-' + agentId).classList.toggle('open');
+    }
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('.menu-wrapper')) {
+        document.querySelectorAll('.menu-dropdown.open').forEach(function(el) {
+          el.classList.remove('open');
+        });
+      }
+    });
+    async function setupTelegram(agentId) {
+      var btn = document.getElementById('tg-btn-' + agentId);
+      btn.disabled = true;
+      btn.textContent = 'Setting up...';
+      try {
+        var resp = await fetch('/api/agents/' + agentId + '/telegram/setup', {method: 'POST'});
+        if (!resp.ok) {
+          var data = await resp.json();
+          alert('Failed: ' + (data.error || resp.statusText));
+          btn.disabled = false;
+          btn.textContent = 'Setup Telegram';
+          return;
+        }
+        pollTelegramStatus(agentId, btn);
+      } catch (e) {
+        alert('Failed: ' + e.message);
         btn.disabled = false;
         btn.textContent = 'Setup Telegram';
-        return;
       }
-      pollTelegramStatus(agentId, btn);
-    } catch (e) {
-      alert('Failed: ' + e.message);
-      btn.disabled = false;
-      btn.textContent = 'Setup Telegram';
     }
-  }
-
-  function pollTelegramStatus(agentId, btn) {
-    var interval = setInterval(async function() {
-      try {
-        var resp = await fetch('/api/agents/' + agentId + '/telegram/status');
-        if (!resp.ok) { return; }
-        var data = await resp.json();
-        btn.textContent = formatStatus(data.status);
-        if (data.status === 'DONE') {
-          clearInterval(interval);
-          btn.className = 'telegram-btn active';
-          btn.textContent = 'Telegram active' + (data.bot_username ? ' (@' + data.bot_username + ')' : '');
-          btn.disabled = false;
-        } else if (data.status === 'FAILED') {
-          clearInterval(interval);
-          btn.textContent = 'Setup failed';
-          btn.disabled = false;
-          btn.className = 'telegram-btn';
-          alert('Telegram setup failed: ' + (data.error || 'unknown error'));
-        }
-      } catch (e) {
-        // Ignore polling errors
-      }
-    }, 2000);
-  }
-
-  function formatStatus(status) {
-    var labels = {
-      'CHECKING_CREDENTIALS': 'Checking credentials...',
-      'WAITING_FOR_LOGIN': 'Waiting for browser login...',
-      'CREATING_BOT': 'Creating bot...',
-      'INJECTING_CREDENTIALS': 'Injecting credentials...',
-      'DONE': 'Done',
-      'FAILED': 'Failed'
-    };
-    return labels[status] || status;
-  }
-  </script>
-  {% else %}
-    {% if is_discovering %}
-  <p class="empty-state">Discovering agents...</p>
-  <script>setTimeout(function() { location.reload(); }, 2000);</script>
+    function pollTelegramStatus(agentId, btn) {
+      var interval = setInterval(async function() {
+        try {
+          var resp = await fetch('/api/agents/' + agentId + '/telegram/status');
+          if (!resp.ok) return;
+          var data = await resp.json();
+          btn.textContent = formatStatus(data.status);
+          if (data.status === 'DONE') {
+            clearInterval(interval);
+            btn.textContent = 'Telegram active' + (data.bot_username ? ' (@' + data.bot_username + ')' : '');
+            btn.disabled = false;
+            btn.style.color = '#16a34a';
+            btn.style.cursor = 'default';
+          } else if (data.status === 'FAILED') {
+            clearInterval(interval);
+            btn.textContent = 'Setup failed';
+            btn.disabled = false;
+            alert('Telegram setup failed: ' + (data.error || 'unknown error'));
+          }
+        } catch (e) {}
+      }, 2000);
+    }
+    function formatStatus(s) {
+      return {'CHECKING_CREDENTIALS':'Checking credentials...','WAITING_FOR_LOGIN':'Waiting for login...',
+        'CREATING_BOT':'Creating bot...','INJECTING_CREDENTIALS':'Injecting credentials...',
+        'DONE':'Done','FAILED':'Failed'}[s] || s;
+    }
+    </script>
     {% else %}
-  <p class="empty-state">
-    No workspaces are accessible. Use a login link to authenticate with a workspace.
-  </p>
+      {% if is_discovering %}
+    <p class="empty-state">Discovering agents...</p>
+    <script>setTimeout(function() { location.reload(); }, 2000);</script>
+      {% else %}
+    <p class="empty-state">No workspaces yet</p>
+      {% endif %}
     {% endif %}
-  {% endif %}
+  </div>
 </body>
 </html>"""
 )
@@ -350,11 +396,14 @@ def render_landing_page(
     accessible_agent_ids: Sequence[AgentId],
     telegram_status_by_agent_id: dict[str, bool] | None = None,
     is_discovering: bool = False,
+    agent_names: dict[str, str] | None = None,
 ) -> str:
     """Render the landing page listing accessible workspaces.
 
     telegram_status_by_agent_id maps agent ID strings to whether they have
     active Telegram bot credentials. When None, no telegram buttons are shown.
+
+    agent_names maps agent ID strings to human-readable workspace names.
 
     When is_discovering is True, the page shows a "Discovering agents..." message
     with auto-refresh instead of the empty state. This is used when the stream
@@ -366,6 +415,7 @@ def render_landing_page(
         telegram_enabled=telegram_status_by_agent_id is not None,
         telegram_status_by_agent_id=telegram_status_by_agent_id or {},
         is_discovering=is_discovering,
+        agent_names=agent_names or {},
     )
 
 

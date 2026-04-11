@@ -279,9 +279,14 @@ def _handle_landing_page(
         telegram_status: dict[str, bool] | None = None
         if telegram_orchestrator is not None:
             telegram_status = {str(aid): telegram_orchestrator.agent_has_telegram(aid) for aid in all_agent_ids}
+        agent_names: dict[str, str] = {}
+        for aid in all_agent_ids:
+            info = backend_resolver.get_agent_display_info(aid)
+            agent_names[str(aid)] = info.agent_name if info else str(aid)
         html = render_landing_page(
             accessible_agent_ids=all_agent_ids,
             telegram_status_by_agent_id=telegram_status,
+            agent_names=agent_names,
         )
         return HTMLResponse(content=html)
 
