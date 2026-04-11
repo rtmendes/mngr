@@ -1,5 +1,4 @@
 import subprocess
-import sys
 from typing import Any
 from typing import assert_never
 
@@ -9,6 +8,7 @@ from loguru import logger
 
 from imbue.mngr.cli.common_opts import add_common_options
 from imbue.mngr.cli.common_opts import setup_command_context
+from imbue.mngr.cli.output_helpers import write_human_line
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import MngrError
 from imbue.mngr.providers.local.instance import LocalProviderInstance
@@ -123,6 +123,6 @@ def run_modal_trigger(provider: ModalProviderInstance, trigger_name: str) -> int
         raise click.ClickException(f"Modal invocation failed for trigger '{trigger_name}': {exc}") from None
 
     if output:
-        sys.stdout.write(output)
+        write_human_line("{}", output)
 
     return 0
