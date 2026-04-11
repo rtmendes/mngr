@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import PrivateAttr
 from pydantic import SecretStr
 from starlette.testclient import TestClient
 
@@ -18,6 +19,7 @@ from imbue.minds.desktop_client.cloudflare_client import OwnerEmail
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.telegram.credential_store import save_agent_bot_credentials
 from imbue.minds.telegram.data_types import TelegramBotCredentials
+from imbue.minds.telegram.setup import TelegramSetupInfo
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
 from imbue.minds.telegram.setup import TelegramSetupStatus
 from imbue.mngr.primitives import AgentId
@@ -426,6 +428,37 @@ def test_notification_returns_501_without_dispatcher(tmp_path: Path) -> None:
     assert response.status_code == 501
 
 
+# -- Stub TelegramSetupOrchestrator for state-injection tests --
+
+
+class _StubTelegramOrchestrator(TelegramSetupOrchestrator):
+    """TelegramSetupOrchestrator subclass with preset get_setup_info return value.
+
+    Allows tests to verify HTTP endpoint behavior for specific orchestrator
+    states without touching private attributes or spawning background threads.
+    """
+
+    _preset_info_by_agent: dict[str, TelegramSetupInfo] = PrivateAttr(default_factory=dict)
+
+    @classmethod
+    def create_with_info(
+        cls,
+        paths: WorkspacePaths,
+        agent_id: AgentId,
+        setup_info: TelegramSetupInfo,
+    ) -> "_StubTelegramOrchestrator":
+        """Create a stub with a preset TelegramSetupInfo for a specific agent."""
+        stub = cls(paths=paths)
+        stub._preset_info_by_agent[str(agent_id)] = setup_info
+        return stub
+
+    def get_setup_info(self, agent_id: AgentId) -> TelegramSetupInfo | None:
+        return self._preset_info_by_agent.get(str(agent_id))
+
+    def start_setup(self, agent_id: AgentId, agent_name: str) -> None:
+        pass
+
+
 # -- Telegram status with active Telegram --
 
 
@@ -451,11 +484,7 @@ def test_telegram_status_returns_done_when_agent_has_telegram(tmp_path: Path) ->
 
 
 def test_telegram_status_returns_in_progress_info(tmp_path: Path) -> None:
-    """When setup is in progress, status endpoint returns current status info.
-
-    Uses direct orchestrator state manipulation to avoid spawning a background
-    thread that would try to open a real browser for Telegram login.
-    """
+    """When setup is in progress, status endpoint returns current status info."""
     paths = WorkspacePaths(data_dir=tmp_path / "minds")
     auth_store = FileAuthStore(data_directory=paths.auth_dir)
 
@@ -463,11 +492,11 @@ def test_telegram_status_returns_in_progress_info(tmp_path: Path) -> None:
     api_key = generate_api_key()
     save_api_key_hash(paths.data_dir, agent_id, hash_api_key(api_key))
 
-    orchestrator = TelegramSetupOrchestrator(paths=paths)
-    # Inject in-progress state directly to avoid browser launch
-    aid = str(agent_id)
-    with orchestrator._lock:
-        orchestrator._statuses[aid] = TelegramSetupStatus.CREATING_BOT
+    preset_info = TelegramSetupInfo(
+        agent_id=agent_id,
+        status=TelegramSetupStatus.CREATING_BOT,
+    )
+    orchestrator = _StubTelegramOrchestrator.create_with_info(paths, agent_id, preset_info)
 
     backend_resolver = StaticBackendResolver(url_by_agent_and_server={})
     notification_dispatcher = NotificationDispatcher(is_electron=True)
@@ -530,11 +559,12 @@ def test_telegram_status_returns_error_field_when_setup_failed(tmp_path: Path) -
     api_key = generate_api_key()
     save_api_key_hash(paths.data_dir, agent_id, hash_api_key(api_key))
 
-    orchestrator = TelegramSetupOrchestrator(paths=paths)
-    aid = str(agent_id)
-    with orchestrator._lock:
-        orchestrator._statuses[aid] = TelegramSetupStatus.FAILED
-        orchestrator._errors[aid] = "setup failed unexpectedly"
+    preset_info = TelegramSetupInfo(
+        agent_id=agent_id,
+        status=TelegramSetupStatus.FAILED,
+        error="setup failed unexpectedly",
+    )
+    orchestrator = _StubTelegramOrchestrator.create_with_info(paths, agent_id, preset_info)
 
     backend_resolver = StaticBackendResolver(url_by_agent_and_server={})
     notification_dispatcher = NotificationDispatcher(is_electron=True)
