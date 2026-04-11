@@ -372,11 +372,11 @@ def test_reverse_tunnel_info_stores_metadata() -> None:
         ssh_info=ssh_info,
         local_port=8420,
         remote_port=54321,
-        agent_state_dir="~/.mngr/agents/test-id",
+        agent_state_dirs=["~/.mngr/agents/test-id"],
     )
     assert info.local_port == 8420
     assert info.remote_port == 54321
-    assert info.agent_state_dir == "~/.mngr/agents/test-id"
+    assert info.agent_state_dirs == ["~/.mngr/agents/test-id"]
 
 
 def test_tunnel_manager_cleanup_with_no_tunnels() -> None:

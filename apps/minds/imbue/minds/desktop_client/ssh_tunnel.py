@@ -14,6 +14,7 @@ from pydantic import Field
 from pydantic import PrivateAttr
 
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.mutable_model import MutableModel
 
 _BUFFER_SIZE: Final[int] = 65536
@@ -62,7 +63,9 @@ class ReverseTunnelInfo(FrozenModel):
     ssh_info: RemoteSSHInfo = Field(description="SSH connection info for the remote host")
     local_port: int = Field(description="Local port being forwarded to the remote host")
     remote_port: int = Field(description="Port assigned on the remote host")
-    agent_state_dir: str = Field(description="$MNGR_AGENT_STATE_DIR path on the remote host")
+    agent_state_dirs: list[str] = Field(
+        description="$MNGR_AGENT_STATE_DIR paths on the remote host for all agents sharing this tunnel"
+    )
 
 
 class SSHTunnelManager(MutableModel):
@@ -195,6 +198,14 @@ class SSHTunnelManager(MutableModel):
                     # Verify the transport is still alive
                     client = self._connections.get(conn_key)
                     if client is not None and _ssh_connection_is_active(client):
+                        # Register this agent's state dir if not already tracked
+                        if agent_state_dir not in existing.agent_state_dirs:
+                            self._reverse_tunnels[conn_key] = existing.model_copy_update(
+                                to_update(
+                                    existing.field_ref().agent_state_dirs,
+                                    existing.agent_state_dirs + [agent_state_dir],
+                                )
+                            )
                         return existing.remote_port
 
                 client = self._get_or_create_connection(ssh_info)
@@ -211,7 +222,7 @@ class SSHTunnelManager(MutableModel):
                 ssh_info=ssh_info,
                 local_port=local_port,
                 remote_port=remote_port,
-                agent_state_dir=agent_state_dir,
+                agent_state_dirs=[agent_state_dir],
             )
             with self._lock:
                 self._reverse_tunnels[conn_key] = tunnel_info
@@ -295,18 +306,20 @@ class SSHTunnelManager(MutableModel):
 
                 logger.info("Reverse tunnel to {} is broken, re-establishing...", conn_key)
                 try:
+                    first_dir = tunnel_info.agent_state_dirs[0] if tunnel_info.agent_state_dirs else ""
                     new_remote_port = self.setup_reverse_tunnel(
                         ssh_info=tunnel_info.ssh_info,
                         local_port=tunnel_info.local_port,
-                        agent_state_dir=tunnel_info.agent_state_dir,
+                        agent_state_dir=first_dir,
                     )
-                    # Update the URL file with the new port
+                    # Update the URL file for all agents sharing this tunnel
                     new_url = f"http://127.0.0.1:{new_remote_port}"
-                    self.write_api_url_to_remote(
-                        ssh_info=tunnel_info.ssh_info,
-                        agent_state_dir=tunnel_info.agent_state_dir,
-                        url=new_url,
-                    )
+                    for agent_state_dir in tunnel_info.agent_state_dirs:
+                        self.write_api_url_to_remote(
+                            ssh_info=tunnel_info.ssh_info,
+                            agent_state_dir=agent_state_dir,
+                            url=new_url,
+                        )
                     logger.info("Reverse tunnel re-established to {} on port {}", conn_key, new_remote_port)
                 except (paramiko.SSHException, OSError, SSHTunnelError) as e:
                     logger.warning("Failed to re-establish reverse tunnel to {}: {}", conn_key, e)
