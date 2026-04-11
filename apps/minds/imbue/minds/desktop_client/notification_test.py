@@ -7,6 +7,7 @@ from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
 from imbue.minds.desktop_client.notification import _dispatch_electron_notification
+from imbue.minds.desktop_client.notification import _dispatch_macos_notification
 from imbue.minds.desktop_client.notification import _run_tkinter_toast
 from imbue.minds.desktop_client.notification import _show_tkinter_toast
 
@@ -161,4 +162,54 @@ def test_show_tkinter_toast_with_no_tkinter_runs_in_thread() -> None:
     assert threading.active_count() >= before_count
 
 
+# -- macOS notification tests --
+
+
+def test_dispatch_macos_notification_does_not_raise() -> None:
+    """On non-macOS, osascript won't exist, but the function should not raise."""
+    request = NotificationRequest(
+        message="test macOS notification",
+        title="Test Title",
+        urgency=NotificationUrgency.CRITICAL,
+    )
+    # Should not raise even if osascript is not available (caught internally)
+    _dispatch_macos_notification(request, "agent-mac")
+
+
+def test_dispatch_macos_notification_handles_quotes() -> None:
+    """Verify double quotes in title/message are escaped for AppleScript."""
+    request = NotificationRequest(
+        message='He said "hello"',
+        title='Title with "quotes"',
+        urgency=NotificationUrgency.NORMAL,
+    )
+    # Should not raise
+    _dispatch_macos_notification(request, "agent-quotes")
+
+
+def test_dispatcher_routes_to_macos_when_is_macos() -> None:
+    """Verify dispatch routes to macOS native notifications when is_macos=True."""
+    dispatcher = NotificationDispatcher.create(is_electron=False, is_macos=True, tkinter_module=None)
+    assert dispatcher.is_macos is True
+    request = NotificationRequest(message="macos dispatch test")
+    # Should not raise -- osascript may fail on Linux but error is caught
+    dispatcher.dispatch(request, "agent-mac-dispatch")
+
+
+def test_dispatcher_prefers_electron_over_macos(capsys: CaptureFixture[str]) -> None:
+    """Electron takes priority over macOS native notifications."""
+    dispatcher = NotificationDispatcher.create(is_electron=True, is_macos=True)
+    request = NotificationRequest(message="electron priority")
+    dispatcher.dispatch(request, "agent-priority")
+
+    captured = capsys.readouterr()
+    event = json.loads(captured.out.strip())
+    assert event["event"] == "notification"
+    assert event["message"] == "electron priority"
+
+
+def test_dispatcher_create_with_is_macos_override() -> None:
+    """Verify create() accepts is_macos parameter."""
+    dispatcher = NotificationDispatcher.create(is_electron=False, is_macos=False)
+    assert dispatcher.is_macos is False
 

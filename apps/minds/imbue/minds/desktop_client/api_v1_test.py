@@ -278,7 +278,20 @@ def _create_test_api_client_with_telegram(
 
 
 def test_telegram_setup_starts_with_orchestrator(tmp_path: Path) -> None:
-    client, agent_id, api_key, _paths = _create_test_api_client_with_telegram(tmp_path)
+    """When an agent already has bot credentials, setup returns CHECKING_CREDENTIALS.
+
+    Pre-saves credentials so the background thread detects them immediately
+    and sets DONE status without trying to open a browser.
+    """
+    client, agent_id, api_key, paths = _create_test_api_client_with_telegram(tmp_path)
+
+    # Pre-save credentials so the orchestrator detects them and skips browser login
+    credentials = TelegramBotCredentials(
+        bot_token=SecretStr("123:fake_token_for_setup_test"),
+        bot_username="setup_test_bot",
+    )
+    save_agent_bot_credentials(paths.data_dir, agent_id, credentials)
+
     response = client.post(
         f"/api/v1/agents/{agent_id}/telegram",
         json={"agent_name": "test-bot"},
@@ -287,6 +300,7 @@ def test_telegram_setup_starts_with_orchestrator(tmp_path: Path) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["agent_id"] == str(agent_id)
+    # With pre-saved credentials, start_setup detects them and returns immediately
     assert data["status"] == "CHECKING_CREDENTIALS"
 
 
@@ -421,18 +435,37 @@ def test_telegram_status_returns_done_when_agent_has_telegram(tmp_path: Path) ->
 
 
 def test_telegram_status_returns_in_progress_info(tmp_path: Path) -> None:
-    """When setup is in progress, status endpoint returns current status info."""
-    client, agent_id, api_key, _paths = _create_test_api_client_with_telegram(tmp_path)
+    """When setup is in progress, status endpoint returns current status info.
 
-    # Start setup so get_setup_info returns a non-None result
-    response = client.post(
-        f"/api/v1/agents/{agent_id}/telegram",
-        json={"agent_name": "test-bot"},
-        headers=_auth_headers(api_key),
+    Uses direct orchestrator state manipulation to avoid spawning a background
+    thread that would try to open a real browser for Telegram login.
+    """
+    paths = WorkspacePaths(data_dir=tmp_path / "minds")
+    auth_store = FileAuthStore(data_directory=paths.auth_dir)
+
+    agent_id = AgentId()
+    api_key = generate_api_key()
+    save_api_key_hash(paths.data_dir, agent_id, hash_api_key(api_key))
+
+    orchestrator = TelegramSetupOrchestrator(paths=paths)
+    # Inject in-progress state directly to avoid browser launch
+    aid = str(agent_id)
+    with orchestrator._lock:
+        orchestrator._statuses[aid] = TelegramSetupStatus.CREATING_BOT
+
+    backend_resolver = StaticBackendResolver(url_by_agent_and_server={})
+    notification_dispatcher = NotificationDispatcher(is_electron=True)
+
+    app = create_desktop_client(
+        auth_store=auth_store,
+        backend_resolver=backend_resolver,
+        http_client=None,
+        notification_dispatcher=notification_dispatcher,
+        telegram_orchestrator=orchestrator,
+        paths=paths,
     )
-    assert response.status_code == 200
+    client = TestClient(app)
 
-    # Now check status -- setup was started, so get_setup_info should return data
     response = client.get(
         f"/api/v1/agents/{agent_id}/telegram",
         headers=_auth_headers(api_key),
@@ -440,7 +473,7 @@ def test_telegram_status_returns_in_progress_info(tmp_path: Path) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["agent_id"] == str(agent_id)
-    assert "status" in data
+    assert data["status"] == str(TelegramSetupStatus.CREATING_BOT)
 
 
 def test_telegram_status_includes_bot_username_when_done(tmp_path: Path) -> None:

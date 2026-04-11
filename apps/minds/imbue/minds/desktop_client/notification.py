@@ -1,10 +1,10 @@
 """Notification dispatch for the minds desktop client.
 
-Routes notifications to either Electron (stdout JSONL) or a tkinter
-toast popup depending on whether the server is running inside the
-Electron desktop app.
+Routes notifications to either Electron (stdout JSONL), native macOS
+notifications, or a tkinter toast popup depending on the runtime context.
 """
 
+import platform
 import threading
 from enum import auto
 from types import ModuleType
@@ -13,10 +13,13 @@ from loguru import logger
 from pydantic import Field
 from pydantic import PrivateAttr
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.enums import UpperCaseStrEnum
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.minds.primitives import OutputFormat
 from imbue.minds.utils.output import emit_event
+
+_IS_MACOS: bool = platform.system() == "Darwin"
 
 # tkinter is an optional dependency: not available on all platforms (e.g. headless servers).
 # Load it at module level so the failure is immediate and predictable, but tolerate absence.
@@ -175,10 +178,33 @@ def _show_tkinter_toast(
     thread.start()
 
 
+def _dispatch_macos_notification(
+    request: NotificationRequest,
+    agent_display_name: str,
+) -> None:
+    """Display a native macOS notification via osascript."""
+    display_title = request.title or f"Notification from {agent_display_name}"
+    # Escape double quotes for AppleScript string literals
+    escaped_title = display_title.replace('"', '\\"')
+    escaped_message = request.message.replace('"', '\\"')
+    escaped_subtitle = f"From: {agent_display_name}".replace('"', '\\"')
+    script = f'display notification "{escaped_message}" with title "{escaped_title}" subtitle "{escaped_subtitle}"'
+    cg = ConcurrencyGroup(name="macos-notification")
+    try:
+        with cg:
+            cg.run_process_to_completion(
+                command=["osascript", "-e", script],
+                is_checked_after=False,
+            )
+    except (OSError, ExceptionGroup) as e:
+        logger.warning("Failed to show macOS notification: {}", e)
+
+
 class NotificationDispatcher(FrozenModel):
-    """Routes notifications to Electron or tkinter based on runtime context."""
+    """Routes notifications to Electron, macOS native, or tkinter based on runtime context."""
 
     is_electron: bool = Field(description="Whether the server is running inside Electron")
+    is_macos: bool = Field(default=_IS_MACOS, description="Whether running on macOS")
     # _tk stores the resolved tkinter module. Set at construction time to the
     # module-level _TKINTER value, or injected via NotificationDispatcher.create()
     # to allow testing without tkinter side effects.
@@ -193,13 +219,14 @@ class NotificationDispatcher(FrozenModel):
         cls,
         is_electron: bool,
         tkinter_module: ModuleType | None = _TKINTER,
+        is_macos: bool = _IS_MACOS,
     ) -> "NotificationDispatcher":
-        """Create a NotificationDispatcher with an explicit tkinter module.
+        """Create a NotificationDispatcher with explicit platform overrides.
 
         Pass tkinter_module=None to disable tkinter toasts (e.g. in tests or on
         headless servers where tkinter is unavailable).
         """
-        dispatcher = cls(is_electron=is_electron)
+        dispatcher = cls(is_electron=is_electron, is_macos=is_macos)
         dispatcher._tk = tkinter_module
         return dispatcher
 
@@ -208,8 +235,13 @@ class NotificationDispatcher(FrozenModel):
         request: NotificationRequest,
         agent_display_name: str,
     ) -> None:
-        """Send a notification to the user via the appropriate channel."""
+        """Send a notification to the user via the appropriate channel.
+
+        Priority: Electron > macOS native > tkinter toast.
+        """
         if self.is_electron:
             _dispatch_electron_notification(request, agent_display_name)
+        elif self.is_macos:
+            _dispatch_macos_notification(request, agent_display_name)
         else:
             _show_tkinter_toast(request, agent_display_name, tk=self._tk)
