@@ -6,6 +6,7 @@ from imbue.minds.desktop_client.api_key_store import find_agent_by_api_key
 from imbue.minds.desktop_client.api_key_store import generate_api_key
 from imbue.minds.desktop_client.api_key_store import hash_api_key
 from imbue.minds.desktop_client.api_key_store import save_api_key_hash
+from imbue.minds.primitives import ApiKeyHash
 from imbue.mngr.primitives import AgentId
 
 
@@ -83,7 +84,7 @@ def test_find_agent_by_api_key_with_multiple_agents(tmp_path: Path) -> None:
 
 def test_save_api_key_hash_creates_directory_structure(tmp_path: Path) -> None:
     agent_id = AgentId()
-    save_api_key_hash(tmp_path, agent_id, "test-hash")
+    save_api_key_hash(tmp_path, agent_id, ApiKeyHash("test-hash"))
 
     hash_file = tmp_path / "agents" / str(agent_id) / "api_key_hash"
     assert hash_file.exists()
