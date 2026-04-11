@@ -1,3 +1,4 @@
+import os
 import uuid
 from pathlib import Path
 
@@ -99,3 +100,43 @@ def test_find_agent_by_api_key_handles_corrupted_hash_file(tmp_path: Path) -> No
 
     found_id = find_agent_by_api_key(tmp_path, "some-key")
     assert found_id is None
+
+
+def test_find_agent_by_api_key_skips_non_directory_entries(tmp_path: Path) -> None:
+    """Verify that non-directory entries in agents/ dir are skipped."""
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir(parents=True)
+    # Create a regular file alongside the agent dirs
+    (agents_dir / "not-a-dir.txt").write_text("stray file")
+
+    # Also create a valid agent entry
+    agent_id = AgentId()
+    key = generate_api_key()
+    save_api_key_hash(tmp_path, agent_id, hash_api_key(key))
+
+    found_id = find_agent_by_api_key(tmp_path, key)
+    assert found_id == agent_id
+
+
+def test_find_agent_by_api_key_skips_missing_hash_file(tmp_path: Path) -> None:
+    """Verify that agent dirs without an api_key_hash file are skipped."""
+    agents_dir = tmp_path / "agents" / "no-hash-agent"
+    agents_dir.mkdir(parents=True)
+    # Do NOT create api_key_hash file
+
+    found_id = find_agent_by_api_key(tmp_path, "any-key")
+    assert found_id is None
+
+
+def test_find_agent_by_api_key_handles_oserror_on_read(tmp_path: Path) -> None:
+    """Verify that an OSError reading a hash file is caught and the entry is skipped."""
+    agents_dir = tmp_path / "agents" / "bad-perm-agent"
+    agents_dir.mkdir(parents=True)
+    hash_file = agents_dir / "api_key_hash"
+    hash_file.write_text("some-hash")
+    os.chmod(hash_file, 0o000)
+    try:
+        found_id = find_agent_by_api_key(tmp_path, "any-key")
+        assert found_id is None
+    finally:
+        os.chmod(hash_file, 0o644)

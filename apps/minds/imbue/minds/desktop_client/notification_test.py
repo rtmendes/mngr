@@ -90,3 +90,5 @@ def test_dispatch_electron_via_dispatcher(capsys: CaptureFixture[str]) -> None:
     assert event["event"] == "notification"
     assert event["message"] == "dispatched message"
     assert event["agent_name"] == "agent-x"
+
+
