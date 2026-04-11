@@ -581,7 +581,7 @@ def _shell_quote_remote_path(path: str) -> str:
     and hyphens), which is safe to embed in a double-quoted shell string.
     """
     if path == "~" or path.startswith("~/"):
-        rest = path[1:]  # strip the leading '~', keeping the '/' if present
+        rest = path[1:]
         return f'"$HOME{rest}"'
     return shlex.quote(path)
 
