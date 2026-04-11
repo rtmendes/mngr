@@ -371,7 +371,7 @@ class AgentManager:
             self._refresh_agents()
 
     def _initial_discover(self) -> None:
-        """Perform initial agent discovery using the existing discover_agents function."""
+        """Perform initial agent discovery and start application watchers."""
         try:
             agents = discover_agents()
             with self._lock:
@@ -380,10 +380,14 @@ class AgentManager:
                         id=agent_info.id,
                         name=agent_info.name,
                         state=agent_info.state,
-                        labels={},
-                        work_dir=None,
+                        labels=agent_info.labels,
+                        work_dir=agent_info.work_dir,
                     )
                     self._agents[agent_info.id] = agent_state
+
+            for agent_info in agents:
+                if agent_info.work_dir:
+                    self._start_app_watcher(agent_info.id, Path(agent_info.work_dir))
         except (OSError, ValueError, RuntimeError, BaseMngrError):
             _loguru_logger.exception("Initial agent discovery failed")
 
@@ -397,8 +401,8 @@ class AgentManager:
                     id=agent_info.id,
                     name=agent_info.name,
                     state=agent_info.state,
-                    labels={},
-                    work_dir=None,
+                    labels=agent_info.labels,
+                    work_dir=agent_info.work_dir,
                 )
 
             with self._lock:
