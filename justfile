@@ -21,6 +21,17 @@ run target:
     exit 1; \
   fi
 
+# Generate .dockerignore from .gitignore: remove the current.tar.gz line
+# (needed in the Docker build context) and add tracked files that offload
+# modifies during builds (which causes Modal upload errors).
+[private]
+_generate-dockerignore:
+    grep -v 'current\.tar\.gz' .gitignore > .dockerignore
+    echo '.git/' >> .dockerignore
+    echo '.offload-image-cache' >> .dockerignore
+    echo '.offload-cache-key' >> .dockerignore
+    echo '.offload-release-cache-key' >> .dockerignore
+
 # Run tests on Modal via Offload
 test-offload args="":
     #!/bin/bash
@@ -41,14 +52,7 @@ test-offload args="":
         echo "$CACHE_KEY" > "$CACHE_KEY_FILE"
     fi
 
-    # Generate .dockerignore from .gitignore: remove the current.tar.gz line
-    # (needed in the Docker build context) and add tracked files that offload
-    # modifies during builds (which causes Modal upload errors).
-    grep -v 'current\.tar\.gz' .gitignore > .dockerignore
-    echo '.git/' >> .dockerignore
-    echo '.offload-image-cache' >> .dockerignore
-    echo '.offload-cache-key' >> .dockerignore
-    echo '.offload-release-cache-key' >> .dockerignore
+    just _generate-dockerignore
 
     ./scripts/make_tar_of_repo.sh $BASE_COMMIT $tmpdir
     export OFFLOAD_PATCH_UUID=`uv run python -c"import uuid;print(uuid.uuid4())"`
@@ -108,14 +112,7 @@ test-offload-release args="":
         echo "$CACHE_KEY" > "$CACHE_KEY_FILE"
     fi
 
-    # Generate .dockerignore from .gitignore: remove the current.tar.gz line
-    # (needed in the Docker build context) and add tracked files that offload
-    # modifies during builds (which causes Modal upload errors).
-    grep -v 'current\.tar\.gz' .gitignore > .dockerignore
-    echo '.git/' >> .dockerignore
-    echo '.offload-image-cache' >> .dockerignore
-    echo '.offload-cache-key' >> .dockerignore
-    echo '.offload-release-cache-key' >> .dockerignore
+    just _generate-dockerignore
 
     ./scripts/make_tar_of_repo.sh $BASE_COMMIT $tmpdir
     export OFFLOAD_PATCH_UUID=`uv run python -c"import uuid;print(uuid.uuid4())"`
