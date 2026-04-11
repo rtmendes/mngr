@@ -1,11 +1,14 @@
 """Integration tests for the schedule run command (local provider)."""
 
+import json
 from pathlib import Path
 
 import click
 import pytest
 
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.primitives import OutputFormat
+from imbue.mngr_schedule.cli.run import _emit_output
 from imbue.mngr_schedule.cli.run import run_local_trigger
 from imbue.mngr_schedule.data_types import ScheduleTriggerDefinition
 from imbue.mngr_schedule.data_types import ScheduledMngrCommand
@@ -78,3 +81,46 @@ def test_run_local_trigger_disabled_still_runs(
     _deploy_echo_trigger(temp_mngr_ctx, "disabled-trigger", is_enabled=False)
     exit_code = run_local_trigger(temp_mngr_ctx, "disabled-trigger")
     assert isinstance(exit_code, int)
+
+
+# =============================================================================
+# _emit_output tests
+# =============================================================================
+
+
+def test_emit_output_human_format(capsys: pytest.CaptureFixture[str]) -> None:
+    """HUMAN format should write the output text with exactly one trailing newline."""
+    _emit_output("hello from trigger\n", OutputFormat.HUMAN)
+    captured = capsys.readouterr()
+    assert captured.out == "hello from trigger\n"
+
+
+def test_emit_output_human_format_no_trailing_newline(capsys: pytest.CaptureFixture[str]) -> None:
+    """HUMAN format should add a newline even if output has none."""
+    _emit_output("hello from trigger", OutputFormat.HUMAN)
+    captured = capsys.readouterr()
+    assert captured.out == "hello from trigger\n"
+
+
+def test_emit_output_json_format(capsys: pytest.CaptureFixture[str]) -> None:
+    """JSON format should emit a JSON object with an 'output' key."""
+    _emit_output("trigger output\n", OutputFormat.JSON)
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data == {"output": "trigger output\n"}
+
+
+def test_emit_output_jsonl_format(capsys: pytest.CaptureFixture[str]) -> None:
+    """JSONL format should emit a JSON object with an 'output' key."""
+    _emit_output("trigger output\n", OutputFormat.JSONL)
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data == {"output": "trigger output\n"}
+
+
+def test_emit_output_empty_string_produces_no_output(capsys: pytest.CaptureFixture[str]) -> None:
+    """Empty output should produce no stdout for any format."""
+    for fmt in OutputFormat:
+        _emit_output("", fmt)
+    captured = capsys.readouterr()
+    assert captured.out == ""
