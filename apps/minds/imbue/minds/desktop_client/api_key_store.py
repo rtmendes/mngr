@@ -11,6 +11,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from imbue.minds.primitives import ApiKeyHash
 from imbue.mngr.primitives import AgentId
 
 
@@ -19,9 +20,9 @@ def generate_api_key() -> str:
     return str(uuid.uuid4())
 
 
-def hash_api_key(key: str) -> str:
+def hash_api_key(key: str) -> ApiKeyHash:
     """Compute the SHA-256 hex digest of an API key."""
-    return hashlib.sha256(key.encode()).hexdigest()
+    return ApiKeyHash(hashlib.sha256(key.encode()).hexdigest())
 
 
 def _api_key_hash_path(data_dir: Path, agent_id: AgentId) -> Path:
@@ -31,7 +32,7 @@ def _api_key_hash_path(data_dir: Path, agent_id: AgentId) -> Path:
 def save_api_key_hash(
     data_dir: Path,
     agent_id: AgentId,
-    key_hash: str,
+    key_hash: ApiKeyHash,
 ) -> None:
     """Write the API key hash to the per-agent hash file."""
     hash_path = _api_key_hash_path(data_dir, agent_id)
