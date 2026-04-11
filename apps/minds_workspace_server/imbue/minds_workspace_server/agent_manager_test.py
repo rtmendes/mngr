@@ -36,7 +36,7 @@ def broadcaster() -> WebSocketBroadcaster:
 def agent_manager(broadcaster: WebSocketBroadcaster) -> AgentManager:
     """Create an AgentManager without starting observe subprocess."""
     with _env(MNGR_AGENT_ID="test-agent-id", MNGR_AGENT_WORK_DIR="/tmp/test-work"):
-        manager = AgentManager(broadcaster)
+        manager = AgentManager.build(broadcaster)
     return manager
 
 
@@ -431,7 +431,7 @@ def test_initial_discover_populates_agents(
     broadcaster: WebSocketBroadcaster,
 ) -> None:
     """Initial discovery populates agent list when discovery succeeds."""
-    manager = AgentManager(broadcaster)
+    manager = AgentManager.build(broadcaster)
     manager._initial_discover()
 
 
@@ -439,7 +439,7 @@ def test_initial_discover_handles_errors(
     broadcaster: WebSocketBroadcaster,
 ) -> None:
     """Initial discovery handles errors gracefully when mngr is unavailable."""
-    manager = AgentManager(broadcaster)
+    manager = AgentManager.build(broadcaster)
     manager._initial_discover()
     assert isinstance(manager.get_agents(), list)
 

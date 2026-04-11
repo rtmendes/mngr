@@ -79,24 +79,36 @@ class AgentManager:
     Handles agent creation via local mngr create calls.
     """
 
-    def __init__(self, broadcaster: WebSocketBroadcaster) -> None:
-        self._broadcaster = broadcaster
-        self._lock = threading.Lock()
+    _broadcaster: WebSocketBroadcaster
+    _lock: threading.Lock
+    _agents: dict[str, AgentStateItem]
+    _applications: dict[str, list[ApplicationEntry]]
+    _app_observers: dict[str, Any]
+    _proto_agents: dict[str, dict[str, Any]]
+    _log_queues: dict[str, queue.Queue[str | None]]
+    _own_agent_id: str
+    _own_work_dir: str
+    _shutdown_event: ShutdownEvent
+    _observe_cg: ConcurrencyGroup | None
+    _creation_cg: ConcurrencyGroup | None
 
-        self._agents: dict[str, AgentStateItem] = {}
-        self._applications: dict[str, list[ApplicationEntry]] = {}
-
-        self._app_observers: dict[str, Any] = {}
-
-        self._proto_agents: dict[str, dict[str, Any]] = {}
-        self._log_queues: dict[str, queue.Queue[str | None]] = {}
-
-        self._own_agent_id = os.environ.get("MNGR_AGENT_ID", "")
-        self._own_work_dir = os.environ.get("MNGR_AGENT_WORK_DIR", "")
-
-        self._shutdown_event = ShutdownEvent.build_root()
-        self._observe_cg: ConcurrencyGroup | None = None
-        self._creation_cg: ConcurrencyGroup | None = None
+    @classmethod
+    def build(cls, broadcaster: WebSocketBroadcaster) -> "AgentManager":
+        """Build an AgentManager with the given broadcaster."""
+        manager = cls.__new__(cls)
+        manager._broadcaster = broadcaster
+        manager._lock = threading.Lock()
+        manager._agents = {}
+        manager._applications = {}
+        manager._app_observers = {}
+        manager._proto_agents = {}
+        manager._log_queues = {}
+        manager._own_agent_id = os.environ.get("MNGR_AGENT_ID", "")
+        manager._own_work_dir = os.environ.get("MNGR_AGENT_WORK_DIR", "")
+        manager._shutdown_event = ShutdownEvent.build_root()
+        manager._observe_cg = None
+        manager._creation_cg = None
+        return manager
 
     def start(self) -> None:
         """Start the observe subprocess and perform initial agent discovery."""

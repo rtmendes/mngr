@@ -61,7 +61,7 @@ async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.watchers = {}
 
     broadcaster = WebSocketBroadcaster()
-    agent_manager = AgentManager(broadcaster)
+    agent_manager = AgentManager.build(broadcaster)
     application.state.broadcaster = broadcaster
     application.state.agent_manager = agent_manager
     agent_manager.start()
