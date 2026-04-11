@@ -10,7 +10,6 @@ from imbue.minds.desktop_client.app import create_desktop_client
 from imbue.minds.desktop_client.auth import FileAuthStore
 from imbue.minds.desktop_client.backend_resolver import StaticBackendResolver
 from imbue.minds.desktop_client.notification import NotificationDispatcher
-from imbue.minds.primitives import ServerName
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
 from imbue.mngr.primitives import AgentId
 
