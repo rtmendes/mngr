@@ -541,8 +541,9 @@ class AgentManager:
 
     def _start_app_watcher(self, agent_id: str, work_dir: Path) -> None:
         """Start watching runtime/applications.toml for an agent."""
-        if agent_id in self._app_observers:
-            return
+        with self._lock:
+            if agent_id in self._app_observers:
+                return
 
         toml_path = work_dir / _APPLICATIONS_TOML_FILENAME
         watch_dir = toml_path.parent
@@ -558,7 +559,8 @@ class AgentManager:
         observer.daemon = True
         try:
             observer.start()
-            self._app_observers[agent_id] = observer
+            with self._lock:
+                self._app_observers[agent_id] = observer
         except OSError:
             _loguru_logger.exception(
                 "Failed to start application watcher for agent {}", agent_id
@@ -566,7 +568,8 @@ class AgentManager:
 
     def _stop_app_watcher(self, agent_id: str) -> None:
         """Stop watching applications.toml for an agent."""
-        observer = self._app_observers.pop(agent_id, None)
+        with self._lock:
+            observer = self._app_observers.pop(agent_id, None)
         if observer is not None:
             observer.stop()
 
