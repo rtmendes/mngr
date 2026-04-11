@@ -15,6 +15,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from imbue.mngr.api.discovery_events import AgentDestroyedEvent
+from imbue.mngr.errors import BaseMngrError
 from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
 from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
 from imbue.mngr.api.discovery_events import HostDestroyedEvent
@@ -76,6 +77,10 @@ class AgentManager:
         """Start the observe subprocess and perform initial agent discovery."""
         self._initial_discover()
         self._start_observe()
+
+    def start_without_observe(self) -> None:
+        """Start with initial discovery only, no observe subprocess. For testing."""
+        self._initial_discover()
 
     def stop(self) -> None:
         """Stop the observe subprocess, file watchers, and creation threads."""
@@ -342,7 +347,7 @@ class AgentManager:
                         work_dir=None,
                     )
                     self._agents[agent_info.id] = agent_state
-        except (OSError, ValueError, RuntimeError):
+        except (OSError, ValueError, RuntimeError, BaseMngrError):
             _loguru_logger.exception("Initial agent discovery failed")
 
     def _refresh_agents(self) -> None:
@@ -370,7 +375,7 @@ class AgentManager:
             for agent_id in removed:
                 self._stop_app_watcher(agent_id)
 
-        except (OSError, ValueError, RuntimeError):
+        except (OSError, ValueError, RuntimeError, BaseMngrError):
             _loguru_logger.exception("Agent refresh failed")
 
     def _start_observe(self) -> None:
