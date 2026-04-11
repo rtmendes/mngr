@@ -32,13 +32,13 @@ from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.minds.config.data_types import MNGR_BINARY
 from imbue.minds.config.data_types import WorkspacePaths
-from imbue.minds.errors import GitCloneError
-from imbue.minds.errors import GitOperationError
-from imbue.minds.errors import MngrCommandError
-from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingClient
 from imbue.minds.desktop_client.api_key_store import generate_api_key
 from imbue.minds.desktop_client.api_key_store import hash_api_key
 from imbue.minds.desktop_client.api_key_store import save_api_key_hash
+from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingClient
+from imbue.minds.errors import GitCloneError
+from imbue.minds.errors import GitOperationError
+from imbue.minds.errors import MngrCommandError
 from imbue.minds.primitives import AgentName
 from imbue.minds.primitives import GitBranch
 from imbue.minds.primitives import GitUrl
