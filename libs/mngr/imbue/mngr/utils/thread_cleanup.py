@@ -9,7 +9,6 @@ This module provides a cleanup function registered as the global default
 """
 
 import gevent
-import gevent.exceptions
 
 
 def cleanup_thread_local_resources() -> None:
@@ -18,8 +17,7 @@ def cleanup_thread_local_resources() -> None:
     Called automatically at the end of each ConcurrencyGroupExecutor worker
     thread's lifetime to prevent file-descriptor leaks from gevent Hubs.
     """
-    try:
-        hub = gevent.get_hub()
-    except gevent.exceptions.LoopExit:
+    hub = gevent.get_hub_if_exists()
+    if hub is None:
         return
     hub.destroy(destroy_loop=True)
