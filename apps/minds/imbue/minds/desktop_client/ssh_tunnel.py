@@ -242,6 +242,7 @@ class SSHTunnelManager(MutableModel):
         command = f"mkdir -p {quoted_dir} && printf '%s' {quoted_url} > {quoted_dir}/minds_api_url"
         try:
             _stdin, stdout, stderr = client.exec_command(command, timeout=10.0)
+            _stdin.close()
             exit_status = stdout.channel.recv_exit_status()
             if exit_status != 0:
                 error_output = stderr.read().decode().strip()
