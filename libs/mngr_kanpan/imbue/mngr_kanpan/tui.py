@@ -318,6 +318,8 @@ class _KanpanState(MutableModel):
     mark_attr_names: tuple[str, ...] = ()
     # Column definitions (builtins + any custom columns from config)
     column_defs: list["_ColumnDef"] = []  # populated from _BOARD_COLUMN_DEFS at startup
+    # Board section display order (from config or default BOARD_SECTION_ORDER)
+    section_order: tuple[BoardSection, ...] = BOARD_SECTION_ORDER
     # Palette attr names for custom column colors
     col_attr_names: tuple[str, ...] = ()
     # Refresh hooks loaded from plugin config
@@ -1426,6 +1428,7 @@ def _build_board_widgets(
     marks: dict[AgentName, str] | None = None,
     mark_attr_names: tuple[str, ...] = (),
     col_attr_names: tuple[str, ...] = (),
+    section_order: tuple[BoardSection, ...] = BOARD_SECTION_ORDER,
 ) -> tuple[SimpleFocusListWalker[AttrMap | Text | Divider | Columns], dict[int, AgentBoardEntry]]:
     """Build the urwid widget list from a BoardSnapshot, grouped by PR state.
 
@@ -1450,7 +1453,7 @@ def _build_board_widgets(
 
     has_content = False
 
-    for section in BOARD_SECTION_ORDER:
+    for section in section_order:
         entries = by_section.get(section)
         if not entries:
             continue
@@ -1504,6 +1507,7 @@ def _refresh_display(state: _KanpanState) -> None:
         state.marks or None,
         state.mark_attr_names,
         state.col_attr_names,
+        state.section_order,
     )
     state.list_walker = walker
     state.frame.body = ListBox(walker)
@@ -1656,6 +1660,10 @@ def run_kanpan(
     on_before_refresh = _load_refresh_hooks(plugin_config.on_before_refresh)
     on_after_refresh = _load_refresh_hooks(plugin_config.on_after_refresh)
 
+    section_order = (
+        tuple(plugin_config.section_order) if plugin_config.section_order is not None else BOARD_SECTION_ORDER
+    )
+
     state = _KanpanState(
         mngr_ctx=mngr_ctx,
         frame=frame,
@@ -1672,6 +1680,7 @@ def run_kanpan(
         col_attr_names=col_attr_names,
         include_filters=include_filters,
         exclude_filters=exclude_filters,
+        section_order=section_order,
     )
 
     input_handler = _KanpanInputHandler(state=state)

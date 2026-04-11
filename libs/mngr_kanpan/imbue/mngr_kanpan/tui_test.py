@@ -1967,3 +1967,71 @@ def test_finish_refresh_prunes_orphaned_marks() -> None:
 
     assert AgentName("agent-a") in state.marks
     assert AgentName("agent-b") not in state.marks
+
+
+# =============================================================================
+# Tests for _build_board_widgets section_order parameter
+# =============================================================================
+
+
+def _extract_section_headings(walker: Any) -> list[str]:
+    """Extract plain-text section heading strings from a walker."""
+    headings: list[str] = []
+    for widget in walker:
+        if isinstance(widget, Text):
+            text = widget.get_text()[0]
+            if " (" in text and (
+                "Done" in text
+                or "In progress" in text
+                or "In review" in text
+                or "Muted" in text
+                or "Cancelled" in text
+            ):
+                headings.append(text)
+    return headings
+
+
+def test_build_board_widgets_default_section_order() -> None:
+    entries = (
+        _make_entry(name="cooking"),
+        _make_entry(name="merged", pr=_make_pr(state=PrState.MERGED)),
+    )
+    walker, _ = _build_board_widgets(_make_snapshot(entries=entries), _BOARD_COLUMN_DEFS)
+    headings = _extract_section_headings(walker)
+    assert len(headings) == 2
+    assert "Done" in headings[0]
+    assert "In progress" in headings[1]
+
+
+def test_build_board_widgets_custom_section_order_reverses() -> None:
+    entries = (
+        _make_entry(name="cooking"),
+        _make_entry(name="merged", pr=_make_pr(state=PrState.MERGED)),
+    )
+    reversed_order = (BoardSection.STILL_COOKING, BoardSection.PR_MERGED)
+    walker, _ = _build_board_widgets(
+        _make_snapshot(entries=entries),
+        _BOARD_COLUMN_DEFS,
+        section_order=reversed_order,
+    )
+    headings = _extract_section_headings(walker)
+    assert len(headings) == 2
+    assert "In progress" in headings[0]
+    assert "Done" in headings[1]
+
+
+def test_build_board_widgets_section_order_omits_unlisted() -> None:
+    entries = (
+        _make_entry(name="cooking"),
+        _make_entry(name="merged", pr=_make_pr(state=PrState.MERGED)),
+    )
+    only_merged = (BoardSection.PR_MERGED,)
+    walker, index_to_entry = _build_board_widgets(
+        _make_snapshot(entries=entries),
+        _BOARD_COLUMN_DEFS,
+        section_order=only_merged,
+    )
+    headings = _extract_section_headings(walker)
+    assert len(headings) == 1
+    assert "Done" in headings[0]
+    assert len(index_to_entry) == 1
