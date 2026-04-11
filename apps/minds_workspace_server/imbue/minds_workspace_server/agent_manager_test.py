@@ -5,7 +5,6 @@ import os
 import queue
 import subprocess
 import threading
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -20,15 +19,12 @@ from imbue.mngr.primitives import AgentName as MngrAgentName
 from imbue.mngr.primitives import DiscoveredAgent
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import ProviderInstanceName
-from imbue.minds_workspace_server.agent_discovery import AgentInfo
 from imbue.minds_workspace_server.agent_manager import AgentManager
 from imbue.minds_workspace_server.agent_manager import _LogQueueCallback
 from imbue.minds_workspace_server.models import AgentCreationError
 from imbue.minds_workspace_server.models import AgentStateItem
 from imbue.minds_workspace_server.models import ApplicationEntry
 from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
-
-DiscoverFn = Callable[[], list[AgentInfo]]
 
 
 @pytest.fixture
@@ -77,12 +73,6 @@ class _env:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = previous
-
-
-def _make_manager_with_env(broadcaster: WebSocketBroadcaster, **env: str) -> AgentManager:
-    """Create an AgentManager with specific environment variables."""
-    with _env(**env):
-        return AgentManager(broadcaster)
 
 
 def test_generate_random_name(agent_manager: AgentManager) -> None:
