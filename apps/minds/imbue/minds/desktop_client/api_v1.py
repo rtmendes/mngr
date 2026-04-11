@@ -103,7 +103,7 @@ async def _handle_cloudflare_enable(
             return _json_error("Server not found locally", 404)
         service_url = backend_url
 
-    is_success = cf_client.add_service(parsed_id, server_name, service_url)
+    is_success = cf_client.add_service(parsed_id, parsed_server, service_url)
 
     if is_success:
         return _json_response({"ok": True})
