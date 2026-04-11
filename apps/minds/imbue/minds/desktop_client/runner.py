@@ -154,6 +154,7 @@ def start_desktop_client(
         uvicorn.run(app, host=host, port=port)
     finally:
         stream_manager.stop()
+        tunnel_manager.cleanup()
 
 
 def _build_cloudflare_client() -> CloudflareForwardingClient | None:
