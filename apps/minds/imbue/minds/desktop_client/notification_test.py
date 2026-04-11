@@ -1,7 +1,7 @@
 import json
 import threading
 
-from _pytest.capture import CaptureFixture
+import pytest
 
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
@@ -36,7 +36,7 @@ def test_notification_request_with_all_fields() -> None:
     assert request.urgency == NotificationUrgency.CRITICAL
 
 
-def test_electron_notification_output_contains_required_fields(capsys: CaptureFixture[str]) -> None:
+def test_electron_notification_output_contains_required_fields(capsys: pytest.CaptureFixture[str]) -> None:
     """Verify _dispatch_electron_notification produces valid JSONL with all fields."""
     request = NotificationRequest(
         message="hello from agent",
@@ -56,7 +56,7 @@ def test_electron_notification_output_contains_required_fields(capsys: CaptureFi
     assert event["agent_name"] == "my-agent"
 
 
-def test_electron_notification_omits_title_when_none(capsys: CaptureFixture[str]) -> None:
+def test_electron_notification_omits_title_when_none(capsys: pytest.CaptureFixture[str]) -> None:
     request = NotificationRequest(message="no title")
 
     _dispatch_electron_notification(request, "agent-1")
@@ -79,7 +79,7 @@ def test_dispatcher_routes_to_tkinter_when_not_electron() -> None:
     assert dispatcher.is_electron is False
 
 
-def test_dispatch_electron_via_dispatcher(capsys: CaptureFixture[str]) -> None:
+def test_dispatch_electron_via_dispatcher(capsys: pytest.CaptureFixture[str]) -> None:
     """Verify the full dispatch path for Electron notifications."""
     dispatcher = NotificationDispatcher(is_electron=True)
     request = NotificationRequest(
@@ -132,7 +132,7 @@ def test_dispatcher_create_with_no_tkinter() -> None:
     assert dispatcher._tk is None
 
 
-def test_dispatcher_create_defaults_is_electron_false(capsys: CaptureFixture[str]) -> None:
+def test_dispatcher_create_defaults_is_electron_false(capsys: pytest.CaptureFixture[str]) -> None:
     """NotificationDispatcher.create(is_electron=True) routes to Electron."""
     dispatcher = NotificationDispatcher.create(is_electron=True)
     request = NotificationRequest(message="from create factory")
@@ -196,7 +196,7 @@ def test_dispatcher_routes_to_macos_when_is_macos() -> None:
     dispatcher.dispatch(request, "agent-mac-dispatch")
 
 
-def test_dispatcher_prefers_electron_over_macos(capsys: CaptureFixture[str]) -> None:
+def test_dispatcher_prefers_electron_over_macos(capsys: pytest.CaptureFixture[str]) -> None:
     """Electron takes priority over macOS native notifications."""
     dispatcher = NotificationDispatcher.create(is_electron=True, is_macos=True)
     request = NotificationRequest(message="electron priority")
