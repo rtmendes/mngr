@@ -21,20 +21,20 @@ from imbue.concurrency_group.errors import ConcurrencyGroupError
 from imbue.concurrency_group.event_utils import ShutdownEvent
 from imbue.concurrency_group.subprocess_utils import run_local_command_modern_version
 from imbue.imbue_common.mutable_model import MutableModel
-from imbue.mngr.api.discovery_events import AgentDestroyedEvent
-from imbue.mngr.errors import BaseMngrError
-from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
-from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
-from imbue.mngr.api.discovery_events import HostDestroyedEvent
-from imbue.mngr.api.discovery_events import parse_discovery_event_line
-from imbue.mngr.primitives import AgentId
-from imbue.mngr.primitives import AgentNameStyle
-from imbue.mngr.utils.name_generator import generate_agent_name
 from imbue.minds_workspace_server.agent_discovery import discover_agents
 from imbue.minds_workspace_server.models import AgentCreationError
 from imbue.minds_workspace_server.models import AgentStateItem
 from imbue.minds_workspace_server.models import ApplicationEntry
 from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
+from imbue.mngr.api.discovery_events import AgentDestroyedEvent
+from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
+from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
+from imbue.mngr.api.discovery_events import HostDestroyedEvent
+from imbue.mngr.api.discovery_events import parse_discovery_event_line
+from imbue.mngr.errors import BaseMngrError
+from imbue.mngr.primitives import AgentId
+from imbue.mngr.primitives import AgentNameStyle
+from imbue.mngr.utils.name_generator import generate_agent_name
 
 _APPLICATIONS_TOML_FILENAME = "runtime/applications.toml"
 
