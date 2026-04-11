@@ -56,15 +56,21 @@ jobs:
           fi
 
       - name: Restore offload test durations from previous run
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: test-results/junit.xml
           key: offload-durations-${{ github.ref }}-${{ github.run_id }}
           restore-keys: offload-durations-${{ github.ref }}-
-          save-always: true
 
       - name: Run tests via offload
         run: just test-offload
+
+      - name: Save offload test durations for next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: test-results/junit.xml
+          key: offload-durations-${{ github.ref }}-${{ github.run_id }}
 
       - name: Combine coverage and check threshold
         if: always()
@@ -159,7 +165,7 @@ jobs:
           fi
 
       - name: Restore offload test durations from previous run
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: test-results/junit.xml
           key: offload-acceptance-durations-${{ github.ref }}-${{ github.run_id }}
@@ -167,6 +173,13 @@ jobs:
 
       - name: Run acceptance tests via offload
         run: just test-offload-acceptance
+
+      - name: Save offload test durations for next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: test-results/junit.xml
+          key: offload-acceptance-durations-${{ github.ref }}-${{ github.run_id }}
 
       - name: Upload test results
         if: always()
