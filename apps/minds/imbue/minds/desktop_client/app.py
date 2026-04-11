@@ -33,6 +33,7 @@ from imbue.minds.desktop_client.api_v1 import create_api_v1_router
 from imbue.minds.desktop_client.auth import AuthStoreInterface
 from imbue.minds.desktop_client.backend_resolver import BackendResolverInterface
 from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingClient
+from imbue.minds.desktop_client.deps import BackendResolverDep
 from imbue.minds.desktop_client.cookie_manager import SESSION_COOKIE_NAME
 from imbue.minds.desktop_client.cookie_manager import create_session_cookie
 from imbue.minds.desktop_client.cookie_manager import verify_session_cookie
@@ -107,12 +108,7 @@ def _get_auth_store(request: Request) -> AuthStoreInterface:
     return request.app.state.auth_store
 
 
-def _get_backend_resolver(request: Request) -> BackendResolverInterface:
-    return request.app.state.backend_resolver
-
-
 AuthStoreDep = Annotated[AuthStoreInterface, Depends(_get_auth_store)]
-BackendResolverDep = Annotated[BackendResolverInterface, Depends(_get_backend_resolver)]
 
 
 # -- Auth helpers --

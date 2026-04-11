@@ -16,8 +16,8 @@ from fastapi.responses import Response
 
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.api_key_store import find_agent_by_api_key
-from imbue.minds.desktop_client.backend_resolver import BackendResolverInterface
 from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingClient
+from imbue.minds.desktop_client.deps import BackendResolverDep
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
@@ -25,13 +25,6 @@ from imbue.minds.primitives import ServerName
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
 from imbue.minds.telegram.setup import TelegramSetupStatus
 from imbue.mngr.primitives import AgentId
-
-
-def _get_backend_resolver(request: Request) -> BackendResolverInterface:
-    return request.app.state.backend_resolver
-
-
-BackendResolverDep = Annotated[BackendResolverInterface, Depends(_get_backend_resolver)]
 
 
 def _authenticate_api_key(request: Request) -> AgentId:
