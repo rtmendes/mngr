@@ -2,7 +2,6 @@ import json
 import os
 import queue
 import shlex
-import subprocess
 import sys
 import threading
 import tomllib
@@ -10,10 +9,16 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger as _loguru_logger
+from pydantic import Field
 from watchdog.events import FileModifiedEvent
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer as _Observer
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.concurrency_group.concurrency_group import InvalidConcurrencyGroupStateError
+from imbue.concurrency_group.event_utils import ShutdownEvent
+from imbue.concurrency_group.subprocess_utils import run_local_command_modern_version
+from imbue.imbue_common.mutable_model import MutableModel
 from imbue.mngr.api.discovery_events import AgentDestroyedEvent
 from imbue.mngr.errors import BaseMngrError
 from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
@@ -30,6 +35,17 @@ from imbue.minds_workspace_server.models import ApplicationEntry
 from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
 
 _APPLICATIONS_TOML_FILENAME = "runtime/applications.toml"
+
+
+class _LogQueueCallback(MutableModel):
+    """Callable that appends process output lines as JSON to a queue."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    log_queue: queue.Queue[str | None] = Field(description="Queue to write log lines into")
+
+    def __call__(self, line: str, _is_stdout: bool) -> None:
+        self.log_queue.put(json.dumps({"line": line.rstrip("\n")}))
 
 
 class _ApplicationsFileHandler(FileSystemEventHandler):
@@ -68,19 +84,17 @@ class AgentManager:
         self._agents: dict[str, AgentStateItem] = {}
         self._applications: dict[str, list[ApplicationEntry]] = {}
 
-        self._observe_process: subprocess.Popen[str] | None = None
-        self._observe_thread: threading.Thread | None = None
-
         self._app_observers: dict[str, Any] = {}
 
         self._proto_agents: dict[str, dict[str, Any]] = {}
         self._log_queues: dict[str, queue.Queue[str | None]] = {}
-        self._creation_threads: list[threading.Thread] = []
 
         self._own_agent_id = os.environ.get("MNGR_AGENT_ID", "")
         self._own_work_dir = os.environ.get("MNGR_AGENT_WORK_DIR", "")
 
-        self._shutdown = False
+        self._shutdown_event = ShutdownEvent.build_root()
+        self._observe_cg: ConcurrencyGroup | None = None
+        self._creation_cg: ConcurrencyGroup | None = None
 
     def start(self) -> None:
         """Start the observe subprocess and perform initial agent discovery."""
@@ -93,24 +107,22 @@ class AgentManager:
 
     def stop(self) -> None:
         """Stop the observe subprocess, file watchers, and creation threads."""
-        self._shutdown = True
+        self._shutdown_event.set()
 
-        if self._observe_process is not None:
-            self._observe_process.terminate()
-            try:
-                self._observe_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._observe_process.kill()
-            self._observe_process = None
+        if self._observe_cg is not None:
+            self._observe_cg.shutdown()
+            self._observe_cg.__exit__(None, None, None)
+            self._observe_cg = None
+
+        if self._creation_cg is not None:
+            self._creation_cg.__exit__(None, None, None)
+            self._creation_cg = None
 
         for observer in self._app_observers.values():
             observer.stop()
         for observer in self._app_observers.values():
             observer.join(timeout=5)
         self._app_observers.clear()
-
-        for t in self._creation_threads:
-            t.join(timeout=5)
 
     def get_agents(self) -> list[AgentStateItem]:
         """Return current agent list."""
@@ -212,13 +224,7 @@ class AgentManager:
             parent_agent_id=None,
         )
 
-        thread = threading.Thread(
-            target=self._run_creation,
-            args=(agent_id, cmd, Path(work_dir), log_queue),
-            daemon=True,
-        )
-        self._creation_threads.append(thread)
-        thread.start()
+        self._launch_creation_thread(agent_id, cmd, Path(work_dir), log_queue)
 
         return agent_id
 
@@ -267,15 +273,28 @@ class AgentManager:
             parent_agent_id=parent_agent_id,
         )
 
-        thread = threading.Thread(
-            target=self._run_creation,
-            args=(agent_id, cmd, Path(work_dir), log_queue),
-            daemon=True,
-        )
-        self._creation_threads.append(thread)
-        thread.start()
+        self._launch_creation_thread(agent_id, cmd, Path(work_dir), log_queue)
 
         return agent_id
+
+    def _launch_creation_thread(
+        self,
+        agent_id: str,
+        cmd: list[str],
+        work_dir: Path,
+        log_queue: queue.Queue[str | None],
+    ) -> None:
+        """Start a background thread to run agent creation and stream logs."""
+        if self._creation_cg is None:
+            self._creation_cg = ConcurrencyGroup(name="agent-creation")
+            self._creation_cg.__enter__()
+
+        self._creation_cg.start_new_thread(
+            target=self._run_creation,
+            args=(agent_id, cmd, work_dir, log_queue),
+            name=f"create-{agent_id[:8]}",
+            is_checked=False,
+        )
 
     def _resolve_agent_work_dir(self, agent_id: str) -> str | None:
         """Resolve an agent's work directory. Must be called with lock held."""
@@ -288,11 +307,10 @@ class AgentManager:
 
     def _get_current_branch(self, work_dir: Path) -> str:
         """Get the current git branch for a work directory."""
-        result = subprocess.run(
-            ["git", "-C", str(work_dir), "branch", "--show-current"],
-            capture_output=True,
-            text=True,
-            check=True,
+        result = run_local_command_modern_version(
+            command=["git", "-C", str(work_dir), "branch", "--show-current"],
+            cwd=None,
+            is_checked=True,
         )
         return result.stdout.strip()
 
@@ -310,24 +328,20 @@ class AgentManager:
 
         success = False
         error: str | None = None
-        try:
-            process = subprocess.Popen(
-                cmd,
-                cwd=str(work_dir),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            if process.stdout is not None:
-                for line in process.stdout:
-                    stripped = line.rstrip("\n")
-                    log_queue.put(json.dumps({"line": stripped}))
 
-            return_code = process.wait()
-            success = return_code == 0
+        try:
+            result = run_local_command_modern_version(
+                command=cmd,
+                cwd=work_dir,
+                is_checked=False,
+                trace_output=True,
+                trace_on_line_callback=_LogQueueCallback(log_queue=log_queue),
+                shutdown_event=self._shutdown_event,
+            )
+            success = result.returncode == 0
             if not success:
-                error = f"mngr create exited with code {return_code}"
-        except (OSError, subprocess.SubprocessError) as e:
+                error = f"mngr create exited with code {result.returncode}"
+        except OSError as e:
             error = str(e)
             _loguru_logger.exception("Error creating agent {}", agent_id)
 
@@ -414,46 +428,34 @@ class AgentManager:
             str(events_dir),
         ]
 
+        self._observe_cg = ConcurrencyGroup(name="agent-manager-observe")
+        self._observe_cg.__enter__()
+
         try:
-            self._observe_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+            self._observe_cg.run_process_in_background(
+                command=cmd,
+                on_output=self._handle_observe_output_line,
+                shutdown_event=self._shutdown_event,
             )
-        except FileNotFoundError:
+        except (OSError, InvalidConcurrencyGroupStateError):
             _loguru_logger.warning(
                 "Could not start mngr observe subprocess. "
                 "Agent lifecycle events will not be detected."
             )
+            self._observe_cg.__exit__(None, None, None)
+            self._observe_cg = None
+
+    def _handle_observe_output_line(self, line: str, _is_stdout: bool) -> None:
+        """Parse and dispatch a single line of output from mngr observe."""
+        stripped = line.strip()
+        if not stripped:
             return
-
-        self._observe_thread = threading.Thread(
-            target=self._observe_reader,
-            daemon=True,
-            name="agent-manager-observe",
-        )
-        self._observe_thread.start()
-
-    def _observe_reader(self) -> None:
-        """Read mngr observe output line by line and handle events."""
-        assert self._observe_process is not None
-        assert self._observe_process.stdout is not None
-
-        for line in self._observe_process.stdout:
-            if self._shutdown:
-                break
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                event = parse_discovery_event_line(line)
-                if event is not None:
-                    self._handle_discovery_event(event)
-            except (json.JSONDecodeError, ValueError, KeyError):
-                _loguru_logger.exception("Error parsing observe line: {}", line[:200])
-
-        _loguru_logger.info("Observe reader thread exiting")
+        try:
+            event = parse_discovery_event_line(stripped)
+            if event is not None:
+                self._handle_discovery_event(event)
+        except (json.JSONDecodeError, ValueError, KeyError):
+            _loguru_logger.exception("Error parsing observe line: {}", stripped[:200])
 
     def _handle_discovery_event(self, event: object) -> None:
         """Handle a discovery event from mngr observe."""
