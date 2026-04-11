@@ -141,3 +141,25 @@ def test_find_agent_by_api_key_handles_oserror_on_read(tmp_path: Path) -> None:
         assert found_id is None
     finally:
         os.chmod(hash_file, 0o644)
+
+
+def test_find_agent_by_api_key_skips_invalid_agent_id_directory(tmp_path: Path) -> None:
+    """Verify that directories with invalid agent ID names are skipped gracefully.
+
+    A stray directory whose name is not a valid AgentId format must not raise
+    an exception or prevent other valid agents from being found.
+    """
+    # Create a stray directory with an invalid AgentId name
+    agents_dir = tmp_path / "agents"
+    stray_dir = agents_dir / "not-a-valid-uuid"
+    stray_dir.mkdir(parents=True)
+    (stray_dir / "api_key_hash").write_text("somehash")
+
+    # Also create a valid agent with a real API key
+    agent_id = AgentId()
+    key = generate_api_key()
+    save_api_key_hash(tmp_path, agent_id, hash_api_key(key))
+
+    # The valid agent should still be found
+    found_id = find_agent_by_api_key(tmp_path, key)
+    assert found_id == agent_id

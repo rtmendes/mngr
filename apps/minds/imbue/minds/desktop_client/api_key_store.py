@@ -56,10 +56,15 @@ def find_agent_by_api_key(data_dir: Path, key: str) -> AgentId | None:
         if not hash_file.is_file():
             continue
         try:
+            agent_id = AgentId(agent_dir.name)
+        except ValueError:
+            logger.debug("Skipping non-agent directory in agents/: {}", agent_dir.name)
+            continue
+        try:
             stored_hash = hash_file.read_text().strip()
         except OSError as e:
             logger.debug("Failed to read API key hash file {}: {}", hash_file, e)
             continue
         if stored_hash == key_hash:
-            return AgentId(agent_dir.name)
+            return agent_id
     return None
