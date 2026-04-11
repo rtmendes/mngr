@@ -193,17 +193,8 @@ def _show_tkinter_toast(
     thread.start()
 
 
-def _dispatch_macos_notification(
-    request: NotificationRequest,
-    agent_display_name: str,
-) -> None:
-    """Display a native macOS notification via osascript."""
-    display_title = request.title or f"Notification from {agent_display_name}"
-    # Escape double quotes for AppleScript string literals
-    escaped_title = display_title.replace('"', '\\"')
-    escaped_message = request.message.replace('"', '\\"')
-    escaped_subtitle = f"From: {agent_display_name}".replace('"', '\\"')
-    script = f'display notification "{escaped_message}" with title "{escaped_title}" subtitle "{escaped_subtitle}"'
+def _run_macos_notification_subprocess(script: str) -> None:
+    """Run an AppleScript notification command via osascript on a background thread."""
     cg = ConcurrencyGroup(name="macos-notification")
     try:
         with cg:
@@ -213,6 +204,26 @@ def _dispatch_macos_notification(
             )
     except (OSError, ExceptionGroup) as e:
         logger.warning("Failed to show macOS notification: {}", e)
+
+
+def _dispatch_macos_notification(
+    request: NotificationRequest,
+    agent_display_name: str,
+) -> None:
+    """Display a native macOS notification via osascript on a background thread."""
+    display_title = request.title or f"Notification from {agent_display_name}"
+    # Escape double quotes for AppleScript string literals
+    escaped_title = display_title.replace('"', '\\"')
+    escaped_message = request.message.replace('"', '\\"')
+    escaped_subtitle = f"From: {agent_display_name}".replace('"', '\\"')
+    script = f'display notification "{escaped_message}" with title "{escaped_title}" subtitle "{escaped_subtitle}"'
+    thread = threading.Thread(
+        target=_run_macos_notification_subprocess,
+        args=(script,),
+        daemon=True,
+        name="macos-notification",
+    )
+    thread.start()
 
 
 class NotificationDispatcher(FrozenModel):
