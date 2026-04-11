@@ -4,18 +4,22 @@ import threading
 from typing import Any
 
 from loguru import logger as _loguru_logger
+from pydantic import PrivateAttr
+
+from imbue.imbue_common.mutable_model import MutableModel
 
 
-class WebSocketBroadcaster:
+class WebSocketBroadcaster(MutableModel):
     """Manages WebSocket clients and broadcasts state updates.
 
     Thread-safe: background threads call broadcast methods which put messages
     into per-client queues. WebSocket handlers (async) drain these queues.
     """
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._client_queues: list[queue.Queue[str | None]] = []
+    model_config = {"arbitrary_types_allowed": True, "extra": "forbid", "frozen": False}
+
+    _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    _client_queues: list[queue.Queue[str | None]] = PrivateAttr(default_factory=list)
 
     def register(self) -> queue.Queue[str | None]:
         """Register a new WebSocket client. Returns a queue to drain for messages."""
