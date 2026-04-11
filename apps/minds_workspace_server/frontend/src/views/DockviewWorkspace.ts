@@ -599,11 +599,11 @@ export const DockviewWorkspace: m.Component<{ agentId: string | null }> = {
         ? m(CreateAgentModal, {
             mode: "chat",
             parentAgentId: newChatParentAgentId,
-            onCreated(newAgentId: string) {
+            onCreated(newAgentId: string, newAgentName: string) {
               showNewChatModal = false;
               const state = agentDockviews.get(agentId);
               if (state) {
-                addProtoAgentPanel(agentId, newAgentId, "new chat", state);
+                addProtoAgentPanel(agentId, newAgentId, newAgentName, state);
               }
             },
             onCancel() {

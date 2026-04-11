@@ -163,7 +163,7 @@ export const Sidebar: m.Component = {
           ? m(CreateAgentModal, {
               mode: "worktree",
               parentAgentId: getSelectedAgentId() ?? undefined,
-              onCreated(agentId: string) {
+              onCreated(agentId: string, _agentName: string) {
                 showCreateModal = false;
                 selectAgent(agentId);
               },

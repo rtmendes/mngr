@@ -9,7 +9,7 @@ import { apiUrl } from "../base-path";
 interface CreateAgentModalAttrs {
   mode: "worktree" | "chat";
   parentAgentId?: string;
-  onCreated: (agentId: string) => void;
+  onCreated: (agentId: string, agentName: string) => void;
   onCancel: () => void;
 }
 
@@ -56,7 +56,7 @@ export function CreateAgentModal(): m.Component<CreateAgentModalAttrs> {
         body,
       });
 
-      attrs.onCreated(response.agent_id);
+      attrs.onCreated(response.agent_id, name.trim());
     } catch (e) {
       error = (e as Error).message ?? "Creation failed";
       loading = false;
