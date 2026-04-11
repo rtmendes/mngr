@@ -109,6 +109,38 @@ def _parse_build_args(
     return region, plan, os_id, tuple(docker_build_args)
 
 
+def _resolve_dockerfile_paths(
+    docker_build_args: Sequence[str],
+    remote_build_dir: str,
+) -> tuple[str, ...]:
+    """Rewrite relative --file/--dockerfile paths to absolute paths on the VPS.
+
+    Docker resolves --file relative to the daemon's CWD, not the build context.
+    Since the build context was uploaded to remote_build_dir on the VPS, any
+    relative Dockerfile paths must be prefixed with that directory.
+
+    Handles both ``--file=Dockerfile`` and ``-f Dockerfile`` forms.
+    """
+    resolved: list[str] = []
+    is_next_arg_dockerfile = False
+    for arg in docker_build_args:
+        if is_next_arg_dockerfile:
+            if not arg.startswith("/"):
+                arg = f"{remote_build_dir}/{arg}"
+            is_next_arg_dockerfile = False
+        elif arg in ("-f", "--file", "--dockerfile"):
+            is_next_arg_dockerfile = True
+        else:
+            for prefix in ("--file=", "-f=", "--dockerfile="):
+                if arg.startswith(prefix):
+                    dockerfile_path = arg[len(prefix):]
+                    if not dockerfile_path.startswith("/"):
+                        arg = f"{prefix}{remote_build_dir}/{dockerfile_path}"
+                    break
+        resolved.append(arg)
+    return tuple(resolved)
+
+
 # Label constants (same scheme as Docker provider)
 LABEL_PREFIX: Final[str] = "com.imbue.mngr."
 LABEL_PROVIDER: Final[str] = f"{LABEL_PREFIX}provider"
@@ -713,11 +745,16 @@ class VpsDockerProvider(BaseProviderInstance):
                 docker_ssh.run_ssh(f"mkdir -p {remote_build_dir}")
                 docker_ssh.upload_directory(local_context, remote_build_dir)
 
+            # Rewrite --file/--dockerfile paths to absolute paths on the VPS.
+            # These are relative to the local build context, but on the VPS
+            # the context lives at remote_build_dir.
+            resolved_build_args = _resolve_dockerfile_paths(non_context_args, remote_build_dir)
+
             with log_span("Building Docker image on VPS"):
                 docker_ssh.build_image(
                     tag=build_tag,
                     build_context_path=remote_build_dir,
-                    docker_build_args=tuple(non_context_args),
+                    docker_build_args=tuple(resolved_build_args),
                     timeout_seconds=600.0,
                 )
         else:

@@ -7,6 +7,7 @@ import pytest
 from imbue.mngr.errors import MngrError
 from imbue.mngr_vps_docker.instance import _parse_build_args
 from imbue.mngr_vps_docker.instance import _remove_host_from_known_hosts
+from imbue.mngr_vps_docker.instance import _resolve_dockerfile_paths
 
 _DEFAULT_REGION = "ewr"
 _DEFAULT_PLAN = "vc2-1c-1gb"
@@ -125,3 +126,49 @@ def test_remove_host_from_known_hosts_empty_file(tmp_path: Path) -> None:
     known_hosts.write_text("")
     _remove_host_from_known_hosts(known_hosts, "192.168.1.100", 22)
     assert known_hosts.read_text() == ""
+
+
+# -- _resolve_dockerfile_paths tests --
+
+
+def test_resolve_dockerfile_paths_rewrites_file_equals() -> None:
+    result = _resolve_dockerfile_paths(["--file=Dockerfile"], "/tmp/build")
+    assert result == ("--file=/tmp/build/Dockerfile",)
+
+
+def test_resolve_dockerfile_paths_rewrites_f_equals() -> None:
+    result = _resolve_dockerfile_paths(["-f=Dockerfile"], "/tmp/build")
+    assert result == ("-f=/tmp/build/Dockerfile",)
+
+
+def test_resolve_dockerfile_paths_rewrites_f_separate_arg() -> None:
+    result = _resolve_dockerfile_paths(["-f", "Dockerfile"], "/tmp/build")
+    assert result == ("-f", "/tmp/build/Dockerfile")
+
+
+def test_resolve_dockerfile_paths_rewrites_file_separate_arg() -> None:
+    result = _resolve_dockerfile_paths(["--file", "my.Dockerfile"], "/tmp/build")
+    assert result == ("--file", "/tmp/build/my.Dockerfile")
+
+
+def test_resolve_dockerfile_paths_preserves_absolute_path() -> None:
+    result = _resolve_dockerfile_paths(["--file=/abs/Dockerfile"], "/tmp/build")
+    assert result == ("--file=/abs/Dockerfile",)
+
+
+def test_resolve_dockerfile_paths_preserves_absolute_separate_arg() -> None:
+    result = _resolve_dockerfile_paths(["-f", "/abs/Dockerfile"], "/tmp/build")
+    assert result == ("-f", "/abs/Dockerfile")
+
+
+def test_resolve_dockerfile_paths_preserves_other_args() -> None:
+    result = _resolve_dockerfile_paths(
+        ["--build-arg=FOO=bar", "--file=Dockerfile", "--no-cache"],
+        "/tmp/build",
+    )
+    assert result == ("--build-arg=FOO=bar", "--file=/tmp/build/Dockerfile", "--no-cache")
+
+
+def test_resolve_dockerfile_paths_empty_args() -> None:
+    result = _resolve_dockerfile_paths([], "/tmp/build")
+    assert result == ()
