@@ -153,6 +153,11 @@ class AgentTypeConfig(FrozenModel):
         default=None,
         description="Base type to inherit from (must be a plugin-provided or command type, not another custom type)",
     )
+    plugin: str | None = Field(
+        default=None,
+        description="Plugin that provides this agent type. Defaults to parent_type (if set) or the type name. "
+        "Used to skip parsing when the plugin is disabled.",
+    )
     command: CommandString | None = Field(
         default=None,
         description="Command to run for this agent type",
@@ -180,7 +185,7 @@ class AgentTypeConfig(FrozenModel):
 
         Uses model_fields_set to determine which fields were explicitly set in
         the override config, so that subclass-specific fields (e.g., ClaudeAgentConfig's
-        trust_working_directory) are correctly preserved during merges.
+        auto_dismiss_dialogs) are correctly preserved during merges.
 
         Scalar fields: override wins if explicitly set
         Tuples (cli_args): concatenate
@@ -370,6 +375,40 @@ class CreateTemplate(FrozenModel):
         return self.__class__(options=merged_options)
 
 
+class RetryConfig(FrozenModel):
+    """Configuration for connection retry behavior.
+
+    Controls how many times and how frequently mngr retries SSH connections
+    to remote agents when connecting (via both ``mngr create --connect`` and
+    ``mngr connect``).
+    """
+
+    connect_retry_times: int = Field(
+        default=3,
+        description="Number of times to retry a failed SSH connection before giving up",
+    )
+    connect_retry_delay: str = Field(
+        default="5s",
+        description="Delay between connection retries (e.g., '5s', '1m')",
+    )
+
+    def merge_with(self, override: "RetryConfig") -> "RetryConfig":
+        """Merge this config with an override config.
+
+        Important note: despite the type signatures, any of these fields may be None in the override--this means that they were NOT set in the toml (and thus should be ignored)
+
+        Scalar fields: override wins if not None
+        """
+        return RetryConfig(
+            connect_retry_times=override.connect_retry_times
+            if override.connect_retry_times is not None
+            else self.connect_retry_times,
+            connect_retry_delay=override.connect_retry_delay
+            if override.connect_retry_delay is not None
+            else self.connect_retry_delay,
+        )
+
+
 class MngrConfig(FrozenModel):
     """Root configuration model for mngr."""
 
@@ -427,6 +466,10 @@ class MngrConfig(FrozenModel):
     pre_command_scripts: dict[str, list[str]] = Field(
         default_factory=dict,
         description="Commands to run before CLI commands execute, keyed by command name (e.g., 'create': ['echo hello', 'validate.sh'])",
+    )
+    retry: RetryConfig = Field(
+        default_factory=RetryConfig,
+        description="Connection retry configuration",
     )
     logging: LoggingConfig = Field(
         default_factory=LoggingConfig,
@@ -606,6 +649,11 @@ class MngrConfig(FrozenModel):
         if override.default_destroyed_host_persisted_seconds is not None:
             default_destroyed_host_persisted_seconds = override.default_destroyed_host_persisted_seconds
 
+        # Merge retry (nested config - use merge_with if override.retry is not None)
+        merged_retry = self.retry
+        if override.retry is not None:
+            merged_retry = self.retry.merge_with(override.retry)
+
         # Merge logging (nested config - use merge_with if override.logging is not None)
         merged_logging = self.logging
         if override.logging is not None:
@@ -627,6 +675,7 @@ class MngrConfig(FrozenModel):
             pre_command_scripts=merged_pre_command_scripts,
             is_remote_agent_installation_allowed=is_remote_agent_installation_allowed,
             connect_command=merged_connect_command,
+            retry=merged_retry,
             logging=merged_logging,
             is_nested_tmux_allowed=merged_is_nested_tmux_allowed,
             headless=merged_headless,
@@ -673,7 +722,7 @@ class MngrContext(FrozenModel):
     )
     project_root: Path | None = Field(
         default=None,
-        description="Project root directory (--context or git worktree root)",
+        description="Project root directory (git worktree root)",
     )
 
     def get_plugin_config(self, name: str, config_type: type[PluginConfigT]) -> PluginConfigT:
@@ -750,11 +799,9 @@ class CommonCliOptions(FrozenModel):
     verbose: int
     log_file: str | None
     log_commands: bool | None
-    log_command_output: bool | None
-    log_env_vars: bool | None
-    project_context_path: str | None
     plugin: tuple[str, ...]
     disable_plugin: tuple[str, ...]
+    setting: tuple[str, ...] = ()
 
 
 class CreateCliOptions(CommonCliOptions):
@@ -784,20 +831,13 @@ class CreateCliOptions(CommonCliOptions):
     command: str | None
     extra_window: tuple[str, ...]
     source: str | None
-    source_agent: str | None
-    source_host: str | None
-    source_path: str | None
-    target: str | None
     target_path: str | None
     transfer: str | None
     rsync: bool | None
     rsync_args: str | None
-    include_git: bool
     include_unclean: bool | None
     include_gitignored: bool
     branch: str
-    depth: int | None
-    shallow_since: str | None
     env: tuple[str, ...]
     env_file: tuple[str, ...]
     pass_env: tuple[str, ...]
@@ -814,12 +854,9 @@ class CreateCliOptions(CommonCliOptions):
     build_arg: tuple[str, ...]
     start_arg: tuple[str, ...]
     reconnect: bool
-    interactive: bool | None
     message: str | None
     message_file: str | None
     edit_message: bool
-    retry: int
-    retry_delay: str
     attach_command: str | None
     idle_timeout: str | None
     idle_mode: str | None
@@ -830,6 +867,5 @@ class CreateCliOptions(CommonCliOptions):
     grant: tuple[str, ...]
     extra_provision_command: tuple[str, ...]
     upload_file: tuple[str, ...]
-    append_to_file: tuple[str, ...]
-    prepend_to_file: tuple[str, ...]
+    update: bool
     yes: bool

@@ -26,6 +26,7 @@ from imbue.mngr.cli.connect import filter_agents
 from imbue.mngr.cli.connect import handle_search_key
 from imbue.mngr.cli.connect import select_agent_interactively
 from imbue.mngr.cli.create import create
+from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.main import cli
 from imbue.mngr.primitives import AgentLifecycleState
@@ -83,7 +84,7 @@ def test_connect_cli_invokes_tmux_attach_for_named_agent(
 
     # Verify the CLI resolved the agent and called tmux attach with the right session
     assert len(intercepted_execvp_calls) == 1
-    assert intercepted_execvp_calls[0] == ("tmux", ["tmux", "attach", "-t", session_name])
+    assert intercepted_execvp_calls[0] == ("tmux", ["tmux", "attach", "-t", f"={session_name}"])
 
 
 @pytest.mark.tmux
@@ -127,7 +128,7 @@ def test_connect_via_cli_group(
         )
 
         assert len(intercepted_execvp_calls) == 1
-        assert intercepted_execvp_calls[0] == ("tmux", ["tmux", "attach", "-t", session_name])
+        assert intercepted_execvp_calls[0] == ("tmux", ["tmux", "attach", "-t", f"={session_name}"])
 
     finally:
         cleanup_tmux_session(session_name)
@@ -185,7 +186,7 @@ def test_connect_start_restarts_stopped_agent(
         # Verify the tmux session was recreated before attaching
         assert tmux_session_exists(session_name), f"Expected tmux session {session_name} to be restarted"
         assert len(intercepted_execvp_calls) == 1
-        assert intercepted_execvp_calls[0] == ("tmux", ["tmux", "attach", "-t", session_name])
+        assert intercepted_execvp_calls[0] == ("tmux", ["tmux", "attach", "-t", f"={session_name}"])
 
     finally:
         cleanup_tmux_session(session_name)
@@ -272,7 +273,7 @@ def test_connect_cli_non_interactive_selects_most_recent_agent(
 
     # Verify the CLI selected the most recently created agent
     assert len(intercepted_execvp_calls) == 1
-    assert intercepted_execvp_calls[0] == ("tmux", ["tmux", "attach", "-t", session_new])
+    assert intercepted_execvp_calls[0] == ("tmux", ["tmux", "attach", "-t", f"={session_new}"])
 
 
 # =============================================================================
@@ -282,43 +283,44 @@ def test_connect_cli_non_interactive_selects_most_recent_agent(
 
 def test_build_connection_options_allow_unknown_host_true(
     default_connect_cli_opts: ConnectCliOptions,
+    temp_mngr_ctx: MngrContext,
 ) -> None:
     """Test that allow_unknown_host=True produces is_unknown_host_allowed=True."""
     opts = default_connect_cli_opts.model_copy_update(
         to_update(default_connect_cli_opts.field_ref().allow_unknown_host, True),
     )
 
-    connection_opts = _build_connection_options(opts)
+    connection_opts = _build_connection_options(opts, temp_mngr_ctx)
 
     assert connection_opts.is_unknown_host_allowed is True
 
 
 def test_build_connection_options_allow_unknown_host_default(
     default_connect_cli_opts: ConnectCliOptions,
+    temp_mngr_ctx: MngrContext,
 ) -> None:
     """Test that is_unknown_host_allowed defaults to False."""
-    connection_opts = _build_connection_options(default_connect_cli_opts)
+    connection_opts = _build_connection_options(default_connect_cli_opts, temp_mngr_ctx)
 
     assert connection_opts.is_unknown_host_allowed is False
 
 
 def test_build_connection_options_maps_all_fields(
     default_connect_cli_opts: ConnectCliOptions,
+    temp_mngr_ctx: MngrContext,
 ) -> None:
     """Test that all ConnectCliOptions fields are correctly mapped to ConnectionOptions."""
     opts = default_connect_cli_opts.model_copy_update(
         to_update(default_connect_cli_opts.field_ref().reconnect, False),
-        to_update(default_connect_cli_opts.field_ref().retry, 5),
-        to_update(default_connect_cli_opts.field_ref().retry_delay, "10s"),
         to_update(default_connect_cli_opts.field_ref().attach_command, "bash"),
         to_update(default_connect_cli_opts.field_ref().allow_unknown_host, True),
     )
 
-    connection_opts = _build_connection_options(opts)
+    connection_opts = _build_connection_options(opts, temp_mngr_ctx)
 
     assert connection_opts.is_reconnect is False
-    assert connection_opts.retry_count == 5
-    assert connection_opts.retry_delay == "10s"
+    assert connection_opts.retry_count == temp_mngr_ctx.config.retry.connect_retry_times
+    assert connection_opts.retry_delay == temp_mngr_ctx.config.retry.connect_retry_delay
     assert connection_opts.attach_command == "bash"
     assert connection_opts.is_unknown_host_allowed is True
 

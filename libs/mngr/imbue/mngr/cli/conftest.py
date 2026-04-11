@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from imbue.mngr.cli.archive import archive
 from imbue.mngr.cli.capture import capture
+from imbue.mngr.cli.check_deps import check_deps
 from imbue.mngr.cli.cleanup import cleanup
 from imbue.mngr.cli.config import config
 from imbue.mngr.cli.connect import ConnectCliOptions
@@ -16,6 +17,7 @@ from imbue.mngr.cli.connect import connect
 from imbue.mngr.cli.destroy import destroy
 from imbue.mngr.cli.events import events
 from imbue.mngr.cli.exec import exec_command
+from imbue.mngr.cli.extras import extras
 from imbue.mngr.cli.gc import gc
 from imbue.mngr.cli.help import help_command
 from imbue.mngr.cli.label import label
@@ -49,11 +51,9 @@ def default_create_cli_opts() -> CreateCliOptions:
         verbose=0,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=(),
         disable_plugin=(),
+        setting=(),
         positional_name=None,
         positional_agent_type=None,
         agent_args=(),
@@ -68,20 +68,13 @@ def default_create_cli_opts() -> CreateCliOptions:
         command=None,
         extra_window=(),
         source=None,
-        source_agent=None,
-        source_host=None,
-        source_path=None,
-        target=None,
         target_path=None,
         transfer=None,
         rsync=None,
         rsync_args=None,
-        include_git=True,
         include_unclean=None,
         include_gitignored=False,
         branch=":mngr/*",
-        depth=None,
-        shallow_since=None,
         env=(),
         env_file=(),
         pass_env=(),
@@ -98,12 +91,9 @@ def default_create_cli_opts() -> CreateCliOptions:
         build_arg=(),
         start_arg=(),
         reconnect=True,
-        interactive=None,
         message=None,
         message_file=None,
         edit_message=False,
-        retry=3,
-        retry_delay="5s",
         attach_command=None,
         connect_command=None,
         idle_timeout=None,
@@ -115,8 +105,7 @@ def default_create_cli_opts() -> CreateCliOptions:
         grant=(),
         extra_provision_command=(),
         upload_file=(),
-        append_to_file=(),
-        prepend_to_file=(),
+        update=False,
         yes=False,
     )
 
@@ -134,16 +123,12 @@ def default_connect_cli_opts() -> ConnectCliOptions:
         verbose=0,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=(),
         disable_plugin=(),
+        setting=(),
         agent=None,
         start=True,
         reconnect=True,
-        retry=3,
-        retry_delay="5s",
         attach_command=None,
         allow_unknown_host=False,
     )
@@ -228,11 +213,13 @@ def editor_recovery_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path
 _HELP_TEST_CASES: list[tuple[click.Command, list[str], str]] = [
     (archive, ["--help"], "archive"),
     (capture, ["--help"], "capture"),
+    (check_deps, ["--help"], "dependencies"),
     (cleanup, ["--help"], "cleanup"),
     (config, ["--help"], "config"),
     (connect, ["--help"], "connect"),
     (destroy, ["--help"], "destroy"),
     (exec_command, ["--help"], "exec"),
+    (extras, ["--help"], "extras"),
     (gc, ["--help"], "gc"),
     (help_command, ["--help"], "help"),
     (label, ["--help"], "label"),

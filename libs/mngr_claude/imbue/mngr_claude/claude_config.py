@@ -1,6 +1,7 @@
 import copy
 import fcntl
 import json
+import os
 import shutil
 from collections.abc import Generator
 from collections.abc import Mapping
@@ -70,14 +71,67 @@ class ClaudeBypassPermissionsNotAcceptedError(ConfigError):
         )
 
 
-def get_claude_config_path() -> Path:
-    """Return the path to the global Claude config file (~/.claude.json)."""
-    return Path.home() / ".claude.json"
+def get_claude_config_dir() -> Path:
+    """Return the Claude Code config directory.
+
+    Reads $CLAUDE_CONFIG_DIR if set, otherwise defaults to ~/.claude/.
+    This returns the "current" config directory -- inside an mngr agent it
+    points to the per-agent isolated config dir.
+    """
+    env_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return Path.home() / ".claude"
 
 
-def get_claude_config_backup_path() -> Path:
-    """Return the path to the global Claude config backup file."""
-    return Path.home() / ".claude.json.bak"
+def get_user_claude_config_dir() -> Path:
+    """Return the user-scope Claude Code config directory.
+
+    Inside an mngr agent, $CLAUDE_CONFIG_DIR points to the agent's isolated
+    config dir, but code that needs the user's original config (e.g. to copy
+    credentials or settings) should call this function instead.
+
+    Resolution order:
+    1. $ORIGINAL_CLAUDE_CONFIG_DIR (set by mngr when creating agents)
+    2. Falls back to get_claude_config_dir() ($CLAUDE_CONFIG_DIR or ~/.claude/)
+    """
+    original = os.environ.get("ORIGINAL_CLAUDE_CONFIG_DIR")
+    if original:
+        return Path(original)
+    return get_claude_config_dir()
+
+
+def find_user_claude_config() -> Path:
+    """Find the user-scope Claude config file (.claude.json).
+
+    Returns the first candidate path that exists on disk. If none exist,
+    returns the first candidate as the default creation path.
+
+    Inside an mngr agent, $CLAUDE_CONFIG_DIR points to the agent's isolated
+    config dir. This function looks for the *user's* original config instead.
+
+    Candidate paths when $ORIGINAL_CLAUDE_CONFIG_DIR is set:
+    1. $ORIGINAL_CLAUDE_CONFIG_DIR/.claude.json (custom CLAUDE_CONFIG_DIR convention)
+    2. Parent of $ORIGINAL_CLAUDE_CONFIG_DIR / .claude.json (default layout where the
+       config file lives *beside* the config dir: ~/.claude/ dir -> ~/.claude.json file)
+
+    Without $ORIGINAL_CLAUDE_CONFIG_DIR:
+    1. ~/.claude.json (Claude Code's default location)
+    """
+    candidates: list[Path] = []
+
+    original = os.environ.get("ORIGINAL_CLAUDE_CONFIG_DIR")
+    if original:
+        original_path = Path(original)
+        candidates.append(original_path / ".claude.json")
+        candidates.append(original_path.parent / ".claude.json")
+
+    candidates.append(Path.home() / ".claude.json")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 
 # =============================================================================
@@ -352,7 +406,7 @@ def check_claude_dialogs_dismissed(config_path: Path, source_path: Path) -> None
     # by skipDangerousModePermissionPrompt in settings.json instead.
 
 
-def ensure_claude_dialogs_dismissed(config_path: Path, source_path: Path) -> None:
+def auto_dismiss_claude_dialogs(config_path: Path, source_path: Path) -> None:
     """Ensure all known Claude startup dialogs are marked as dismissed.
 
     Sets the necessary fields in the config file so that Claude Code can start
@@ -457,6 +511,11 @@ def build_readiness_hooks_config() -> dict[str, Any]:
                         },
                         {
                             "type": "command",
+                            "command": _SESSION_GUARD
+                            + 'echo "The base branch for this work is: ${GIT_BASE_BRANCH:-main}"',
+                        },
+                        {
+                            "type": "command",
                             "command": (
                                 _SESSION_GUARD + "_MNGR_HOOK_INPUT=$(cat);"
                                 ' _MNGR_NEW_SID=$(echo "$_MNGR_HOOK_INPUT" | jq -r ".session_id // empty");'
@@ -537,6 +596,31 @@ def build_readiness_hooks_config() -> dict[str, Any]:
                         {
                             "type": "command",
                             "command": _SESSION_GUARD + 'bash "$MNGR_AGENT_STATE_DIR/commands/wait_for_stop_hook.sh"',
+                        },
+                    ],
+                }
+            ],
+        }
+    }
+
+
+@pure
+def build_credential_sync_hooks_config() -> dict[str, Any]:
+    """Build the hooks configuration for credential sync on macOS.
+
+    Installs a Notification:auth_success hook that propagates keychain
+    credentials from the current agent to all other per-agent keychain entries
+    after a successful login.
+    """
+    return {
+        "hooks": {
+            "Notification": [
+                {
+                    "matcher": "auth_success",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": 'python3 "$MNGR_AGENT_STATE_DIR/commands/sync_keychain_credentials.py"',
                         },
                     ],
                 }

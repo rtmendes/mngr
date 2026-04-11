@@ -12,7 +12,9 @@ from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import NestedTmuxError
 from imbue.mngr.interfaces.agent import AgentInterface
 from imbue.mngr.interfaces.host import OnlineHostInterface
+from imbue.mngr.utils.duration import parse_duration_to_seconds
 from imbue.mngr.utils.interactive_subprocess import run_interactive_subprocess
+from imbue.mngr.utils.polling import poll_until
 
 # Exit codes used by the remote SSH wrapper script to signal post-disconnect actions.
 # These are checked by connect_to_agent after the SSH session ends to determine
@@ -21,7 +23,29 @@ SIGNAL_EXIT_CODE_DESTROY: Final[int] = 10
 SIGNAL_EXIT_CODE_STOP: Final[int] = 11
 
 
-def _build_ssh_activity_wrapper_script(session_name: str, host_dir: Path, agent_command: str) -> str:
+def build_post_attach_resize_script(session_name: str) -> str:
+    """Build a shell command that resizes tmux windows and sends SIGWINCH.
+
+    After a tmux client attaches, resize all windows to match the client
+    (resize-window -A), then explicitly send SIGWINCH to each pane's child
+    processes. The explicit SIGWINCH is needed because resize-window -A can
+    be a no-op (and thus not trigger SIGWINCH) when the window already
+    matches the client size (e.g., due to window-size=latest).
+
+    Uses pgrep -P to find child processes of each pane. This avoids any
+    dependency on matching the agent's process name, which is unreliable
+    (on macOS, Claude's process title shows as its version number rather
+    than "claude").
+    """
+    return (
+        f"tmux list-windows -t '={session_name}' -F '#I' | "
+        f"xargs -I{{}} tmux resize-window -t '{session_name}':{{}} -A; "
+        f"tmux list-panes -t '{session_name}' -F '#{{pane_pid}}' | "
+        f"xargs -I{{}} sh -c 'kill -WINCH {{}} $(pgrep -P {{}})' 2>/dev/null"
+    )
+
+
+def _build_ssh_activity_wrapper_script(session_name: str, host_dir: Path) -> str:
     """Build a shell script that tracks SSH activity while running tmux.
 
     The script:
@@ -50,10 +74,10 @@ def _build_ssh_activity_wrapper_script(session_name: str, host_dir: Path, agent_
         f'printf \'{{\\n  "time": %d,\\n  "ssh_pid": %d\\n}}\\n\' "$TIME_MS" "$$" > \'{activity_file}\'; '
         f"sleep 5; done) & "
         "MNGR_ACTIVITY_PID=$!; "
-        # resize all tmux windows to be the correct size and signal the agent that it needs to redraw. We do this with a delay so that it happens after attaching.
-        f"(sleep 5 && tmux list-windows -t '{session_name}' -F '#I' | xargs -I{{}} tmux resize-window -t '{session_name}':{{}} -A && sleep 1 && pkill -SIGWINCH -f {shlex.quote(agent_command)}) & "
+        # Force a terminal resize after attaching to trigger SIGWINCH delivery.
+        f"(sleep 3; {build_post_attach_resize_script(session_name)}) 2>/dev/null & "
         # actually attach
-        f"tmux attach -t '{session_name}'; "
+        f"tmux attach -t '={session_name}'; "
         "kill $MNGR_ACTIVITY_PID 2>/dev/null; "
         # Check for signal files written by tmux key bindings (Ctrl-q writes "destroy", Ctrl-t writes "stop")
         f"SIGNAL_FILE='{signal_file}'; "
@@ -176,7 +200,7 @@ def connect_to_agent(
 ) -> None:
     """Connect to an agent via tmux attach (local) or SSH + tmux attach (remote).
 
-    For local agents, replaces the current process with: tmux attach -t <session_name>
+    For local agents, replaces the current process with: tmux attach -t =<session_name>
 
     For remote agents, runs SSH interactively and then checks the exit code to
     determine if a post-disconnect action (destroy/stop) was requested via the
@@ -200,13 +224,12 @@ def connect_to_agent(
             # Copy and remove TMUX so tmux allows the nested attachment
             env = dict(os.environ)
             del env["TMUX"]
-        os.execvpe("tmux", ["tmux", "attach", "-t", session_name], env)
+        os.execvpe("tmux", ["tmux", "attach", "-t", f"={session_name}"], env)
     else:
         ssh_args = _build_ssh_args(host, connection_opts)
 
         # Build wrapper script that tracks SSH activity while running tmux
-        agent_command = agent.get_expected_process_name()
-        wrapper_script = _build_ssh_activity_wrapper_script(session_name, host.host_dir, agent_command)
+        wrapper_script = _build_ssh_activity_wrapper_script(session_name, host.host_dir)
         # Pass the wrapper as a single remote command string so SSH doesn't
         # split it into separate words. SSH concatenates multiple remote command
         # arguments with spaces, which would cause 'bash -c' to only receive
@@ -218,15 +241,43 @@ def connect_to_agent(
         if fixed_env.get("TERM") == "xterm-kitty":
             fixed_env["TERM"] = "xterm-256color"
 
-        # Use run_interactive_subprocess instead of os.execvp so we can check the exit code
-        # and run post-disconnect actions (destroy/stop) triggered by tmux key bindings
-        completed = run_interactive_subprocess(ssh_args, env=fixed_env)
-        exit_code = completed.returncode
+        retry_delay_seconds = parse_duration_to_seconds(connection_opts.retry_delay)
+        max_attempts = 1 + connection_opts.retry_count
 
-        action = _determine_post_disconnect_action(exit_code, session_name)
-        if action is not None:
-            executable, argv = action
-            logger.info("Running post-disconnect action: {}", argv)
-            os.execvp(executable, argv)
-        else:
-            logger.debug("SSH session ended with exit code {} (no post-disconnect action)", exit_code)
+        for attempt in range(1, max_attempts + 1):
+            # Use run_interactive_subprocess instead of os.execvp so we can check the exit code
+            # and run post-disconnect actions (destroy/stop) triggered by tmux key bindings
+            completed = run_interactive_subprocess(ssh_args, env=fixed_env)
+            exit_code = completed.returncode
+
+            # Exit code 0 means normal disconnect -- no retry needed
+            if exit_code == 0:
+                logger.debug("SSH session ended normally")
+                return
+
+            # Check for post-disconnect actions (destroy/stop via tmux key bindings)
+            action = _determine_post_disconnect_action(exit_code, session_name)
+            if action is not None:
+                executable, argv = action
+                logger.info("Running post-disconnect action: {}", argv)
+                os.execvp(executable, argv)
+                # The exec call above replaces the process and never returns.
+                # This return is a safety net for tests that mock the exec call.
+                return
+
+            # Non-zero, non-signal exit code: SSH connection failed
+            if attempt < max_attempts:
+                logger.warning(
+                    "SSH connection failed (exit code {}). Retrying in {} ({}/{})...",
+                    exit_code,
+                    connection_opts.retry_delay,
+                    attempt,
+                    max_attempts,
+                )
+                poll_until(lambda: False, timeout=retry_delay_seconds, poll_interval=retry_delay_seconds)
+            else:
+                logger.debug(
+                    "SSH session ended with exit code {} after {} attempt(s)",
+                    exit_code,
+                    max_attempts,
+                )
