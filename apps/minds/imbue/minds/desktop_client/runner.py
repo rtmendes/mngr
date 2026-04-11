@@ -20,6 +20,7 @@ from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingUrl
 from imbue.minds.desktop_client.cloudflare_client import CloudflareSecret
 from imbue.minds.desktop_client.cloudflare_client import CloudflareUsername
 from imbue.minds.desktop_client.cloudflare_client import OwnerEmail
+from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import OutputFormat
@@ -52,6 +53,8 @@ def start_desktop_client(
     cloudflare_client = _build_cloudflare_client()
     agent_creator = AgentCreator(paths=paths, cloudflare_client=cloudflare_client)
     telegram_orchestrator = TelegramSetupOrchestrator(paths=paths)
+    is_electron = os.getenv("MINDS_ELECTRON") == "1"
+    notification_dispatcher = NotificationDispatcher(is_electron=is_electron)
 
     # Generate a one-time login URL for the user
     code = OneTimeCode(secrets.token_urlsafe(_ONE_TIME_CODE_LENGTH))
@@ -79,6 +82,8 @@ def start_desktop_client(
         agent_creator=agent_creator,
         cloudflare_client=cloudflare_client,
         telegram_orchestrator=telegram_orchestrator,
+        notification_dispatcher=notification_dispatcher,
+        paths=paths,
     )
 
     if not is_no_browser:

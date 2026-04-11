@@ -28,12 +28,14 @@ from websockets import ClientConnection
 from imbue.minds.desktop_client.agent_creator import AgentCreationStatus
 from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.agent_creator import LOG_SENTINEL
+from imbue.minds.desktop_client.api_v1 import create_api_v1_router
 from imbue.minds.desktop_client.auth import AuthStoreInterface
 from imbue.minds.desktop_client.backend_resolver import BackendResolverInterface
 from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingClient
 from imbue.minds.desktop_client.cookie_manager import SESSION_COOKIE_NAME
 from imbue.minds.desktop_client.cookie_manager import create_session_cookie
 from imbue.minds.desktop_client.cookie_manager import verify_session_cookie
+from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.proxy import generate_backend_loading_html
 from imbue.minds.desktop_client.proxy import generate_bootstrap_html
 from imbue.minds.desktop_client.proxy import generate_browser_info_bar_html
@@ -1092,6 +1094,8 @@ def create_desktop_client(
     agent_creator: AgentCreator | None = None,
     cloudflare_client: CloudflareForwardingClient | None = None,
     telegram_orchestrator: TelegramSetupOrchestrator | None = None,
+    notification_dispatcher: NotificationDispatcher | None = None,
+    paths: "WorkspacePaths | None" = None,
 ) -> FastAPI:
     """Create the desktop client FastAPI application.
 
@@ -1106,7 +1110,12 @@ def create_desktop_client(
 
     When telegram_orchestrator is provided, the landing page shows Telegram setup
     buttons and the /api/agents/{agent_id}/telegram/* endpoints are available.
+
+    When notification_dispatcher and paths are provided, the /api/v1/ REST API
+    router is mounted with API key authentication and notification support.
     """
+    from imbue.minds.config.data_types import WorkspacePaths as _WorkspacePaths
+
     is_externally_managed_client = http_client is not None
 
     @asynccontextmanager
@@ -1127,8 +1136,16 @@ def create_desktop_client(
     app.state.agent_creator = agent_creator
     app.state.cloudflare_client = cloudflare_client
     app.state.telegram_orchestrator = telegram_orchestrator
+    app.state.notification_dispatcher = notification_dispatcher
+    if paths is not None:
+        app.state.api_v1_paths = paths
     if http_client is not None:
         app.state.http_client = http_client
+
+    # Mount the REST API v1 router
+    if paths is not None:
+        api_v1_router = create_api_v1_router()
+        app.include_router(api_v1_router, prefix="/api/v1")
 
     # Register routes
     app.get("/login")(_handle_login)
