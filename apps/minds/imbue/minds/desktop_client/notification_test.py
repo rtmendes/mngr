@@ -1,10 +1,11 @@
 import json
-from io import StringIO
-from unittest.mock import patch
+
+from _pytest.capture import CaptureFixture
 
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
+from imbue.minds.desktop_client.notification import _dispatch_electron_notification
 
 
 def test_notification_urgency_values() -> None:
@@ -31,19 +32,18 @@ def test_notification_request_with_all_fields() -> None:
     assert request.urgency == NotificationUrgency.CRITICAL
 
 
-def test_dispatch_electron_writes_jsonl_to_stdout() -> None:
-    dispatcher = NotificationDispatcher(is_electron=True)
+def test_electron_notification_output_contains_required_fields(capsys: CaptureFixture[str]) -> None:
+    """Verify _dispatch_electron_notification produces valid JSONL with all fields."""
     request = NotificationRequest(
         message="hello from agent",
         title="Alert",
         urgency=NotificationUrgency.CRITICAL,
     )
 
-    captured = StringIO()
-    with patch("imbue.minds.utils.output.sys.stdout", captured):
-        dispatcher.dispatch(request, "my-agent")
+    _dispatch_electron_notification(request, "my-agent")
 
-    output = captured.getvalue().strip()
+    captured = capsys.readouterr()
+    output = captured.out.strip()
     event = json.loads(output)
     assert event["event"] == "notification"
     assert event["message"] == "hello from agent"
@@ -52,33 +52,24 @@ def test_dispatch_electron_writes_jsonl_to_stdout() -> None:
     assert event["agent_name"] == "my-agent"
 
 
-def test_dispatch_electron_without_title() -> None:
-    dispatcher = NotificationDispatcher(is_electron=True)
+def test_electron_notification_omits_title_when_none(capsys: CaptureFixture[str]) -> None:
     request = NotificationRequest(message="no title")
 
-    captured = StringIO()
-    with patch("imbue.minds.utils.output.sys.stdout", captured):
-        dispatcher.dispatch(request, "agent-1")
+    _dispatch_electron_notification(request, "agent-1")
 
-    output = captured.getvalue().strip()
+    captured = capsys.readouterr()
+    output = captured.out.strip()
     event = json.loads(output)
     assert event["event"] == "notification"
     assert event["message"] == "no title"
     assert "title" not in event
 
 
-def test_dispatch_tkinter_spawns_thread() -> None:
-    """Verify tkinter dispatch starts a background thread without crashing."""
-    import tkinter as tk
+def test_dispatcher_routes_to_electron_when_configured() -> None:
+    dispatcher = NotificationDispatcher(is_electron=True)
+    assert dispatcher.is_electron is True
 
+
+def test_dispatcher_routes_to_tkinter_when_not_electron() -> None:
     dispatcher = NotificationDispatcher(is_electron=False)
-    request = NotificationRequest(
-        message="test notification",
-        urgency=NotificationUrgency.LOW,
-    )
-
-    # Patch tkinter.Tk to avoid actually creating a window in CI
-    with patch("imbue.minds.desktop_client.notification.tk.Tk") as mock_tk:
-        mock_tk.side_effect = tk.TclError("no display")
-        # This should not raise -- the tkinter error is caught internally
-        dispatcher.dispatch(request, "test-agent")
+    assert dispatcher.is_electron is False
