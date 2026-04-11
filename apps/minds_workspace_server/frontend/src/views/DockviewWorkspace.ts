@@ -125,7 +125,7 @@ function buildDropdownItems(
   if (apps.length > 0) {
     for (const app of apps) {
       const basePath = getBasePath();
-      const proxyUrl = `${basePath.replace(/\/web\/?$/, "")}/../${app.name}/`.replace(/\/\.\.\//g, "/");
+      const proxyUrl = `${basePath.replace(/\/web\/?$/, "")}/${app.name}/`;
       items.push({
         label: app.name,
         action: () => openIframeTab(agentId, dockviewState, proxyUrl, app.name),
