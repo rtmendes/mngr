@@ -749,3 +749,105 @@ def test_write_api_url_to_remote_handles_ssh_exception(tmp_path: Path) -> None:
         url="http://127.0.0.1:9000",
     )
     manager.cleanup()
+
+
+# -- setup_reverse_tunnel tests --
+#
+# These tests inject a FakeSSHClient directly into _connections so that
+# setup_reverse_tunnel can run without making real SSH connections.
+
+
+def test_setup_reverse_tunnel_returns_assigned_port(tmp_path: Path) -> None:
+    """setup_reverse_tunnel calls request_port_forward and returns the assigned port."""
+    ssh_info = _sample_ssh_info(tmp_path)
+    fake_client = FakeSSHClient.create(active=True)
+    manager = _make_manager_with_fake_connection(ssh_info, fake_client)
+
+    remote_port = manager.setup_reverse_tunnel(
+        ssh_info=ssh_info,
+        local_port=8420,
+        agent_state_dir="~/.mngr/agents/test-agent",
+    )
+
+    assert remote_port == 54321
+    manager.cleanup()
+
+
+def test_setup_reverse_tunnel_stores_tunnel_info(tmp_path: Path) -> None:
+    """After setup, the tunnel info is stored in _reverse_tunnels."""
+    ssh_info = _sample_ssh_info(tmp_path)
+    fake_client = FakeSSHClient.create(active=True)
+    manager = _make_manager_with_fake_connection(ssh_info, fake_client)
+
+    manager.setup_reverse_tunnel(
+        ssh_info=ssh_info,
+        local_port=8420,
+        agent_state_dir="~/.mngr/agents/test-agent",
+    )
+
+    conn_key = f"{ssh_info.host}:{ssh_info.port}"
+    with manager._lock:
+        tunnel_info = manager._reverse_tunnels.get(conn_key)
+
+    assert tunnel_info is not None
+    assert tunnel_info.remote_port == 54321
+    assert tunnel_info.local_port == 8420
+    assert "~/.mngr/agents/test-agent" in tunnel_info.agent_state_dirs
+    manager.cleanup()
+
+
+def test_setup_reverse_tunnel_reuses_existing_active_tunnel(tmp_path: Path) -> None:
+    """When an active reverse tunnel already exists for a host, the same port is returned."""
+    ssh_info = _sample_ssh_info(tmp_path)
+    fake_client = FakeSSHClient.create(active=True)
+    manager = _make_manager_with_fake_connection(ssh_info, fake_client)
+
+    conn_key = f"{ssh_info.host}:{ssh_info.port}"
+    existing_tunnel = ReverseTunnelInfo(
+        ssh_info=ssh_info,
+        local_port=8420,
+        remote_port=11111,
+        agent_state_dirs=["~/.mngr/agents/agent-a"],
+    )
+    with manager._lock:
+        manager._reverse_tunnels[conn_key] = existing_tunnel
+
+    port = manager.setup_reverse_tunnel(
+        ssh_info=ssh_info,
+        local_port=8420,
+        agent_state_dir="~/.mngr/agents/agent-b",
+    )
+
+    assert port == 11111
+    with manager._lock:
+        tunnel_info = manager._reverse_tunnels[conn_key]
+    assert "~/.mngr/agents/agent-b" in tunnel_info.agent_state_dirs
+    manager.cleanup()
+
+
+def test_setup_reverse_tunnel_does_not_duplicate_agent_dir(tmp_path: Path) -> None:
+    """Calling setup with an agent_state_dir already tracked does not duplicate it."""
+    ssh_info = _sample_ssh_info(tmp_path)
+    fake_client = FakeSSHClient.create(active=True)
+    manager = _make_manager_with_fake_connection(ssh_info, fake_client)
+
+    conn_key = f"{ssh_info.host}:{ssh_info.port}"
+    existing_tunnel = ReverseTunnelInfo(
+        ssh_info=ssh_info,
+        local_port=8420,
+        remote_port=11111,
+        agent_state_dirs=["~/.mngr/agents/agent-a"],
+    )
+    with manager._lock:
+        manager._reverse_tunnels[conn_key] = existing_tunnel
+
+    manager.setup_reverse_tunnel(
+        ssh_info=ssh_info,
+        local_port=8420,
+        agent_state_dir="~/.mngr/agents/agent-a",
+    )
+
+    with manager._lock:
+        tunnel_info = manager._reverse_tunnels[conn_key]
+    assert tunnel_info.agent_state_dirs.count("~/.mngr/agents/agent-a") == 1
+    manager.cleanup()
