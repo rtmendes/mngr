@@ -123,6 +123,6 @@ def run_modal_trigger(provider: ModalProviderInstance, trigger_name: str) -> int
         raise click.ClickException(f"Modal invocation failed for trigger '{trigger_name}': {exc}") from None
 
     if output:
-        write_human_line("{}", output)
+        write_human_line("{}", output.rstrip("\n"))
 
     return 0
