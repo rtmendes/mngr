@@ -46,16 +46,22 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ~/.cargo/bin/offload
-          key: cargo-offload-0.6.2-${{ runner.os }}
+          key: cargo-offload-git-2e814a85-${{ runner.os }}
 
       - name: Install offload
         run: |
           if ! command -v offload &> /dev/null; then
-            cargo install offload@0.6.2
+            cargo install --git https://github.com/imbue-ai/offload.git --rev 2e814a85
           fi
 
       - name: Run tests via offload
         run: just test-offload
+
+      - name: Combine coverage and check threshold
+        run: |
+          i=0; for f in $(find test-results/ -name ".coverage"); do cp "$f" ".coverage.$i"; i=$((i+1)); done
+          uv run coverage combine .coverage.*
+          uv run coverage report --rcfile=libs/mngr/pyproject.toml --fail-under=80
 
       - name: Upload test results
         if: always()
@@ -100,6 +106,7 @@ jobs:
     env:
       MODAL_TOKEN_ID: ${{ vars.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
     steps:
       - uses: actions/checkout@v6
@@ -132,12 +139,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ~/.cargo/bin/offload
-          key: cargo-offload-0.6.2-${{ runner.os }}
+          key: cargo-offload-git-2e814a85-${{ runner.os }}
 
       - name: Install offload
         run: |
           if ! command -v offload &> /dev/null; then
-            cargo install offload@0.6.2
+            cargo install --git https://github.com/imbue-ai/offload.git --rev 2e814a85
           fi
 
       - name: Run acceptance tests via offload
