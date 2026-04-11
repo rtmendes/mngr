@@ -5,6 +5,7 @@ from pathlib import Path
 
 import paramiko
 import pytest
+from pydantic import PrivateAttr
 from pydantic import ValidationError
 
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
@@ -409,10 +410,10 @@ class _FakeSSHTunnelManager(SSHTunnelManager):
     so tests can exercise _check_and_repair_tunnels without a real SSH server.
     """
 
-    _setup_calls: list[tuple[RemoteSSHInfo, int, str]] = []
-    _write_calls: list[tuple[RemoteSSHInfo, str, str]] = []
-    _setup_port: int = 9999
-    _setup_raise: type[Exception] | None = None
+    _setup_calls: list[tuple[RemoteSSHInfo, int, str]] = PrivateAttr(default_factory=list)
+    _write_calls: list[tuple[RemoteSSHInfo, str, str]] = PrivateAttr(default_factory=list)
+    _setup_port: int = PrivateAttr(default=9999)
+    _setup_raise: type[Exception] | None = PrivateAttr(default=None)
 
     def setup_reverse_tunnel(
         self,
@@ -438,10 +439,8 @@ def _make_fake_reverse_tunnel_manager(
     remote_port: int = 9999,
     raise_on_setup: type[Exception] | None = None,
 ) -> _FakeSSHTunnelManager:
-    """Create a _FakeSSHTunnelManager with fresh call lists."""
+    """Create a _FakeSSHTunnelManager with the given configuration."""
     mgr = _FakeSSHTunnelManager()
-    mgr._setup_calls = []
-    mgr._write_calls = []
     mgr._setup_port = remote_port
     mgr._setup_raise = raise_on_setup
     return mgr
