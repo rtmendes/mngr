@@ -497,11 +497,12 @@ def _reverse_tunnel_accept_loop(
         if channel is None:
             continue
 
+        local_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            local_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             local_sock.connect(("127.0.0.1", local_port))
         except OSError as e:
             logger.warning("Failed to connect to local port {} for reverse tunnel: {}", local_port, e)
+            local_sock.close()
             try:
                 channel.close()
             except (paramiko.SSHException, OSError):
