@@ -2,6 +2,7 @@
 
 import json
 import os
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -240,15 +241,28 @@ def test_get_log_queue_for_proto_agent(
             work_dir="/tmp/test-work",
         )
 
+    # Use a blocking event so the creation thread cannot complete before we assert
+    creation_started = threading.Event()
+    creation_can_proceed = threading.Event()
+
+    mock_process = MagicMock()
+    mock_process.stdout = iter([])
+    mock_process.wait.side_effect = lambda: creation_can_proceed.wait() or 0
+
     with (
-        patch("imbue.minds_workspace_server.agent_manager.subprocess.Popen"),
+        patch(
+            "imbue.minds_workspace_server.agent_manager.subprocess.Popen",
+            side_effect=lambda *a, **kw: (creation_started.set(), mock_process)[1],
+        ),
         patch("imbue.minds_workspace_server.agent_manager.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(stdout="main\n", returncode=0)
         agent_id = agent_manager.create_worktree_agent("test-worktree", "parent-id")
 
-    log_q = agent_manager.get_log_queue(agent_id)
-    assert log_q is not None
+        creation_started.wait(timeout=5)
+        log_q = agent_manager.get_log_queue(agent_id)
+        assert log_q is not None
+        creation_can_proceed.set()
 
 
 def test_get_log_queue_returns_none_for_unknown(agent_manager: AgentManager) -> None:

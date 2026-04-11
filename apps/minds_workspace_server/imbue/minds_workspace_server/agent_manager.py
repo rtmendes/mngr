@@ -338,6 +338,7 @@ class AgentManager:
 
         with self._lock:
             self._proto_agents.pop(agent_id, None)
+            self._log_queues.pop(agent_id, None)
 
         self._broadcaster.broadcast_proto_agent_completed(
             agent_id=agent_id, success=success, error=error
