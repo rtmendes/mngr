@@ -277,4 +277,3 @@
 # ignore demos
 **/recordings
 /.dockerignore
-.offload-image-cache
