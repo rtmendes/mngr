@@ -152,7 +152,7 @@ async def _handle_telegram_setup(
         body = await request.json()
         raw_name = body.get("agent_name", agent_name)
         agent_name = str(raw_name).strip() if raw_name else agent_name
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError, AttributeError):
         pass
 
     telegram_orchestrator.start_setup(agent_id=parsed_id, agent_name=agent_name)
@@ -212,6 +212,9 @@ async def _handle_notification(
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
         return _json_error("Invalid JSON body", 400)
+
+    if not isinstance(body, dict):
+        return _json_error("Request body must be a JSON object", 400)
 
     message = body.get("message")
     if not message or not isinstance(message, str):

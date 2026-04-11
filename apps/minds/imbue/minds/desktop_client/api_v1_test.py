@@ -591,3 +591,26 @@ def test_cloudflare_disable_returns_502_when_api_call_fails(tmp_path: Path) -> N
     assert response.status_code == 502
 
 
+def test_notification_rejects_non_dict_json_body(tmp_path: Path) -> None:
+    """When the notification body is valid JSON but not a dict, return 400."""
+    client, _agent_id, api_key, _paths = _create_test_api_client(tmp_path)
+    response = client.post(
+        "/api/v1/notifications",
+        content="[1, 2, 3]",
+        headers={**_auth_headers(api_key), "Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+
+
+def test_telegram_setup_with_non_dict_json_body(tmp_path: Path) -> None:
+    """When the telegram setup body is valid JSON but not a dict, setup still proceeds."""
+    client, agent_id, api_key, _paths = _create_test_api_client_with_telegram(tmp_path)
+    response = client.post(
+        f"/api/v1/agents/{agent_id}/telegram",
+        content="42",
+        headers={**_auth_headers(api_key), "Content-Type": "application/json"},
+    )
+    # Non-dict body is handled gracefully: setup proceeds with default agent name
+    assert response.status_code == 200
+
+
