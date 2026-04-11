@@ -276,4 +276,3 @@
 
 # ignore demos
 **/recordings
-**/.reviewer/conversation-review-output.jsonl
