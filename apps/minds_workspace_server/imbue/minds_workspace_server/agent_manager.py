@@ -560,6 +560,9 @@ class AgentManager:
         try:
             observer.start()
             with self._lock:
+                if agent_id in self._app_observers:
+                    observer.stop()
+                    return
                 self._app_observers[agent_id] = observer
         except OSError:
             _loguru_logger.exception(
