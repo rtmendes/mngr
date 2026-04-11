@@ -139,12 +139,12 @@ def test_get_signing_key_raises_on_write_error(tmp_path: Path) -> None:
         os.chmod(auth_dir, 0o755)
 
 
-def test_load_codes_returns_empty_on_json_decode_error(tmp_path: Path) -> None:
-    """If the codes file contains invalid JSON, _load_codes returns an empty tuple."""
+def test_validate_code_returns_false_on_json_decode_error(tmp_path: Path) -> None:
+    """If the codes file contains invalid JSON, code validation returns False without crashing."""
     auth_dir = tmp_path / "auth"
     auth_dir.mkdir(parents=True)
     (auth_dir / "one_time_codes.json").write_text("not valid json {{{")
 
     store = FileAuthStore(data_directory=auth_dir)
-    result = store._load_codes()
-    assert result == ()
+    result = store.validate_and_consume_code(OneTimeCode("any-code"))
+    assert result is False
