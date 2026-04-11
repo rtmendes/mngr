@@ -208,50 +208,65 @@ _CREATE_FORM_TEMPLATE: Final[str] = (
     """
     + _COMMON_STYLES
     + """
-    .form-group { margin-bottom: 16px; }
-    label { display: block; margin-bottom: 6px; font-size: 14px; color: rgb(60, 60, 80); }
+    body { background: #f8fafc; padding: 0; font-size: 14px; }
+    .page { max-width: 800px; margin: 0 auto; padding: 48px 16px; }
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
+    .page-header h1 { font-size: 14px; font-weight: 600; color: #1e293b; margin: 0; }
+    .back-link { color: #64748b; text-decoration: none; font-size: 14px; }
+    .back-link:hover { color: #334155; }
+    .form-group { margin-bottom: 20px; }
+    label { display: block; margin-bottom: 6px; font-size: 14px; color: #334155; font-weight: 500; }
     input[type="text"], select {
-      width: 100%; max-width: 500px; padding: 10px 14px;
-      border: 1px solid rgb(200, 200, 210); border-radius: 6px; font-size: 16px;
+      width: 100%; padding: 10px 12px;
+      border: 1px solid #e2e8f0; border-radius: 6px; font-size: 14px;
+      font-family: inherit; background: white; color: #0f172a;
     }
-    input[type="text"]:focus, select:focus { outline: none; border-color: rgb(26, 26, 46); }
-    .help-text { margin-top: 4px; font-size: 13px; color: gray; }
-    .back-link { margin-top: 24px; }
-    .back-link a { color: rgb(26, 26, 46); text-decoration: underline; }
+    input[type="text"]:focus, select:focus { outline: none; border-color: #94a3b8; }
+    .help-text { margin-top: 4px; font-size: 13px; color: #94a3b8; }
+    .submit-btn {
+      padding: 8px 20px; background: #1e293b; color: white; border: none;
+      border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer;
+      font-family: inherit; margin-top: 8px;
+    }
+    .submit-btn:hover { background: #334155; }
   </style>
 </head>
 <body>
-  <h1>Create a Workspace</h1>
-  <form action="/create" method="post">
-    <div class="form-group">
-      <label for="agent_name">Name</label>
-      <input type="text" id="agent_name" name="agent_name" value="{{ agent_name }}"
-             placeholder="selene" required>
+  <div class="page">
+    <div class="page-header">
+      <h1>Create a Workspace</h1>
+      <a href="/" class="back-link">Back</a>
     </div>
-    <div class="form-group">
-      <label for="git_url">Git repository URL or local path</label>
-      <input type="text" id="git_url" name="git_url" value="{{ git_url }}"
-             placeholder="https://github.com/user/repo.git or /path/to/repo" required>
-      <p class="help-text">A git URL will be cloned to a temp directory. A local path will be used directly.</p>
-    </div>
-    <div class="form-group">
-      <label for="branch">Branch</label>
-      <input type="text" id="branch" name="branch" value="{{ branch }}"
-             placeholder="main">
-      <p class="help-text">The branch to check out after cloning. Leave empty to use the repository's default branch.</p>
-    </div>
-    <div class="form-group">
-      <label for="launch_mode">Launch mode</label>
-      <select id="launch_mode" name="launch_mode">
-        {% for mode in launch_modes %}
-        <option value="{{ mode.value }}"{% if mode.value == selected_launch_mode %} selected{% endif %}>{{ mode.value | lower }}</option>
-        {% endfor %}
-      </select>
-      <p class="help-text">Local: run in a Docker container. Lima: run in a Lima VM. Dev: run directly on this host. Cloud: run on a cloud provider (not yet supported).</p>
-    </div>
-    <button type="submit" class="btn">Create</button>
-  </form>
-  <div class="back-link"><a href="/">Back</a></div>
+    <form action="/create" method="post">
+      <div class="form-group">
+        <label for="agent_name">Name</label>
+        <input type="text" id="agent_name" name="agent_name" value="{{ agent_name }}"
+               placeholder="selene" required>
+      </div>
+      <div class="form-group">
+        <label for="git_url">Git repository URL or local path</label>
+        <input type="text" id="git_url" name="git_url" value="{{ git_url }}"
+               placeholder="https://github.com/user/repo.git or /path/to/repo" required>
+        <p class="help-text">A git URL will be cloned to a temp directory. A local path will be used directly.</p>
+      </div>
+      <div class="form-group">
+        <label for="branch">Branch</label>
+        <input type="text" id="branch" name="branch" value="{{ branch }}"
+               placeholder="main">
+        <p class="help-text">Leave empty to use the repository's default branch.</p>
+      </div>
+      <div class="form-group">
+        <label for="launch_mode">Launch mode</label>
+        <select id="launch_mode" name="launch_mode">
+          {% for mode in launch_modes %}
+          <option value="{{ mode.value }}"{% if mode.value == selected_launch_mode %} selected{% endif %}>{{ mode.value | lower }}</option>
+          {% endfor %}
+        </select>
+        <p class="help-text">Local: Docker container. Lima: Lima VM. Dev: directly on this host.</p>
+      </div>
+      <button type="submit" class="submit-btn">Create</button>
+    </form>
+  </div>
 </body>
 </html>"""
 )
