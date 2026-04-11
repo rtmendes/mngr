@@ -8,9 +8,11 @@ from loguru import logger
 
 from imbue.mngr.cli.common_opts import add_common_options
 from imbue.mngr.cli.common_opts import setup_command_context
+from imbue.mngr.cli.output_helpers import emit_final_json
 from imbue.mngr.cli.output_helpers import write_human_line
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import MngrError
+from imbue.mngr.primitives import OutputFormat
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr_modal.instance import ModalProviderInstance
 from imbue.mngr_schedule.cli.group import schedule
@@ -48,7 +50,7 @@ def schedule_run(ctx: click.Context, **kwargs: Any) -> None:
       mngr schedule run my-trigger --provider local
       mngr schedule run my-trigger --provider modal
     """
-    mngr_ctx, _output_opts, opts = setup_command_context(
+    mngr_ctx, output_opts, opts = setup_command_context(
         ctx=ctx,
         command_name="schedule_run",
         command_class=ScheduleRunCliOptions,
@@ -59,11 +61,29 @@ def schedule_run(ctx: click.Context, **kwargs: Any) -> None:
     if isinstance(provider, LocalProviderInstance):
         exit_code = run_local_trigger(mngr_ctx, opts.name)
     elif isinstance(provider, ModalProviderInstance):
-        exit_code = run_modal_trigger(provider, opts.name)
+        output = run_modal_trigger(provider, opts.name)
+        _emit_output(output, output_opts.output_format)
+        exit_code = 0
     else:
         assert_never(provider)
 
     ctx.exit(exit_code)
+
+
+def _emit_output(output: str, output_format: OutputFormat) -> None:
+    """Emit trigger output in the requested format."""
+    if not output:
+        return
+
+    match output_format:
+        case OutputFormat.JSON:
+            emit_final_json({"output": output})
+        case OutputFormat.JSONL:
+            emit_final_json({"output": output})
+        case OutputFormat.HUMAN:
+            write_human_line("{}", output.rstrip("\n"))
+        case _ as unreachable:
+            assert_never(unreachable)
 
 
 def run_local_trigger(mngr_ctx: MngrContext, trigger_name: str) -> int:
@@ -94,11 +114,13 @@ def run_local_trigger(mngr_ctx: MngrContext, trigger_name: str) -> int:
     return result.returncode
 
 
-def run_modal_trigger(provider: ModalProviderInstance, trigger_name: str) -> int:
+def run_modal_trigger(provider: ModalProviderInstance, trigger_name: str) -> str:
     """Run a modal trigger by invoking the deployed function on Modal.
 
     This is the exact same code path as Modal cron: invoke the
     run_scheduled_trigger() function that was deployed by schedule add.
+
+    Returns the command output captured by run_scheduled_trigger().
     """
     record = get_modal_schedule_creation_record(provider, trigger_name)
     if record is None:
@@ -118,11 +140,6 @@ def run_modal_trigger(provider: ModalProviderInstance, trigger_name: str) -> int
     )
 
     try:
-        output = invoke_modal_trigger_function(record)
+        return invoke_modal_trigger_function(record)
     except MngrError as exc:
         raise click.ClickException(f"Modal invocation failed for trigger '{trigger_name}': {exc}") from None
-
-    if output:
-        write_human_line("{}", output.rstrip("\n"))
-
-    return 0
