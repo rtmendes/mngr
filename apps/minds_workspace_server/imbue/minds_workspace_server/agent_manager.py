@@ -12,7 +12,7 @@ from typing import Any
 from loguru import logger as _loguru_logger
 from watchdog.events import FileModifiedEvent
 from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
+from watchdog.observers import Observer as _Observer
 
 from imbue.mngr.api.discovery_events import AgentDestroyedEvent
 from imbue.mngr.errors import BaseMngrError
@@ -32,17 +32,25 @@ from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
 _APPLICATIONS_TOML_FILENAME = "runtime/applications.toml"
 
 
+class _ApplicationsFileHandler(FileSystemEventHandler):
+    """Watchdog handler that triggers on modifications to applications.toml."""
+
+    agent_id: str
+    on_change: Any
+
+    def on_modified(self, event: FileModifiedEvent) -> None:  # type: ignore[override]
+        if not event.is_directory:
+            self.on_change(self.agent_id)
+
+
 def _make_applications_file_handler(
-    agent_id: str, manager: "AgentManager"
-) -> FileSystemEventHandler:
-    """Create a watchdog handler that triggers on modifications to applications.toml."""
-
-    class Handler(FileSystemEventHandler):
-        def on_modified(self, event: FileModifiedEvent) -> None:  # type: ignore[override]
-            if not event.is_directory:
-                manager._on_applications_changed(agent_id)
-
-    return Handler()
+    agent_id: str, on_change: Any,
+) -> _ApplicationsFileHandler:
+    """Create an applications file handler for the given agent."""
+    handler = _ApplicationsFileHandler()
+    handler.agent_id = agent_id
+    handler.on_change = on_change
+    return handler
 
 
 class AgentManager:
@@ -63,7 +71,7 @@ class AgentManager:
         self._observe_process: subprocess.Popen[str] | None = None
         self._observe_thread: threading.Thread | None = None
 
-        self._app_observers: dict[str, Observer] = {}
+        self._app_observers: dict[str, Any] = {}
 
         self._proto_agents: dict[str, dict[str, Any]] = {}
         self._log_queues: dict[str, queue.Queue[str | None]] = {}
@@ -219,7 +227,7 @@ class AgentManager:
 
         if work_dir is None:
             msg = f"Cannot determine work directory for agent {parent_agent_id}"
-            raise ValueError(msg)
+            raise AgentCreationError(msg)
 
         cmd = [
             "mngr",
@@ -537,8 +545,8 @@ class AgentManager:
 
         self._read_applications(agent_id, toml_path)
 
-        handler = _make_applications_file_handler(agent_id, self)
-        observer = Observer()
+        handler = _make_applications_file_handler(agent_id, self._on_applications_changed)
+        observer = _Observer()
         observer.schedule(handler, str(watch_dir), recursive=False)
         observer.daemon = True
         try:

@@ -179,7 +179,9 @@ def test_create_chat_agent_broadcasts_proto_created(
     assert isinstance(agent_id, str)
     assert len(agent_id) > 0
 
-    proto_msg = json.loads(q.get_nowait())
+    raw = q.get_nowait()
+    assert raw is not None
+    proto_msg = json.loads(raw)
     assert proto_msg["type"] == "proto_agent_created"
     assert proto_msg["agent_id"] == agent_id
     assert proto_msg["creation_type"] == "chat"
@@ -216,7 +218,9 @@ def test_create_worktree_agent_broadcasts_proto_created(
 
     assert isinstance(agent_id, str)
 
-    proto_msg = json.loads(q.get_nowait())
+    raw = q.get_nowait()
+    assert raw is not None
+    proto_msg = json.loads(raw)
     assert proto_msg["type"] == "proto_agent_created"
     assert proto_msg["creation_type"] == "worktree"
     assert proto_msg["parent_agent_id"] is None
