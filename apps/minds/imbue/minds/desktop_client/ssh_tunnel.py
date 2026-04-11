@@ -1,5 +1,6 @@
 import os
 import select
+import shlex
 import socket
 import tempfile
 import threading
@@ -236,7 +237,9 @@ class SSHTunnelManager(MutableModel):
         with self._lock:
             client = self._get_or_create_connection(ssh_info)
 
-        command = f"mkdir -p {agent_state_dir} && printf '%s' '{url}' > {agent_state_dir}/minds_api_url"
+        quoted_dir = shlex.quote(agent_state_dir)
+        quoted_url = shlex.quote(url)
+        command = f"mkdir -p {quoted_dir} && printf '%s' {quoted_url} > {quoted_dir}/minds_api_url"
         try:
             _stdin, stdout, stderr = client.exec_command(command, timeout=10.0)
             exit_status = stdout.channel.recv_exit_status()
