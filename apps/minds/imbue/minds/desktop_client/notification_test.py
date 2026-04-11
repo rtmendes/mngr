@@ -2,10 +2,13 @@ import json
 
 from _pytest.capture import CaptureFixture
 
+import imbue.minds.desktop_client.notification as notification_module
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
 from imbue.minds.desktop_client.notification import _dispatch_electron_notification
+from imbue.minds.desktop_client.notification import _run_tkinter_toast
+from imbue.minds.desktop_client.notification import _show_tkinter_toast
 
 
 def test_notification_urgency_values() -> None:
@@ -96,5 +99,43 @@ def test_dispatcher_is_electron_false_does_not_raise() -> None:
     """Verify NotificationDispatcher can be constructed in non-electron mode."""
     dispatcher = NotificationDispatcher(is_electron=False)
     assert dispatcher.is_electron is False
+
+
+def test_run_tkinter_toast_without_tkinter_does_not_raise() -> None:
+    """When tkinter is unavailable, _run_tkinter_toast returns immediately without error."""
+    original_tkinter = notification_module._TKINTER
+    notification_module._TKINTER = None
+    try:
+        # Should not raise even though tkinter is None
+        _run_tkinter_toast("Title", "Message", NotificationUrgency.LOW, "agent")
+    finally:
+        notification_module._TKINTER = original_tkinter
+
+
+def test_show_tkinter_toast_with_no_tkinter_does_not_raise() -> None:
+    """_show_tkinter_toast does not raise even when tkinter is unavailable.
+
+    The function starts a daemon thread. With no tkinter available, the thread
+    logs a warning and exits immediately.
+    """
+    original_tkinter = notification_module._TKINTER
+    notification_module._TKINTER = None
+    try:
+        request = NotificationRequest(message="toast message", title="Test")
+        _show_tkinter_toast(request, "agent-z")
+    finally:
+        notification_module._TKINTER = original_tkinter
+
+
+def test_dispatch_non_electron_does_not_raise() -> None:
+    """The non-Electron dispatch path starts a background toast and does not raise."""
+    original_tkinter = notification_module._TKINTER
+    notification_module._TKINTER = None
+    try:
+        dispatcher = NotificationDispatcher(is_electron=False)
+        request = NotificationRequest(message="background toast")
+        dispatcher.dispatch(request, "agent-y")
+    finally:
+        notification_module._TKINTER = original_tkinter
 
 
