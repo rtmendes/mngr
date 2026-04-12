@@ -37,10 +37,15 @@ from imbue.minds_workspace_server.models import AgentListResponse
 from imbue.minds_workspace_server.models import CreateAgentResponse
 from imbue.minds_workspace_server.models import CreateChatRequest
 from imbue.minds_workspace_server.models import CreateWorktreeRequest
+from imbue.minds_workspace_server.models import DestroyAgentResponse
 from imbue.minds_workspace_server.models import ErrorResponse
 from imbue.minds_workspace_server.models import RandomNameResponse
 from imbue.minds_workspace_server.models import SendMessageRequest
 from imbue.minds_workspace_server.models import SendMessageResponse
+from imbue.minds_workspace_server.sharing_proxy import SharingProxyError
+from imbue.minds_workspace_server.sharing_proxy import disable_sharing
+from imbue.minds_workspace_server.sharing_proxy import enable_sharing
+from imbue.minds_workspace_server.sharing_proxy import get_sharing_status
 from imbue.minds_workspace_server.plugins import get_plugin_manager
 from imbue.minds_workspace_server.session_watcher import AgentSessionWatcher
 from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
@@ -169,6 +174,7 @@ def _index(request: Request) -> Response:
         html_content = index_path.read_text()
         html_content = _inject_base_path_meta_tag(html_content, root_path)
         html_content = _inject_hostname_meta_tag(html_content)
+        html_content = _inject_agent_id_meta_tag(html_content)
         if config.javascript_plugin_basenames:
             html_content = _inject_plugin_script_tags(html_content, config.javascript_plugin_basenames, root_path)
         return HTMLResponse(html_content)
@@ -583,6 +589,72 @@ async def _proto_agent_logs_endpoint(websocket: WebSocket) -> None:
         pass
 
 
+async def _destroy_agent(agent_id: str, request: Request) -> JSONResponse:
+    """Destroy an agent by running mngr destroy --force."""
+    agent_manager: AgentManager = request.app.state.agent_manager
+    agent_state = agent_manager.get_agent_by_id(agent_id)
+    if agent_state is None:
+        error = ErrorResponse(detail=f"Agent '{agent_id}' not found")
+        return JSONResponse(content=error.model_dump(), status_code=404)
+
+    agent_name = agent_state.name
+
+    def _run_destroy() -> tuple[bool, str]:
+        result = run_local_command_modern_version(
+            command=["mngr", "destroy", agent_name, "--force"],
+            cwd=None,
+            is_checked=False,
+            timeout=30.0,
+        )
+        succeeded = result.returncode == 0
+        output = result.stdout.strip() if succeeded else result.stderr.strip()
+        return succeeded, output
+
+    success, output = await run_in_threadpool(_run_destroy)
+    if not success:
+        error = ErrorResponse(detail=f"Failed to destroy agent '{agent_name}': {output}")
+        return JSONResponse(content=error.model_dump(), status_code=500)
+
+    return JSONResponse(content=DestroyAgentResponse(status="ok").model_dump())
+
+
+async def _get_sharing_status_endpoint(server_name: str) -> JSONResponse:
+    """Get the Cloudflare forwarding status for a server."""
+    try:
+        status = await run_in_threadpool(get_sharing_status, server_name)
+        return JSONResponse(content=status.model_dump())
+    except SharingProxyError as e:
+        error = ErrorResponse(detail=str(e))
+        return JSONResponse(content=error.model_dump(), status_code=502)
+
+
+async def _enable_sharing_endpoint(server_name: str) -> JSONResponse:
+    """Enable Cloudflare forwarding for a server."""
+    try:
+        status = await run_in_threadpool(enable_sharing, server_name)
+        return JSONResponse(content=status.model_dump())
+    except SharingProxyError as e:
+        error = ErrorResponse(detail=str(e))
+        return JSONResponse(content=error.model_dump(), status_code=502)
+
+
+async def _disable_sharing_endpoint(server_name: str) -> JSONResponse:
+    """Disable Cloudflare forwarding for a server."""
+    try:
+        status = await run_in_threadpool(disable_sharing, server_name)
+        return JSONResponse(content=status.model_dump())
+    except SharingProxyError as e:
+        error = ErrorResponse(detail=str(e))
+        return JSONResponse(content=error.model_dump(), status_code=502)
+
+
+def _inject_agent_id_meta_tag(html_content: str) -> str:
+    """Inject the primary agent ID as a meta tag for the frontend."""
+    agent_id = os.environ.get("MNGR_AGENT_ID", "")
+    meta_tag = f'<meta name="minds-workspace-server-agent-id" content="{agent_id}">'
+    return html_content.replace("</head>", f"{meta_tag}\n</head>")
+
+
 def create_application(
     config: Config | None = None,
     provider_names: tuple[str, ...] | None = None,
@@ -610,6 +682,10 @@ def create_application(
     application.add_api_route("/api/agents/{agent_id}/layout", _get_layout, methods=["GET"])
     application.add_api_route("/api/agents/{agent_id}/layout", _save_layout, methods=["POST"])
     application.add_api_route("/api/agents/{agent_id}/screen", _get_screen_capture, methods=["GET"])
+    application.add_api_route("/api/agents/{agent_id}/destroy", _destroy_agent, methods=["POST"])
+    application.add_api_route("/api/sharing/{server_name}", _get_sharing_status_endpoint, methods=["GET"])
+    application.add_api_route("/api/sharing/{server_name}", _enable_sharing_endpoint, methods=["PUT"])
+    application.add_api_route("/api/sharing/{server_name}", _disable_sharing_endpoint, methods=["DELETE"])
     application.add_api_route(
         "/api/agents/{agent_id}/subagents/{subagent_session_id}/events", _get_subagent_events, methods=["GET"]
     )
