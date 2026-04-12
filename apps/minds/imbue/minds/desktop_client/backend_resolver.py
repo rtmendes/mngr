@@ -99,6 +99,14 @@ class BackendResolverInterface(MutableModel, ABC):
             return AgentDisplayInfo(agent_name=str(agent_id), host_id="localhost")
         return None
 
+    def get_workspace_name(self, agent_id: AgentId) -> str | None:
+        """Return the workspace label value for an agent, or None.
+
+        Default implementation returns None.
+        Subclasses with access to agent labels should override this.
+        """
+        return None
+
     def has_completed_initial_discovery(self) -> bool:
         """Whether any agent discovery data has been received.
 
