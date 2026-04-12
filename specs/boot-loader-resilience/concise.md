@@ -153,28 +153,39 @@ When `agent_id` is provided, the page **always** includes "Terminal" and "Agent"
 
 The parameters are optional with defaults that preserve the current behavior for any call site that does not pass them.
 
-**`app.py`** -- Update the three call sites that return the loading page:
+**`app.py`** -- Add a `_make_loading_html()` helper and update the three call sites that return the loading page:
 
-1. `backend_url is None` (line 584)
-2. SSH tunnel failure (line 609)
-3. Backend 5xx response (line 643)
+1. `backend_url is None`
+2. SSH tunnel failure
+3. Backend 5xx response
 
-Each call site already has `parsed_id`, `parsed_server`, and `backend_resolver` in scope. The change is:
+A private helper encapsulates the logic of querying the backend resolver and building the loading page:
+
+```python
+def _make_loading_html(
+    agent_id: AgentId,
+    server_name: ServerName,
+    backend_resolver: BackendResolverInterface,
+) -> str:
+    other_servers = tuple(
+        s for s in backend_resolver.list_servers_for_agent(agent_id)
+        if s != server_name
+    )
+    return generate_backend_loading_html(
+        agent_id=agent_id,
+        current_server=server_name,
+        other_servers=other_servers,
+    )
+```
+
+Each call site already has `parsed_id`, `parsed_server`, and `backend_resolver` in scope. The change at each site is:
 
 ```python
 # Before
 return HTMLResponse(content=generate_backend_loading_html())
 
 # After
-other_servers = tuple(
-    s for s in backend_resolver.list_servers_for_agent(parsed_id)
-    if s != parsed_server
-)
-return HTMLResponse(content=generate_backend_loading_html(
-    agent_id=parsed_id,
-    current_server=parsed_server,
-    other_servers=other_servers,
-))
+return HTMLResponse(content=_make_loading_html(parsed_id, parsed_server, backend_resolver))
 ```
 
 The `terminal` and `agent` links are rendered even if they are not in `other_servers` (they are unconditional when `agent_id` is provided). The `other_servers` tuple provides links to any additional servers beyond the convention-based ones.
