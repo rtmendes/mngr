@@ -787,22 +787,22 @@ def _get_tunnel_http_client(
     backend_url: str,
     backend_resolver: BackendResolverInterface,
 ) -> httpx.AsyncClient | None:
-    """Get an httpx client configured for SSH tunneling, or None for direct connection."""
+    """Get an httpx client configured for SSH tunneling, or None for direct connection.
+
+    Creates a fresh client each time to avoid stale connections when SSH
+    tunnels are recreated after a broken pipe.
+    """
     tunnel_manager: SSHTunnelManager | None = app.state.tunnel_manager
     socket_path = _get_tunnel_socket_path(tunnel_manager, agent_id, backend_url, backend_resolver)
     if socket_path is None:
         return None
 
-    clients: dict[str, httpx.AsyncClient] = app.state.ssh_http_clients
-    key = str(socket_path)
-    if key not in clients:
-        transport = httpx.AsyncHTTPTransport(uds=key)
-        clients[key] = httpx.AsyncClient(
-            transport=transport,
-            follow_redirects=False,
-            timeout=_PROXY_TIMEOUT_SECONDS,
-        )
-    return clients[key]
+    transport = httpx.AsyncHTTPTransport(uds=str(socket_path))
+    return httpx.AsyncClient(
+        transport=transport,
+        follow_redirects=False,
+        timeout=_PROXY_TIMEOUT_SECONDS,
+    )
 
 
 # -- Agent creation route handlers --
