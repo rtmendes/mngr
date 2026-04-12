@@ -67,9 +67,10 @@ This ensures that `vendor/mngr/` in the template on disk always reflects the cur
    - Remote mode: `rsync -avz --delete --exclude=... -e "ssh -p ${PORT} -i ${KEY} -o StrictHostKeyChecking=no" "${TEMPLATE_DIR}/" "${USER}@${HOST}:/code/"`
    - Local mode: `rsync -a --delete --exclude=... "${TEMPLATE_DIR}/" "${TARGET}/"`
    - Additional `--delete` exclusions for container state: `runtime/`, `.mngr/`
-3. Rebuild frontend: `uv run mngr exec "${AGENT_NAME}" "cd /code/vendor/mngr/apps/minds_workspace_server/frontend && npm run build"`
+3. `uv run mngr start "${AGENT_NAME}"` -- starts the agent; bootstrap auto-starts all services.
+4. Rebuild frontend: `uv run mngr exec "${AGENT_NAME}" "cd /code/vendor/mngr/apps/minds_workspace_server/frontend && npm run build"`
    - For local mode, run the npm build directly at the appropriate path.
-4. `uv run mngr start "${AGENT_NAME}"` -- starts the agent; bootstrap auto-starts all services.
+   - The agent must be running before `mngr exec` is called, since `mngr exec` requires an active agent connection.
 
 **Step 2 (parallel track B): Desktop client restart**
 
@@ -146,4 +147,4 @@ This ensures that `vendor/mngr/` in the template on disk always reflects the cur
 * Should the script also handle the case where the agent doesn't exist yet (i.e., run `mngr create` as part of the first invocation)? Currently, the script assumes the agent already exists and was created via the desktop client or `mngr create`.
 * The `pkill -TERM -f "electron.*minds"` pattern could match unrelated Electron apps if any happen to have "minds" in their command line. A more precise matching pattern may be needed.
 * When `mngr stop` is called, any in-progress Claude conversation is lost. Should the script warn the user or require a `--force` flag? (Current decision: no, since we're testing infrastructure, not conversations.)
-* The `npm run build` step runs inside the container via `mngr exec`, which requires the agent to be stopped then started. But `mngr exec` may need the agent to be running (it auto-starts). The sequencing is: stop -> rsync -> start -> exec (npm build). Alternatively, the frontend build could run directly via SSH (`ssh -p ... "cd /code/... && npm run build"`) between the rsync and `mngr start`, while the agent is still stopped. This needs verification.
+* The frontend build via `mngr exec` requires the agent to be running. The implemented sequencing is: stop -> rsync -> start -> exec (npm build). An alternative would be to run the build directly via SSH between rsync and start (while the agent is still stopped), but this would require duplicating SSH connection logic.
