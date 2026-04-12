@@ -24,6 +24,7 @@ from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.api_key_store import find_agent_by_api_key
 from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingClient
 from imbue.minds.desktop_client.deps import BackendResolverDep
+from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
 from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
@@ -156,18 +157,16 @@ def _handle_cloudflare_enable(
             return _json_error("Server not found locally", 404)
         service_url = backend_url
 
-    # Ensure the tunnel exists before adding a service.
-    # The tunnel is normally created during agent creation, but may not exist
-    # if the agent was created without Cloudflare configured.
-    services = cf_client.list_services(parsed_id)
-    if services is None:
+    # Ensure the tunnel exists and we have a token for it.
+    # create_tunnel is idempotent -- if the tunnel already exists, it returns
+    # the existing token. We always need the token to inject into the agent.
+    paths: WorkspacePaths = request.app.state.api_v1_paths
+    stored_token = load_tunnel_token(paths.data_dir, parsed_id)
+    if stored_token is None:
         token, message = cf_client.create_tunnel(parsed_id)
         if token is None:
             return _json_error(f"Failed to create Cloudflare tunnel: {message}", 502)
-        # Store the token so it can be re-injected on agent restart/rediscovery
-        paths: WorkspacePaths = request.app.state.api_v1_paths
         save_tunnel_token(paths.data_dir, parsed_id, token)
-        # Inject the token into the agent's runtime/secrets so cloudflared starts
         _inject_tunnel_token_into_agent(parsed_id, token)
 
     is_success = cf_client.add_service(parsed_id, parsed_server, service_url)
