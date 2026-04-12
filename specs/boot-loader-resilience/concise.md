@@ -32,16 +32,19 @@ In the last three rows, the terminal is available but the user cannot discover i
 
 ## Design
 
-Two changes, both required for the full benefit:
+Four changes that reinforce each other:
 
 1. **Move the terminal out of bootstrap** into an `extra_windows` entry so it starts directly from `mngr create`, with no dependency on bootstrap.
-2. **Make the loading page link to available servers** so users can reach the terminal (or any other server) when the web server is unavailable.
+2. **Use a fixed, known-by-convention port for ttyd** instead of dynamic allocation. This eliminates the port-detection machinery in `run_ttyd.sh` and makes the terminal URL predictable.
+3. **Always show the terminal link on the loading page**, unconditionally -- even before the terminal has registered with the backend resolver. The link goes through the desktop client proxy, so if the terminal is not yet ready, the user gets the terminal's own auto-retrying loading page (which resolves within 1-2 seconds). This is dramatically better than no link at all.
+4. **Also show links to other available servers** that the backend resolver knows about, for completeness.
 
 ### Principle
 
 The terminal is the escape hatch. It must:
 - Start independently of every other service
 - Be discoverable from the loading page without requiring the web server
+- Not depend on a successful registration chain to be linkable
 
 After these changes, the failure table improves:
 
@@ -52,7 +55,7 @@ After these changes, the failure table improves:
 | minds-workspace-server bug (5xx) | broken | up | Loading page **with terminal link** |
 | svc-web crashes | down | up | Loading page **with terminal link** |
 | ttyd crashes | up | down | Web works normally |
-| Both crash independently | down | down | Infinite "Loading..." (much less likely) |
+| Both crash independently | down | down | Loading page with terminal link (link shows terminal's own loading page until ttyd recovers) |
 
 ## Expected Behavior
 
@@ -61,26 +64,26 @@ After these changes, the failure table improves:
 When the web server is unavailable (backend not registered, returns 5xx, or SSH tunnel fails), the desktop client returns a loading page that:
 
 - Shows "Loading..." with auto-reload every 1 second (unchanged)
-- Below the loading message, shows links to other available servers for this agent
-- Specifically, if the terminal server is registered, shows a prominent "Open terminal" link
-- Links are to the desktop client proxy URLs (e.g., `/agents/{agent_id}/terminal/`), not to raw backend ports
+- **Always** shows a "Terminal" link and an "Agent" link below the loading message, unconditionally. These are convention-based links (`/agents/{agent_id}/terminal/` and `/agents/{agent_id}/agent/`) that will work as soon as ttyd has started, regardless of whether the backend resolver has discovered the terminal server yet. If the terminal is not yet ready, clicking the link shows the terminal's own auto-retrying loading page, which resolves within 1-2 seconds.
+- Additionally shows links to any other servers the backend resolver knows about (excluding the server currently being loaded)
+- Links are to the desktop client proxy URLs, not to raw backend ports
 - Links use `target="_top"` so they escape any iframe wrapper (browser info bar)
-
-The available servers are queried from the backend resolver on each page load. Since the page reloads every second, new servers appear within 1 second of registration.
-
-If no other servers are available, the loading page looks the same as today (just "Loading..." with no links).
 
 ### Terminal as an independent extra window
 
 The terminal (ttyd) starts as a direct extra window created by `mngr create`, alongside bootstrap and telegram. It no longer depends on bootstrap reading services.toml.
 
+The terminal uses a **fixed, known-by-convention port** (7681, ttyd's default) instead of dynamic allocation. This:
+- Eliminates the stderr-parsing port detection logic in `run_ttyd.sh`
+- Makes `forward_port.py` registration immediate (the URL is known ahead of time)
+- Simplifies the script significantly
+
 The terminal continues to:
-- Use dynamic port allocation (`-p 0`)
 - Register itself in `runtime/applications.toml` via `forward_port.py`
 - Write server events to `events/servers/events.jsonl`
 - Provide the `agent.sh` dispatch script for agent terminal access
 
-The terminal typically starts and registers within 1-2 seconds of agent creation, well before the web server is ready.
+The terminal typically starts within 1-2 seconds of agent creation, well before the web server is ready.
 
 ## Changes
 
@@ -116,11 +119,22 @@ command = "uv run app-watcher"
 restart = "on-failure"
 ```
 
-No changes needed to `scripts/run_ttyd.sh` -- it already handles everything independently.
+**`scripts/run_ttyd.sh`** -- Simplify to use a fixed port:
+
+The script changes from dynamic port allocation (`-p 0` with stderr parsing) to a fixed port:
+
+```bash
+TTYD_PORT=7681
+python3 "$REPO_ROOT/scripts/forward_port.py" --name terminal --url "http://localhost:$TTYD_PORT"
+# Also register the agent sub-URL and write events.jsonl entries (same as before, but with known port)
+exec ttyd -p "$TTYD_PORT" -a -t disableLeaveAlert=true -W bash -c "$DISPATCH_SCRIPT"
+```
+
+The port registration and event writing happen *before* starting ttyd (since the port is now known), and `exec` replaces the shell with ttyd for cleaner process management. The stderr-parsing `while IFS= read -r line` pipeline is removed entirely.
 
 ### Monorepo: `apps/minds/` -- Loading page with fallback links
 
-**`proxy.py`** -- Update `generate_backend_loading_html()` to accept optional server links:
+**`proxy.py`** -- Update `generate_backend_loading_html()` to accept an agent ID and additional server links:
 
 The function signature changes from:
 ```python
@@ -135,7 +149,7 @@ def generate_backend_loading_html(
 ) -> str:
 ```
 
-When `other_servers` is non-empty, the page includes a section below "Loading..." with links to each server. The terminal link (if present) is shown most prominently.
+When `agent_id` is provided, the page **always** includes "Terminal" and "Agent" links (convention-based, unconditional). When `other_servers` is non-empty, links to those additional servers are also shown. The current server being loaded is excluded.
 
 The parameters are optional with defaults that preserve the current behavior for any call site that does not pass them.
 
@@ -163,11 +177,17 @@ return HTMLResponse(content=generate_backend_loading_html(
 ))
 ```
 
+The `terminal` and `agent` links are rendered even if they are not in `other_servers` (they are unconditional when `agent_id` is provided). The `other_servers` tuple provides links to any additional servers beyond the convention-based ones.
+
 ## Edge Cases and Considerations
 
-### Timing: terminal not yet registered when loading page first shown
+### Terminal link before terminal is ready
 
-The loading page reloads every 1 second. Each reload generates fresh HTML with the current set of available servers. If the terminal has not registered yet on the first reload, it will appear on a subsequent reload once ttyd starts and calls `forward_port.py`. The maximum delay is the terminal startup time (typically 1-2 seconds).
+The terminal and agent links are shown unconditionally (whenever `agent_id` is known). If the user clicks the link before ttyd has started, they land on the terminal's own loading page which auto-retries every second. Since ttyd starts in 1-2 seconds as an extra window, the wait is brief. This is intentionally better than hiding the link: a loading page that resolves quickly is far more useful than no link at all.
+
+### Fixed port conflicts
+
+Using a fixed port (7681) means ttyd will fail to start if another process is already on that port. In practice, each agent runs in its own container, so conflicts are unlikely. If a conflict does occur, ttyd exits with a clear error visible in the terminal's tmux window, which is easier to diagnose than a silently-assigned random port.
 
 ### Browser info bar iframe
 
@@ -177,15 +197,11 @@ For non-Electron browsers, the loading page is rendered inside the browser info 
 
 The current bootstrap service manager stores the `restart` field from services.toml but never uses it -- `_reconcile()` only checks whether a service exists in the desired set, not whether it is actually running. Moving the terminal out of bootstrap does not lose any restart capability because none existed.
 
-### The `agent` sub-URL
-
-`run_ttyd.sh` registers two servers: `terminal` (raw bash shell) and `agent` (attaches to the agent's tmux window 0). Both will appear as links on the loading page. This is intentional -- they serve different purposes, and the user can choose which is more useful for debugging. The `agent` link is particularly valuable because it lets the user see exactly what the AI agent is doing.
-
 ### Backward compatibility
 
-The loading page changes are backward-compatible: if no `agent_id` is passed, the page renders identically to today. Existing call sites can be migrated incrementally.
+The loading page changes are backward-compatible: if no `agent_id` is passed, the page renders identically to today (no terminal link, no server links). Existing call sites can be migrated incrementally.
 
-The template repo change (moving terminal to extra_windows) takes effect only for newly created agents. Existing agents continue using the bootstrap-managed terminal until recreated.
+The template repo change (moving terminal to extra_windows and switching to a fixed port) takes effect only for newly created agents. Existing agents continue using the bootstrap-managed terminal until recreated.
 
 ### `@pure` decorator
 
@@ -193,12 +209,13 @@ The template repo change (moving terminal to extra_windows) takes effect only fo
 
 ## Testing
 
-- **Unit test**: Verify `generate_backend_loading_html()` includes terminal link HTML when `other_servers` contains `ServerName("terminal")`.
-- **Unit test**: Verify the loading page contains no extra links when `other_servers` is empty (backward compatibility).
+- **Unit test**: Verify `generate_backend_loading_html(agent_id=..., ...)` always includes terminal and agent links when `agent_id` is provided.
+- **Unit test**: Verify the loading page contains no links when `agent_id` is `None` (backward compatibility).
+- **Unit test**: Verify additional servers from `other_servers` appear as links.
 - **Unit test**: Verify links use `target="_top"`.
-- **Integration test**: Verify the full proxy path returns a loading page with server links when the backend is unavailable but other servers are registered.
+- **Integration test**: Verify the full proxy path returns a loading page with terminal link when the backend is unavailable, even before the terminal server has registered.
 
-Template repo changes are tested manually by creating a new agent and verifying that the terminal starts independently of bootstrap.
+Template repo changes are tested manually by creating a new agent and verifying that the terminal starts independently of bootstrap on the fixed port.
 
 ## Future Improvements
 
