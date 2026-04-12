@@ -478,13 +478,14 @@ def apply_create_template(
 
     Templates are named presets of create command arguments that can be applied
     using --template <name>. Multiple templates can be specified and are applied
-    in order, stacking their values. Template values act as defaults - they only
-    override parameters that came from DEFAULT source, not user-specified values.
+    in order, stacking their values.
 
-    When multiple templates are specified, later templates override earlier ones
-    for the same parameter.
-
-    CLI arguments always take precedence over template values.
+    Merge semantics (matching config file merge behavior):
+    - Scalar params: latest template wins; CLI arguments always take precedence.
+    - List/tuple params (env, pass_env, etc.): concatenated with existing values
+      (from config defaults, earlier templates, or CLI). An explicit empty list
+      [] resets the parameter, clearing all values from earlier in the chain
+      (but not CLI-specified values).
 
     This function should only be called for the 'create' command.
     """
@@ -495,7 +496,7 @@ def apply_create_template(
     # Start with existing params
     updated_params = params.copy()
 
-    # Apply each template in order (later templates override earlier ones)
+    # Apply each template in order
     for template_name in template_names:
         try:
             template_key = CreateTemplateName(template_name)
@@ -516,15 +517,32 @@ def apply_create_template(
 
         template = config.create_templates[template_key]
 
-        # Apply template options only for parameters that came from defaults (not CLI)
         for param_name, template_value in template.options.items():
             if template_value is None:
                 continue
             if param_name not in params:
                 continue
             source = ctx.get_parameter_source(param_name)
-            if source == ParameterSource.DEFAULT:
+            existing_value = updated_params[param_name]
+
+            # List/tuple params: concatenate (or reset on explicit empty list)
+            if isinstance(template_value, (list, tuple)) and isinstance(existing_value, (list, tuple)):
+                if not template_value:
+                    # Explicit empty list resets values from config defaults and
+                    # earlier templates, but CLI-specified values are preserved
+                    if source == ParameterSource.DEFAULT:
+                        updated_params[param_name] = ()
+                    else:
+                        pass
+                else:
+                    # Concatenate existing values with template values
+                    updated_params[param_name] = tuple(existing_value) + tuple(template_value)
+            elif source == ParameterSource.DEFAULT:
+                # Scalar params from defaults: template value wins
                 updated_params[param_name] = template_value
+            else:
+                # CLI-specified scalar params: CLI wins (no change)
+                pass
 
     return updated_params
 
