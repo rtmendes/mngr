@@ -589,6 +589,7 @@ function createDockviewForAgent(agentId: string, parentElement: HTMLElement): Ag
   const dockview = new DockviewComponent(container, {
     theme: themeLight,
     defaultRenderer: "always",
+    defaultTabComponent: "custom",
     createComponent(options) {
       const params = (options as unknown as { params?: PanelParams }).params ?? panelParams.get(options.id);
 
