@@ -136,17 +136,18 @@ agent_update() {
     fi
     echo "      Done."
 
-    echo "[3.5/4] Starting agent '${AGENT_NAME}'..."
-    uv run --directory "${MNGR_REPO_ROOT}" mngr start "${AGENT_NAME}" 2>&1
-    echo "      Agent started."
-
-    echo "[4/4] Rebuilding minds_workspace_server frontend..."
+    echo "[3.5/4] Rebuilding minds_workspace_server frontend..."
     if [[ "${MODE}" == "remote" ]]; then
-        uv run --directory "${MNGR_REPO_ROOT}" mngr exec "${AGENT_NAME}" "cd /code/vendor/mngr/apps/minds_workspace_server/frontend && npm run build" 2>&1
+        ssh -p "${SSH_PORT}" -i "${SSH_KEY}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+            "${SSH_USER}@${SSH_HOST}" "cd /code/vendor/mngr/apps/minds_workspace_server/frontend && npm run build" 2>&1
     else
         (cd "${LOCAL_TARGET}/vendor/mngr/apps/minds_workspace_server/frontend" && npm run build) 2>&1
     fi
     echo "      Frontend rebuilt."
+
+    echo "[4/4] Starting agent '${AGENT_NAME}'..."
+    uv run --directory "${MNGR_REPO_ROOT}" mngr start "${AGENT_NAME}" 2>&1
+    echo "      Agent started."
 }
 
 # --- Track B: Desktop client restart ---
@@ -179,7 +180,7 @@ electron_restart() {
     export MINDS_WORKSPACE_NAME="${AGENT_NAME}"
 
     echo "[electron] Starting desktop client (MINDS_WORKSPACE_GIT_URL=${TEMPLATE_DIR})..."
-    (cd "${MNGR_REPO_ROOT}/apps/minds" && npm start) &
+    (cd "${MNGR_REPO_ROOT}/apps/minds" && npm start >> /tmp/minds-electron.log 2>&1) &
 }
 
 # Run both tracks in parallel
