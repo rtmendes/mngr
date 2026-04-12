@@ -177,13 +177,15 @@ electron_stop() {
 }
 
 electron_start() {
-    # Source .env if it exists
-    if [[ -f "${MNGR_REPO_ROOT}/.env" ]]; then
-        set -a
-        # shellcheck disable=SC1091
-        source "${MNGR_REPO_ROOT}/.env"
-        set +a
-    fi
+    # Source .env and .test_env if they exist
+    for envfile in "${MNGR_REPO_ROOT}/.env" "${MNGR_REPO_ROOT}/.test_env"; do
+        if [[ -f "${envfile}" ]]; then
+            set -a
+            # shellcheck disable=SC1090
+            source "${envfile}"
+            set +a
+        fi
+    done
 
     export MINDS_WORKSPACE_GIT_URL="${TEMPLATE_DIR}"
     export MINDS_WORKSPACE_NAME="${AGENT_NAME}"
