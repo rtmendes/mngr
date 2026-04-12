@@ -373,14 +373,13 @@ class MngrStreamManager(MutableModel):
     resolver: MngrCliBackendResolver = Field(frozen=True, description="Backend resolver to update with streaming data")
     mngr_binary: str = Field(default=MNGR_BINARY, frozen=True, description="Path to mngr binary")
 
-    _cg: ConcurrencyGroup = PrivateAttr(
-        default_factory=lambda: ConcurrencyGroup(name="mngr-stream-manager", exit_timeout_seconds=2.0)
-    )
+    _cg: ConcurrencyGroup = PrivateAttr(default_factory=lambda: ConcurrencyGroup(name="mngr-stream-manager"))
     _known_agent_ids: set[str] = PrivateAttr(default_factory=set)
     _agent_host_map: dict[str, str] = PrivateAttr(default_factory=dict)
     _discovered_agents: tuple[DiscoveredAgent, ...] = PrivateAttr(default=())
     _ssh_by_host_id: dict[str, RemoteSSHInfo] = PrivateAttr(default_factory=dict)
     _events_servers: dict[str, dict[str, str]] = PrivateAttr(default_factory=dict)
+    _observe_process: RunningProcess | None = PrivateAttr(default=None)
     _events_processes: dict[str, RunningProcess] = PrivateAttr(default_factory=dict)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _on_agent_discovered_callbacks: list[Callable[[AgentId, RemoteSSHInfo | None], None]] = PrivateAttr(
@@ -402,15 +401,30 @@ class MngrStreamManager(MutableModel):
         self._cg.__enter__()
         # Run from $HOME so mngr uses its global config, not any project-specific
         # .mngr/settings.toml that might restrict behavior (e.g. is_allowed_in_pytest).
-        self._cg.run_process_in_background(
+        self._observe_process = self._cg.run_process_in_background(
             command=[self.mngr_binary, "observe", "--discovery-only", "--quiet"],
             on_output=self._on_discovery_stream_output,
             cwd=Path.home(),
         )
 
     def stop(self) -> None:
-        """Stop all streaming subprocesses."""
+        """Stop all streaming subprocesses.
+
+        Terminates the mngr observe and mngr events processes first so
+        that the threads reading their output unblock immediately, then
+        exits the ConcurrencyGroup (which joins the threads).
+        """
+        for process in self._all_managed_processes():
+            process.terminate()
         self._cg.__exit__(None, None, None)
+
+    def _all_managed_processes(self) -> list[RunningProcess]:
+        """Return all managed subprocess handles (observe + per-agent events)."""
+        result: list[RunningProcess] = []
+        if self._observe_process is not None:
+            result.append(self._observe_process)
+        result.extend(self._events_processes.values())
+        return result
 
     def _on_discovery_stream_output(self, line: str, is_stdout: bool) -> None:
         """Handle a line of output from mngr observe --discovery-only."""
