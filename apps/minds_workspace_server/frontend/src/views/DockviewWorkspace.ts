@@ -29,6 +29,19 @@ import { selectAgent } from "../navigation";
 
 const AUTOSAVE_DEBOUNCE_MS = 1500;
 
+type AccessMode = "cloudflare" | "local" | "dev";
+
+function getAccessMode(): AccessMode {
+  const hostname = window.location.hostname;
+  if (hostname.match(/^[^-]+--(.*)/)) {
+    return "cloudflare";
+  }
+  if (window.location.pathname.match(/^.*\/agents\/[^/]+\//)) {
+    return "local";
+  }
+  return "dev";
+}
+
 // SVG path constants for tab action icons
 const SVG_CLOSE = '<line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/>';
 const SVG_TRASH = '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>';
@@ -537,9 +550,10 @@ async function saveLayout(agentId: string, state: AgentDockviewState): Promise<v
     panelParams[id] = params;
   }
   const payload: SavedLayout = { dockview: dockviewJson, panelParams };
+  const mode = getAccessMode();
 
   try {
-    await fetch(apiUrl(`/api/agents/${encodeURIComponent(agentId)}/layout`), {
+    await fetch(apiUrl(`/api/agents/${encodeURIComponent(agentId)}/layout?mode=${mode}`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -560,8 +574,9 @@ function scheduleSave(agentId: string, state: AgentDockviewState): void {
 }
 
 async function loadLayout(agentId: string): Promise<SavedLayout | null> {
+  const mode = getAccessMode();
   try {
-    const response = await fetch(apiUrl(`/api/agents/${encodeURIComponent(agentId)}/layout`));
+    const response = await fetch(apiUrl(`/api/agents/${encodeURIComponent(agentId)}/layout?mode=${mode}`));
     if (!response.ok) return null;
     return (await response.json()) as SavedLayout;
   } catch {

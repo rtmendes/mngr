@@ -379,13 +379,22 @@ def _stream_subagent_events(agent_id: str, subagent_session_id: str, request: Re
     )
 
 
+def _layout_filename(request: Request) -> str:
+    """Return the layout filename based on the access mode query parameter."""
+    mode = request.query_params.get("mode", "")
+    if mode and mode in ("cloudflare", "local", "dev"):
+        return f"layout-{mode}.json"
+    return "layout.json"
+
+
 def _get_layout(agent_id: str, request: Request) -> Response:
     """Get the saved workspace layout for an agent."""
     agent_info = _find_agent(agent_id, request)
     if agent_info is None:
         return _agent_not_found_response(agent_id)
 
-    layout_file = agent_info.agent_state_dir / "workspace_layout" / "layout.json"
+    filename = _layout_filename(request)
+    layout_file = agent_info.agent_state_dir / "workspace_layout" / filename
     if not layout_file.exists():
         return JSONResponse(content=None, status_code=404)
 
@@ -410,9 +419,10 @@ async def _save_layout(agent_id: str, request: Request) -> Response:
         error = ErrorResponse(detail="Invalid JSON in request body")
         return JSONResponse(content=error.model_dump(), status_code=400)
 
+    filename = _layout_filename(request)
     layout_dir = agent_info.agent_state_dir / "workspace_layout"
     layout_dir.mkdir(parents=True, exist_ok=True)
-    layout_file = layout_dir / "layout.json"
+    layout_file = layout_dir / filename
     layout_file.write_bytes(body)
 
     return JSONResponse(content={"status": "ok"})
