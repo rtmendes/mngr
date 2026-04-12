@@ -301,13 +301,15 @@ function buildDropdownItems(
   // --- Applications section ---
   items.push({ label: "Applications", action: () => {}, header: true });
 
-  // Always show a terminal option, even for agents without their own ttyd.
-  // Uses the primary agent's ttyd with a workdir dispatch to open in the
-  // correct directory for the selected agent.
-  const agent = getAgentById(agentId);
-  const terminalBaseUrl = getApplicationUrl("terminal", "http://localhost:7681", agentId);
-  const terminalUrl = agent?.work_dir
-    ? `${terminalBaseUrl}?arg=workdir&arg=${encodeURIComponent(agent.work_dir)}`
+  // Always show a terminal option. Uses the primary agent's ttyd instance
+  // with a workdir dispatch to cd into the selected agent's work directory.
+  // The terminal URL always routes through the primary agent since ttyd only
+  // runs there.
+  const primaryId = getPrimaryAgentId();
+  const currentAgent = getAgentById(agentId);
+  const terminalBaseUrl = getApplicationUrl("terminal", "http://localhost:7681", primaryId || agentId);
+  const terminalUrl = currentAgent?.work_dir
+    ? `${terminalBaseUrl}?arg=workdir&arg=${encodeURIComponent(currentAgent.work_dir)}`
     : terminalBaseUrl;
   items.push({
     label: "terminal",
