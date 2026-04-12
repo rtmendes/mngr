@@ -211,6 +211,8 @@ class AgentManager:
 
         with self._lock:
             work_dir = self._resolve_agent_work_dir(selected_agent_id)
+            parent = self._agents.get(selected_agent_id)
+            parent_labels = dict(parent.labels) if parent else {}
 
         if work_dir is None:
             msg = f"Cannot determine work directory for agent {selected_agent_id}"
@@ -238,6 +240,10 @@ class AgentManager:
             "--no-connect",
         ]
 
+        # Inherit the project label from the parent agent
+        if "project" in parent_labels:
+            cmd.extend(["--label", f"project={parent_labels['project']}"])
+
         log_queue: queue.Queue[str | None] = queue.Queue(maxsize=10000)
 
         proto_info = {
@@ -258,6 +264,8 @@ class AgentManager:
         )
 
         labels = {"user_created": "true", "workspace": name}
+        if "project" in parent_labels:
+            labels["project"] = parent_labels["project"]
         self._launch_creation_thread(agent_id, name, cmd, Path(work_dir), log_queue, labels)
 
         return agent_id
