@@ -158,11 +158,16 @@ electron_stop() {
     local electron_pid
     electron_pid=$(pgrep -f "electron/dist/electron \\.$" 2>/dev/null | head -1)
     if [[ -z "${electron_pid}" ]]; then
-        echo "[electron] No running electron app found."
-        return
+        echo "[electron] ERROR: No running electron app found. If this is unexpected, check for orphaned processes:" >&2
+        echo "[electron]   pgrep -af 'electron|uv run.*minds'" >&2
+        return 1
     fi
 
-    kill -TERM "${electron_pid}" 2>/dev/null || true
+    echo "[electron] Sending SIGTERM to electron PID ${electron_pid}"
+    if ! kill -TERM "${electron_pid}"; then
+        echo "[electron] ERROR: Failed to send SIGTERM to PID ${electron_pid}" >&2
+        return 1
+    fi
 
     # Wait for clean shutdown (typically ~1.5 seconds)
     for i in $(seq 1 20); do
@@ -173,7 +178,11 @@ electron_stop() {
         sleep 0.5
     done
 
-    echo "[electron] WARNING: Electron did not exit within 10 seconds after SIGTERM"
+    echo "[electron] ERROR: Electron PID ${electron_pid} did not exit within 10 seconds after SIGTERM." >&2
+    echo "[electron] The clean shutdown chain is broken. Debug with:" >&2
+    echo "[electron]   pgrep -af 'electron|uv run.*minds'" >&2
+    echo "[electron]   tail -50 /tmp/minds-electron.log" >&2
+    return 1
 }
 
 electron_start() {
@@ -203,8 +212,15 @@ agent_update &
 AGENT_PID=$!
 
 wait "${ELECTRON_STOP_PID}"
+ELECTRON_STOP_EXIT=$?
 wait "${AGENT_PID}"
 AGENT_EXIT=$?
+
+if [[ "${ELECTRON_STOP_EXIT}" -ne 0 ]]; then
+    echo "ERROR: Electron stop failed (exit code ${ELECTRON_STOP_EXIT}). Not starting a new instance." >&2
+    echo "       Fix the issue, then re-run propagate_changes." >&2
+    exit 1
+fi
 
 if [[ "${AGENT_EXIT}" -ne 0 ]]; then
     echo "ERROR: Agent update failed (exit code ${AGENT_EXIT})" >&2
