@@ -23,6 +23,7 @@ import {
   getChatAgentsForParent,
   getApplicationsForAgent,
   getChatProtoAgentsForParent,
+  getProtoAgents,
   getSidebarAgents,
 } from "../models/AgentManager";
 import { selectAgent } from "../navigation";
@@ -713,7 +714,9 @@ async function initializeAgentDockview(agentId: string, parentElement: HTMLEleme
   }
 
   const agent = getAgentById(agentId);
-  addChatPanel(agentId, agentId, agent?.name ?? "Chat", state);
+  const proto = agent ? null : getProtoAgents().find((p) => p.agent_id === agentId);
+  const agentName = agent?.name ?? proto?.name ?? "Chat";
+  addChatPanel(agentId, agentId, agentName, state);
 }
 
 function showAgentDockview(agentId: string): void {
