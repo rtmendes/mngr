@@ -350,9 +350,7 @@ def generate_backend_loading_html(
             link_items = "".join(
                 '<a href="/agents/{agent_id}/{server}/" target="_top"'
                 ' style="color: rgb(100, 149, 237); text-decoration: none;'
-                ' margin: 0 8px;">{server}</a>'.format(
-                    agent_id=agent_id, server=server
-                )
+                ' margin: 0 8px;">{server}</a>'.format(agent_id=agent_id, server=server)
                 for server in servers_to_show
             )
             links_html = (

@@ -535,9 +535,7 @@ def _make_loading_html(
     backend_resolver: BackendResolverInterface,
 ) -> str:
     """Build loading-page HTML with fallback links to other available servers."""
-    other_servers = tuple(
-        s for s in backend_resolver.list_servers_for_agent(agent_id) if s != server_name
-    )
+    other_servers = tuple(s for s in backend_resolver.list_servers_for_agent(agent_id) if s != server_name)
     return generate_backend_loading_html(
         agent_id=agent_id,
         current_server=server_name,
@@ -597,9 +595,7 @@ async def _handle_proxy_http(
         # when a stale tab is pointed at an unavailable backend.
         request_accept = request.headers.get("accept", "")
         if "text/html" in request_accept:
-            return HTMLResponse(
-                content=_make_loading_html(parsed_id, parsed_server, backend_resolver)
-            )
+            return HTMLResponse(content=_make_loading_html(parsed_id, parsed_server, backend_resolver))
         return Response(
             status_code=502,
             content="Backend unavailable for agent {}, server {}".format(agent_id, server_name),
@@ -624,9 +620,7 @@ async def _handle_proxy_http(
     except (SSHTunnelError, paramiko.SSHException, OSError) as e:
         logger.warning("SSH tunnel setup failed for {} server {}: {}", agent_id, server_name, e)
         if "text/html" in request.headers.get("accept", ""):
-            return HTMLResponse(
-                content=_make_loading_html(parsed_id, parsed_server, backend_resolver)
-            )
+            return HTMLResponse(content=_make_loading_html(parsed_id, parsed_server, backend_resolver))
         return Response(status_code=502, content=f"SSH tunnel to remote backend failed: {e}")
 
     # Check if this request expects a streaming response (SSE).
@@ -660,9 +654,7 @@ async def _handle_proxy_http(
     # dead-end 502 that requires manual reload.
     if isinstance(result, Response):
         if result.status_code >= 500 and "text/html" in request.headers.get("accept", ""):
-            return HTMLResponse(
-                content=_make_loading_html(parsed_id, parsed_server, backend_resolver)
-            )
+            return HTMLResponse(content=_make_loading_html(parsed_id, parsed_server, backend_resolver))
         return result
 
     return _build_proxy_response(

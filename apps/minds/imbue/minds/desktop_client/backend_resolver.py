@@ -491,9 +491,7 @@ class MngrStreamManager(MutableModel):
             self._ssh_by_host_id[host_id_str] = ssh_info
             agent_ids = tuple(AgentId(agent_id) for agent_id in self._agent_host_map)
             # Find agents on this host so we can notify discovery callbacks with SSH info
-            agents_on_host = tuple(
-                AgentId(aid) for aid, hid in self._agent_host_map.items() if hid == host_id_str
-            )
+            agents_on_host = tuple(AgentId(aid) for aid, hid in self._agent_host_map.items() if hid == host_id_str)
 
         self._update_resolver(agent_ids)
 
