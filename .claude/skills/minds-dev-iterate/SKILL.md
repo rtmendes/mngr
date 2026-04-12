@@ -38,13 +38,28 @@ cd ~/project/forever-claude-template
 git worktree add /path/to/mngr/worktree/.external_worktrees/forever-claude-template -b <branch-name> main
 ```
 
-### 2. Install Electron dependencies
+### 2. Sync current mngr code into the template
+
+**CRITICAL**: The template's `vendor/mngr/` starts with whatever was committed on `main`. You MUST rsync the current mngr repo into it before creating any agents, otherwise the container will run stale code:
+
+```bash
+rsync -a --delete \
+    --exclude='.git' --exclude='__pycache__' --exclude='.venv' \
+    --exclude='node_modules' --exclude='.test_output' --exclude='.mypy_cache' \
+    --exclude='.ruff_cache' --exclude='.pytest_cache' --exclude='uv.lock' \
+    --exclude='.external_worktrees' \
+    ./ .external_worktrees/forever-claude-template/vendor/mngr/
+```
+
+This is the same rsync that `propagate_changes` does as step 1, but it must happen once before the first agent creation.
+
+### 3. Install Electron dependencies
 
 ```bash
 cd apps/minds && npm install && cd ../..
 ```
 
-### 3. Find your Docker SSH key
+### 4. Find your Docker SSH key
 
 The Docker provider stores SSH keys at:
 ```
@@ -56,7 +71,7 @@ Find yours with:
 find ~/.mngr/profiles -path "*/docker/*/keys/docker_ssh_key"
 ```
 
-### 4. Start the Electron app
+### 5. Start the Electron app
 
 Source `.env` from the mngr repo root and set these env vars:
 
@@ -79,11 +94,11 @@ TEMPLATE_BRANCH=$(cd .external_worktrees/forever-claude-template && git branch -
 )
 ```
 
-### 5. Create the agent
+### 6. Create the agent
 
 Use the Electron app's creation form to create a Docker agent. The form will default to the template path and agent name from the env vars.
 
-### 6. Find the Docker container's SSH port
+### 7. Find the Docker container's SSH port
 
 ```bash
 docker ps --format '{{.Names}} {{.Ports}}' | grep mindtest
