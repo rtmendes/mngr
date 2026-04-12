@@ -301,7 +301,20 @@ function buildDropdownItems(
   // --- Applications section ---
   items.push({ label: "Applications", action: () => {}, header: true });
 
-  const apps = getApplicationsForAgent(agentId).filter((app) => app.name !== "web");
+  // Always show a terminal option, even for agents without their own ttyd.
+  // Uses the primary agent's ttyd with a workdir dispatch to open in the
+  // correct directory for the selected agent.
+  const agent = getAgentById(agentId);
+  const terminalBaseUrl = getApplicationUrl("terminal", "http://localhost:7681", agentId);
+  const terminalUrl = agent?.work_dir
+    ? `${terminalBaseUrl}?arg=workdir&arg=${encodeURIComponent(agent.work_dir)}`
+    : terminalBaseUrl;
+  items.push({
+    label: "terminal",
+    action: () => openIframeTab(agentId, dockviewState, terminalUrl, "terminal"),
+  });
+
+  const apps = getApplicationsForAgent(agentId).filter((app) => app.name !== "web" && app.name !== "terminal");
   for (const app of apps) {
     const proxyUrl = getApplicationUrl(app.name, app.url, agentId);
     items.push({
