@@ -157,7 +157,11 @@ def start_desktop_client(
     # NOT in a finally block here. Uvicorn re-raises the captured SIGTERM
     # after shutdown (via signal.raise_signal), so a finally block around
     # uvicorn.run() would never execute on signal-triggered shutdown.
-    uvicorn.run(app, host=host, port=port)
+    #
+    # timeout_graceful_shutdown=1 ensures uvicorn cancels in-flight tasks
+    # quickly, giving the lifespan shutdown hook time to run within
+    # electron's 5-second SIGKILL window.
+    uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=1)
 
 
 def _build_cloudflare_client() -> CloudflareForwardingClient | None:
