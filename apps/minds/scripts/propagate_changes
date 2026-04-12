@@ -174,15 +174,21 @@ _find_mngr_stream_pids() {
 electron_stop() {
     echo "[electron] Stopping desktop client..."
 
-    # Send SIGTERM to the top-level electron process only. Electron's
-    # before-quit handler calls shutdown() which SIGTERMs the Python
-    # backend, which then gracefully stops uvicorn, runs the finally
-    # block (stream_manager.stop()), and terminates all mngr observe /
-    # mngr events children.
+    # Send SIGTERM to the process group so electron, the Python backend,
+    # and all mngr subprocesses receive it simultaneously. This gives the
+    # Python backend the full shutdown window to clean up subprocesses,
+    # rather than waiting for SIGTERM to cascade through electron -> uv ->
+    # python (which can eat several seconds of the 5-second SIGKILL window).
     local electron_pid
     electron_pid=$(_find_electron_pid)
     if [[ -n "${electron_pid}" ]]; then
-        kill -TERM "${electron_pid}" 2>/dev/null || true
+        local pgid
+        pgid=$(ps -o pgid= -p "${electron_pid}" 2>/dev/null | tr -d ' ')
+        if [[ -n "${pgid}" ]] && [[ "${pgid}" != "0" ]]; then
+            kill -TERM -"${pgid}" 2>/dev/null || true
+        else
+            kill -TERM "${electron_pid}" 2>/dev/null || true
+        fi
     fi
 
     # Wait up to 10 seconds for the full process tree to shut down
