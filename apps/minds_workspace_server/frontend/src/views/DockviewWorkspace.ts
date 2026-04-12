@@ -68,6 +68,28 @@ function getApplicationUrl(appName: string, rawUrl: string, _agentId: string): s
   return rawUrl;
 }
 
+function getTerminalUrl(): string {
+  const hostname = window.location.hostname;
+
+  // Cloudflare proxy: terminal--agentid--username.domain
+  const cfMatch = hostname.match(/^[^-]+--(.*)/);
+  if (cfMatch) {
+    const proto = window.location.protocol;
+    const port = window.location.port ? `:${window.location.port}` : "";
+    return `${proto}//terminal--${cfMatch[1]}${port}/`;
+  }
+
+  // Local forwarding server: always use the primary agent's terminal
+  const primaryId = getPrimaryAgentId();
+  const pathMatch = window.location.pathname.match(/^(.*\/agents\/)[^/]+\//);
+  if (pathMatch && primaryId) {
+    return `${pathMatch[1]}${primaryId}/terminal/`;
+  }
+
+  // Dev mode
+  return "http://localhost:7681";
+}
+
 type PanelType = "chat" | "iframe" | "subagent";
 
 interface PanelParams {
@@ -304,10 +326,11 @@ function buildDropdownItems(
   // Always show a terminal option. Uses the primary agent's ttyd instance
   // with a workdir dispatch to cd into the selected agent's work directory.
   // The terminal URL always routes through the primary agent since ttyd only
-  // runs there.
-  const primaryId = getPrimaryAgentId();
+  // runs there -- we can't use getApplicationUrl because in local mode it
+  // derives the agent ID from the current URL path (which points to the
+  // selected agent, not the primary one).
   const currentAgent = getAgentById(agentId);
-  const terminalBaseUrl = getApplicationUrl("terminal", "http://localhost:7681", primaryId || agentId);
+  const terminalBaseUrl = getTerminalUrl();
   const terminalUrl = currentAgent?.work_dir
     ? `${terminalBaseUrl}?arg=workdir&arg=${encodeURIComponent(currentAgent.work_dir)}`
     : terminalBaseUrl;
