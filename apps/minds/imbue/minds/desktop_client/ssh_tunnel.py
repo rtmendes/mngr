@@ -238,6 +238,34 @@ class SSHTunnelManager(MutableModel):
 
             return remote_port
 
+    def read_remote_mngr_host_dir(self, ssh_info: RemoteSSHInfo) -> str:
+        """Read MNGR_HOST_DIR from the remote host, falling back to ~/.mngr.
+
+        Runs ``echo $MNGR_HOST_DIR`` on the remote host. If the variable is
+        unset or empty, falls back to the home-directory default ``~/.mngr``.
+        """
+        with self._lock:
+            client = self._get_or_create_connection(ssh_info)
+
+        command = 'echo "${MNGR_HOST_DIR:-$HOME/.mngr}"'
+        try:
+            _stdin, stdout, stderr = client.exec_command(command, timeout=10.0)
+            _stdin.close()
+            try:
+                result = stdout.read().decode().strip()
+                exit_status = stdout.channel.recv_exit_status()
+                if exit_status != 0 or not result:
+                    logger.debug("Could not read MNGR_HOST_DIR from remote, using default")
+                    return "~/.mngr"
+                return result
+            finally:
+                stdout.channel.close()
+                stdout.close()
+                stderr.close()
+        except (paramiko.SSHException, OSError) as e:
+            logger.warning("Failed to read MNGR_HOST_DIR from remote {}: {}", ssh_info.host, e)
+            return "~/.mngr"
+
     def write_api_url_to_remote(
         self,
         ssh_info: RemoteSSHInfo,

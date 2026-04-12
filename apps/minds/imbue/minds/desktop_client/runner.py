@@ -56,10 +56,9 @@ class AgentDiscoveryHandler(FrozenModel):
             self._handle_local_agent(agent_id)
 
     def _handle_remote_agent(self, agent_id: AgentId, ssh_info: RemoteSSHInfo) -> None:
-        # Use $MNGR_HOST_DIR on the remote host (defaults to ~/.mngr if unset).
-        # Docker containers set MNGR_HOST_DIR=/mngr, so we can't hardcode ~/.mngr.
-        agent_state_dir = f"${{MNGR_HOST_DIR:-$HOME/.mngr}}/agents/{agent_id}"
         try:
+            remote_host_dir = self.tunnel_manager.read_remote_mngr_host_dir(ssh_info)
+            agent_state_dir = f"{remote_host_dir}/agents/{agent_id}"
             remote_port = self.tunnel_manager.setup_reverse_tunnel(
                 ssh_info=ssh_info,
                 local_port=self.server_port,
