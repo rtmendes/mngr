@@ -115,9 +115,13 @@ class CloudflareForwardingClient(FrozenModel):
                     "Failed to list services for {}: {} {}", tunnel_name, response.status_code, response.text
                 )
                 return None
-            services = response.json().get("services", [])
+            data = response.json()
+            # The forwarding API may return {"services": [...]} or a bare list
+            services = data.get("services", data) if isinstance(data, dict) else data
+            if not isinstance(services, list):
+                services = []
             return {s["service_name"]: s["hostname"] for s in services if "service_name" in s and "hostname" in s}
-        except (httpx.HTTPError, KeyError) as e:
+        except (httpx.HTTPError, KeyError, AttributeError) as e:
             logger.warning("Failed to list services for {}: {}", tunnel_name, e)
             return None
 
