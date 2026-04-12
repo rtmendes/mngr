@@ -25,6 +25,7 @@ from imbue.minds.desktop_client.cloudflare_client import CloudflareUsername
 from imbue.minds.desktop_client.cloudflare_client import OwnerEmail
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
+from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
 from imbue.minds.primitives import OneTimeCode
@@ -53,6 +54,10 @@ class AgentDiscoveryHandler(FrozenModel):
     mngr_host_dir: Path = Field(
         default_factory=lambda: _DEFAULT_MNGR_HOST_DIR,
         description="Base mngr host directory for local agents (defaults to ~/.mngr)",
+    )
+    data_dir: Path = Field(
+        default_factory=lambda: _DEFAULT_MNGR_HOST_DIR.parent / ".minds",
+        description="Minds data directory for looking up stored tunnel tokens",
     )
 
     def __call__(self, agent_id: AgentId, ssh_info: RemoteSSHInfo | None, provider_name: str) -> None:
@@ -84,6 +89,19 @@ class AgentDiscoveryHandler(FrozenModel):
             logger.debug("Wrote API URL {} for remote agent {}", api_url, agent_id)
         except (SSHTunnelError, OSError, paramiko.SSHException) as e:
             logger.warning("Failed to set up reverse tunnel for agent {}: {}", agent_id, e)
+
+        # Inject stored tunnel token if one exists for this agent
+        self._inject_stored_tunnel_token(agent_id)
+
+    def _inject_stored_tunnel_token(self, agent_id: AgentId) -> None:
+        """If a tunnel token is stored for this agent, inject it via mngr exec."""
+        token = load_tunnel_token(self.data_dir, agent_id)
+        if token is None:
+            return
+        # Import here to avoid circular dependency and keep the import light
+        from imbue.minds.desktop_client.api_v1 import _inject_tunnel_token_into_agent
+
+        _inject_tunnel_token_into_agent(agent_id, token)
 
     def _handle_local_agent(self, agent_id: AgentId) -> None:
         local_state_dir = self.mngr_host_dir / "agents" / str(agent_id)
@@ -139,7 +157,9 @@ def start_desktop_client(
 
     # Register callback to set up reverse tunnels and write API URL files
     # when agents are discovered
-    discovery_handler = AgentDiscoveryHandler(tunnel_manager=tunnel_manager, server_port=port)
+    discovery_handler = AgentDiscoveryHandler(
+        tunnel_manager=tunnel_manager, server_port=port, data_dir=data_directory,
+    )
     stream_manager.add_on_agent_discovered_callback(discovery_handler)
     stream_manager.start()
 

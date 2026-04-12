@@ -6,6 +6,7 @@ per-agent API keys (Bearer tokens) with SHA-256 hash lookup.
 """
 
 import json
+import shlex
 from typing import Annotated
 
 from fastapi import APIRouter
@@ -13,13 +14,17 @@ from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import Response
+from loguru import logger
 from pydantic import Field
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.minds.config.data_types import MNGR_BINARY
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.api_key_store import find_agent_by_api_key
 from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingClient
 from imbue.minds.desktop_client.deps import BackendResolverDep
+from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
@@ -53,6 +58,28 @@ def _authenticate_api_key(request: Request) -> AgentId:
 
 
 CallerAgentIdDep = Annotated[AgentId, Depends(_authenticate_api_key)]
+
+
+def _inject_tunnel_token_into_agent(agent_id: AgentId, token: str) -> None:
+    """Write the tunnel token to the agent's runtime/secrets via mngr exec.
+
+    This causes the cloudflare-tunnel service inside the agent to detect
+    the token and start cloudflared.
+    """
+    safe_token = shlex.quote(token)
+    cg = ConcurrencyGroup(name="inject-tunnel-token")
+    with cg:
+        result = cg.run_process_to_completion(
+            command=[
+                MNGR_BINARY,
+                "exec",
+                str(agent_id),
+                f"mkdir -p runtime && printf 'export CLOUDFLARE_TUNNEL_TOKEN=%s\\n' {safe_token} > runtime/secrets",
+            ],
+            is_checked_after=False,
+        )
+    if result.returncode != 0:
+        logger.warning("Failed to inject tunnel token into agent {}: {}", agent_id, result.stderr.strip())
 
 
 def _json_response(data: dict[str, object], status_code: int = 200) -> Response:
@@ -137,6 +164,11 @@ def _handle_cloudflare_enable(
         token, message = cf_client.create_tunnel(parsed_id)
         if token is None:
             return _json_error(f"Failed to create Cloudflare tunnel: {message}", 502)
+        # Store the token so it can be re-injected on agent restart/rediscovery
+        paths: WorkspacePaths = request.app.state.api_v1_paths
+        save_tunnel_token(paths.data_dir, parsed_id, token)
+        # Inject the token into the agent's runtime/secrets so cloudflared starts
+        _inject_tunnel_token_into_agent(parsed_id, token)
 
     is_success = cf_client.add_service(parsed_id, parsed_server, service_url)
 
