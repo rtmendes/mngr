@@ -625,6 +625,10 @@ async def _destroy_agent(agent_id: str, request: Request) -> JSONResponse:
         error = ErrorResponse(detail=f"Failed to destroy agent '{agent_name}': {output}")
         return JSONResponse(content=error.model_dump(), status_code=500)
 
+    # Remove the agent from the workspace server's tracked state immediately
+    # so the frontend reflects the destruction without waiting for mngr observe.
+    agent_manager.remove_agent(agent_id)
+
     return JSONResponse(content=DestroyAgentResponse(status="ok").model_dump())
 
 

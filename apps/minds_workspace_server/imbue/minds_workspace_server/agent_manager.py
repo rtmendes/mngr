@@ -147,6 +147,19 @@ class AgentManager:
         with self._lock:
             return self._agents.get(agent_id)
 
+    def remove_agent(self, agent_id: str) -> None:
+        """Remove an agent from the tracked state and broadcast the update.
+
+        Called after a successful mngr destroy to immediately reflect
+        the destruction without waiting for the observe subprocess.
+        """
+        with self._lock:
+            self._agents.pop(agent_id, None)
+            self._applications.pop(agent_id, None)
+
+        self._stop_app_watcher(agent_id)
+        self._broadcaster.broadcast_agents_updated(self.get_agents_serialized())
+
     def get_applications(self) -> dict[str, list[ApplicationEntry]]:
         """Return per-agent application map."""
         with self._lock:
