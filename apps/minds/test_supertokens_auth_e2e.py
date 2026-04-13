@@ -27,8 +27,6 @@ from imbue.minds.desktop_client.app import create_desktop_client
 from imbue.minds.desktop_client.auth import FileAuthStore
 from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
 from imbue.minds.desktop_client.runner import _init_supertokens
-from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
-from imbue.minds.desktop_client.supertokens_routes import create_supertokens_router
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import OutputFormat
 
