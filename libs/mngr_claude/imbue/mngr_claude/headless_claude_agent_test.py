@@ -292,8 +292,9 @@ def test_stream_output_raises_when_empty_file(
 ) -> None:
     """stream_output should raise MngrError when stdout file exists but is empty.
 
-    Creates both stdout.jsonl (empty) and stderr.log (empty) so the error
-    fallback chain stops before reaching tmux pane capture.
+    Creates both stdout.jsonl (empty) and stderr.log (empty). The error
+    fallback chain reaches pane capture (which returns None -- no tmux
+    session for the test agent), then falls through to "no details available".
     """
     _patch_agent_as_stopped(monkeypatch)
     agent, host = _make_headless_agent(local_provider, tmp_path)
