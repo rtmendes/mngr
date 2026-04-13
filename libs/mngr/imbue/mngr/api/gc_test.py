@@ -94,16 +94,6 @@ def test_gc_machines_skips_local_hosts(local_provider: LocalProviderInstance, te
 # =========================================================================
 
 
-@pytest.fixture
-def gc_mock_provider(temp_host_dir: Path, temp_mngr_ctx: MngrContext) -> MockProviderInstance:
-    """Create a MockProviderInstance for gc_machines tests."""
-    return MockProviderInstance(
-        name=ProviderInstanceName("test-provider"),
-        host_dir=temp_host_dir,
-        mngr_ctx=temp_mngr_ctx,
-    )
-
-
 def _make_offline_host(
     provider: MockProviderInstance,
     mngr_ctx: MngrContext,
