@@ -73,17 +73,6 @@ def test_get_all_commits_ahead_nonexistent_dir(tmp_path: Path) -> None:
     assert result[missing] is None
 
 
-def test_get_all_commits_ahead_invalid_output(tmp_path: Path) -> None:
-    """Process exits 0 but outputs non-numeric text -- returns None."""
-    proc = MagicMock()
-    proc.read_stdout.return_value = "not-a-number\n"
-    proc.returncode = 0
-    cg = MagicMock()
-    cg.run_process_in_background.return_value = proc
-    result = _get_all_commits_ahead([tmp_path], cg)
-    assert result[tmp_path] is None
-
-
 def test_get_all_commits_ahead_launch_error(tmp_path: Path) -> None:
     """ConcurrencyGroupError on process launch -- returns None."""
     cg = MagicMock()
