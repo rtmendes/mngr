@@ -84,7 +84,7 @@ def _run_in_tmux_and_capture(
         raise TimeoutError(
             f"Sentinel {_SENTINEL!r} did not appear in tmux session {session_name!r} within {timeout}s.\n"
             f"Final pane content:\n{final.stdout}"
-        )
+        ) from None
 
     subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
     return captured
