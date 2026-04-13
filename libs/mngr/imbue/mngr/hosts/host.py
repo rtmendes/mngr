@@ -360,16 +360,16 @@ class Host(BaseHost, OnlineHostInterface):
                 logger.debug("Channel closed while running command: {}, retrying without disconnect", e)
             else:
                 logger.debug("SSH error while running command: {}, disconnecting for retry", e)
-                self.disconnect()
+                self.connector.host.disconnect()
             raise
         except EOFError as e:
             logger.debug("SSH error while running command: {}, disconnecting for retry", e)
-            self.disconnect()
+            self.connector.host.disconnect()
             raise
         except OSError as e:
             if "Socket is closed" in str(e):
                 logger.debug("Socket closed while running command, disconnecting for retry")
-                self.disconnect()
+                self.connector.host.disconnect()
             raise
 
         # Detect ghost failures: pyinfra silently returns (False, output) when
@@ -379,7 +379,7 @@ class Host(BaseHost, OnlineHostInterface):
         success, _output = result
         if not success and transport_before is not None and not transport_before.is_active():
             logger.debug("Command failed and SSH transport is dead, disconnecting for retry")
-            self.disconnect()
+            self.connector.host.disconnect()
             raise SSHException(
                 "Command returned failure with dead SSH transport "
                 "(likely channel closed during execution by concurrent disconnect)"
@@ -443,7 +443,7 @@ class Host(BaseHost, OnlineHostInterface):
                 raise FileNotFoundError(f"File not found: {remote_filename}") from e
             elif "Socket is closed" in error_msg:
                 logger.debug("Socket closed while reading {}, disconnecting for retry", remote_filename)
-                self.disconnect()
+                self.connector.host.disconnect()
                 raise
             else:
                 raise
@@ -461,11 +461,11 @@ class Host(BaseHost, OnlineHostInterface):
                 logger.debug("Channel closed while reading {}: {}, retrying without disconnect", remote_filename, e)
             else:
                 logger.debug("SSH error while reading {}: {}, disconnecting for retry", remote_filename, e)
-                self.disconnect()
+                self.connector.host.disconnect()
             raise
         except EOFError as e:
             logger.debug("SSH error while reading {}: {}, disconnecting for retry", remote_filename, e)
-            self.disconnect()
+            self.connector.host.disconnect()
             raise
 
     def _get_file_via_paramiko(
@@ -545,7 +545,7 @@ class Host(BaseHost, OnlineHostInterface):
         except OSError as e:
             if "Socket is closed" in str(e):
                 logger.debug("Socket closed while writing {}, disconnecting for retry", remote_filename)
-                self.disconnect()
+                self.connector.host.disconnect()
                 raise
             else:
                 raise
@@ -563,11 +563,11 @@ class Host(BaseHost, OnlineHostInterface):
                 logger.debug("Channel closed while writing {}: {}, retrying without disconnect", remote_filename, e)
             else:
                 logger.debug("SSH error while writing {}: {}, disconnecting for retry", remote_filename, e)
-                self.disconnect()
+                self.connector.host.disconnect()
             raise
         except EOFError as e:
             logger.debug("SSH error while writing {}: {}, disconnecting for retry", remote_filename, e)
-            self.disconnect()
+            self.connector.host.disconnect()
             raise
 
     def _get_paramiko_transport(self) -> object:
