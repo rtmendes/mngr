@@ -100,7 +100,7 @@ def _json_error(message: str, status_code: int) -> Response:
     return _json_response({"error": message}, status_code=status_code)
 
 
-def _get_cf_client_with_auth(request: Request) -> tuple[CloudflareForwardingClient | None, Response | None]:
+def get_cf_client_with_auth(request: Request) -> tuple[CloudflareForwardingClient | None, Response | None]:
     """Get a cloudflare client enriched with SuperTokens auth if available.
 
     Returns (client, None) on success, or (None, error_response) if auth is required but missing.
@@ -176,7 +176,7 @@ def _handle_cloudflare_status(
     _caller_agent_id: CallerAgentIdDep,
 ) -> Response:
     """Get Cloudflare forwarding status for a server."""
-    cf_client, error_response = _get_cf_client_with_auth(request)
+    cf_client, error_response = get_cf_client_with_auth(request)
     if error_response is not None:
         return error_response
     assert cf_client is not None
@@ -219,7 +219,7 @@ def _handle_cloudflare_enable(
     body: _CloudflareEnableBody | None = None,
 ) -> Response:
     """Enable Cloudflare forwarding for a server."""
-    cf_client, error_response = _get_cf_client_with_auth(request)
+    cf_client, error_response = get_cf_client_with_auth(request)
     if error_response is not None:
         return error_response
     assert cf_client is not None
@@ -265,7 +265,7 @@ def _handle_cloudflare_disable(
     _caller_agent_id: CallerAgentIdDep,
 ) -> Response:
     """Disable Cloudflare forwarding for a server."""
-    cf_client, error_response = _get_cf_client_with_auth(request)
+    cf_client, error_response = get_cf_client_with_auth(request)
     if error_response is not None:
         return error_response
     assert cf_client is not None

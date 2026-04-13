@@ -30,6 +30,7 @@ from imbue.minds.desktop_client.agent_creator import AgentCreationStatus
 from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.agent_creator import LOG_SENTINEL
 from imbue.minds.desktop_client.api_v1 import create_api_v1_router
+from imbue.minds.desktop_client.api_v1 import get_cf_client_with_auth
 from imbue.minds.desktop_client.auth import AuthStoreInterface
 from imbue.minds.desktop_client.backend_resolver import BackendResolverInterface
 from imbue.minds.desktop_client.backend_resolver import MngrStreamManager
@@ -367,13 +368,10 @@ async def _handle_toggle_global(
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content='{"error": "Not authenticated"}', media_type="application/json")
 
-    cf_client: CloudflareForwardingClient | None = request.app.state.cloudflare_client
-    if cf_client is None:
-        return Response(
-            status_code=501,
-            content='{"error": "Cloudflare forwarding not configured"}',
-            media_type="application/json",
-        )
+    cf_client, error_response = get_cf_client_with_auth(request)
+    if error_response is not None:
+        return error_response
+    assert cf_client is not None
 
     try:
         body = await request.json()
