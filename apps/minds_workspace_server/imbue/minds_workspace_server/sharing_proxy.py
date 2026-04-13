@@ -126,7 +126,10 @@ def enable_sharing(server_name: str, auth_rules: list[dict[str, object]] | None 
     try:
         response = httpx.put(url, headers=headers, json=body if body else None, timeout=_REQUEST_TIMEOUT_SECONDS)
         if response.status_code == 200:
-            return get_sharing_status(server_name)
+            # Return a provisional enabled status. The frontend will re-fetch
+            # to get the full status (URL, auth) without blocking on a second
+            # round trip that could cause a timeout.
+            return SharingStatus(enabled=True, auth_rules=auth_rules or [])
 
         error_msg = _extract_error(response)
         raise SharingProxyError(f"Failed to enable sharing: {error_msg}")
@@ -148,7 +151,7 @@ def update_sharing_auth(server_name: str, auth_rules: list[dict[str, object]]) -
             timeout=_REQUEST_TIMEOUT_SECONDS,
         )
         if response.status_code == 200:
-            return get_sharing_status(server_name)
+            return SharingStatus(enabled=True, auth_rules=auth_rules)
 
         error_msg = _extract_error(response)
         raise SharingProxyError(f"Failed to update sharing auth: {error_msg}")

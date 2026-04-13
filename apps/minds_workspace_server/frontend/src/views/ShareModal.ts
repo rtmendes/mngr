@@ -92,7 +92,11 @@ async function enableSharing(serverName: string, emails: string[]): Promise<void
       const data = await response.json().catch(() => ({}));
       modalError = (data as { detail?: string }).detail ?? `HTTP ${response.status}`;
     } else {
-      modalStatus = (await response.json()) as SharingStatus;
+      // The enable response is provisional (may not have URL yet).
+      // Re-fetch to get the full status including the URL.
+      modalActionInProgress = false;
+      await fetchStatus(serverName);
+      return;
     }
   } catch (e) {
     modalError = `Network error: ${(e as Error).message}`;
