@@ -38,7 +38,10 @@ function getAccessMode(): AccessMode {
   if (hostname.match(/^[^-]+--(.*)/)) {
     return "cloudflare";
   }
-  if (window.location.pathname.match(/^.*\/forwarding\/[^/]+\//)) {
+  // Local mode: detected by Mithril's /agents/:agentId/ route in the pathname.
+  // The desktop client proxy uses /forwarding/ but Mithril's pushState sets
+  // the visible pathname to its own /agents/ route.
+  if (window.location.pathname.match(/^.*\/agents\/[^/]+\//)) {
     return "local";
   }
   return "dev";
@@ -49,7 +52,7 @@ const SVG_CLOSE = '<line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2=
 const SVG_TRASH = '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>';
 const SVG_SHARE = '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>';
 
-function getApplicationUrl(appName: string, rawUrl: string, _agentId: string): string {
+function getApplicationUrl(appName: string, rawUrl: string, agentId: string): string {
   const hostname = window.location.hostname;
 
   // Cloudflare proxy: server--agentid--username.domain
@@ -60,10 +63,9 @@ function getApplicationUrl(appName: string, rawUrl: string, _agentId: string): s
     return `${proto}//${appName}--${cfMatch[1]}${port}/`;
   }
 
-  // Local forwarding server: /forwarding/{id}/{server_name}/
-  const pathMatch = window.location.pathname.match(/^(.*\/forwarding\/[^/]+)\//);
-  if (pathMatch) {
-    return `${pathMatch[1]}/${appName}/`;
+  // Local forwarding server: construct /forwarding/{agentId}/{appName}/
+  if (window.location.pathname.match(/^.*\/agents\/[^/]+\//) && agentId) {
+    return `/forwarding/${agentId}/${appName}/`;
   }
 
   // Dev mode (no forwarding server): use the raw URL from applications.toml
@@ -83,9 +85,8 @@ function getTerminalUrl(): string {
 
   // Local forwarding server: always use the primary agent's terminal
   const primaryId = getPrimaryAgentId();
-  const pathMatch = window.location.pathname.match(/^(.*\/forwarding\/)[^/]+\//);
-  if (pathMatch && primaryId) {
-    return `${pathMatch[1]}${primaryId}/terminal/`;
+  if (window.location.pathname.match(/^.*\/agents\/[^/]+\//) && primaryId) {
+    return `/forwarding/${primaryId}/terminal/`;
   }
 
   // Dev mode
