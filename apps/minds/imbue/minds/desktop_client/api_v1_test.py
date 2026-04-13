@@ -17,6 +17,7 @@ from imbue.minds.desktop_client.cloudflare_client import CloudflareSecret
 from imbue.minds.desktop_client.cloudflare_client import CloudflareUsername
 from imbue.minds.desktop_client.cloudflare_client import OwnerEmail
 from imbue.minds.desktop_client.notification import NotificationDispatcher
+from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token
 from imbue.minds.telegram.credential_store import save_agent_bot_credentials
 from imbue.minds.telegram.data_types import TelegramBotCredentials
 from imbue.minds.telegram.setup import TelegramSetupInfo
@@ -733,12 +734,20 @@ def _create_test_api_client_with_succeeding_cloudflare(
     tmp_path: Path,
     agent_id: AgentId,
 ) -> tuple[TestClient, str, WorkspacePaths]:
-    """Create a client with a CloudflareForwardingClient that always succeeds."""
+    """Create a client with a CloudflareForwardingClient that always succeeds.
+
+    Pre-stores a tunnel token so that inject_tunnel_token_into_agent is not
+    called during tests (it runs mngr exec which is not safe in unit tests).
+    """
     paths = WorkspacePaths(data_dir=tmp_path / "minds")
     auth_store = FileAuthStore(data_directory=paths.auth_dir)
 
     api_key = generate_api_key()
     save_api_key_hash(paths.data_dir, agent_id, hash_api_key(api_key))
+
+    # Pre-store a tunnel token so the enable endpoint skips create_tunnel and
+    # inject_tunnel_token_into_agent (both require real infrastructure).
+    save_tunnel_token(paths.data_dir, agent_id, "pre-stored-test-token")
 
     backend_resolver = StaticBackendResolver(
         url_by_agent_and_server={str(agent_id): {"web": "http://127.0.0.1:9000"}},
