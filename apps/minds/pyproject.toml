@@ -83,11 +83,13 @@ omit = [
   "*/tests/*",
   "*/conftest.py",
   "*/utils/testing.py",
-  # External service interaction modules -- tested via acceptance tests.
+  # External service interaction modules -- tested via acceptance/release tests.
   # Pure functions within these modules are tested in the corresponding *_test.py files.
   "*/telegram/credential_extractor.py",
   "*/telegram/bot_creator.py",
   "*/telegram/injector.py",
+  # SuperTokens routes require a live Core connection -- tested via release test.
+  "*/desktop_client/supertokens_routes.py",
 ]
 
 [tool.inline-snapshot]
