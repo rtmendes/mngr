@@ -15,6 +15,7 @@ catch it.
 """
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -29,8 +30,13 @@ _TEST_SCRIPT = Path(__file__).with_name("_kqueue_tty_test_script.py")
 
 
 def _write_shell_wrapper(shell_path: Path, py_path: Path) -> None:
-    """Write a shell script that runs the Python test script via uv."""
-    shell_path.write_text(f"cd {_REPO_ROOT} && uv run python {py_path}\n")
+    """Write a shell script that runs the Python test script.
+
+    Uses sys.executable so the script runs with the same Python interpreter
+    as the test, which avoids PATH issues in environments where the tmux
+    shell doesn't inherit the test runner's PATH (e.g. Modal sandboxes).
+    """
+    shell_path.write_text(f"cd {_REPO_ROOT} && {sys.executable} {py_path}\n")
     shell_path.chmod(0o755)
 
 
