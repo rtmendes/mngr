@@ -204,6 +204,36 @@ jobs:
           path: test-results/
           retention-days: 30
 
+  # Docker acceptance tests - runs on a GitHub runner with a real Docker daemon.
+  # Temporary: these will move to offload once Docker-in-Docker support lands.
+  test-docker:
+    if: github.ref != 'refs/heads/release'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Configure Docker Hub mirror
+        run: |
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Install Python dependencies
+        run: uv sync --all-packages
+
+      - name: Run Docker acceptance tests
+        run: uv run pytest -n 0 --timeout 90 --no-cov -v --tb=short -m 'docker_sdk'
+
   # Release tests - runs only on release branch pushes
   test-release:
     if: github.ref == 'refs/heads/release' && github.event_name == 'push'
