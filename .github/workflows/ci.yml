@@ -79,6 +79,14 @@ jobs:
           uv run coverage combine .coverage.*
           uv run coverage report --rcfile=libs/mngr/pyproject.toml --fail-under=80
 
+      - name: Report test results
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: test-results/junit.xml
+          include_passed: false
+          check_name: Unit + Integration Tests
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -180,6 +188,14 @@ jobs:
         with:
           path: test-results/junit.xml
           key: offload-acceptance-durations-${{ github.ref }}-${{ github.run_id }}
+
+      - name: Report test results
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: test-results/junit.xml
+          include_passed: false
+          check_name: Acceptance Tests
 
       - name: Upload test results
         if: always()
