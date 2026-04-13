@@ -11,7 +11,6 @@ import sys
 import tempfile
 import time
 from collections.abc import Generator
-from collections.abc import Iterator
 from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import datetime
@@ -739,7 +738,7 @@ def get_short_random_string() -> str:
 
 
 @contextmanager
-def capture_loguru(level: str = "WARNING") -> Iterator[StringIO]:
+def capture_loguru(level: str = "WARNING") -> Generator[StringIO, None, None]:
     """Capture loguru output at the given level into a StringIO buffer.
 
     Loguru's handlers don't follow CliRunner's sys.stderr replacement, so
