@@ -127,23 +127,28 @@ def _handle_cloudflare_status(
 
     parsed_id = AgentId(agent_id)
 
+    # Build the default auth rules from the owner email for when no policy is stored
+    owner_default_rules = [
+        {"action": "allow", "include": [{"email": {"email": str(cf_client.owner_email)}}]},
+    ]
+
     services = cf_client.list_services(parsed_id)
     if services is None:
-        # No tunnel exists yet -- return default auth from tunnel (if any)
+        # No tunnel exists yet -- return owner email as the default
         default_rules = cf_client.get_tunnel_auth(parsed_id)
-        return _json_response({"enabled": False, "url": None, "auth_rules": default_rules or []})
+        return _json_response({"enabled": False, "url": None, "auth_rules": default_rules or owner_default_rules})
 
     hostname = services.get(server_name)
     if hostname:
         # Service is enabled -- get its specific auth policy
         auth_rules = cf_client.get_service_auth(parsed_id, server_name)
         if auth_rules is None:
-            auth_rules = cf_client.get_tunnel_auth(parsed_id) or []
+            auth_rules = cf_client.get_tunnel_auth(parsed_id) or owner_default_rules
         return _json_response({"enabled": True, "url": f"https://{hostname}", "auth_rules": auth_rules})
 
-    # Tunnel exists but this service isn't enabled -- return tunnel default auth
+    # Tunnel exists but this service isn't enabled -- return tunnel default or owner email
     default_rules = cf_client.get_tunnel_auth(parsed_id)
-    return _json_response({"enabled": False, "url": None, "auth_rules": default_rules or []})
+    return _json_response({"enabled": False, "url": None, "auth_rules": default_rules or owner_default_rules})
 
 
 def _handle_cloudflare_enable(
