@@ -14,7 +14,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.responses import Response
 from loguru import logger
 from supertokens_python.recipe.emailpassword.interfaces import ConsumePasswordResetTokenOkResult
-from supertokens_python.recipe.emailpassword.interfaces import CreateResetPasswordOkResult
 from supertokens_python.recipe.emailpassword.interfaces import EmailAlreadyExistsError
 from supertokens_python.recipe.emailpassword.interfaces import SignInOkResult as EPSignInOkResult
 from supertokens_python.recipe.emailpassword.interfaces import SignUpOkResult as EPSignUpOkResult

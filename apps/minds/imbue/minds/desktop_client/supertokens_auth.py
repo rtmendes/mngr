@@ -11,10 +11,8 @@ from pathlib import Path
 
 from loguru import logger
 from pydantic import Field
-from pydantic import SecretStr
 
 from imbue.imbue_common.frozen_model import FrozenModel
-from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.primitives import NonEmptyStr
 
