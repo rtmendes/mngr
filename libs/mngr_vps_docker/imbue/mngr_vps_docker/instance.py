@@ -218,17 +218,8 @@ class VpsDockerProvider(BaseProviderInstance):
     config: VpsDockerProviderConfig = Field(frozen=True, description="VPS Docker provider configuration")
     vps_client: VpsClientInterface = Field(frozen=True, description="VPS provider API client")
 
-    _host_by_id_cache: dict[HostId, HostInterface] = PrivateAttr(default_factory=dict)
     _host_record_cache: dict[HostId, VpsDockerHostRecord] = PrivateAttr(default_factory=dict)
     _container_running_cache: dict[str, bool] = PrivateAttr(default_factory=dict)
-
-    def _evict_cached_host(self, host_id: HostId, replacement: HostInterface | None = None) -> None:
-        """Remove a Host from the cache, disconnecting it if it holds an SSH connection."""
-        old_host = self._host_by_id_cache.pop(host_id, None)
-        if old_host is not None and old_host is not replacement and isinstance(old_host, Host):
-            old_host.disconnect()
-        if replacement is not None:
-            self._host_by_id_cache[host_id] = replacement
 
     @property
     def supports_snapshots(self) -> bool:

@@ -229,20 +229,6 @@ class DockerProviderInstance(BaseProviderInstance):
 
     # Instance-level caches
     _container_cache_by_id: dict[HostId, docker.models.containers.Container] = PrivateAttr(default_factory=dict)
-    _host_by_id_cache: dict[HostId, HostInterface] = PrivateAttr(default_factory=dict)
-
-    def _evict_cached_host(self, host_id: HostId, replacement: HostInterface | None = None) -> None:
-        """Remove a Host from the cache, disconnecting it if it holds an SSH connection.
-
-        If replacement is provided and is a different instance than the cached one,
-        the old Host is disconnected before being evicted. If replacement is None,
-        the entry is simply removed (with disconnect).
-        """
-        old_host = self._host_by_id_cache.pop(host_id, None)
-        if old_host is not None and old_host is not replacement and isinstance(old_host, Host):
-            old_host.disconnect()
-        if replacement is not None:
-            self._host_by_id_cache[host_id] = replacement
 
     @property
     def supports_snapshots(self) -> bool:

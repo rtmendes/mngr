@@ -392,18 +392,8 @@ class ModalProviderInstance(BaseProviderInstance):
     # Modal's eventually consistent tag API for recently created sandboxes.
     _sandbox_cache_by_id: dict[HostId, SandboxInterface] = PrivateAttr(default_factory=dict)
     _sandbox_cache_by_name: dict[HostName, SandboxInterface] = PrivateAttr(default_factory=dict)
-    _host_by_id_cache: dict[HostId, HostInterface] = PrivateAttr(default_factory=dict)
     # Cache for host records read from the volume to avoid repeated reads
     _host_record_cache_by_id: dict[HostId, HostRecord] = PrivateAttr(default_factory=dict)
-
-    def _evict_cached_host(self, host_id: HostId, replacement: HostInterface | None = None) -> None:
-        """Remove a Host from the cache, disconnecting it if it holds an SSH connection."""
-        old_host = self._host_by_id_cache.pop(host_id, None)
-        if old_host is not None and old_host is not replacement and isinstance(old_host, Host):
-            old_host.disconnect()
-        if replacement is not None:
-            self._host_by_id_cache[host_id] = replacement
-
     # a reference to the ssh process, just in case we ever need it (and to prevent it from being garbage collected)
     _ssh_process: ExecProcess | None = PrivateAttr(default=None)
     # a list of *all* currently running sandboxes for this app
