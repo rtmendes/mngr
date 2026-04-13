@@ -26,6 +26,7 @@ from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.app import create_desktop_client
 from imbue.minds.desktop_client.auth import FileAuthStore
 from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
+from imbue.minds.desktop_client.runner import _init_supertokens
 from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
 from imbue.minds.desktop_client.supertokens_routes import create_supertokens_router
 from imbue.minds.primitives import OneTimeCode
@@ -100,8 +101,6 @@ class AuthTestFixture:
         return f"http://{self.host}:{self.port}"
 
     def start(self) -> None:
-        from imbue.minds.desktop_client.runner import _init_supertokens
-
         session_store = _init_supertokens(
             data_directory=self.tmp_dir,
             host=self.host,
