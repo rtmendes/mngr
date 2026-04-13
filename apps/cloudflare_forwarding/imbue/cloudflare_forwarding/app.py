@@ -884,11 +884,24 @@ class ForwardingCtx:
 
 
 def authenticate_request(request: Request, ops: CloudflareOps) -> AuthResult:
-    """Authenticate a request. Returns AdminAuth or AgentAuth."""
+    """Authenticate a request. Returns AdminAuth or AgentAuth.
+
+    Supports three auth methods:
+    1. Basic Auth (admin credentials from USER_CREDENTIALS)
+    2. Bearer token (base64-encoded tunnel token for agent auth)
+    3. Bearer token (SuperTokens JWT for user auth -- treated as admin)
+    """
     auth_header = request.headers.get("authorization", "")
 
     if auth_header.lower().startswith("bearer "):
-        return _authenticate_agent(auth_header[7:], ops)
+        token = auth_header[7:]
+        # Try tunnel token first
+        try:
+            return _authenticate_agent(token, ops)
+        except HTTPException:
+            pass
+        # Try SuperTokens JWT
+        return _authenticate_supertokens(token)
 
     if auth_header.lower().startswith("basic "):
         return _authenticate_admin(auth_header)
@@ -932,6 +945,35 @@ def _authenticate_agent(token: str, ops: CloudflareOps) -> AgentAuth:
         raise HTTPException(status_code=401, detail="Invalid tunnel token: tunnel not found")
 
     return AgentAuth(tunnel_id=tunnel_id, tunnel_name=tunnel["name"])
+
+
+_USER_ID_PREFIX_LENGTH = 16
+
+
+def _authenticate_supertokens(token: str) -> AdminAuth:
+    """Validate a SuperTokens JWT access token. Returns AdminAuth with user_id_prefix as username."""
+    connection_uri = os.environ.get("SUPERTOKENS_CONNECTION_URI")
+    if not connection_uri:
+        raise HTTPException(status_code=401, detail="SuperTokens not configured")
+
+    try:
+        from supertokens_python.recipe.session.syncio import get_session_without_request_response
+
+        session = get_session_without_request_response(
+            access_token=token,
+            anti_csrf_check=False,
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
+
+    if session is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired SuperTokens session")
+
+    user_id = session.get_user_id()
+    # Derive 16-char hex prefix from UUID
+    user_id_prefix = user_id.replace("-", "")[:_USER_ID_PREFIX_LENGTH]
+
+    return AdminAuth(username=user_id_prefix)
 
 
 def require_admin(auth: AuthResult) -> AdminAuth:
@@ -1130,11 +1172,44 @@ def set_service_auth(request: Request, tunnel_name: str, service_name: str, body
 # Modal deployment
 # ---------------------------------------------------------------------------
 
-image = modal.Image.debian_slim().pip_install("fastapi[standard]", "httpx")
+image = modal.Image.debian_slim().pip_install("fastapi[standard]", "httpx", "supertokens-python")
 app = modal.App(name="cloudflare-forwarding", image=image)
+
+
+def _init_supertokens() -> None:
+    """Initialize SuperTokens SDK for JWT validation if configured."""
+    connection_uri = os.environ.get("SUPERTOKENS_CONNECTION_URI")
+    if not connection_uri:
+        return
+
+    from supertokens_python import InputAppInfo
+    from supertokens_python import SupertokensConfig
+    from supertokens_python import init as supertokens_init
+    from supertokens_python.recipe import session
+
+    api_key = os.environ.get("SUPERTOKENS_API_KEY")
+
+    supertokens_init(
+        supertokens_config=SupertokensConfig(
+            connection_uri=connection_uri,
+            api_key=api_key,
+        ),
+        app_info=InputAppInfo(
+            app_name="CloudflareForwarding",
+            api_domain="https://cloudflare-forwarding.modal.run",
+            website_domain="https://cloudflare-forwarding.modal.run",
+            api_base_path="/auth",
+            website_base_path="/auth",
+        ),
+        framework="fastapi",
+        recipe_list=[session.init()],
+        mode="asgi",
+    )
+    logger.info("SuperTokens SDK initialized for JWT validation")
 
 
 @app.function(secrets=[modal.Secret.from_name("cloudflare-forwarding-secrets")])
 @modal.asgi_app()
 def fastapi_app() -> FastAPI:
+    _init_supertokens()
     return web_app
