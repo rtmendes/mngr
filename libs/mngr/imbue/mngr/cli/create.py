@@ -1758,7 +1758,6 @@ by pushing all local branches and tags via git. Use --transfer to override the d
         ("list", "List existing agents"),
         ("destroy", "Destroy agents"),
         ("limit", "Configure agent resource limits"),
-        ("ask", "Ask mngr for help (uses headless_claude internally)"),
     ),
     group_intros=(
         (

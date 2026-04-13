@@ -279,7 +279,6 @@ Provider: vultr
 - [mngr list](./list.md) - List existing agents
 - [mngr destroy](./destroy.md) - Destroy agents
 - [mngr limit](../secondary/limit.md) - Configure agent resource limits
-- [mngr ask](../secondary/ask.md) - Ask mngr for help (uses headless_claude internally)
 
 ## Examples
 
