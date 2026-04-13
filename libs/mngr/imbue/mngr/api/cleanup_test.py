@@ -16,7 +16,8 @@ from imbue.mngr.api.cleanup import execute_cleanup
 from imbue.mngr.api.cleanup import find_agents_for_cleanup
 from imbue.mngr.api.create import CreateAgentOptions
 from imbue.mngr.api.data_types import CleanupResult
-from imbue.mngr.api.providers import _instance_cache
+from imbue.mngr.api.providers import register_provider_instance
+from imbue.mngr.api.providers import reset_provider_instances
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import ProviderInstanceConfig
 from imbue.mngr.errors import MngrError
@@ -488,8 +489,7 @@ def test_execute_cleanup_destroy_offline_host_error_with_abort(
         host_dir=temp_host_dir,
         mngr_ctx=temp_mngr_ctx,
     )
-    cache_key = (provider_name, id(temp_mngr_ctx))
-    _instance_cache[cache_key] = offline_provider
+    register_provider_instance(provider_name, temp_mngr_ctx, offline_provider)
 
     try:
         # Create two agents on the fake offline host so we can verify ABORT stops
@@ -519,7 +519,7 @@ def test_execute_cleanup_destroy_offline_host_error_with_abort(
         # No agents should have been reported as destroyed.
         assert result.destroyed_agents == []
     finally:
-        _instance_cache.pop(cache_key, None)
+        reset_provider_instances()
 
 
 def test_execute_cleanup_destroy_unknown_provider_with_abort_stops_processing(
@@ -578,8 +578,7 @@ def test_execute_cleanup_stop_error_with_abort_stops_processing(
         host_dir=temp_host_dir,
         mngr_ctx=temp_mngr_ctx,
     )
-    cache_key = (provider_name, id(temp_mngr_ctx))
-    _instance_cache[cache_key] = stop_provider
+    register_provider_instance(provider_name, temp_mngr_ctx, stop_provider)
 
     try:
         host_details = HostDetails(
@@ -625,7 +624,7 @@ def test_execute_cleanup_stop_error_with_abort_stops_processing(
         assert "Error stopping agents on host" in result.errors[0]
         assert result.stopped_agents == []
     finally:
-        _instance_cache.pop(cache_key, None)
+        reset_provider_instances()
 
 
 def test_execute_cleanup_stop_unknown_provider_with_abort_stops_processing(
@@ -708,8 +707,7 @@ def test_execute_cleanup_destroy_offline_host_success(
         host_dir=temp_host_dir,
         mngr_ctx=temp_mngr_ctx,
     )
-    cache_key = (provider_name, id(temp_mngr_ctx))
-    _instance_cache[cache_key] = success_provider
+    register_provider_instance(provider_name, temp_mngr_ctx, success_provider)
 
     try:
         first_agent = make_test_agent_details(
@@ -735,7 +733,7 @@ def test_execute_cleanup_destroy_offline_host_success(
         assert AgentName("offline-success-agent-one") in result.destroyed_agents
         assert AgentName("offline-success-agent-two") in result.destroyed_agents
     finally:
-        _instance_cache.pop(cache_key, None)
+        reset_provider_instances()
 
 
 def test_execute_cleanup_stop_on_offline_host_skips_with_warning(
@@ -753,8 +751,7 @@ def test_execute_cleanup_stop_on_offline_host_skips_with_warning(
         host_dir=temp_host_dir,
         mngr_ctx=temp_mngr_ctx,
     )
-    cache_key = (provider_name, id(temp_mngr_ctx))
-    _instance_cache[cache_key] = offline_provider
+    register_provider_instance(provider_name, temp_mngr_ctx, offline_provider)
 
     try:
         agent = make_test_agent_details(
@@ -777,4 +774,4 @@ def test_execute_cleanup_stop_on_offline_host_skips_with_warning(
         assert "Skipping" in result.errors[0]
         assert "offline host" in result.errors[0]
     finally:
-        _instance_cache.pop(cache_key, None)
+        reset_provider_instances()

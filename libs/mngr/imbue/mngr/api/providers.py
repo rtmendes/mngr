@@ -48,6 +48,25 @@ def reset_provider_instances() -> None:
     _atexit_registered["registered"] = False
 
 
+def register_provider_instance(
+    name: ProviderInstanceName,
+    mngr_ctx: MngrContext,
+    instance: BaseProviderInstance,
+) -> None:
+    """Register a pre-built provider instance into the cache.
+
+    Stores the given instance under the (name, id(mngr_ctx)) cache key,
+    replacing any existing entry. A subsequent call to get_provider_instance
+    with the same name and context will return this instance.
+
+    This is intended for tests that need to inject custom provider subclasses
+    into the provider resolution path without going through the build pipeline.
+    Call reset_provider_instances() or pop the entry during teardown.
+    """
+    cache_key = (name, id(mngr_ctx))
+    _instance_cache[cache_key] = instance
+
+
 def get_provider_instance(
     name: ProviderInstanceName,
     mngr_ctx: MngrContext,
