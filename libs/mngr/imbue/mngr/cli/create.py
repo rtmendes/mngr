@@ -345,7 +345,7 @@ class _CreateCommand(click.Command):
 @optgroup.option(
     "--command",
     "-c",
-    help="Shell command for the agent to run [implies --type generic]",
+    help="Shell command for the agent to run [default --type: generic]",
 )
 # FOLLOWUP: hmm... I wonder if the name of this should be changed to something more like "window" to be more closely aligned with the tmux primitive it actually creates...
 #  more generally, we probably need to do a pass at refining *all* of these option names...
@@ -1760,7 +1760,6 @@ by pushing all local branches and tags via git. Use --transfer to override the d
         ("Add extra tmux windows", 'mngr create my-agent -w server="npm run dev"'),
         ("Reuse existing agent or create if not found", "mngr create my-agent --reuse"),
         ("Run a shell command (headless)", 'mngr create --type headless_command -c "echo hello world"'),
-        ("Run claude non-interactively (headless)", 'mngr create --type headless_claude -- "what is 2+2"'),
     ),
     see_also=(
         ("connect", "Connect to an existing agent"),
