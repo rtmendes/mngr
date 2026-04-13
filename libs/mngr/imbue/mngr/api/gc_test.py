@@ -10,8 +10,6 @@ from pathlib import Path
 
 import pluggy
 import pytest
-from pyinfra.api import State
-from pyinfra.api.inventory import Inventory
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.model_update import to_update
@@ -1377,14 +1375,8 @@ class _AuthErroringHost(Host):
 
 def _make_erroring_host(provider: LocalProviderInstance, host_cls: type[Host]) -> Host:
     """Create an instance of host_cls using the local provider's connector and ID."""
-    # Build the same way as LocalProviderInstance._create_host does.
-    names_data = (["@local"], {})
-    inventory = Inventory(names_data)
-    state = State(inventory=inventory)
-    pyinfra_host = inventory.get_host("@local")
-    pyinfra_host.init(state)
+    pyinfra_host = provider._create_local_pyinfra_host()
     connector = PyinfraConnector(pyinfra_host)
-
     return host_cls(
         id=provider.host_id,
         connector=connector,
