@@ -56,9 +56,14 @@ class CloudflareForwardingClient(FrozenModel):
         credentials = f"{self.username}:{self.secret}"
         return "Basic " + base64.b64encode(credentials.encode()).decode()
 
+    @staticmethod
+    def _truncate_agent_id(agent_id: AgentId) -> str:
+        """Truncate an agent ID to a 16-char prefix for use in hostnames."""
+        return str(agent_id).removeprefix("agent-")[:16]
+
     def make_tunnel_name(self, agent_id: AgentId) -> str:
         """Build the tunnel name for an agent."""
-        return f"{self.username}--{agent_id}"
+        return f"{self.username}--{self._truncate_agent_id(agent_id)}"
 
     def create_tunnel(self, agent_id: AgentId) -> tuple[str | None, str]:
         """Create a Cloudflare tunnel for the agent and return (token, message).
