@@ -30,6 +30,16 @@ from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
 from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
 from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
+from supertokens_python import InputAppInfo
+from supertokens_python import SupertokensConfig
+from supertokens_python import init as supertokens_init
+from supertokens_python.recipe import emailpassword
+from supertokens_python.recipe import emailverification
+from supertokens_python.recipe import session as session_recipe
+from supertokens_python.recipe import thirdparty
+from supertokens_python.recipe.thirdparty.provider import ProviderClientConfig
+from supertokens_python.recipe.thirdparty.provider import ProviderConfig
+from supertokens_python.recipe.thirdparty.provider import ProviderInput
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import OutputFormat
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
@@ -216,17 +226,6 @@ def _init_supertokens(
         logger.info("SuperTokens not configured (SUPERTOKENS_CONNECTION_URI not set)")
         return None
 
-    from supertokens_python import InputAppInfo
-    from supertokens_python import SupertokensConfig
-    from supertokens_python import init as supertokens_init
-    from supertokens_python.recipe import emailpassword
-    from supertokens_python.recipe import emailverification
-    from supertokens_python.recipe import session
-    from supertokens_python.recipe import thirdparty
-    from supertokens_python.recipe.thirdparty.provider import ProviderClientConfig
-    from supertokens_python.recipe.thirdparty.provider import ProviderConfig
-    from supertokens_python.recipe.thirdparty.provider import ProviderInput
-
     api_key = os.environ.get("SUPERTOKENS_API_KEY")
     google_client_id = os.environ.get("GOOGLE_CLIENT_ID")
     google_client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
@@ -272,7 +271,7 @@ def _init_supertokens(
         ),
         framework="fastapi",
         recipe_list=[
-            session.init(),
+            session_recipe.init(),
             emailpassword.init(),
             thirdparty.init(
                 sign_in_and_up_feature=thirdparty.SignInAndUpFeature(providers=providers),

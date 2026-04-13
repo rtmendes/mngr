@@ -5,6 +5,7 @@ email verification, password reset, and session status. All routes use
 plain HTML + vanilla JS -- no SuperTokens frontend SDK.
 """
 
+import json
 import webbrowser
 
 from fastapi import APIRouter
@@ -47,8 +48,6 @@ _TENANT_ID = "public"
 
 
 def _json_response(data: dict[str, object], status_code: int = 200) -> Response:
-    import json
-
     return Response(
         content=json.dumps(data),
         media_type="application/json",
