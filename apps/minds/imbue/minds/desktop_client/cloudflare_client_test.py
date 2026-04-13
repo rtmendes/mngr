@@ -93,12 +93,12 @@ def test_effective_owner_email_prefers_supertokens() -> None:
         owner_email=OwnerEmail("basic@example.com"),
         supertokens_email="st@example.com",
     )
-    assert client._effective_owner_email() == "st@example.com"
+    assert client.effective_owner_email() == "st@example.com"
 
 
 def test_effective_owner_email_falls_back_to_owner_email() -> None:
     client = _make_client()
-    assert client._effective_owner_email() == "test@example.com"
+    assert client.effective_owner_email() == "test@example.com"
 
 
 def test_client_works_with_only_supertokens_fields() -> None:
@@ -110,4 +110,4 @@ def test_client_works_with_only_supertokens_fields() -> None:
     )
     assert client._auth_header() == "Bearer jwt-token"
     assert client._effective_username() == "a1b2c3d4e5f67890"
-    assert client._effective_owner_email() == "user@example.com"
+    assert client.effective_owner_email() == "user@example.com"

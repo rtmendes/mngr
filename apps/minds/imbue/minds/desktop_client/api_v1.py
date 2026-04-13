@@ -184,7 +184,7 @@ def _handle_cloudflare_status(
     parsed_id = AgentId(agent_id)
 
     # Build the default auth rules from the owner email for when no policy is stored
-    effective_email = cf_client._effective_owner_email()
+    effective_email = cf_client.effective_owner_email()
     owner_default_rules = (
         [{"action": "allow", "include": [{"email": {"email": effective_email}}]}]
         if effective_email

@@ -69,7 +69,7 @@ class CloudflareForwardingClient(FrozenModel):
             return "Basic " + base64.b64encode(credentials.encode()).decode()
         raise ValueError("No auth credentials configured for cloudflare_forwarding")
 
-    def _effective_owner_email(self) -> str | None:
+    def effective_owner_email(self) -> str | None:
         """Return the email to use for default access policies."""
         return self.supertokens_email or (str(self.owner_email) if self.owner_email else None)
 
@@ -97,7 +97,7 @@ class CloudflareForwardingClient(FrozenModel):
         Returns (token, success_message) on success, or (None, error_message) on failure.
         """
         tunnel_name = self.make_tunnel_name(agent_id)
-        owner_email = self._effective_owner_email()
+        owner_email = self.effective_owner_email()
         default_policy: dict[str, object] | None = None
         if owner_email:
             default_policy = {
