@@ -327,7 +327,7 @@ def _handle_agent_default_redirect(
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content="Not authenticated")
 
-    return Response(status_code=307, headers={"Location": f"/agents/{agent_id}/web/"})
+    return Response(status_code=307, headers={"Location": f"/forwarding/{agent_id}/web/"})
 
 
 async def _handle_agent_servers_page(
@@ -1194,26 +1194,26 @@ def create_desktop_client(
     app.get("/creating/{agent_id}")(_handle_creating_page)
 
     # Agent default page: redirect to web server
-    app.get("/agents/{agent_id}/")(_handle_agent_default_redirect)
+    app.get("/forwarding/{agent_id}/")(_handle_agent_default_redirect)
 
-    # Agent server listing page: /agents/{agent_id}/servers/
-    app.get("/agents/{agent_id}/servers/")(_handle_agent_servers_page)
+    # Agent server listing page: /forwarding/{agent_id}/servers/
+    app.get("/forwarding/{agent_id}/servers/")(_handle_agent_servers_page)
 
     # Toggle global forwarding for a server
-    app.post("/agents/{agent_id}/servers/{server_name}/global")(_handle_toggle_global)
+    app.post("/forwarding/{agent_id}/servers/{server_name}/global")(_handle_toggle_global)
 
     # Telegram setup routes
     app.post("/api/agents/{agent_id}/telegram/setup")(_handle_telegram_setup)
     app.get("/api/agents/{agent_id}/telegram/status")(_handle_telegram_status)
 
-    # Proxy routes: /agents/{agent_id}/{server_name}/{path:path}
+    # Proxy routes: /forwarding/{agent_id}/{server_name}/{path:path}
     app.api_route(
-        "/agents/{agent_id}/{server_name}/{path:path}",
+        "/forwarding/{agent_id}/{server_name}/{path:path}",
         methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
     )(_handle_proxy_http)
 
     # WebSocket route needs manual dependency wiring since Depends doesn't work on WS
-    @app.websocket("/agents/{agent_id}/{server_name}/{path:path}")
+    @app.websocket("/forwarding/{agent_id}/{server_name}/{path:path}")
     async def proxy_websocket(websocket: WebSocket, agent_id: str, server_name: str, path: str) -> None:
         await _handle_proxy_websocket(
             websocket=websocket,

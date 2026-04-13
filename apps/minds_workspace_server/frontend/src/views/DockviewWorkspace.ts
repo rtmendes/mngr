@@ -38,7 +38,7 @@ function getAccessMode(): AccessMode {
   if (hostname.match(/^[^-]+--(.*)/)) {
     return "cloudflare";
   }
-  if (window.location.pathname.match(/^.*\/agents\/[^/]+\//)) {
+  if (window.location.pathname.match(/^.*\/forwarding\/[^/]+\//)) {
     return "local";
   }
   return "dev";
@@ -60,8 +60,8 @@ function getApplicationUrl(appName: string, rawUrl: string, _agentId: string): s
     return `${proto}//${appName}--${cfMatch[1]}${port}/`;
   }
 
-  // Local forwarding server: /agents/{id}/{server_name}/
-  const pathMatch = window.location.pathname.match(/^(.*\/agents\/[^/]+)\//);
+  // Local forwarding server: /forwarding/{id}/{server_name}/
+  const pathMatch = window.location.pathname.match(/^(.*\/forwarding\/[^/]+)\//);
   if (pathMatch) {
     return `${pathMatch[1]}/${appName}/`;
   }
@@ -83,7 +83,7 @@ function getTerminalUrl(): string {
 
   // Local forwarding server: always use the primary agent's terminal
   const primaryId = getPrimaryAgentId();
-  const pathMatch = window.location.pathname.match(/^(.*\/agents\/)[^/]+\//);
+  const pathMatch = window.location.pathname.match(/^(.*\/forwarding\/)[^/]+\//);
   if (pathMatch && primaryId) {
     return `${pathMatch[1]}${primaryId}/terminal/`;
   }
