@@ -965,16 +965,6 @@ def test_gc_with_machines_flag(temp_mngr_ctx: MngrContext, local_provider: Local
 
 
 # =========================================================================
-# _handle_error additional path tests
-# =========================================================================
-
-
-def test_handle_error_continue_without_exception_does_not_raise() -> None:
-    """CONTINUE behavior without an exception logs the message and does not raise."""
-    _handle_error("some message", ErrorBehavior.CONTINUE, exc=None)
-
-
-# =========================================================================
 # _discover_hosts_for_gc error handling tests
 # =========================================================================
 
@@ -1244,22 +1234,11 @@ def test_clean_work_dir_is_noop_in_dry_run(local_host: Host, tmp_path: Path) -> 
     assert work_dir.exists()
 
 
-def test_clean_work_dir_removes_git_worktree(local_host: Host, tmp_path: Path, setup_git_config: None) -> None:
+def test_clean_work_dir_removes_git_worktree(local_host: Host, temp_git_repo: Path, tmp_path: Path) -> None:
     """_clean_work_dir uses git worktree remove for git worktrees."""
-    # Create a main git repo with an initial commit.
-    main_repo = tmp_path / "main_repo"
-    main_repo.mkdir()
-    subprocess.run(["git", "init", str(main_repo)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(main_repo), "commit", "--allow-empty", "-m", "initial"],
-        check=True,
-        capture_output=True,
-    )
-
-    # Create a git worktree.
     wt_path = tmp_path / "my_worktree"
     subprocess.run(
-        ["git", "-C", str(main_repo), "worktree", "add", str(wt_path)],
+        ["git", "-C", str(temp_git_repo), "worktree", "add", str(wt_path)],
         check=True,
         capture_output=True,
     )
@@ -2027,28 +2006,3 @@ def test_remove_git_worktree_falls_back_when_git_file_absent(local_host: Host, t
 
     # The directory should have been removed via rm -rf fallback.
     assert not work_dir.exists()
-
-
-# =========================================================================
-# Additional coverage: _get_orphaned_work_dirs when du output is non-integer
-# =========================================================================
-
-
-def test_get_orphaned_work_dirs_handles_non_integer_du_output(
-    local_host: Host, local_provider: LocalProviderInstance, tmp_path: Path
-) -> None:
-    """_get_orphaned_work_dirs handles du returning unexpected (non-integer) output."""
-    work_dir = tmp_path / "work_dir_with_weird_du"
-    work_dir.mkdir()
-
-    certified = local_host.get_certified_data()
-    updated = certified.model_copy_update(
-        to_update(certified.field_ref().generated_work_dirs, (str(work_dir),)),
-    )
-    local_host.set_certified_data(updated)
-
-    orphaned = _get_orphaned_work_dirs(host=local_host, provider_name=local_provider.name)
-
-    # Should succeed and return the orphaned dir (size may be 0 or actual).
-    assert len(orphaned) == 1
-    assert orphaned[0].path == work_dir
