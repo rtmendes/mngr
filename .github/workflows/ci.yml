@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: ['**']
 
-permissions:
-  checks: write
-  contents: read
-
 jobs:
   # Unit + integration tests via offload on Modal - runs on non-release branches
   test-offload:
