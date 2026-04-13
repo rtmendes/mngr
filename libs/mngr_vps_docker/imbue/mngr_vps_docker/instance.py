@@ -294,8 +294,17 @@ class VpsDockerProvider(BaseProviderInstance):
     # Host Store
     # =========================================================================
 
+    def _state_container_name(self) -> str:
+        """Return the expected state container name for this provider/user."""
+        return f"{self.mngr_ctx.config.prefix}docker-state-{self.mngr_ctx.get_profile_user_id()}"
+
     def _get_host_store(self, docker_ssh: DockerOverSsh) -> VpsDockerHostStore:
-        """Get or create the host store on the VPS."""
+        """Get or create the host store on the VPS.
+
+        Creates the state container if it does not exist. Use
+        _get_host_store_readonly for read-only access that does not create
+        the container (e.g., during discovery).
+        """
         state_container_name = ensure_state_container(
             docker_ssh=docker_ssh,
             prefix=self.mngr_ctx.config.prefix,
@@ -305,6 +314,20 @@ class VpsDockerProvider(BaseProviderInstance):
         return VpsDockerHostStore(
             docker_ssh=docker_ssh,
             state_container_name=state_container_name,
+        )
+
+    def _get_host_store_readonly(self, docker_ssh: DockerOverSsh) -> VpsDockerHostStore | None:
+        """Get a read-only handle to the host store on the VPS.
+
+        Returns None if the state container does not exist or is not running.
+        Unlike _get_host_store, this never creates the state container.
+        """
+        container_name = self._state_container_name()
+        if not docker_ssh.container_is_running(container_name):
+            return None
+        return VpsDockerHostStore(
+            docker_ssh=docker_ssh,
+            state_container_name=container_name,
         )
 
     # =========================================================================

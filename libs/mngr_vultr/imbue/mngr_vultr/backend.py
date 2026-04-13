@@ -73,10 +73,19 @@ class VultrProvider(VpsDockerProvider):
         self,
         vps_ip: str,
     ) -> tuple[list[VpsDockerHostRecord], dict[HostId, list[dict[str, Any]]]]:
-        """Read all host records and agent data from a single VPS in one SSH command."""
+        """Read all host records and agent data from a single VPS in one SSH command.
+
+        Uses the read-only host store so that discovery never creates the
+        state container. If the container does not exist yet (e.g., the VPS
+        is still being set up by a concurrent ``mngr create``), returns
+        empty results.
+        """
         try:
             docker_ssh = self._make_docker_ssh(vps_ip)
-            host_store = self._get_host_store(docker_ssh)
+            host_store = self._get_host_store_readonly(docker_ssh)
+            if host_store is None:
+                logger.debug("State container not ready on VPS {}, skipping", vps_ip)
+                return [], {}
             return host_store.list_all_host_records_with_agents()
         except (VpsConnectionError, ContainerSetupError) as e:
             logger.warning("Failed to read records from VPS {}: {}", vps_ip, e)
