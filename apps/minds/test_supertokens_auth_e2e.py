@@ -69,7 +69,7 @@ def _poll_for_email(
             if subject_contains.lower() in msg.get("subject", "").lower():
                 return msg
         threading.Event().wait(interval)
-    raise TimeoutError(
+    pytest.fail(
         f"No email with subject containing {subject_contains!r} "
         f"arrived at {username}@restmail.net within {timeout}s"
     )
@@ -82,7 +82,7 @@ def _extract_verification_token(email_msg: dict[str, object]) -> str:
     match = re.search(r"token=([a-zA-Z0-9_\-%.]+)", body)
     if match:
         return match.group(1)
-    raise ValueError(f"Could not extract verification token from email body:\n{body[:500]}")
+    pytest.fail(f"Could not extract verification token from email body:\n{body[:500]}")
 
 
 class AuthTestFixture:
