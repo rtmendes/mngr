@@ -928,6 +928,12 @@ class VpsDockerProvider(BaseProviderInstance):
             except MngrError as e:
                 logger.warning("Failed to create snapshot before stop: {}", e)
 
+        # Disconnect SSH before stopping (also disconnect the passed-in host
+        # in case it is a different instance than the cached one).
+        if isinstance(host, Host):
+            host.disconnect()
+        self._evict_cached_host(host_id)
+
         with log_span("Stopping container on VPS"):
             docker_ssh.stop_container(host_record.config.container_name, timeout_seconds=int(timeout_seconds))
 
@@ -938,7 +944,6 @@ class VpsDockerProvider(BaseProviderInstance):
         updated_record = host_record.model_copy(update={"certified_host_data": updated_data})
         host_store.write_host_record(updated_record)
 
-        self._evict_cached_host(host_id)
         logger.info("Host {} stopped", host_id)
 
     # =========================================================================
@@ -974,6 +979,13 @@ class VpsDockerProvider(BaseProviderInstance):
 
     def destroy_host(self, host: HostInterface | HostId) -> None:
         host_id = host.id if isinstance(host, HostInterface) else host
+
+        # Disconnect SSH before destroying (also disconnect the passed-in host
+        # in case it is a different instance than the cached one).
+        if isinstance(host, Host):
+            host.disconnect()
+        self._evict_cached_host(host_id)
+
         host_record = self._find_host_record(host_id)
         if host_record is None or host_record.config is None:
             raise HostNotFoundError(host_id)
@@ -1030,7 +1042,6 @@ class VpsDockerProvider(BaseProviderInstance):
             except Exception as e:
                 logger.trace("Failed to clean up container known_hosts: {}", e)
 
-        self._evict_cached_host(host_id)
         logger.info("Host {} destroyed (VPS {})", host_id, vps_config.vps_instance_id)
 
     def delete_host(self, host: HostInterface) -> None:
