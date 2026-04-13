@@ -82,7 +82,7 @@ def _store_session_from_user(
     tokens = session.get_all_session_tokens_dangerously()
     session_store.store_session(
         access_token=tokens["accessToken"],
-        refresh_token=tokens["refreshToken"] or "",
+        refresh_token=tokens["refreshToken"] or None,
         user_id=user_id,
         email=email,
         display_name=display_name,

@@ -50,7 +50,9 @@ class StoredSession(FrozenModel):
     """Session data persisted to disk."""
 
     access_token: SuperTokensAccessToken = Field(description="JWT access token")
-    refresh_token: SuperTokensRefreshToken = Field(description="Refresh token for obtaining new access tokens")
+    refresh_token: SuperTokensRefreshToken | None = Field(
+        default=None, description="Refresh token for obtaining new access tokens (absent for short-lived sessions)"
+    )
     user_id: SuperTokensUserId = Field(description="SuperTokens user ID")
     email: str = Field(description="User email address")
     display_name: str | None = Field(default=None, description="Display name from OAuth provider")
@@ -86,7 +88,7 @@ class SuperTokensSessionStore(MutableModel):
     def store_session(
         self,
         access_token: str,
-        refresh_token: str,
+        refresh_token: str | None,
         user_id: str,
         email: str,
         display_name: str | None = None,
@@ -94,7 +96,7 @@ class SuperTokensSessionStore(MutableModel):
         """Store session tokens and user info to disk."""
         session = StoredSession(
             access_token=SuperTokensAccessToken(access_token),
-            refresh_token=SuperTokensRefreshToken(refresh_token),
+            refresh_token=SuperTokensRefreshToken(refresh_token) if refresh_token else None,
             user_id=SuperTokensUserId(user_id),
             email=email,
             display_name=display_name,
@@ -167,7 +169,7 @@ class SuperTokensSessionStore(MutableModel):
             return
         self.store_session(
             access_token=new_access_token,
-            refresh_token=str(session.refresh_token),
+            refresh_token=str(session.refresh_token) if session.refresh_token is not None else None,
             user_id=str(session.user_id),
             email=session.email,
             display_name=session.display_name,
