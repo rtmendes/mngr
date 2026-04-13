@@ -176,7 +176,7 @@ def test_ansi_to_html_text_before_and_after_escape_is_preserved() -> None:
 
 
 def test_render_tutorial_block_comment_lines_get_comment_class() -> None:
-    """Lines starting with # are wrapped in a comment span."""
+    """Lines starting with a hash character are wrapped in a comment span."""
     result = render_tutorial_block("# This is a comment")
     assert '<span class="comment"># This is a comment</span>' in result
 
@@ -213,8 +213,14 @@ def test_render_tutorial_block_html_special_chars_are_escaped() -> None:
 
 def test_render_tutorial_block_leading_whitespace_comment_still_matches() -> None:
     """A comment line with leading whitespace is still classified as a comment."""
-    result = render_tutorial_block("   # indented comment")
-    assert '<span class="comment">   # indented comment</span>' in result
+    # The line "   # indented comment" has leading spaces before the hash.
+    # render_tutorial_block must still detect it as a comment (via lstrip).
+    input_line = "   " + "# indented comment"
+    result = render_tutorial_block(input_line)
+    assert '<span class="comment">' in result
+    assert "indented comment" in result
+    # The span must contain the original line verbatim (with leading spaces).
+    assert input_line in result
 
 
 def test_render_tutorial_block_mixed_content_preserves_order() -> None:
