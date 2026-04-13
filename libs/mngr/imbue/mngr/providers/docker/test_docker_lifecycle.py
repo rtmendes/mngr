@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from pathlib import Path
+
 import pytest
 
 from imbue.mngr.config.data_types import MngrContext
@@ -520,8 +521,8 @@ def test_disconnect_closes_paramiko_ssh_client(docker_provider: DockerProviderIn
     assert result.success
 
     # Grab the paramiko transport from the live connection.
-    # Access the pyinfra internals via cast(Any, ...) since these are
-    # not part of the public type surface.
+    # Access pyinfra internals directly (not part of the public type surface);
+    # the ty: ignore suppresses the unresolved-attribute type error.
     old_client = host.connector.host.connector.client  # ty: ignore[unresolved-attribute]
     assert old_client is not None
     old_transport = old_client.get_transport()
@@ -533,6 +534,5 @@ def test_disconnect_closes_paramiko_ssh_client(docker_provider: DockerProviderIn
 
     # The paramiko transport should be closed after disconnect
     assert not old_transport.is_active(), (
-        "paramiko transport is still active after disconnect -- "
-        "the SSH connection was leaked"
+        "paramiko transport is still active after disconnect -- the SSH connection was leaked"
     )

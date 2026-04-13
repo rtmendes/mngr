@@ -245,7 +245,6 @@ def handle_modal_auth_error(func: Callable[P, T]) -> Callable[P, T]:
     return wrapper
 
 
-
 class SandboxConfig(HostConfig):
     """Configuration parsed from build arguments."""
 
@@ -404,6 +403,7 @@ class ModalProviderInstance(BaseProviderInstance):
             old_host.disconnect()
         if replacement is not None:
             self._host_by_id_cache[host_id] = replacement
+
     # a reference to the ssh process, just in case we ever need it (and to prevent it from being garbage collected)
     _ssh_process: ExecProcess | None = PrivateAttr(default=None)
     # a list of *all* currently running sandboxes for this app
