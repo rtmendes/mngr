@@ -10,6 +10,7 @@ from imbue.cloudflare_forwarding.app import AuthPolicy
 from imbue.cloudflare_forwarding.app import CloudflareApiError
 from imbue.cloudflare_forwarding.app import InvalidTunnelComponentError
 from imbue.cloudflare_forwarding.app import ServiceNotFoundError
+from imbue.cloudflare_forwarding.app import TunnelComponentTooLongError
 from imbue.cloudflare_forwarding.app import TunnelNotFoundError
 from imbue.cloudflare_forwarding.app import TunnelOwnershipError
 from imbue.cloudflare_forwarding.app import cf_check
@@ -417,3 +418,23 @@ def test_route_malformed_bearer_token(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _make_test_client(monkeypatch)
     resp = client.get("/tunnels/foo--bar/services", headers={"Authorization": "Bearer not-valid-base64!!!"})
     assert resp.status_code == 401
+
+
+def test_route_create_tunnel_too_long_username_returns_400(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Creating a tunnel with a too-long username returns 400, not 500."""
+    long_name = "a_very_long_username_exceeds_max"
+    encoded = base64.b64encode(f"{long_name}:secret".encode()).decode()
+    monkeypatch.setenv("USER_CREDENTIALS", json.dumps({long_name: "secret"}))
+    fake_ctx = make_fake_forwarding_ctx()
+    monkeypatch.setattr(app_mod, "get_ctx", lambda: fake_ctx)
+    client = TestClient(web_app)
+    resp = client.post("/tunnels", json={"agent_id": "agent1"}, headers={"Authorization": f"Basic {encoded}"})
+    assert resp.status_code == 400
+
+
+def test_tunnel_component_too_long_error_message() -> None:
+    with pytest.raises(TunnelComponentTooLongError) as exc_info:
+        raise TunnelComponentTooLongError("Username", "toolong", 5)
+    assert "Username" in str(exc_info.value)
+    assert "toolong" in str(exc_info.value)
+    assert "5" in str(exc_info.value)
