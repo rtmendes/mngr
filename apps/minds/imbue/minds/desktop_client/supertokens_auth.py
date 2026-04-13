@@ -11,6 +11,7 @@ from pathlib import Path
 
 from loguru import logger
 from pydantic import Field
+from pydantic import PrivateAttr
 
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.mutable_model import MutableModel
@@ -80,7 +81,7 @@ class SuperTokensSessionStore(MutableModel):
     """
 
     data_directory: Path = Field(frozen=True, description="Directory for session data files")
-    _lock: threading.Lock = threading.Lock()
+    _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     def store_session(
         self,
