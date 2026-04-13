@@ -38,7 +38,6 @@ from imbue.mngr.api.list import agent_details_to_cel_context
 from imbue.mngr.api.list import list_agents
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import ProviderInstanceConfig
-from imbue.mngr.config.provider_config_registry import _provider_config_registry
 from imbue.mngr.errors import MngrError
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.interfaces.data_types import AgentDetails
@@ -62,7 +61,8 @@ from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SSHInfo
 from imbue.mngr.providers.mock_provider_test import MockProviderInstance
 from imbue.mngr.providers.mock_provider_test import make_offline_host
-from imbue.mngr.providers.registry import _backend_registry
+from imbue.mngr.providers.registry import register_backend_for_testing
+from imbue.mngr.providers.registry import reset_backend_registry
 from imbue.mngr.utils.cel_utils import compile_cel_filters
 
 # =============================================================================
@@ -1262,8 +1262,7 @@ def test_list_agents_batch_continue_mode_handles_mismatched_provider_name(
     In CONTINUE mode this triggers a ProviderInstanceNotFoundError that should
     be recorded (not raised).
     """
-    _backend_registry[_MISMATCHED_BACKEND_NAME] = _MismatchedProviderBackend
-    _provider_config_registry[_MISMATCHED_BACKEND_NAME] = ProviderInstanceConfig
+    register_backend_for_testing(_MismatchedProviderBackend, ProviderInstanceConfig)
     try:
         captured_errors: list[ErrorInfo] = []
         result = list_agents(
@@ -1279,8 +1278,7 @@ def test_list_agents_batch_continue_mode_handles_mismatched_provider_name(
         assert len(captured_errors) >= 1
         assert all(isinstance(e, ProviderErrorInfo) for e in captured_errors)
     finally:
-        del _backend_registry[_MISMATCHED_BACKEND_NAME]
-        del _provider_config_registry[_MISMATCHED_BACKEND_NAME]
+        reset_backend_registry()
 
 
 def test_list_agents_batch_abort_mode_raises_for_mismatched_provider_name(
@@ -1292,8 +1290,7 @@ def test_list_agents_batch_abort_mode_raises_for_mismatched_provider_name(
     ProviderInstanceNotFoundError must propagate (wrapped by the
     ConcurrencyGroupExecutor) rather than be swallowed.
     """
-    _backend_registry[_MISMATCHED_BACKEND_NAME] = _MismatchedProviderBackend
-    _provider_config_registry[_MISMATCHED_BACKEND_NAME] = ProviderInstanceConfig
+    register_backend_for_testing(_MismatchedProviderBackend, ProviderInstanceConfig)
     try:
         with pytest.raises(ConcurrencyExceptionGroup) as exc_info:
             list_agents(
@@ -1303,8 +1300,7 @@ def test_list_agents_batch_abort_mode_raises_for_mismatched_provider_name(
             )
         assert exc_info.value.only_exception_is_instance_of(MngrError)
     finally:
-        del _backend_registry[_MISMATCHED_BACKEND_NAME]
-        del _provider_config_registry[_MISMATCHED_BACKEND_NAME]
+        reset_backend_registry()
 
 
 # =============================================================================
