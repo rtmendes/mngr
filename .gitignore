@@ -248,7 +248,6 @@
 
 # Offload caches and local files
 **/.offload/**
-**/.offload-release-cache-key
 **/test-results
 **/current.tar.gz
 
