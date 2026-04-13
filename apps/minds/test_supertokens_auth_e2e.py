@@ -169,9 +169,10 @@ def test_supertokens_signup_signin_verify(tmp_path: Path) -> None:
 
 
 def _run_signup_signin_flow(fixture: AuthTestFixture) -> None:
-    username = f"minds-test-{uuid.uuid4().hex[:12]}"
+    test_run_id = uuid.uuid4().hex
+    username = f"minds-test-{test_run_id}"
     email = f"{username}@restmail.net"
-    password = f"TestPassword-{uuid.uuid4().hex[:8]}"
+    password = f"TestPassword-{test_run_id}"
 
     # Clear any existing mail
     _clear_restmail(username)
