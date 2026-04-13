@@ -9,30 +9,14 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 
 T = TypeVar("T")
 
-# Global default callback invoked in each worker thread after its task completes.
-# Libraries should set this early at startup (e.g. in their plugin_manager setup)
-# to clean up thread-local resources that would otherwise leak file descriptors.
-_default_on_thread_exit: Callable[[], None] | None = None
-
-
-def set_default_on_thread_exit(callback: Callable[[], None] | None) -> None:
-    """Set a global default thread-exit callback for all ConcurrencyGroupExecutor instances.
-
-    This is intended to be called once at application startup. The callback
-    is invoked in each worker thread after its submitted callable completes,
-    and should clean up any thread-local resources (e.g. gevent Hubs) that
-    hold OS-level file descriptors.
-    """
-    global _default_on_thread_exit
-    _default_on_thread_exit = callback
-
 
 class ConcurrencyGroupExecutor(AbstractContextManager):
     """Executor that runs callables in threads managed by a ConcurrencyGroup.
 
-    After each submitted callable completes, the global default thread-exit
-    callback (set via ``set_default_on_thread_exit``) is invoked to clean up
-    thread-local resources.
+    Accepts an optional ``on_thread_exit`` callback that is invoked in each
+    worker thread after its submitted callable completes. Use this to clean
+    up thread-local resources (e.g. gevent Hubs) that hold OS-level file
+    descriptors.
     """
 
     def __init__(
@@ -40,10 +24,12 @@ class ConcurrencyGroupExecutor(AbstractContextManager):
         parent_cg: ConcurrencyGroup,
         name: str,
         max_workers: int,
+        on_thread_exit: Callable[[], None] | None = None,
     ) -> None:
         self._parent_cg = parent_cg
         self._name = name
         self._semaphore = threading.BoundedSemaphore(max_workers)
+        self._on_thread_exit = on_thread_exit
         self._cg: ConcurrencyGroup | None = None
 
     def __enter__(self) -> "ConcurrencyGroupExecutor":
@@ -72,8 +58,8 @@ class ConcurrencyGroupExecutor(AbstractContextManager):
                 else:
                     future.set_result(result)
                 finally:
-                    if _default_on_thread_exit is not None:
-                        _default_on_thread_exit()
+                    if self._on_thread_exit is not None:
+                        self._on_thread_exit()
 
         self._cg.start_new_thread(
             target=_run,

@@ -16,7 +16,7 @@ from imbue.mngr.providers.registry import list_backends
 # instances are created on every call. The cache is invalidated when the
 # MngrContext changes (tracked by _cache_ctx_id).
 _instance_cache: dict[ProviderInstanceName, BaseProviderInstance] = {}
-_cache_ctx_id: int | None = None
+_cache_ctx: MngrContext | None = None
 _atexit_registered: dict[str, bool] = {"registered": False}
 
 
@@ -46,9 +46,9 @@ def reset_provider_instances() -> None:
     Closes all cached provider instances and clears the cache.
     This is primarily used for test isolation to ensure a clean state between tests.
     """
-    global _cache_ctx_id
+    global _cache_ctx
     _close_all_provider_instances()
-    _cache_ctx_id = None
+    _cache_ctx = None
     _atexit_registered["registered"] = False
 
 
@@ -63,10 +63,10 @@ def get_provider_instance(
 
     Resolution order: check config.providers, then try as backend name with defaults.
     """
-    global _cache_ctx_id
-    if id(mngr_ctx) != _cache_ctx_id:
+    global _cache_ctx
+    if mngr_ctx is not _cache_ctx:
         _close_all_provider_instances()
-        _cache_ctx_id = id(mngr_ctx)
+        _cache_ctx = mngr_ctx
 
     if name in _instance_cache:
         return _instance_cache[name]
