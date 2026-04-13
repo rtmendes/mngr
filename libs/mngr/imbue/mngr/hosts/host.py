@@ -244,6 +244,13 @@ class Host(BaseHost, OnlineHostInterface):
             self.connector.host.disconnect()
             logger.trace("Disconnected pyinfra host {}", self.id)
 
+    def __del__(self) -> None:
+        """Best-effort cleanup of the paramiko SSH client on garbage collection."""
+        try:
+            self._close_paramiko_client()
+        except (OSError, SSHException, AttributeError, TypeError):
+            pass
+
     @contextmanager
     def _notify_on_connection_error(self) -> Iterator[None]:
         """Context manager that calls on_connection_error when HostConnectionError is raised.
