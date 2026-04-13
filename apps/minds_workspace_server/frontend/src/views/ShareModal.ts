@@ -135,14 +135,18 @@ async function disableSharing(serverName: string): Promise<void> {
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       modalError = (data as { detail?: string }).detail ?? `HTTP ${response.status}`;
-    } else {
-      modalStatus = (await response.json()) as SharingStatus;
+      modalActionInProgress = false;
+      m.redraw();
+      return;
     }
+    // Re-fetch to get the default auth policy for the disabled state
+    modalActionInProgress = false;
+    await fetchStatus(serverName);
   } catch (e) {
     modalError = `Network error: ${(e as Error).message}`;
+    modalActionInProgress = false;
+    m.redraw();
   }
-  modalActionInProgress = false;
-  m.redraw();
 }
 
 function addEmail(emails: string[], serverName: string, isEnabled: boolean): void {
@@ -169,7 +173,7 @@ function removeEmail(emails: string[], email: string, serverName: string, isEnab
 function renderEmailList(emails: string[], serverName: string, isEnabled: boolean): m.Vnode {
   return m("div.share-modal-emails", [
     emails.length === 0
-      ? m("p.share-modal-empty", "No email restrictions. Anyone with the link can access.")
+      ? null
       : m("ul.share-modal-email-list",
           emails.map((email) =>
             m("li.share-modal-email-item", { key: email }, [
