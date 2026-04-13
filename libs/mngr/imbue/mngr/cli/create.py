@@ -51,6 +51,7 @@ from imbue.mngr.cli.output_helpers import emit_event
 from imbue.mngr.cli.output_helpers import emit_final_json
 from imbue.mngr.cli.output_helpers import write_human_line
 from imbue.mngr.config.agent_class_registry import get_agent_class
+from imbue.mngr.config.agent_class_registry import is_agent_class_registered
 from imbue.mngr.config.data_types import CreateCliOptions
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import OutputOptions
@@ -59,6 +60,7 @@ from imbue.mngr.errors import UserInputError
 from imbue.mngr.hosts.host import HostLocation
 from imbue.mngr.hosts.host import get_agent_state_dir_path
 from imbue.mngr.interfaces.agent import AgentInterface
+from imbue.mngr.interfaces.agent import CommandAcceptingAgentMixin
 from imbue.mngr.interfaces.agent import StreamingHeadlessAgentMixin
 from imbue.mngr.interfaces.data_types import HostLifecycleOptions
 from imbue.mngr.interfaces.host import AgentDataOptions
@@ -339,12 +341,12 @@ class _CreateCommand(click.Command):
     show_default=True,
     help="Auto-generated name style",
 )
-@optgroup.option("--type", help="Which type of agent to run [default: claude]")
+@optgroup.option("--type", help="Which type of agent to run [default: claude, or generic when -c is used]")
 @optgroup.option(
     "--command",
     "-c",
-    help="Shell command for the agent to run. With headless agent types (e.g. --type headless_command), "
-    "streams output and auto-destroys. Without --type, implies 'generic' agent type (mutually exclusive with --type)",
+    help="Shell command for the agent to run. --type defaults to 'generic' when -c is used. "
+    "With --type headless_command, streams output and auto-destroys",
 )
 # FOLLOWUP: hmm... I wonder if the name of this should be changed to something more like "window" to be more closely aligned with the tmux primitive it actually creates...
 #  more generally, we probably need to do a pass at refining *all* of these option names...
@@ -1420,8 +1422,7 @@ def _parse_agent_opts(
     # target_path comes from :PATH in the address or --target-path (merged upstream)
 
     # Determine agent type using the shared resolution logic.
-    # Additional validation: conflicting positional vs --type, and --command
-    # mutual exclusivity with non-generic --type.
+    # --type defaults to "generic" when -c is present (via _resolve_agent_type_name).
     resolved_agent_args = opts.agent_args
 
     if opts.positional_agent_type and opts.type and opts.type != opts.positional_agent_type:
@@ -1430,17 +1431,18 @@ def _parse_agent_opts(
             f"but --type says '{opts.type}'. Use one or the other."
         )
 
-    # Handle --command: it implies using the "generic" agent type
-    if opts.command:
-        explicit_type = opts.type or opts.positional_agent_type
-        if explicit_type is not None and explicit_type != "generic":
-            raise UserInputError(
-                f"--command and --type are mutually exclusive. "
-                f"Use --command to run a literal command (implicitly uses 'generic' agent type), "
-                f"or use --type to specify an agent type like '{explicit_type}'."
-            )
-
     resolved_agent_type = _resolve_agent_type_name(opts.type, opts.positional_agent_type, opts.command)
+
+    # Validate that -c/--command is only used with agent types that accept it.
+    # Unregistered types (which fall back to the default BaseAgent) are always
+    # command-accepting since running arbitrary commands is their primary purpose.
+    if opts.command and resolved_agent_type is not None and is_agent_class_registered(resolved_agent_type):
+        agent_class = get_agent_class(resolved_agent_type)
+        if not issubclass(agent_class, CommandAcceptingAgentMixin):
+            raise UserInputError(
+                f"Agent type '{resolved_agent_type}' does not accept -c/--command. "
+                f"Only command-accepting agent types (like 'generic' or 'headless_command') support -c."
+            )
 
     is_clone = source_agent_state_dir is not None
 

@@ -829,6 +829,60 @@ def test_create_headless_streams_output(
 
 
 # =============================================================================
+# Tests for --command validation in _parse_agent_opts
+# =============================================================================
+
+
+def test_parse_agent_opts_command_with_registered_non_command_type_raises(
+    default_create_cli_opts: CreateCliOptions,
+    local_provider: LocalProviderInstance,
+    temp_mngr_ctx: MngrContext,
+    temp_work_dir: Path,
+) -> None:
+    """Using -c with a registered type that doesn't accept commands should raise."""
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+    source_location = HostLocation(host=local_host, path=temp_work_dir)
+    # "claude" is a registered type that does not implement CommandAcceptingAgentMixin
+    opts = default_create_cli_opts.model_copy_update(
+        to_update(default_create_cli_opts.field_ref().type, "claude"),
+        to_update(default_create_cli_opts.field_ref().command, "echo hello"),
+    )
+
+    with pytest.raises(UserInputError, match="does not accept -c/--command"):
+        _parse_agent_opts(
+            opts=opts,
+            address=AgentAddress(),
+            initial_message=None,
+            source_location=source_location,
+            mngr_ctx=temp_mngr_ctx,
+        )
+
+
+def test_parse_agent_opts_command_with_generic_type_allowed(
+    default_create_cli_opts: CreateCliOptions,
+    local_provider: LocalProviderInstance,
+    temp_mngr_ctx: MngrContext,
+    temp_work_dir: Path,
+) -> None:
+    """Using -c with unregistered 'generic' type should be allowed (default fallback)."""
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+    source_location = HostLocation(host=local_host, path=temp_work_dir)
+    opts = default_create_cli_opts.model_copy_update(
+        to_update(default_create_cli_opts.field_ref().command, "echo hello"),
+    )
+
+    result, _ = _parse_agent_opts(
+        opts=opts,
+        address=AgentAddress(),
+        initial_message=None,
+        source_location=source_location,
+        mngr_ctx=temp_mngr_ctx,
+    )
+
+    assert result.command == CommandString("echo hello")
+
+
+# =============================================================================
 # Tests for --label option in _parse_agent_opts
 # =============================================================================
 
