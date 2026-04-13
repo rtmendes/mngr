@@ -14,6 +14,7 @@ import pluggy
 import pytest
 from loguru import logger
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.model_update import to_update
 from imbue.mngr import hookimpl
@@ -37,12 +38,15 @@ from imbue.mngr.api.list import agent_details_to_cel_context
 from imbue.mngr.api.list import list_agents
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import ProviderInstanceConfig
+from imbue.mngr.config.provider_config_registry import _provider_config_registry
 from imbue.mngr.errors import MngrError
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.interfaces.data_types import CertifiedHostData
 from imbue.mngr.interfaces.data_types import HostDetails
 from imbue.mngr.interfaces.host import CreateAgentOptions
+from imbue.mngr.interfaces.provider_backend import ProviderBackendInterface
+from imbue.mngr.interfaces.provider_instance import ProviderInstanceInterface
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentLifecycleState
 from imbue.mngr.primitives import AgentName
@@ -58,6 +62,7 @@ from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SSHInfo
 from imbue.mngr.providers.mock_provider_test import MockProviderInstance
 from imbue.mngr.providers.mock_provider_test import make_offline_host
+from imbue.mngr.providers.registry import _backend_registry
 from imbue.mngr.utils.cel_utils import compile_cel_filters
 
 # =============================================================================
@@ -1009,6 +1014,71 @@ class _RaisingDetailProviderInstance(MockProviderInstance):
         raise MngrError("simulated detail retrieval failure")
 
 
+class _MismatchedProviderInstance(MockProviderInstance):
+    """Provider that returns hosts whose provider_name differs from self.name.
+
+    Used to exercise the ProviderInstanceNotFoundError path in
+    _list_agents_batch (lines 271-279).
+    """
+
+    def discover_hosts_and_agents(
+        self,
+        cg: ConcurrencyGroup,
+        include_destroyed: bool = False,
+    ) -> dict[DiscoveredHost, list[DiscoveredAgent]]:
+        mismatched_host = DiscoveredHost(
+            host_id=HostId.generate(),
+            host_name=HostName("mismatched-host"),
+            provider_name=ProviderInstanceName("nonexistent-provider-xyz"),
+        )
+        agent = DiscoveredAgent(
+            host_id=mismatched_host.host_id,
+            agent_id=AgentId.generate(),
+            agent_name=AgentName("mismatched-agent"),
+            provider_name=ProviderInstanceName("nonexistent-provider-xyz"),
+        )
+        return {mismatched_host: [agent]}
+
+
+_MISMATCHED_BACKEND_NAME = ProviderBackendName("test-mismatched-backend")
+
+
+class _MismatchedProviderBackend(ProviderBackendInterface):
+    """Backend that creates a _MismatchedProviderInstance."""
+
+    @staticmethod
+    def get_name() -> ProviderBackendName:
+        return _MISMATCHED_BACKEND_NAME
+
+    @staticmethod
+    def get_description() -> str:
+        return "Test backend that returns mismatched provider names"
+
+    @staticmethod
+    def get_config_class() -> type[ProviderInstanceConfig]:
+        return ProviderInstanceConfig
+
+    @staticmethod
+    def get_build_args_help() -> str:
+        return "No arguments supported."
+
+    @staticmethod
+    def get_start_args_help() -> str:
+        return "No arguments supported."
+
+    @staticmethod
+    def build_provider_instance(
+        name: ProviderInstanceName,
+        config: ProviderInstanceConfig,
+        mngr_ctx: MngrContext,
+    ) -> ProviderInstanceInterface:
+        return _MismatchedProviderInstance(
+            name=name,
+            host_dir=mngr_ctx.config.default_host_dir,
+            mngr_ctx=mngr_ctx,
+        )
+
+
 def _make_list_params(
     error_behavior: ErrorBehavior = ErrorBehavior.CONTINUE,
     on_error: Any = None,
@@ -1102,6 +1172,40 @@ def test_list_agents_abort_mode_propagates_top_level_mngr_error(
 # =============================================================================
 
 
+def test_maybe_write_full_discovery_snapshot_logs_warning_on_oserror(
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """_maybe_write_full_discovery_snapshot logs a warning when OSError occurs.
+
+    Makes the discovery events file read-only so that the write attempt
+    fails with PermissionError (a subclass of OSError). The function should
+    log the warning and return normally rather than propagating the error.
+    """
+    events_path = get_discovery_events_path(temp_mngr_ctx.config)
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    events_path.write_text("")
+    events_path.chmod(0o444)
+
+    host_details = _make_host_details()
+    agent = _make_agent_details("oserror-agent", host_details)
+    result = ListResult()
+    result.agents.append(agent)
+
+    with _capture_loguru_warnings() as log_output:
+        _maybe_write_full_discovery_snapshot(
+            mngr_ctx=temp_mngr_ctx,
+            result=result,
+            provider_names=None,
+            include_filters=(),
+            exclude_filters=(),
+        )
+
+    events_path.chmod(0o644)
+
+    output = log_output.getvalue()
+    assert "Failed to write full discovery snapshot" in output
+
+
 def test_maybe_write_full_discovery_snapshot_emits_ssh_host_info(
     temp_mngr_ctx: MngrContext,
 ) -> None:
@@ -1141,6 +1245,66 @@ def test_maybe_write_full_discovery_snapshot_emits_ssh_host_info(
     content = events_path.read_text()
     assert "DISCOVERY_FULL" in content
     assert "ssh-agent" in content
+
+
+# =============================================================================
+# Lines 271-279: ProviderInstanceNotFoundError in batch mode
+# =============================================================================
+
+
+def test_list_agents_batch_continue_mode_handles_mismatched_provider_name(
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """list_agents batch mode records a ProviderErrorInfo when a host's provider is unknown.
+
+    The _MismatchedProviderInstance returns hosts with a provider_name that does
+    not match any entry in the provider_map built by _list_agents_batch.
+    In CONTINUE mode this triggers a ProviderInstanceNotFoundError that should
+    be recorded (not raised).
+    """
+    _backend_registry[_MISMATCHED_BACKEND_NAME] = _MismatchedProviderBackend
+    _provider_config_registry[_MISMATCHED_BACKEND_NAME] = ProviderInstanceConfig
+    try:
+        captured_errors: list[ErrorInfo] = []
+        result = list_agents(
+            mngr_ctx=temp_mngr_ctx,
+            is_streaming=False,
+            error_behavior=ErrorBehavior.CONTINUE,
+            on_error=lambda e: captured_errors.append(e),
+        )
+
+        provider_errors = [e for e in result.errors if isinstance(e, ProviderErrorInfo)]
+        assert len(provider_errors) >= 1
+        assert any("nonexistent-provider-xyz" in str(e.provider_name) for e in provider_errors)
+        assert len(captured_errors) >= 1
+        assert all(isinstance(e, ProviderErrorInfo) for e in captured_errors)
+    finally:
+        del _backend_registry[_MISMATCHED_BACKEND_NAME]
+        del _provider_config_registry[_MISMATCHED_BACKEND_NAME]
+
+
+def test_list_agents_batch_abort_mode_raises_for_mismatched_provider_name(
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """list_agents batch mode propagates the error in ABORT mode.
+
+    Same scenario as the CONTINUE test, but with ABORT mode the
+    ProviderInstanceNotFoundError must propagate (wrapped by the
+    ConcurrencyGroupExecutor) rather than be swallowed.
+    """
+    _backend_registry[_MISMATCHED_BACKEND_NAME] = _MismatchedProviderBackend
+    _provider_config_registry[_MISMATCHED_BACKEND_NAME] = ProviderInstanceConfig
+    try:
+        with pytest.raises(ConcurrencyExceptionGroup) as exc_info:
+            list_agents(
+                mngr_ctx=temp_mngr_ctx,
+                is_streaming=False,
+                error_behavior=ErrorBehavior.ABORT,
+            )
+        assert exc_info.value.only_exception_is_instance_of(MngrError)
+    finally:
+        del _backend_registry[_MISMATCHED_BACKEND_NAME]
+        del _provider_config_registry[_MISMATCHED_BACKEND_NAME]
 
 
 # =============================================================================
