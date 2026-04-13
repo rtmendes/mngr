@@ -905,11 +905,16 @@ def authenticate_request(request: Request, ops: CloudflareOps) -> AuthResult:
     if auth_header.lower().startswith("bearer "):
         token = auth_header[7:]
         # Try tunnel token first
+        agent_exc: HTTPException | None = None
         try:
             return _authenticate_agent(token, ops)
-        except HTTPException:
-            pass
-        # Try SuperTokens JWT
+        except HTTPException as exc:
+            agent_exc = exc
+        # Only try SuperTokens JWT if it is configured; otherwise preserve the
+        # original agent auth error so callers receive a meaningful message.
+        if not os.environ.get("SUPERTOKENS_CONNECTION_URI"):
+            assert agent_exc is not None
+            raise agent_exc
         return _authenticate_supertokens(token)
 
     if auth_header.lower().startswith("basic "):
