@@ -14,7 +14,7 @@ from imbue.mngr.providers.registry import list_backends
 # Cache of provider instances by name. Reusing instances avoids leaking
 # resources (gRPC connections, SSH connections) that accumulate when new
 # instances are created on every call. The cache is invalidated when the
-# MngrContext changes (tracked by _cache_ctx_id).
+# MngrContext changes (tracked by _cache_ctx).
 _instance_cache: dict[ProviderInstanceName, BaseProviderInstance] = {}
 _cache_ctx: MngrContext | None = None
 _atexit_registered: dict[str, bool] = {"registered": False}

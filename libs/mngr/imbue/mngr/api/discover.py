@@ -88,7 +88,7 @@ def _run_discovery(
         for provider in providers:
             provider.reset_caches()
 
-    # Process all providers in parallel using ConcurrencyGroupExecutor
+    # Process all providers in parallel using mngr_executor
     futures: list[Future[None]] = []
     with mngr_executor(
         parent_cg=mngr_ctx.concurrency_group, name="discover_hosts_and_agents", max_workers=32
