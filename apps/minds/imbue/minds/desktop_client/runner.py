@@ -289,26 +289,25 @@ def _init_supertokens(
 
 
 def _build_cloudflare_client() -> CloudflareForwardingClient | None:
-    """Build a CloudflareForwardingClient from environment variables, or None if not configured."""
+    """Build a CloudflareForwardingClient from environment variables, or None if not configured.
+
+    Only CLOUDFLARE_FORWARDING_URL is required. Basic Auth fields (username, secret,
+    owner_email) are optional and only used as a fallback when SuperTokens is not configured.
+    """
     forwarding_url = os.environ.get("CLOUDFLARE_FORWARDING_URL")
+    if not forwarding_url:
+        logger.info("Cloudflare forwarding not configured (CLOUDFLARE_FORWARDING_URL not set), tunnel features disabled")
+        return None
+
     username = os.environ.get("CLOUDFLARE_FORWARDING_USERNAME")
     secret = os.environ.get("CLOUDFLARE_FORWARDING_SECRET")
     owner_email = os.environ.get("OWNER_EMAIL")
 
-    if not all([forwarding_url, username, secret, owner_email]):
-        logger.info("Cloudflare forwarding not configured (missing env vars), tunnel features disabled")
-        return None
-
-    assert forwarding_url is not None
-    assert username is not None
-    assert secret is not None
-    assert owner_email is not None
-
     return CloudflareForwardingClient(
         forwarding_url=CloudflareForwardingUrl(forwarding_url),
-        username=CloudflareUsername(username),
-        secret=CloudflareSecret(secret),
-        owner_email=OwnerEmail(owner_email),
+        username=CloudflareUsername(username) if username else None,
+        secret=CloudflareSecret(secret) if secret else None,
+        owner_email=OwnerEmail(owner_email) if owner_email else None,
     )
 
 
