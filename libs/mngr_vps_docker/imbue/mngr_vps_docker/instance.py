@@ -535,34 +535,11 @@ class VpsDockerProvider(BaseProviderInstance):
 
         except Exception:
             logger.error("Host creation failed, attempting cleanup...")
-            # Clean up the state container on the VPS so it doesn't block future
-            # create attempts on this VPS (the name is per-user, not per-host).
-            # If the VPS is about to be destroyed this is redundant, but if
-            # destruction fails the stale container would otherwise persist.
-            if vps_instance_id is not None:
-                state_container_name = (
-                    f"{self.mngr_ctx.config.prefix}docker-state-"
-                    f"{self.mngr_ctx.get_profile_user_id()}"
-                )
-                try:
-                    docker_ssh.remove_container(state_container_name, force=True)
-                except Exception:
-                    logger.debug(
-                        "Could not remove state container {} on VPS (may not exist yet)",
-                        state_container_name,
-                    )
             try:
                 if vps_instance_id is not None:
                     self.vps_client.destroy_instance(vps_instance_id)
             except Exception as cleanup_err:
-                logger.warning(
-                    "Failed to clean up VPS instance {}: {}. "
-                    "You may need to manually destroy it via the Vultr dashboard or "
-                    "'vultr-cli instance delete {}'",
-                    vps_instance_id,
-                    cleanup_err,
-                    vps_instance_id,
-                )
+                logger.warning("Failed to clean up VPS instance: {}", cleanup_err)
             try:
                 self.vps_client.delete_ssh_key(vps_ssh_key_id)
             except Exception as cleanup_err:
