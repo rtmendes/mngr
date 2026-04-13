@@ -21,7 +21,7 @@ from supertokens_python.recipe.emailpassword.interfaces import SignUpOkResult as
 from supertokens_python.recipe.emailpassword.interfaces import UpdateEmailOrPasswordOkResult
 from supertokens_python.recipe.emailpassword.interfaces import WrongCredentialsError
 from supertokens_python.recipe.emailpassword.syncio import consume_password_reset_token
-from supertokens_python.recipe.emailpassword.syncio import create_reset_password_token
+from supertokens_python.recipe.emailpassword.syncio import send_reset_password_email
 from supertokens_python.recipe.emailpassword.syncio import sign_in
 from supertokens_python.recipe.emailpassword.syncio import sign_up
 from supertokens_python.recipe.emailpassword.syncio import update_email_or_password
@@ -352,13 +352,13 @@ async def _handle_forgot_password_api(request: Request) -> Response:
         return _success
 
     user_id = users[0].id
-    result = create_reset_password_token(
+    result = send_reset_password_email(
         tenant_id=_TENANT_ID,
         user_id=user_id,
         email=email,
     )
-    if not hasattr(result, "token"):
-        logger.warning("Failed to create password reset token for user {}", user_id)
+    if result == "UNKNOWN_USER_ID_ERROR":
+        logger.warning("Failed to send password reset email for user {}", user_id)
     return _success
 
 
