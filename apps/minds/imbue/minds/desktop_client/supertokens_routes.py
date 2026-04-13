@@ -13,6 +13,12 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.responses import Response
 from loguru import logger
+from supertokens_python.asyncio import list_users_by_account_info
+from supertokens_python.recipe.emailpassword.asyncio import consume_password_reset_token
+from supertokens_python.recipe.emailpassword.asyncio import send_reset_password_email
+from supertokens_python.recipe.emailpassword.asyncio import sign_in
+from supertokens_python.recipe.emailpassword.asyncio import sign_up
+from supertokens_python.recipe.emailpassword.asyncio import update_email_or_password
 from supertokens_python.recipe.emailpassword.interfaces import ConsumePasswordResetTokenOkResult
 from supertokens_python.recipe.emailpassword.interfaces import EmailAlreadyExistsError
 from supertokens_python.recipe.emailpassword.interfaces import PasswordPolicyViolationError
@@ -20,20 +26,16 @@ from supertokens_python.recipe.emailpassword.interfaces import SignInOkResult as
 from supertokens_python.recipe.emailpassword.interfaces import SignUpOkResult as EPSignUpOkResult
 from supertokens_python.recipe.emailpassword.interfaces import UpdateEmailOrPasswordOkResult
 from supertokens_python.recipe.emailpassword.interfaces import WrongCredentialsError
-from supertokens_python.recipe.emailpassword.syncio import consume_password_reset_token
-from supertokens_python.recipe.emailpassword.syncio import send_reset_password_email
-from supertokens_python.recipe.emailpassword.syncio import sign_in
-from supertokens_python.recipe.emailpassword.syncio import sign_up
-from supertokens_python.recipe.emailpassword.syncio import update_email_or_password
-from supertokens_python.recipe.emailverification.syncio import is_email_verified
-from supertokens_python.recipe.emailverification.syncio import send_email_verification_email
-from supertokens_python.recipe.session.syncio import create_new_session_without_request_response
+from supertokens_python.recipe.emailverification.asyncio import is_email_verified
+from supertokens_python.recipe.emailverification.asyncio import send_email_verification_email
+from supertokens_python.recipe.emailverification.syncio import is_email_verified as is_email_verified_sync
+from supertokens_python.recipe.emailverification.syncio import send_email_verification_email as send_email_verification_email_sync
+from supertokens_python.recipe.session.asyncio import create_new_session_without_request_response
+from supertokens_python.recipe.thirdparty.asyncio import get_provider
+from supertokens_python.recipe.thirdparty.asyncio import manually_create_or_update_user
 from supertokens_python.recipe.thirdparty.interfaces import ManuallyCreateOrUpdateUserOkResult
 from supertokens_python.recipe.thirdparty.provider import RedirectUriInfo
-from supertokens_python.recipe.thirdparty.syncio import get_provider
-from supertokens_python.recipe.thirdparty.syncio import manually_create_or_update_user
 from supertokens_python.syncio import get_user
-from supertokens_python.syncio import list_users_by_account_info
 from supertokens_python.types import RecipeUserId
 from supertokens_python.types.base import AccountInfoInput
 
@@ -70,14 +72,14 @@ def _get_output_format(request: Request) -> OutputFormat:
     return request.app.state.supertokens_output_format
 
 
-def _store_session_from_user(
+async def _store_session_from_user(
     session_store: SuperTokensSessionStore,
     user_id: str,
     email: str,
     display_name: str | None = None,
 ) -> None:
     """Create a SuperTokens session and store the tokens on disk."""
-    session = create_new_session_without_request_response(
+    session = await create_new_session_without_request_response(
         tenant_id=_TENANT_ID,
         recipe_user_id=RecipeUserId(user_id),
     )
@@ -115,7 +117,7 @@ async def _handle_signup_api(request: Request) -> Response:
     if not email or not password:
         return _json_response({"status": "FIELD_ERROR", "message": "Email and password are required"}, 400)
 
-    result = sign_up(
+    result = await sign_up(
         tenant_id=_TENANT_ID,
         email=email,
         password=password,
@@ -127,8 +129,8 @@ async def _handle_signup_api(request: Request) -> Response:
     if isinstance(result, EPSignUpOkResult):
         user = result.user
         recipe_user_id = user.login_methods[0].recipe_user_id if user.login_methods else RecipeUserId(user.id)
-        _store_session_from_user(session_store, user.id, email)
-        send_email_verification_email(
+        await _store_session_from_user(session_store, user.id, email)
+        await send_email_verification_email(
             tenant_id=_TENANT_ID,
             user_id=user.id,
             recipe_user_id=recipe_user_id,
@@ -149,7 +151,7 @@ async def _handle_signin_api(request: Request) -> Response:
     if not email or not password:
         return _json_response({"status": "FIELD_ERROR", "message": "Email and password are required"}, 400)
 
-    result = sign_in(
+    result = await sign_in(
         tenant_id=_TENANT_ID,
         email=email,
         password=password,
@@ -161,11 +163,11 @@ async def _handle_signin_api(request: Request) -> Response:
     if isinstance(result, EPSignInOkResult):
         user = result.user
         recipe_user_id = user.login_methods[0].recipe_user_id if user.login_methods else RecipeUserId(user.id)
-        verified = is_email_verified(recipe_user_id=recipe_user_id, email=email)
-        _store_session_from_user(session_store, user.id, email)
+        verified = await is_email_verified(recipe_user_id=recipe_user_id, email=email)
+        await _store_session_from_user(session_store, user.id, email)
         needs_verification = not verified
         if needs_verification:
-            send_email_verification_email(
+            await send_email_verification_email(
                 tenant_id=_TENANT_ID,
                 user_id=user.id,
                 recipe_user_id=recipe_user_id,
@@ -212,7 +214,7 @@ def _handle_email_verified_api(request: Request) -> Response:
     if user is None:
         return _json_response({"verified": False, "signedIn": False})
     recipe_user_id = user.login_methods[0].recipe_user_id if user.login_methods else RecipeUserId(str(user_info.user_id))
-    verified = is_email_verified(recipe_user_id=recipe_user_id, email=user_info.email)
+    verified = is_email_verified_sync(recipe_user_id=recipe_user_id, email=user_info.email)
     return _json_response({"verified": verified, "signedIn": True})
 
 
@@ -226,7 +228,7 @@ def _handle_resend_verification_api(request: Request) -> Response:
     if user is None:
         return _json_response({"status": "ERROR", "message": "User not found"}, 404)
     recipe_user_id = user.login_methods[0].recipe_user_id if user.login_methods else RecipeUserId(str(user_info.user_id))
-    send_email_verification_email(
+    send_email_verification_email_sync(
         tenant_id=_TENANT_ID,
         user_id=str(user_info.user_id),
         recipe_user_id=recipe_user_id,
@@ -246,7 +248,7 @@ def _handle_check_email_page(request: Request) -> HTMLResponse:
 async def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
     """Initiate OAuth by opening the system browser."""
     server_port = _get_server_port(request)
-    provider = get_provider(tenant_id=_TENANT_ID, third_party_id=provider_id)
+    provider = await get_provider(tenant_id=_TENANT_ID, third_party_id=provider_id)
     if provider is None:
         return _json_response({"error": f"Unknown provider: {provider_id}"}, 404)
 
@@ -268,7 +270,7 @@ async def _handle_oauth_callback(provider_id: str, request: Request) -> HTMLResp
     query_params = dict(request.query_params)
     callback_url = f"http://127.0.0.1:{server_port}/auth/callback/{provider_id}"
 
-    provider = get_provider(tenant_id=_TENANT_ID, third_party_id=provider_id)
+    provider = await get_provider(tenant_id=_TENANT_ID, third_party_id=provider_id)
     if provider is None:
         return HTMLResponse(f"<html><body><h1>Unknown provider: {provider_id}</h1></body></html>", status_code=404)
 
@@ -298,7 +300,7 @@ async def _handle_oauth_callback(provider_id: str, request: Request) -> HTMLResp
     email = user_info.email.id
     is_verified = user_info.email.is_verified
 
-    result = manually_create_or_update_user(
+    result = await manually_create_or_update_user(
         tenant_id=_TENANT_ID,
         third_party_id=provider_id,
         third_party_user_id=user_info.third_party_user_id,
@@ -318,7 +320,7 @@ async def _handle_oauth_callback(provider_id: str, request: Request) -> HTMLResp
         raw = user_info.raw_user_info_from_provider.from_user_info_api
         display_name = raw.get("name") or raw.get("login") or raw.get("displayName")
 
-    _store_session_from_user(session_store, user.id, email, display_name=display_name)
+    await _store_session_from_user(session_store, user.id, email, display_name=display_name)
 
     emit_event(
         "auth_success",
@@ -344,7 +346,7 @@ async def _handle_forgot_password_api(request: Request) -> Response:
     # Look up the user by email. Always return a success-looking response to
     # avoid leaking whether an account exists for the given address.
     _success = _json_response({"status": "OK", "message": "If an account exists, a reset email has been sent"})
-    users = list_users_by_account_info(
+    users = await list_users_by_account_info(
         tenant_id=_TENANT_ID,
         account_info=AccountInfoInput(email=email),
     )
@@ -352,7 +354,7 @@ async def _handle_forgot_password_api(request: Request) -> Response:
         return _success
 
     user_id = users[0].id
-    result = send_reset_password_email(
+    result = await send_reset_password_email(
         tenant_id=_TENANT_ID,
         user_id=user_id,
         email=email,
@@ -376,7 +378,7 @@ async def _handle_reset_password_api(request: Request) -> Response:
     if not token or not new_password:
         return _json_response({"status": "FIELD_ERROR", "message": "Token and new password are required"}, 400)
 
-    result = consume_password_reset_token(
+    result = await consume_password_reset_token(
         tenant_id=_TENANT_ID,
         token=token,
     )
@@ -384,7 +386,7 @@ async def _handle_reset_password_api(request: Request) -> Response:
     if not isinstance(result, ConsumePasswordResetTokenOkResult):
         return _json_response({"status": "INVALID_TOKEN", "message": "Invalid or expired reset token"})
 
-    update_result = update_email_or_password(
+    update_result = await update_email_or_password(
         recipe_user_id=RecipeUserId(result.user_id),
         password=new_password,
     )
