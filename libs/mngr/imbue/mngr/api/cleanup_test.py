@@ -69,10 +69,9 @@ class _OfflineHostProvider(LocalProviderInstance):
     triggers the error path in _execute_destroy when the match arm falls through
     to HostInterface (the offline branch).
 
-    The return type annotation on get_host is intentionally omitted: the parent
-    declares `-> Host` but this class returns `OfflineHost`, which satisfies
-    HostInterface but is not a Host subclass. Omitting the annotation lets the
-    type checker (ty) skip the incompatibility check.
+    get_host() has no return type annotation because it returns OfflineHost, which
+    satisfies HostInterface but is not a subclass of Host (the parent's declared
+    return type). Adding a return annotation would produce a type error.
     """
 
     def get_host(self, host: HostId | HostName):
