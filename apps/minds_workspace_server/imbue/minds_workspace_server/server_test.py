@@ -286,13 +286,16 @@ def test_random_name_endpoint(client: TestClient) -> None:
     assert len(data["name"]) > 0
 
 
-def test_create_chat_agent_missing_parent(client: TestClient) -> None:
-    """Creating a chat agent with an unknown parent returns 400."""
+def test_create_chat_agent_succeeds(client: TestClient) -> None:
+    """Creating a chat agent returns 201 with an agent_id."""
     response = client.post(
         "/api/agents/create-chat",
-        json={"name": "test-chat", "parent_agent_id": "nonexistent"},
+        json={"name": "test-chat"},
     )
-    assert response.status_code == 400
+    assert response.status_code == 201
+    data = response.json()
+    assert "agent_id" in data
+    assert len(data["agent_id"]) > 0
 
 
 def test_create_worktree_agent_missing_agent(client: TestClient) -> None:

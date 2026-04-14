@@ -26,7 +26,6 @@ async function bootstrap(): Promise<void> {
     const appResolver: m.RouteResolver = { render: () => m(App) };
     m.route(rootElement, "/", {
       "/": appResolver,
-      "/agents/:agentId/": appResolver,
       ...pluginRoutes,
     });
     await runHook("ready");
