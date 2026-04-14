@@ -41,12 +41,7 @@ _DEFAULT_MNGR_HOST_DIR: Final[Path] = Path.home() / ".mngr"
 
 
 
-_PROVIDER_HOST_DIR: Final[dict[str, str]] = {
-    "docker": "/mngr",
-    "modal": "/mngr",
-    "vultr": "/mngr",
-    "lima": "/mngr",
-}
+_REMOTE_HOST_DIR: Final[str] = "/mngr"
 
 
 class AgentDiscoveryHandler(FrozenModel):
@@ -71,8 +66,8 @@ class AgentDiscoveryHandler(FrozenModel):
 
     @staticmethod
     def _remote_host_dir(provider_name: str) -> str:
-        """Return the mngr host directory for a provider, defaulting to ~/.mngr."""
-        return _PROVIDER_HOST_DIR.get(provider_name, "~/.mngr")
+        """Return the mngr host directory for a remote provider."""
+        return _REMOTE_HOST_DIR
 
     def _handle_remote_agent(self, agent_id: AgentId, ssh_info: RemoteSSHInfo, provider_name: str) -> None:
         host_dir = self._remote_host_dir(provider_name)
