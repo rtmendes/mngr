@@ -19,6 +19,7 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.model_update import to_update
 from imbue.mngr import hookimpl
 from imbue.mngr.api.discover import _all_identifiers_found
+from imbue.mngr.api.discover import _discover_provider_hosts_and_agents
 from imbue.mngr.api.discover import discover_hosts_and_agents
 from imbue.mngr.api.discover import warn_on_duplicate_host_names
 from imbue.mngr.api.discovery_events import get_discovery_events_path
@@ -40,6 +41,7 @@ from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import ProviderInstanceConfig
 from imbue.mngr.config.provider_config_registry import _provider_config_registry
 from imbue.mngr.errors import MngrError
+from imbue.mngr.errors import ProviderUnavailableError
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.interfaces.data_types import CertifiedHostData
@@ -997,6 +999,21 @@ class _RaisingDiscoveryProviderInstance(MockProviderInstance):
         raise MngrError("simulated discovery failure from test")
 
 
+class _UnavailableDiscoveryProviderInstance(MockProviderInstance):
+    """Provider that raises ProviderUnavailableError from discover_hosts_and_agents.
+
+    Simulates a provider whose backend is unreachable (e.g. Modal environment
+    deleted). Used to verify that batch discovery gracefully skips the provider.
+    """
+
+    def discover_hosts_and_agents(
+        self,
+        cg: ConcurrencyGroup,
+        include_destroyed: bool = False,
+    ) -> dict[DiscoveredHost, list[DiscoveredAgent]]:
+        raise ProviderUnavailableError(self.name, "Environment 'mngr-abc123' not found")
+
+
 class _RaisingDetailProviderInstance(MockProviderInstance):
     """Provider that raises MngrError from get_host_and_agent_details.
 
@@ -1310,6 +1327,56 @@ def test_list_agents_batch_abort_mode_raises_for_mismatched_provider_name(
 # =============================================================================
 # Lines 348-385: Provider-level MngrError in streaming mode
 # =============================================================================
+
+
+def test_discover_provider_hosts_propagates_provider_unavailable_error(
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """_discover_provider_hosts_and_agents propagates ProviderUnavailableError from the provider.
+
+    This error is then caught per-provider in _run_discovery's future loop.
+    """
+    unavailable_provider = _UnavailableDiscoveryProviderInstance(
+        name=ProviderInstanceName("unavailable-modal"),
+        host_dir=temp_mngr_ctx.config.default_host_dir,
+        mngr_ctx=temp_mngr_ctx,
+    )
+    agents_by_host: dict[DiscoveredHost, list[DiscoveredAgent]] = {}
+
+    with pytest.raises(ProviderUnavailableError, match="not available"):
+        _discover_provider_hosts_and_agents(
+            unavailable_provider, agents_by_host, True, Lock(), temp_mngr_ctx.concurrency_group
+        )
+
+
+def test_discover_and_emit_details_streaming_skips_unavailable_provider(
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """_discover_and_emit_details_for_provider records ProviderUnavailableError in CONTINUE mode.
+
+    ProviderUnavailableError is a MngrError, so the existing catch clause handles it.
+    """
+    provider = _UnavailableDiscoveryProviderInstance(
+        name=ProviderInstanceName("unavailable-modal"),
+        host_dir=temp_mngr_ctx.config.default_host_dir,
+        mngr_ctx=temp_mngr_ctx,
+    )
+    result = ListResult()
+    lock = Lock()
+    params = _make_list_params(error_behavior=ErrorBehavior.CONTINUE)
+
+    _discover_and_emit_details_for_provider(
+        provider=provider,
+        params=params,
+        result=result,
+        results_lock=lock,
+        cg=temp_mngr_ctx.concurrency_group,
+    )
+
+    assert len(result.errors) == 1
+    assert isinstance(result.errors[0], ProviderErrorInfo)
+    assert result.errors[0].provider_name == ProviderInstanceName("unavailable-modal")
+    assert "not available" in result.errors[0].message
 
 
 def test_discover_and_emit_details_for_provider_continue_mode_records_error(

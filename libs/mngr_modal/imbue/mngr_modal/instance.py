@@ -39,6 +39,7 @@ from imbue.mngr.errors import HostNameConflictError
 from imbue.mngr.errors import HostNotFoundError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import ModalAuthError
+from imbue.mngr.errors import ProviderUnavailableError
 from imbue.mngr.errors import SnapshotNotFoundError
 from imbue.mngr.hosts.common import check_agent_type_known
 from imbue.mngr.hosts.common import compute_idle_seconds
@@ -2370,6 +2371,8 @@ log "=== Shutdown script completed ==="
                     all_host_records, agent_data_by_host_id = host_and_agent_future.result()
             except ModalProxyAuthError as e:
                 raise ModalAuthError() from e
+            except ModalProxyError as e:
+                raise ProviderUnavailableError(self.name, str(e)) from e
             logger.debug(
                 "Modal discovery: {} running host(s), {} host record(s), {} host(s) with agent data",
                 len(running_host_ids),
