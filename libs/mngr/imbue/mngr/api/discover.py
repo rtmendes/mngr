@@ -12,7 +12,6 @@ from imbue.imbue_common.pure import pure
 from imbue.mngr.api.discovery_events import resolve_provider_names_for_identifiers
 from imbue.mngr.api.providers import get_all_provider_instances
 from imbue.mngr.config.data_types import MngrContext
-from imbue.mngr.errors import ProviderUnavailableError
 from imbue.mngr.primitives import DiscoveredAgent
 from imbue.mngr.primitives import DiscoveredHost
 from imbue.mngr.primitives import HostId
@@ -90,27 +89,25 @@ def _run_discovery(
             provider.reset_caches()
 
     # Process all providers in parallel using ConcurrencyGroupExecutor
-    provider_futures: list[tuple[BaseProviderInstance, Future[None]]] = []
+    futures: list[Future[None]] = []
     with ConcurrencyGroupExecutor(
         parent_cg=mngr_ctx.concurrency_group, name="discover_hosts_and_agents", max_workers=32
     ) as executor:
         for provider in providers:
-            future = executor.submit(
-                _discover_provider_hosts_and_agents,
-                provider,
-                agents_by_host,
-                include_destroyed,
-                results_lock,
-                mngr_ctx.concurrency_group,
+            futures.append(
+                executor.submit(
+                    _discover_provider_hosts_and_agents,
+                    provider,
+                    agents_by_host,
+                    include_destroyed,
+                    results_lock,
+                    mngr_ctx.concurrency_group,
+                )
             )
-            provider_futures.append((provider, future))
 
-    # Re-raise any thread exceptions, skipping unavailable providers
-    for provider, future in provider_futures:
-        try:
-            future.result()
-        except ProviderUnavailableError as e:
-            logger.warning("Skipped unavailable provider {} during discovery: {}", provider.name, e)
+    # Re-raise any thread exceptions
+    for future in futures:
+        future.result()
 
     # Warn if any host names are duplicated within the same provider
     warn_on_duplicate_host_names(agents_by_host)

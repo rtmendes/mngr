@@ -19,7 +19,6 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.model_update import to_update
 from imbue.mngr import hookimpl
 from imbue.mngr.api.discover import _all_identifiers_found
-from imbue.mngr.api.discover import _discover_provider_hosts_and_agents
 from imbue.mngr.api.discover import discover_hosts_and_agents
 from imbue.mngr.api.discover import warn_on_duplicate_host_names
 from imbue.mngr.api.discovery_events import get_discovery_events_path
@@ -1327,26 +1326,6 @@ def test_list_agents_batch_abort_mode_raises_for_mismatched_provider_name(
 # =============================================================================
 # Lines 348-385: Provider-level MngrError in streaming mode
 # =============================================================================
-
-
-def test_discover_provider_hosts_propagates_provider_unavailable_error(
-    temp_mngr_ctx: MngrContext,
-) -> None:
-    """_discover_provider_hosts_and_agents propagates ProviderUnavailableError from the provider.
-
-    This error is then caught per-provider in _run_discovery's future loop.
-    """
-    unavailable_provider = _UnavailableDiscoveryProviderInstance(
-        name=ProviderInstanceName("unavailable-modal"),
-        host_dir=temp_mngr_ctx.config.default_host_dir,
-        mngr_ctx=temp_mngr_ctx,
-    )
-    agents_by_host: dict[DiscoveredHost, list[DiscoveredAgent]] = {}
-
-    with pytest.raises(ProviderUnavailableError, match="not available"):
-        _discover_provider_hosts_and_agents(
-            unavailable_provider, agents_by_host, True, Lock(), temp_mngr_ctx.concurrency_group
-        )
 
 
 def test_discover_and_emit_details_streaming_skips_unavailable_provider(
