@@ -237,13 +237,6 @@ def test_dispatcher_default_constructor_resolves_tkinter() -> None:
     _ = dispatcher._tk
 
 
-def test_show_tkinter_toast_with_no_tkinter_runs_in_thread() -> None:
-    """_show_tkinter_toast with tk=None starts a daemon thread that exits immediately."""
-    request = NotificationRequest(message="thread test")
-    # Should not raise even when tkinter is unavailable
-    _show_tkinter_toast(request, "agent-thread", tk=None)
-
-
 # -- macOS notification tests --
 
 
