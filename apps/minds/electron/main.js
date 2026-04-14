@@ -62,11 +62,13 @@ const TITLEBAR_CSS = `
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-align: center; padding: 0 8px;
 }
-#minds-titlebar .minds-user-area { position: relative; -webkit-app-region: no-drag; }
+#minds-titlebar .minds-user-area { position: relative; -webkit-app-region: no-drag; flex-shrink: 0; }
 #minds-titlebar .minds-user-btn {
   -webkit-app-region: no-drag; background: none; border: none;
-  color: #94a3b8; cursor: pointer; padding: 4px 12px; border-radius: 6px;
-  font-size: 13px; font-family: inherit; white-space: nowrap;
+  color: #94a3b8; cursor: pointer; padding: 4px 10px; border-radius: 4px;
+  font-size: 12px; font-family: inherit;
+  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: block;
 }
 #minds-titlebar .minds-user-btn:hover { background: rgba(255,255,255,0.08); color: #e2e8f0; }
 #minds-titlebar .minds-user-dropdown {
