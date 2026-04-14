@@ -64,7 +64,7 @@ const TITLEBAR_CSS = `
 }
 #minds-titlebar .minds-user-area { position: relative; -webkit-app-region: no-drag; flex-shrink: 0; }
 #minds-titlebar .minds-user-btn {
-  -webkit-app-region: no-drag; background: none; border: none;
+  width: auto; height: auto; display: inline;
   color: #94a3b8; cursor: pointer; padding: 4px 10px; border-radius: 4px;
   font-size: 12px; font-family: inherit; white-space: nowrap;
 }
