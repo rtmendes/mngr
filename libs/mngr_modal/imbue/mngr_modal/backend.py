@@ -29,7 +29,6 @@ from imbue.mngr.interfaces.provider_instance import ProviderInstanceInterface
 from imbue.mngr.primitives import ProviderBackendName
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.providers.deploy_utils import collect_provider_profile_files
-from imbue.mngr.utils.testing import TEST_ENV_PATTERN
 from imbue.mngr_modal import hookimpl
 from imbue.mngr_modal.config import ModalMode
 from imbue.mngr_modal.config import ModalProviderConfig
@@ -61,14 +60,10 @@ def _create_environment(environment_name: str, modal_interface: ModalInterface) 
     a NotFoundError), so it does not check for existence first.
     """
 
-    # Environments starting with mngr_ must follow the timestamped test pattern
-    # (mngr_test-YYYY-MM-DD-HH-MM-SS-*) so they can be identified and cleaned up by CI.
-    # Production environments use a different prefix (mngr-) and are not affected.
-    if environment_name.startswith("mngr_") and not TEST_ENV_PATTERN.match(environment_name):
+    # first a quick check to make sure we're not naming things incorrectly (and making it hard to clean up these environments)
+    if environment_name.startswith("mngr_") and not environment_name.startswith("mngr_test-"):
         raise MngrError(
-            f"Refusing to create Modal environment with name '{environment_name}': "
-            f"test environments must match 'mngr_test-YYYY-MM-DD-HH-MM-SS-*'. "
-            f"Use the modal_mngr_ctx fixture or generate_test_environment_name() for the prefix."
+            f"Refusing to create Modal environment with name {environment_name}: test environments should start with 'mngr_test-' and should be explicitly configured using generate_test_environment_name() so that they can be easily identified and cleaned up."
         )
 
     with log_span("Creating Modal environment: {}", environment_name):
