@@ -568,7 +568,7 @@ class VpsDockerProvider(BaseProviderInstance):
                     "Host creation failed. MNGR_KEEP_FAILED_HOSTS=1 is set, "
                     "skipping cleanup so you can debug. VPS instance: {}, IP: {}",
                     vps_instance_id,
-                    vps_ip if "vps_ip" in dir() else "unknown",
+                    vps_ip if "vps_ip" in locals() else "unknown",
                 )
             else:
                 logger.error("Host creation failed, attempting cleanup...")
