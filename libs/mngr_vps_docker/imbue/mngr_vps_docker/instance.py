@@ -40,7 +40,6 @@ from imbue.mngr.interfaces.data_types import HostDetails
 from imbue.mngr.interfaces.data_types import HostLifecycleOptions
 from imbue.mngr.interfaces.data_types import HostResources
 from imbue.mngr.interfaces.data_types import PyinfraConnector
-from imbue.mngr.primitives import SSHInfo
 from imbue.mngr.interfaces.data_types import SnapshotInfo
 from imbue.mngr.interfaces.data_types import SnapshotRecord
 from imbue.mngr.interfaces.data_types import VolumeInfo
@@ -58,6 +57,7 @@ from imbue.mngr.primitives import HostState
 from imbue.mngr.primitives import IdleMode
 from imbue.mngr.primitives import ImageReference
 from imbue.mngr.primitives import LogLevel
+from imbue.mngr.primitives import SSHInfo
 from imbue.mngr.primitives import SnapshotId
 from imbue.mngr.primitives import SnapshotName
 from imbue.mngr.primitives import VolumeId
@@ -105,7 +105,9 @@ class _ParsedVpsBuildOptions(FrozenModel):
     region: str = Field(description="VPS region")
     plan: str = Field(description="VPS plan")
     os_id: int = Field(description="VPS OS image ID")
-    git_depth: int | None = Field(default=None, description="Git clone depth for build context, or None for full clone")
+    git_depth: int | None = Field(
+        default=None, description="Git clone depth for build context, or None for full clone"
+    )
     docker_build_args: tuple[str, ...] = Field(description="Remaining args passed to docker build")
 
 
@@ -139,7 +141,9 @@ def _parse_build_args(
             elif arg.startswith("--git-depth="):
                 git_depth = int(arg.split("=", 1)[1])
             elif arg.startswith("--vps-"):
-                raise MngrError(f"Unknown VPS build arg: {arg}. Valid VPS args: --vps-region=, --vps-plan=, --vps-os=, --git-depth=")
+                raise MngrError(
+                    f"Unknown VPS build arg: {arg}. Valid VPS args: --vps-region=, --vps-plan=, --vps-os=, --git-depth="
+                )
             else:
                 docker_build_args.append(arg)
 
@@ -176,7 +180,7 @@ def _resolve_dockerfile_paths(
         else:
             for prefix in ("--file=", "-f=", "--dockerfile="):
                 if arg.startswith(prefix):
-                    dockerfile_path = arg[len(prefix):]
+                    dockerfile_path = arg[len(prefix) :]
                     if not dockerfile_path.startswith("/"):
                         arg = f"{prefix}{remote_build_dir}/{dockerfile_path}"
                     break
@@ -218,7 +222,6 @@ class VpsDockerProvider(BaseProviderInstance):
     config: VpsDockerProviderConfig = Field(frozen=True, description="VPS Docker provider configuration")
     vps_client: VpsClientInterface = Field(frozen=True, description="VPS provider API client")
 
-    _host_by_id_cache: dict[HostId, HostInterface] = PrivateAttr(default_factory=dict)
     _host_record_cache: dict[HostId, VpsDockerHostRecord] = PrivateAttr(default_factory=dict)
     _container_running_cache: dict[str, bool] = PrivateAttr(default_factory=dict)
 
@@ -239,7 +242,8 @@ class VpsDockerProvider(BaseProviderInstance):
         return False
 
     def reset_caches(self) -> None:
-        self._host_by_id_cache.clear()
+        for host_id in list(self._host_by_id_cache):
+            self._evict_cached_host(host_id)
         self._host_record_cache.clear()
         self._container_running_cache.clear()
 
@@ -338,7 +342,7 @@ class VpsDockerProvider(BaseProviderInstance):
                 callback_host_id, certified_data, vps_ip
             ),
         )
-        self._host_by_id_cache[host_id] = host
+        self._evict_cached_host(host_id, replacement=host)
         return host
 
     def _create_offline_host(
@@ -357,7 +361,7 @@ class VpsDockerProvider(BaseProviderInstance):
                 callback_host_id, certified_data, vps_ip
             ),
         )
-        self._host_by_id_cache[host_id] = offline
+        self._evict_cached_host(host_id, replacement=offline)
         return offline
 
     def _on_certified_host_data_updated(self, host_id: HostId, certified_data: CertifiedHostData, vps_ip: str) -> None:
@@ -828,13 +832,15 @@ class VpsDockerProvider(BaseProviderInstance):
                         timeout=120.0,
                     )
                 if clone_result.returncode != 0:
-                    raise ContainerSetupError(
-                        f"Failed to clone build context: {clone_result.stderr.strip()}"
-                    )
+                    raise ContainerSetupError(f"Failed to clone build context: {clone_result.stderr.strip()}")
                 context_args[-1] = str(local_clone_dir / "repo")
 
         try:
-            logger.log(LogLevel.BUILD.value, "Building Docker image on VPS (this may take several minutes)...", source="docker")
+            logger.log(
+                LogLevel.BUILD.value,
+                "Building Docker image on VPS (this may take several minutes)...",
+                source="docker",
+            )
             if context_args:
                 upload_context = Path(context_args[-1])
                 logger.log(LogLevel.BUILD.value, "Uploading build context to VPS...", source="vps")
@@ -919,6 +925,12 @@ class VpsDockerProvider(BaseProviderInstance):
             except MngrError as e:
                 logger.warning("Failed to create snapshot before stop: {}", e)
 
+        # Disconnect SSH before stopping (also disconnect the passed-in host
+        # in case it is a different instance than the cached one).
+        if isinstance(host, Host):
+            host.disconnect()
+        self._evict_cached_host(host_id)
+
         with log_span("Stopping container on VPS"):
             docker_ssh.stop_container(host_record.config.container_name, timeout_seconds=int(timeout_seconds))
 
@@ -929,7 +941,6 @@ class VpsDockerProvider(BaseProviderInstance):
         updated_record = host_record.model_copy(update={"certified_host_data": updated_data})
         host_store.write_host_record(updated_record)
 
-        self._host_by_id_cache.pop(host_id, None)
         logger.info("Host {} stopped", host_id)
 
     # =========================================================================
@@ -965,6 +976,13 @@ class VpsDockerProvider(BaseProviderInstance):
 
     def destroy_host(self, host: HostInterface | HostId) -> None:
         host_id = host.id if isinstance(host, HostInterface) else host
+
+        # Disconnect SSH before destroying (also disconnect the passed-in host
+        # in case it is a different instance than the cached one).
+        if isinstance(host, Host):
+            host.disconnect()
+        self._evict_cached_host(host_id)
+
         host_record = self._find_host_record(host_id)
         if host_record is None or host_record.config is None:
             raise HostNotFoundError(host_id)
@@ -1021,16 +1039,14 @@ class VpsDockerProvider(BaseProviderInstance):
             except Exception as e:
                 logger.trace("Failed to clean up container known_hosts: {}", e)
 
-        self._host_by_id_cache.pop(host_id, None)
         logger.info("Host {} destroyed (VPS {})", host_id, vps_config.vps_instance_id)
 
     def delete_host(self, host: HostInterface) -> None:
         """Delete all local records for a destroyed host (does not destroy VPS)."""
-        host_id = host.id
-        self._host_by_id_cache.pop(host_id, None)
+        self._evict_cached_host(host.id)
 
     def on_connection_error(self, host_id: HostId) -> None:
-        self._host_by_id_cache.pop(host_id, None)
+        self._evict_cached_host(host_id)
 
     # =========================================================================
     # Discovery
