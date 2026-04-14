@@ -17,7 +17,7 @@ import { SubagentView } from "./SubagentView";
 import { CreateAgentModal } from "./CreateAgentModal";
 import { DestroyConfirmDialog } from "./DestroyConfirmDialog";
 import { ShareModal } from "./ShareModal";
-import { apiUrl, getBasePath, getPrimaryAgentId } from "../base-path";
+import { apiUrl, getPrimaryAgentId } from "../base-path";
 import {
   getAgentById,
   getAgents,
@@ -30,14 +30,28 @@ const AUTOSAVE_DEBOUNCE_MS = 1500;
 
 type AccessMode = "cloudflare" | "local" | "dev";
 
+/**
+ * Detect the forwarding prefix from the <base> tag injected by the desktop
+ * client proxy. Returns e.g. "/forwarding/{agentId}/web" or null if not proxied.
+ */
+function getForwardingPrefix(): string | null {
+  const baseEl = document.querySelector("base[href]");
+  if (!baseEl) return null;
+  const href = baseEl.getAttribute("href") ?? "";
+  if (href.includes("/forwarding/")) {
+    return href.replace(/\/+$/, "");
+  }
+  return null;
+}
+
 function getAccessMode(): AccessMode {
   const hostname = window.location.hostname;
   if (hostname.match(/^[^-]+--(.*)/)) {
     return "cloudflare";
   }
-  // Local mode: the base path contains /forwarding/ when served through
-  // the desktop client proxy (e.g. /forwarding/{agentId}/web).
-  if (getBasePath().includes("/forwarding/")) {
+  // Local mode: the desktop client proxy injects a <base> tag with
+  // href="/forwarding/{agentId}/{serverName}/" into the HTML.
+  if (getForwardingPrefix() !== null) {
     return "local";
   }
   return "dev";
@@ -60,8 +74,8 @@ function getApplicationUrl(appName: string, rawUrl: string): string {
     return `${proto}//${appName}--${cfMatch[1]}${port}/`;
   }
 
-  // Local forwarding server: base path contains /forwarding/ when proxied
-  if (primaryId && getBasePath().includes("/forwarding/")) {
+  // Local forwarding server: desktop client proxy injects <base> with /forwarding/
+  if (primaryId && getForwardingPrefix() !== null) {
     return `/forwarding/${primaryId}/${appName}/`;
   }
 
@@ -82,7 +96,7 @@ function getTerminalUrl(): string {
 
   // Local forwarding server: always use the primary agent's terminal
   const primaryId = getPrimaryAgentId();
-  if (primaryId && getBasePath().includes("/forwarding/")) {
+  if (primaryId && getForwardingPrefix() !== null) {
     return `/forwarding/${primaryId}/terminal/`;
   }
 
