@@ -1,3 +1,4 @@
+import types
 from collections.abc import Sequence
 from typing import Any
 
@@ -6,6 +7,7 @@ import click
 from imbue.mngr import hookimpl
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.plugin_registry import register_plugin_config
+from imbue.mngr_kanpan import hookspecs as kanpan_hookspecs
 from imbue.mngr_kanpan.cli import kanpan
 from imbue.mngr_kanpan.data_sources.git_info import GitInfoDataSource
 from imbue.mngr_kanpan.data_sources.github import GitHubDataSource
@@ -19,6 +21,12 @@ from imbue.mngr_kanpan.data_types import KanpanPluginConfig
 from imbue.mngr_kanpan.data_types import ShellCommandSourceConfig
 
 register_plugin_config("kanpan", KanpanPluginConfig)
+
+
+@hookimpl
+def register_hookspecs() -> types.ModuleType | None:
+    """Register kanpan-specific hookspecs."""
+    return kanpan_hookspecs
 
 
 @hookimpl

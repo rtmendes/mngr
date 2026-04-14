@@ -251,6 +251,66 @@ def test_parse_unresolved_invalid_json() -> None:
     assert _parse_unresolved("not json") is False
 
 
+def test_parse_unresolved_ignore_user_skips_matching_threads() -> None:
+    data = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {
+                                "isResolved": False,
+                                "comments": {"nodes": [{"author": {"login": "myuser"}}]},
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    assert _parse_unresolved(json.dumps(data), ignore_user="myuser") is False
+
+
+def test_parse_unresolved_ignore_user_keeps_other_threads() -> None:
+    data = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {
+                                "isResolved": False,
+                                "comments": {"nodes": [{"author": {"login": "reviewer"}}]},
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    assert _parse_unresolved(json.dumps(data), ignore_user="myuser") is True
+
+
+def test_parse_unresolved_ignore_user_none_counts_all() -> None:
+    data = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {
+                                "isResolved": False,
+                                "comments": {"nodes": [{"author": {"login": "myuser"}}]},
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    assert _parse_unresolved(json.dumps(data), ignore_user=None) is True
+
+
 # === _fetch_repo_prs ===
 
 
