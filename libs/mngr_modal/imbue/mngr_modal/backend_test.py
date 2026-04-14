@@ -1,7 +1,49 @@
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.errors import ProviderUnavailableError
+from imbue.mngr.primitives import ProviderInstanceName
+from imbue.mngr_modal.backend import ModalProviderBackend
 from imbue.mngr_modal.backend import get_files_for_deploy
+from imbue.mngr_modal.config import ModalMode
+from imbue.mngr_modal.config import ModalProviderConfig
+from imbue.modal_proxy.errors import ModalProxyError
+
+# =============================================================================
+# build_provider_instance Tests
+# =============================================================================
+
+
+def test_build_provider_instance_converts_modal_proxy_error_to_provider_unavailable(
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """build_provider_instance wraps ModalProxyError as ProviderUnavailableError.
+
+    When _get_or_create_app raises ModalProxyError (e.g. the Modal environment
+    has been deleted), the error is converted to ProviderUnavailableError so
+    that callers can treat the provider as temporarily unavailable rather than
+    crashing the entire list operation.
+    """
+    config = ModalProviderConfig(
+        mode=ModalMode.TESTING,
+        app_name="unavailable-test-app",
+        host_dir=temp_mngr_ctx.config.default_host_dir,
+    )
+    with patch.object(
+        ModalProviderBackend,
+        "_get_or_create_app",
+        side_effect=ModalProxyError("Environment 'mngr-abc123' not found"),
+    ):
+        with pytest.raises(ProviderUnavailableError, match="Environment 'mngr-abc123' not found"):
+            ModalProviderBackend.build_provider_instance(
+                name=ProviderInstanceName("modal"),
+                config=config,
+                mngr_ctx=temp_mngr_ctx,
+            )
+
 
 # =============================================================================
 # get_files_for_deploy Tests
