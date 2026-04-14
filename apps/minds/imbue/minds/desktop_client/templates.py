@@ -689,18 +689,6 @@ body {
   font-size: 12px; font-family: inherit; white-space: nowrap;
 }
 .minds-user-btn:hover { background: rgba(255,255,255,0.08); color: #e2e8f0; }
-.minds-user-dropdown {
-  display: none; position: absolute; right: 0; top: 100%; margin-top: 4px;
-  background: #1e293b; border: 1px solid #475569; border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3); min-width: 140px; z-index: 10; padding: 4px 0;
-}
-.minds-user-dropdown.open { display: block; }
-.minds-dropdown-item {
-  display: block; width: 100%; padding: 8px 16px; font-size: 13px;
-  text-align: left; background: none; border: none; cursor: pointer;
-  color: #cbd5e1; font-family: inherit;
-}
-.minds-dropdown-item:hover { background: rgba(255,255,255,0.08); color: #f1f5f9; }
 
 .minds-wc { display: flex; }
 {% if is_mac %}.minds-wc { display: none; }{% endif %}
@@ -759,10 +747,6 @@ body {
   <span class="minds-title" id="page-title">Minds</span>
   <div class="minds-user-area">
     <button id="user-btn" class="minds-user-btn" title="Account">Login</button>
-    <div class="minds-user-dropdown" id="user-dropdown">
-      <button class="minds-dropdown-item" id="settings-btn">Settings</button>
-      <button class="minds-dropdown-item" id="signout-btn">Sign out</button>
-    </div>
   </div>
   <div class="minds-wc">
     <button id="min-btn" title="Minimize">
@@ -879,16 +863,7 @@ fetch('/auth/api/status').then(function(r) { return r.json(); }).then(updateAuth
 document.getElementById('user-btn').onclick = function(e) {
   e.stopPropagation();
   if (!signedIn) { navigateContent('/auth/login'); return; }
-  document.getElementById('user-dropdown').classList.toggle('open');
-};
-document.addEventListener('click', function() { document.getElementById('user-dropdown').classList.remove('open'); });
-document.getElementById('settings-btn').onclick = function() {
-  document.getElementById('user-dropdown').classList.remove('open');
   navigateContent('/auth/settings');
-};
-document.getElementById('signout-btn').onclick = function() {
-  document.getElementById('user-dropdown').classList.remove('open');
-  fetch('/auth/api/signout', { method: 'POST' }).then(function() { navigateContent('/'); });
 };
 
 // -- SSE for workspace list (browser mode sidebar) --
