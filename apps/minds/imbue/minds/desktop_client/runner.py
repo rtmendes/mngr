@@ -44,6 +44,8 @@ _DEFAULT_MNGR_HOST_DIR: Final[Path] = Path.home() / ".mngr"
 _PROVIDER_HOST_DIR: Final[dict[str, str]] = {
     "docker": "/mngr",
     "modal": "/mngr",
+    "vultr": "/mngr",
+    "lima": "/mngr",
 }
 
 
