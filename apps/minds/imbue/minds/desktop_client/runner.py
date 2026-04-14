@@ -59,7 +59,7 @@ class AgentDiscoveryHandler(FrozenModel):
 
     def __call__(self, agent_id: AgentId, ssh_info: RemoteSSHInfo | None, provider_name: str) -> None:
         if ssh_info is not None:
-            self._handle_remote_agent(agent_id, ssh_info, provider_name)
+            self._handle_remote_agent(agent_id, ssh_info)
         else:
             self._handle_local_agent(agent_id)
 
@@ -68,7 +68,7 @@ class AgentDiscoveryHandler(FrozenModel):
         """Return the mngr host directory for a remote provider."""
         return _REMOTE_HOST_DIR
 
-    def _handle_remote_agent(self, agent_id: AgentId, ssh_info: RemoteSSHInfo, provider_name: str) -> None:
+    def _handle_remote_agent(self, agent_id: AgentId, ssh_info: RemoteSSHInfo) -> None:
         host_dir = self._remote_host_dir()
         agent_state_dir = f"{host_dir}/agents/{agent_id}"
         try:
