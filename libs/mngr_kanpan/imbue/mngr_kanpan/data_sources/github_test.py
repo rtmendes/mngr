@@ -314,6 +314,48 @@ def test_parse_unresolved_ignore_user_none_counts_all() -> None:
     assert _parse_unresolved(json.dumps(data), ignore_user=None) is True
 
 
+def test_parse_unresolved_ignore_user_flags_thread_where_someone_else_responded_last() -> None:
+    """I started the thread but someone else responded and I haven't replied yet."""
+    data = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {
+                                "isResolved": False,
+                                "comments": {"nodes": [{"author": {"login": "reviewer"}}]},
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    assert _parse_unresolved(json.dumps(data), ignore_user="myuser") is True
+
+
+def test_parse_unresolved_ignore_user_skips_thread_where_i_responded_last() -> None:
+    """Someone else started the thread but I already replied."""
+    data = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {
+                                "isResolved": False,
+                                "comments": {"nodes": [{"author": {"login": "myuser"}}]},
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    assert _parse_unresolved(json.dumps(data), ignore_user="myuser") is False
+
+
 def test_parse_unresolved_ignore_user_empty_comments_counts_as_unresolved() -> None:
     data = {
         "data": {
@@ -332,6 +374,69 @@ def test_parse_unresolved_ignore_user_empty_comments_counts_as_unresolved() -> N
         }
     }
     assert _parse_unresolved(json.dumps(data), ignore_user="myuser") is True
+
+
+# --- PR conversation comments ---
+
+
+def test_parse_unresolved_pr_comment_by_other_flags_unresolved() -> None:
+    """Last PR conversation comment is by someone else -- needs response."""
+    data = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {"nodes": []},
+                    "comments": {"nodes": [{"author": {"login": "reviewer"}}]},
+                }
+            }
+        }
+    }
+    assert _parse_unresolved(json.dumps(data), ignore_user="myuser") is True
+
+
+def test_parse_unresolved_pr_comment_by_me_not_flagged() -> None:
+    """Last PR conversation comment is by me -- I already replied."""
+    data = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {"nodes": []},
+                    "comments": {"nodes": [{"author": {"login": "myuser"}}]},
+                }
+            }
+        }
+    }
+    assert _parse_unresolved(json.dumps(data), ignore_user="myuser") is False
+
+
+def test_parse_unresolved_pr_comment_not_checked_without_ignore_user() -> None:
+    """Without ignore_user, PR conversation comments are not checked."""
+    data = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {"nodes": []},
+                    "comments": {"nodes": [{"author": {"login": "reviewer"}}]},
+                }
+            }
+        }
+    }
+    assert _parse_unresolved(json.dumps(data), ignore_user=None) is False
+
+
+def test_parse_unresolved_no_pr_comments_is_clean() -> None:
+    """No PR conversation comments and no unresolved threads -- clean."""
+    data = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {"nodes": []},
+                    "comments": {"nodes": []},
+                }
+            }
+        }
+    }
+    assert _parse_unresolved(json.dumps(data), ignore_user="myuser") is False
 
 
 # === _fetch_repo_prs ===
