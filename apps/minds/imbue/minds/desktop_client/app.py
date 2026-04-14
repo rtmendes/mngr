@@ -1114,15 +1114,7 @@ def _handle_chrome_page(
     is_mac = "Macintosh" in user_agent or "Mac OS" in user_agent
 
     authenticated = _is_authenticated(cookies=request.cookies, auth_store=auth_store)
-    initial_workspaces: list[dict[str, str]] = []
-    if authenticated:
-        agent_ids = backend_resolver.list_known_workspace_ids()
-        for aid in agent_ids:
-            ws_name = backend_resolver.get_workspace_name(aid)
-            if not ws_name:
-                info = backend_resolver.get_agent_display_info(aid)
-                ws_name = info.agent_name if info else str(aid)
-            initial_workspaces.append({"id": str(aid), "name": ws_name})
+    initial_workspaces = _build_workspace_list(backend_resolver) if authenticated else []
 
     html = render_chrome_page(
         is_mac=is_mac,
