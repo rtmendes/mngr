@@ -27,6 +27,7 @@ from paramiko import SFTPClient
 from paramiko import SSHException
 from paramiko import Transport
 from pydantic import Field
+from pydantic import PrivateAttr
 from pydantic import ValidationError
 from pyinfra.api.command import StringCommand
 from pyinfra.api.exceptions import ConnectError
@@ -226,6 +227,10 @@ class Host(BaseHost, OnlineHostInterface):
     )
     mngr_ctx: MngrContext = Field(frozen=True, repr=False, description="The mngr context")
 
+    # Set to True by disconnect() and model_copy_update() to prevent __del__
+    # from closing the paramiko client (which may be shared with a copy).
+    _explicitly_disconnected: bool = PrivateAttr(default=False)
+
     @property
     def is_local(self) -> bool:
         """Check if this host uses the local connector."""
@@ -256,16 +261,66 @@ class Host(BaseHost, OnlineHostInterface):
             else:
                 raise HostConnectionError(f"Failed to connect to host: {e}") from e
 
+    def _close_paramiko_client(self) -> None:
+        """Close the paramiko SSH client if one exists.
+
+        pyinfra's disconnect() only clears its SFTP cache and sets
+        connected=False. It does NOT close the underlying paramiko SSHClient.
+        When connect() is called again, pyinfra creates a new SSHClient
+        without closing the old one, leaking the TCP socket (and a
+        server-side sshd-session process). This method explicitly closes
+        the client to prevent that leak.
+
+        Safe to call on local connectors (no paramiko client) and on
+        already-closed clients.
+        """
+        try:
+            client = self.connector.host.connector.client  # ty: ignore[unresolved-attribute]
+        except AttributeError:
+            return
+        if client is not None:
+            try:
+                client.close()
+            except (OSError, SSHException):
+                pass
+
     def disconnect(self) -> None:
         """Disconnect the pyinfra host if connected.
 
-        This should be called before destroying or stopping a host to cleanly
-        close the SSH connection. Failure to disconnect can lead to stale
-        socket state causing "Socket is closed" errors in subsequent operations.
+        Closes the paramiko SSH client first (which pyinfra's disconnect
+        neglects to do), then calls pyinfra's disconnect to clear its
+        internal state.
         """
+        self._close_paramiko_client()
         if self.connector.host.connected:
             self.connector.host.disconnect()
             logger.trace("Disconnected pyinfra host {}", self.id)
+        self._explicitly_disconnected = True
+
+    def model_copy_update(self, *updates: Any) -> "Host":
+        """Create a copy of this Host with updated fields.
+
+        The copy shares the same pyinfra connector (and thus the same SSH
+        client). Mark ourselves so __del__ does not close the shared client
+        when this original is garbage collected.
+        """
+        result = super().model_copy_update(*updates)
+        self._explicitly_disconnected = True
+        return result
+
+    def __del__(self) -> None:
+        """Best-effort cleanup of the paramiko SSH client on garbage collection.
+
+        Only acts if disconnect() was never called explicitly and this Host
+        was never copied via model_copy_update (the copy shares the connector,
+        so closing the client here would kill the copy's connection).
+        """
+        if self._explicitly_disconnected:
+            return
+        try:
+            self._close_paramiko_client()
+        except (OSError, SSHException, AttributeError, TypeError):
+            logger.debug("Failed to close paramiko client during Host.__del__ for {}", self.id)
 
     @contextmanager
     def _notify_on_connection_error(self) -> Iterator[None]:
