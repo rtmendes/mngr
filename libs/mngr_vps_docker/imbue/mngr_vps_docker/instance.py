@@ -512,6 +512,7 @@ class VpsDockerProvider(BaseProviderInstance):
             vps_ssh_key_id = self.vps_client.upload_ssh_key(key_name, vps_public_key)
 
         vps_instance_id: VpsInstanceId | None = None
+        vps_ip: str | None = None
         try:
             vps_instance_id, vps_ip, docker_ssh = self._provision_vps(
                 host_id=host_id,
@@ -568,7 +569,7 @@ class VpsDockerProvider(BaseProviderInstance):
                     "Host creation failed. MNGR_KEEP_FAILED_HOSTS=1 is set, "
                     "skipping cleanup so you can debug. VPS instance: {}, IP: {}",
                     vps_instance_id,
-                    vps_ip if "vps_ip" in locals() else "unknown",
+                    vps_ip,
                 )
             else:
                 logger.error("Host creation failed, attempting cleanup...")
