@@ -521,12 +521,12 @@ def on_shutdown() -> None:
 
 
 @hookspec
-def kanpan_data_sources(mngr_ctx: MngrContext) -> Sequence[Any] | None:
-    """Register data sources for kanpan board refresh.
+def register_hookspecs() -> Any | None:
+    """Register additional hookspec modules with the plugin manager.
 
-    Each data source must implement the KanpanDataSource protocol
-    (defined in imbue.mngr_kanpan.data_source). Data sources produce
-    typed fields that become columns on the kanpan board.
+    Plugins that define their own hooks should implement this to return
+    a module containing @hookspec-decorated functions. The module will be
+    passed to pm.add_hookspecs() after all plugins are loaded.
 
-    Return a sequence of data source instances, or None if not contributing any.
+    Return a module object, or None if not contributing any hookspecs.
     """

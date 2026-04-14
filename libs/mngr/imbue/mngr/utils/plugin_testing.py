@@ -56,6 +56,9 @@ def plugin_manager() -> Generator[pluggy.PluginManager, None, None]:
     pm = pluggy.PluginManager("mngr")
     pm.add_hookspecs(hookspecs)
     pm.load_setuptools_entrypoints("mngr")
+    for hookspec_module in pm.hook.register_hookspecs():
+        if hookspec_module is not None:
+            pm.add_hookspecs(hookspec_module)
     load_local_backend_only(pm)
     load_agents_from_plugins(pm)
 
