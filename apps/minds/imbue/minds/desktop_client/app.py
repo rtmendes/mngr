@@ -33,6 +33,7 @@ from imbue.minds.desktop_client.api_v1 import create_api_v1_router
 from imbue.minds.desktop_client.api_v1 import get_cf_client_with_auth
 from imbue.minds.desktop_client.auth import AuthStoreInterface
 from imbue.minds.desktop_client.backend_resolver import BackendResolverInterface
+from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
 from imbue.minds.desktop_client.backend_resolver import MngrStreamManager
 from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingClient
 from imbue.minds.desktop_client.cookie_manager import SESSION_COOKIE_NAME
@@ -1146,7 +1147,8 @@ async def _handle_chrome_events(
 
     The chrome subscribes to this on load. If unauthenticated, sends an auth_required
     event. Once authenticated, sends the current workspace list and pushes updates
-    whenever the list changes.
+    whenever the backend resolver's data changes (driven by MngrStreamManager's
+    discovery and events streams).
     """
     authenticated = _is_authenticated(cookies=request.cookies, auth_store=auth_store)
 
@@ -1155,14 +1157,28 @@ async def _handle_chrome_events(
             yield "data: {}\n\n".format(json.dumps({"type": "auth_required"}))
             return
 
+        # Use an asyncio.Event to wake up when the resolver's data changes.
+        # The resolver fires callbacks from background threads, so we use
+        # call_soon_threadsafe to signal the event on the event loop.
+        change_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        if isinstance(backend_resolver, MngrCliBackendResolver):
+            backend_resolver.add_on_change_callback(lambda: loop.call_soon_threadsafe(change_event.set))
+
         # Send initial workspace list
         last_workspace_data = _build_workspace_list(backend_resolver)
         yield "data: {}\n\n".format(json.dumps({"type": "workspaces", "workspaces": last_workspace_data}))
 
-        # Poll for changes until client disconnects
+        # Wait for changes and push updates until client disconnects
         connected = not await request.is_disconnected()
         while connected:
-            await asyncio.sleep(2.0)
+            # Wait for a change signal or timeout (timeout for disconnect checks)
+            change_event.clear()
+            try:
+                await asyncio.wait_for(change_event.wait(), timeout=30.0)
+            except TimeoutError:
+                pass
 
             connected = not await request.is_disconnected()
             if not connected:
