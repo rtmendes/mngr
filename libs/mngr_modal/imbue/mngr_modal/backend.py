@@ -1,5 +1,4 @@
 import contextlib
-import re
 from contextlib import AbstractContextManager
 from io import StringIO
 from pathlib import Path
@@ -30,6 +29,7 @@ from imbue.mngr.interfaces.provider_instance import ProviderInstanceInterface
 from imbue.mngr.primitives import ProviderBackendName
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.providers.deploy_utils import collect_provider_profile_files
+from imbue.mngr.utils.testing import TEST_ENV_PATTERN
 from imbue.mngr_modal import hookimpl
 from imbue.mngr_modal.config import ModalMode
 from imbue.mngr_modal.config import ModalProviderConfig
@@ -50,11 +50,6 @@ MODAL_BACKEND_NAME: Final[ProviderBackendName] = ProviderBackendName("modal")
 STATE_VOLUME_SUFFIX: Final[str] = "-state"
 MODAL_NAME_MAX_LENGTH: Final[int] = 64
 
-# Pattern for valid test environment names: mngr_test-YYYY-MM-DD-HH-MM-SS followed by anything.
-# This mirrors TEST_ENV_PATTERN in imbue.mngr.utils.testing but is defined here to avoid importing
-# test utilities in production code.
-_TEST_ENV_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^mngr_test-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}")
-
 
 def _create_environment(environment_name: str, modal_interface: ModalInterface) -> None:
     """Create a Modal environment.
@@ -69,7 +64,7 @@ def _create_environment(environment_name: str, modal_interface: ModalInterface) 
     # Environments starting with mngr_ must follow the timestamped test pattern
     # (mngr_test-YYYY-MM-DD-HH-MM-SS-*) so they can be identified and cleaned up by CI.
     # Production environments use a different prefix (mngr-) and are not affected.
-    if environment_name.startswith("mngr_") and not _TEST_ENV_NAME_RE.match(environment_name):
+    if environment_name.startswith("mngr_") and not TEST_ENV_PATTERN.match(environment_name):
         raise MngrError(
             f"Refusing to create Modal environment with name '{environment_name}': "
             f"test environments must match 'mngr_test-YYYY-MM-DD-HH-MM-SS-*'. "
