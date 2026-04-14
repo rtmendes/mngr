@@ -62,14 +62,15 @@ const TITLEBAR_CSS = `
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-align: center; padding: 0 8px;
 }
-#minds-titlebar .minds-user-area { position: relative; display: flex; -webkit-app-region: no-drag; }
+#minds-titlebar .minds-user-area { position: relative; display: flex; -webkit-app-region: no-drag; margin-right: 4px; }
 #minds-titlebar .minds-user-btn {
-  -webkit-app-region: no-drag; background: none; border: 1px solid #475569;
-  color: #cbd5e1; cursor: pointer; padding: 3px 10px; border-radius: 4px;
-  font-size: 12px; font-family: inherit; white-space: nowrap; max-width: 180px;
-  overflow: hidden; text-overflow: ellipsis;
+  -webkit-app-region: no-drag; background: none; border: none;
+  color: #94a3b8; cursor: pointer; padding: 4px 12px; border-radius: 6px;
+  font-size: 13px; font-family: inherit; white-space: nowrap; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; height: 28px;
+  display: flex; align-items: center; gap: 6px;
 }
-#minds-titlebar .minds-user-btn:hover { background: rgba(255,255,255,0.08); color: #f1f5f9; }
+#minds-titlebar .minds-user-btn:hover { background: rgba(255,255,255,0.08); color: #e2e8f0; }
 #minds-titlebar .minds-user-dropdown {
   display: none; position: absolute; right: 0; top: 100%; margin-top: 4px;
   background: #1e293b; border: 1px solid #475569; border-radius: 6px;
@@ -77,7 +78,7 @@ const TITLEBAR_CSS = `
 }
 #minds-titlebar .minds-user-dropdown.open { display: block; }
 #minds-titlebar .minds-dropdown-item {
-  display: block; width: 100%; padding: 8px 14px; font-size: 12px;
+  display: block; width: 100%; padding: 8px 16px; font-size: 13px;
   text-align: left; background: none; border: none; cursor: pointer;
   color: #cbd5e1; font-family: inherit;
 }
@@ -109,7 +110,7 @@ const TITLEBAR_HTML = `
 </div>
 <span class="minds-title" id="minds-title">Minds</span>
 <div class="minds-user-area" id="minds-user-area">
-  <button id="minds-user-btn" class="minds-user-btn" title="Account">Login</button>
+  <button id="minds-user-btn" class="minds-user-btn" title="Account"><svg viewBox="0 0 24 24" style="width:14px;height:14px;flex-shrink:0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span id="minds-user-label">Login</span></button>
   <div class="minds-user-dropdown" id="minds-user-dropdown">
     <button class="minds-dropdown-item" id="minds-settings-btn">Settings</button>
     <button class="minds-dropdown-item" id="minds-signout-btn">Sign out</button>
@@ -182,14 +183,15 @@ const TITLEBAR_JS = `(function() {
   };
 
   // Fetch auth status and update the button
+  var userLabel = document.getElementById('minds-user-label');
   fetch('/auth/api/status').then(function(r) { return r.json(); }).then(function(data) {
     if (data.signedIn) {
       signedIn = true;
-      userBtn.textContent = data.displayName || data.email || 'Account';
+      userLabel.textContent = data.displayName || data.email || 'Account';
       userBtn.title = data.email || 'Account';
     } else {
       signedIn = false;
-      userBtn.textContent = 'Login';
+      userLabel.textContent = 'Login';
       userBtn.title = 'Sign in to your account';
     }
   }).catch(function() {});
