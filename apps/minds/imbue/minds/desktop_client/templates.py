@@ -959,20 +959,23 @@ function renderWorkspaces(workspaces) {
   }).join('');
 }
 
-var evtSource = new EventSource('/_chrome/events');
-evtSource.onmessage = function(event) {
-  try {
-    var data = JSON.parse(event.data);
-    if (data.type === 'workspaces') renderWorkspaces(data.workspaces);
-  } catch(e) {}
-};
-evtSource.onerror = function() {
-  evtSource.close();
-  setTimeout(function() {
-    evtSource = new EventSource('/_chrome/events');
-    evtSource.onmessage = arguments.callee;
-  }, 5000);
-};
+var evtSource = null;
+function connectSSE() {
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource('/_chrome/events');
+  evtSource.onmessage = function(event) {
+    try {
+      var data = JSON.parse(event.data);
+      if (data.type === 'workspaces') renderWorkspaces(data.workspaces);
+    } catch(e) {}
+  };
+  evtSource.onerror = function() {
+    evtSource.close();
+    evtSource = null;
+    setTimeout(connectSSE, 5000);
+  };
+}
+connectSSE();
 </script>
 </body>
 </html>"""
