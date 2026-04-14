@@ -405,11 +405,15 @@ ipcMain.on('retry', async () => {
   }
 
   if (chromeView && !chromeView.webContents.isDestroyed()) {
-    await chromeView.webContents.loadFile(path.join(__dirname, 'shell.html'));
-    // Reset chrome bounds to title bar height since we're back in loading mode
+    // Expand chrome view to full window and hide content view for the loading screen
     if (mainWindow && !mainWindow.isDestroyed()) {
-      updateViewBounds();
+      const { width, height } = mainWindow.getContentBounds();
+      chromeView.setBounds({ x: 0, y: 0, width, height });
+      if (contentView) {
+        contentView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      }
     }
+    await chromeView.webContents.loadFile(path.join(__dirname, 'shell.html'));
     startBackendWithRetry();
   }
 });
