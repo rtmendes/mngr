@@ -91,8 +91,18 @@ function createWindow() {
   mainWindow.on('unmaximize', () => { mainWindow._maximizedByUs = false; });
 
   mainWindow.once('ready-to-show', () => {
+    console.log('[window] ready-to-show fired');
     mainWindow.show();
   });
+
+  // BaseWindow may not fire ready-to-show since it has no built-in web contents.
+  // Show the window immediately after a short delay as a fallback.
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      console.log('[window] Showing window via fallback timeout');
+      mainWindow.show();
+    }
+  }, 500);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -190,8 +200,16 @@ function registerShortcuts() {
 }
 
 async function runStartupSequence() {
-  // Show loading screen in the chrome view during startup
+  console.log('[startup] Loading shell.html in chrome view...');
+  // During startup, expand chrome view to full window to show loading screen
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const { width, height } = mainWindow.getContentBounds();
+    chromeView.setBounds({ x: 0, y: 0, width, height });
+    // Hide content view during startup
+    contentView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+  }
   await chromeView.webContents.loadFile(path.join(__dirname, 'shell.html'));
+  console.log('[startup] shell.html loaded');
 
   try {
     await runEnvSetup((status) => {
@@ -248,6 +266,12 @@ async function startBackendWithRetry() {
     });
 
     backendBaseUrl = `http://127.0.0.1:${port}`;
+
+    console.log('[startup] Backend ready. Loading chrome from', backendBaseUrl + '/_chrome');
+    console.log('[startup] Loading content from', loginUrl);
+
+    // Restore normal layout: chrome at top, content below
+    updateViewBounds();
 
     // Load chrome from backend and content from landing page
     if (chromeView && !chromeView.webContents.isDestroyed()) {
