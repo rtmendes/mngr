@@ -28,6 +28,8 @@ from supertokens_python.recipe.emailpassword.interfaces import UpdateEmailOrPass
 from supertokens_python.recipe.emailpassword.interfaces import WrongCredentialsError
 from supertokens_python.recipe.emailverification.asyncio import is_email_verified
 from supertokens_python.recipe.emailverification.asyncio import send_email_verification_email
+from supertokens_python.recipe.emailverification.asyncio import verify_email_using_token
+from supertokens_python.recipe.emailverification.interfaces import VerifyEmailUsingTokenOkResult
 from supertokens_python.recipe.emailverification.syncio import is_email_verified as is_email_verified_sync
 from supertokens_python.recipe.emailverification.syncio import send_email_verification_email as send_email_verification_email_sync
 from supertokens_python.recipe.session.asyncio import create_new_session_without_request_response
@@ -400,6 +402,46 @@ async def _handle_reset_password_api(request: Request) -> Response:
     return _json_response({"status": "OK", "message": "Password has been reset"})
 
 
+async def _handle_verify_email(request: Request, token: str = "", tenantId: str = "public") -> HTMLResponse:
+    """Handle email verification link click. Verifies the token and shows a result page."""
+    if not token:
+        return HTMLResponse(
+            "<html><body><h1>Missing verification token</h1></body></html>",
+            status_code=400,
+        )
+
+    result = await verify_email_using_token(tenant_id=tenantId, token=token)
+
+    if isinstance(result, VerifyEmailUsingTokenOkResult):
+        return HTMLResponse(
+            '<!DOCTYPE html><html><head><title>Email verified</title>'
+            '<style>body { font-family: system-ui; display: flex; justify-content: center; '
+            'align-items: center; min-height: 100vh; background: #f8fafc; }'
+            '.card { background: white; border-radius: 12px; padding: 40px; '
+            'box-shadow: 0 1px 3px rgba(0,0,0,0.1); max-width: 420px; text-align: center; }'
+            'h1 { color: #15803d; margin-bottom: 8px; } '
+            'a { color: #3b82f6; text-decoration: none; }</style></head>'
+            '<body><div class="card"><h1>Email verified</h1>'
+            '<p style="color: #64748b; margin-bottom: 16px;">Your email has been verified successfully.</p>'
+            '<a href="/">Go to home</a></div></body></html>'
+        )
+
+    return HTMLResponse(
+        '<!DOCTYPE html><html><head><title>Verification failed</title>'
+        '<style>body { font-family: system-ui; display: flex; justify-content: center; '
+        'align-items: center; min-height: 100vh; background: #f8fafc; }'
+        '.card { background: white; border-radius: 12px; padding: 40px; '
+        'box-shadow: 0 1px 3px rgba(0,0,0,0.1); max-width: 420px; text-align: center; }'
+        'h1 { color: #dc2626; margin-bottom: 8px; } '
+        'a { color: #3b82f6; text-decoration: none; }</style></head>'
+        '<body><div class="card"><h1>Verification failed</h1>'
+        '<p style="color: #64748b; margin-bottom: 16px;">The verification link is invalid or expired. '
+        'Please request a new one from the app.</p>'
+        '<a href="/auth/login">Go to sign in</a></div></body></html>',
+        status_code=400,
+    )
+
+
 def _handle_settings_page(request: Request) -> HTMLResponse:
     """Render the account settings page."""
     session_store = _get_session_store(request)
@@ -456,6 +498,7 @@ def create_supertokens_router(
     router.post("/api/forgot-password")(_handle_forgot_password_api)
     router.get("/reset-password")(_handle_reset_password_page)
     router.post("/api/reset-password")(_handle_reset_password_api)
+    router.get("/verify-email")(_handle_verify_email)
     router.get("/settings")(_handle_settings_page)
 
     return router
