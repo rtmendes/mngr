@@ -51,7 +51,6 @@ from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import HostState
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SSHInfo
-from imbue.mngr.providers.base_provider import BaseProviderInstance
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr.providers.registry import load_local_backend_only
@@ -713,27 +712,6 @@ def make_ctx_with_plugins(
     for plugin in plugins:
         pm.register(plugin)
     return mngr_ctx.model_copy_update(to_update(mngr_ctx.field_ref().pm, pm))
-
-
-@contextmanager
-def override_provider_instance(
-    name: ProviderInstanceName,
-    mngr_ctx: MngrContext,
-    instance: BaseProviderInstance,
-) -> Generator[None, None, None]:
-    """Temporarily inject a provider instance into the provider cache.
-
-    Use this in tests that need to control what get_provider_instance() returns
-    for a given (name, context) pair. The entry is removed on exit.
-    """
-    from imbue.mngr.api.providers import _instance_cache
-
-    cache_key = (name, id(mngr_ctx))
-    _instance_cache[cache_key] = instance
-    try:
-        yield
-    finally:
-        _instance_cache.pop(cache_key, None)
 
 
 def make_test_agent_details(

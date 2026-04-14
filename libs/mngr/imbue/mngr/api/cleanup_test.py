@@ -1,6 +1,8 @@
 """Unit tests for cleanup API functions."""
 
+from collections.abc import Generator
 from collections.abc import Sequence
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -15,6 +17,7 @@ from imbue.mngr.api.cleanup import execute_cleanup
 from imbue.mngr.api.cleanup import find_agents_for_cleanup
 from imbue.mngr.api.create import CreateAgentOptions
 from imbue.mngr.api.data_types import CleanupResult
+from imbue.mngr.api.providers import _instance_cache
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import ProviderInstanceConfig
 from imbue.mngr.errors import MngrError
@@ -39,7 +42,21 @@ from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr.utils.polling import wait_for
 from imbue.mngr.utils.testing import make_ctx_with_plugins
 from imbue.mngr.utils.testing import make_test_agent_details
-from imbue.mngr.utils.testing import override_provider_instance
+
+
+@contextmanager
+def injected_provider(
+    name: ProviderInstanceName,
+    mngr_ctx: MngrContext,
+    instance: LocalProviderInstance,
+) -> Generator[None, None, None]:
+    """Temporarily inject a provider instance into the provider cache."""
+    cache_key = (name, id(mngr_ctx))
+    _instance_cache[cache_key] = instance
+    try:
+        yield
+    finally:
+        _instance_cache.pop(cache_key, None)
 
 
 class _DestroyErrorPlugin:
@@ -463,7 +480,7 @@ def test_execute_cleanup_destroy_offline_host_error_with_abort(
         mngr_ctx=temp_mngr_ctx,
     )
 
-    with override_provider_instance(provider_name, temp_mngr_ctx, offline_provider):
+    with injected_provider(provider_name, temp_mngr_ctx, offline_provider):
         # Create two agents on the fake offline host so we can verify ABORT stops
         # processing after the first host's error.
         first_agent = make_test_agent_details(
@@ -546,7 +563,7 @@ def test_execute_cleanup_stop_error_with_abort_stops_processing(
         mngr_ctx=temp_mngr_ctx,
     )
 
-    with override_provider_instance(provider_name, temp_mngr_ctx, stop_provider):
+    with injected_provider(provider_name, temp_mngr_ctx, stop_provider):
         first_agent = make_test_agent_details(
             name="stop-error-agent-one",
             host_id=stop_provider.host_id,
@@ -648,7 +665,7 @@ def test_execute_cleanup_destroy_offline_host_success(
         mngr_ctx=temp_mngr_ctx,
     )
 
-    with override_provider_instance(provider_name, temp_mngr_ctx, success_provider):
+    with injected_provider(provider_name, temp_mngr_ctx, success_provider):
         first_agent = make_test_agent_details(
             name="offline-success-agent-one",
             host_id=HostId.generate(),
@@ -685,7 +702,7 @@ def test_execute_cleanup_stop_on_offline_host_skips_with_warning(
         mngr_ctx=temp_mngr_ctx,
     )
 
-    with override_provider_instance(provider_name, temp_mngr_ctx, offline_provider):
+    with injected_provider(provider_name, temp_mngr_ctx, offline_provider):
         agent = make_test_agent_details(
             name="offline-stop-agent",
             host_id=HostId.generate(),

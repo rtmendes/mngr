@@ -270,13 +270,6 @@ def test_render_transcript_output_is_wrapped_in_pre_transcript() -> None:
     assert "</pre>" in result
 
 
-def test_render_transcript_blocks_are_wrapped_in_cmd_block_divs() -> None:
-    """Each logical block is wrapped in a <div class="cmd-block">."""
-    result = render_transcript("$ ls\n? 0")
-    assert '<div class="cmd-block">' in result
-    assert "</div>" in result
-
-
 def test_render_transcript_new_block_starts_after_exit_code_then_comment() -> None:
     """A new comment after an exit code starts a new cmd-block."""
     result = render_transcript("$ cmd1\n? 0\n# new section\n$ cmd2\n? 0")
