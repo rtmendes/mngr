@@ -27,6 +27,7 @@ from paramiko import SFTPClient
 from paramiko import SSHException
 from paramiko import Transport
 from pydantic import Field
+from pydantic import PrivateAttr
 from pydantic import ValidationError
 from pyinfra.api.command import StringCommand
 from pyinfra.api.exceptions import ConnectError
@@ -179,6 +180,10 @@ class Host(BaseHost, OnlineHostInterface):
     )
     mngr_ctx: MngrContext = Field(frozen=True, repr=False, description="The mngr context")
 
+    # Set to True by disconnect() and model_copy_update() to prevent __del__
+    # from closing the paramiko client (which may be shared with a copy).
+    _explicitly_disconnected: bool = PrivateAttr(default=False)
+
     @property
     def is_local(self) -> bool:
         """Check if this host uses the local connector."""
@@ -263,7 +268,7 @@ class Host(BaseHost, OnlineHostInterface):
         was never copied via model_copy_update (the copy shares the connector,
         so closing the client here would kill the copy's connection).
         """
-        if getattr(self, "_explicitly_disconnected", False):
+        if self._explicitly_disconnected:
             return
         try:
             self._close_paramiko_client()
