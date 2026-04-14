@@ -243,7 +243,20 @@ class Host(BaseHost, OnlineHostInterface):
         if self.connector.host.connected:
             self.connector.host.disconnect()
             logger.trace("Disconnected pyinfra host {}", self.id)
+        self._explicitly_disconnected = True
 
+    def __del__(self) -> None:
+        """Best-effort cleanup of the paramiko SSH client on garbage collection.
+
+        Only acts if disconnect() was never called explicitly (i.e., the Host
+        was dropped without proper cleanup).
+        """
+        if getattr(self, "_explicitly_disconnected", False):
+            return
+        try:
+            self._close_paramiko_client()
+        except (OSError, SSHException, AttributeError, TypeError):
+            logger.debug("Failed to close paramiko client during Host.__del__ for {}", self.id)
 
     @contextmanager
     def _notify_on_connection_error(self) -> Iterator[None]:
