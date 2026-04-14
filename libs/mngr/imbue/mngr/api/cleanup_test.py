@@ -45,7 +45,7 @@ from imbue.mngr.utils.testing import make_test_agent_details
 
 
 @contextmanager
-def injected_provider(
+def _injected_provider(
     name: ProviderInstanceName,
     mngr_ctx: MngrContext,
     instance: LocalProviderInstance,
@@ -480,7 +480,7 @@ def test_execute_cleanup_destroy_offline_host_error_with_abort(
         mngr_ctx=temp_mngr_ctx,
     )
 
-    with injected_provider(provider_name, temp_mngr_ctx, offline_provider):
+    with _injected_provider(provider_name, temp_mngr_ctx, offline_provider):
         # Create two agents on the fake offline host so we can verify ABORT stops
         # processing after the first host's error.
         first_agent = make_test_agent_details(
@@ -563,7 +563,7 @@ def test_execute_cleanup_stop_error_with_abort_stops_processing(
         mngr_ctx=temp_mngr_ctx,
     )
 
-    with injected_provider(provider_name, temp_mngr_ctx, stop_provider):
+    with _injected_provider(provider_name, temp_mngr_ctx, stop_provider):
         first_agent = make_test_agent_details(
             name="stop-error-agent-one",
             host_id=stop_provider.host_id,
@@ -665,7 +665,7 @@ def test_execute_cleanup_destroy_offline_host_success(
         mngr_ctx=temp_mngr_ctx,
     )
 
-    with injected_provider(provider_name, temp_mngr_ctx, success_provider):
+    with _injected_provider(provider_name, temp_mngr_ctx, success_provider):
         first_agent = make_test_agent_details(
             name="offline-success-agent-one",
             host_id=HostId.generate(),
@@ -702,7 +702,7 @@ def test_execute_cleanup_stop_on_offline_host_skips_with_warning(
         mngr_ctx=temp_mngr_ctx,
     )
 
-    with injected_provider(provider_name, temp_mngr_ctx, offline_provider):
+    with _injected_provider(provider_name, temp_mngr_ctx, offline_provider):
         agent = make_test_agent_details(
             name="offline-stop-agent",
             host_id=HostId.generate(),
