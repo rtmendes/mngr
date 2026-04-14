@@ -416,6 +416,38 @@ _RESET_PASSWORD_TEMPLATE: Final[str] = """<!DOCTYPE html>
 </html>"""
 
 
+_VERIFY_EMAIL_SUCCESS_TEMPLATE: Final[str] = """<!DOCTYPE html>
+<html>
+<head>
+  <title>Email verified</title>
+  <style>""" + _AUTH_STYLES + """</style>
+</head>
+<body>
+  <div class="auth-card" style="text-align: center;">
+    <h1 style="color: #15803d;">Email verified</h1>
+    <p class="subtitle">Your email has been verified successfully.</p>
+    <div class="toggle-link"><a href="/">Go to home</a></div>
+  </div>
+</body>
+</html>"""
+
+
+_VERIFY_EMAIL_FAILED_TEMPLATE: Final[str] = """<!DOCTYPE html>
+<html>
+<head>
+  <title>Verification failed</title>
+  <style>""" + _AUTH_STYLES + """</style>
+</head>
+<body>
+  <div class="auth-card" style="text-align: center;">
+    <h1 style="color: #dc2626;">Verification failed</h1>
+    <p class="subtitle">The verification link is invalid or expired. Please request a new one from the app.</p>
+    <div class="toggle-link"><a href="/auth/login">Go to sign in</a></div>
+  </div>
+</body>
+</html>"""
+
+
 _SETTINGS_TEMPLATE: Final[str] = """<!DOCTYPE html>
 <html>
 <head>
@@ -518,6 +550,18 @@ def render_reset_password_page(token: str = "") -> str:
     """Render the password reset page."""
     template = _JINJA_ENV.from_string(_RESET_PASSWORD_TEMPLATE)
     return template.render(token=token)
+
+
+def render_verify_email_success_page() -> str:
+    """Render the email verified successfully page."""
+    template = _JINJA_ENV.from_string(_VERIFY_EMAIL_SUCCESS_TEMPLATE)
+    return template.render()
+
+
+def render_verify_email_failed_page() -> str:
+    """Render the email verification failed page."""
+    template = _JINJA_ENV.from_string(_VERIFY_EMAIL_FAILED_TEMPLATE)
+    return template.render()
 
 
 def render_settings_page(
