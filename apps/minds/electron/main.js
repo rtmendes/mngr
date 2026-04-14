@@ -62,13 +62,11 @@ const TITLEBAR_CSS = `
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   text-align: center; padding: 0 8px;
 }
-#minds-titlebar .minds-user-area { position: relative; display: flex; -webkit-app-region: no-drag; margin-right: 4px; }
+#minds-titlebar .minds-user-area { position: relative; -webkit-app-region: no-drag; }
 #minds-titlebar .minds-user-btn {
   -webkit-app-region: no-drag; background: none; border: none;
   color: #94a3b8; cursor: pointer; padding: 4px 12px; border-radius: 6px;
-  font-size: 13px; font-family: inherit; white-space: nowrap; max-width: 260px;
-  overflow: hidden; text-overflow: ellipsis; height: 28px;
-  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-family: inherit; white-space: nowrap;
 }
 #minds-titlebar .minds-user-btn:hover { background: rgba(255,255,255,0.08); color: #e2e8f0; }
 #minds-titlebar .minds-user-dropdown {
@@ -110,7 +108,7 @@ const TITLEBAR_HTML = `
 </div>
 <span class="minds-title" id="minds-title">Minds</span>
 <div class="minds-user-area" id="minds-user-area">
-  <button id="minds-user-btn" class="minds-user-btn" title="Account"><svg viewBox="0 0 24 24" style="width:14px;height:14px;flex-shrink:0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span id="minds-user-label">Login</span></button>
+  <button id="minds-user-btn" class="minds-user-btn" title="Account">Login</button>
   <div class="minds-user-dropdown" id="minds-user-dropdown">
     <button class="minds-dropdown-item" id="minds-settings-btn">Settings</button>
     <button class="minds-dropdown-item" id="minds-signout-btn">Sign out</button>
@@ -182,17 +180,19 @@ const TITLEBAR_JS = `(function() {
     fetch('/auth/api/signout', { method: 'POST' }).then(function() { window.location.href = '/'; });
   };
 
-  // Fetch auth status and update the button
-  var userLabel = document.getElementById('minds-user-label');
-  fetch('/auth/api/status').then(function(r) { return r.json(); }).then(function(data) {
+  // Fetch auth status using an absolute URL so the service worker cannot intercept it
+  var statusUrl = window.location.origin + '/auth/api/status';
+  fetch(statusUrl).then(function(r) { return r.json(); }).then(function(data) {
+    var btn = document.getElementById('minds-user-btn');
+    if (!btn) return;
     if (data.signedIn) {
       signedIn = true;
-      userLabel.textContent = data.displayName || data.email || 'Account';
-      userBtn.title = data.email || 'Account';
+      btn.textContent = data.displayName || data.email || 'Account';
+      btn.title = data.email || 'Account';
     } else {
       signedIn = false;
-      userLabel.textContent = 'Login';
-      userBtn.title = 'Sign in to your account';
+      btn.textContent = 'Login';
+      btn.title = 'Sign in to your account';
     }
   }).catch(function() {});
 })();`;
