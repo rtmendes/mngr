@@ -47,6 +47,10 @@ def test_get_all_commits_ahead_with_upstream(tmp_path: Path) -> None:
     # Create a local branch tracking a fake upstream
     run_git_command(repo, "checkout", "-b", "feature")
     run_git_command(repo, "branch", "--set-upstream-to=main")
+    # Should be 0 ahead before any new commits
+    with ConcurrencyGroup(name="test") as cg:
+        result = _get_all_commits_ahead([repo], cg)
+    assert result[repo] == 0
     # Make one commit ahead
     (repo / "file.txt").write_text("new content")
     run_git_command(repo, "add", "file.txt")
