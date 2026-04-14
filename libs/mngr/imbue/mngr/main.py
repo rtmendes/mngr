@@ -250,6 +250,13 @@ def apply_plugin_cli_options(command: TCommand, command_name: str | None = None)
     return command
 
 
+def load_plugin_hookspecs(pm: pluggy.PluginManager) -> None:
+    """Register any hookspec modules that plugins return via the register_hookspecs hook."""
+    for hookspec_module in pm.hook.register_hookspecs():
+        if hookspec_module is not None:
+            pm.add_hookspecs(hookspec_module)
+
+
 def create_plugin_manager() -> pluggy.PluginManager:
     """
     Initializes the plugin manager and loads all plugin registries.
@@ -280,9 +287,7 @@ def create_plugin_manager() -> pluggy.PluginManager:
     pm.load_setuptools_entrypoints("mngr")
 
     # Allow plugins to register their own hookspec modules (for plugin-specific hooks).
-    for hookspec_module in pm.hook.register_hookspecs():
-        if hookspec_module is not None:
-            pm.add_hookspecs(hookspec_module)
+    load_plugin_hookspecs(pm)
 
     # load all classes defined by plugins so they are available later
     load_all_registries(pm)
