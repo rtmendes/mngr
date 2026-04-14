@@ -34,6 +34,7 @@ from imbue.mngr.hosts.host import ONBOARDING_TEXT_TMUX_USER
 from imbue.mngr.hosts.host import _build_start_agent_shell_command
 from imbue.mngr.hosts.host import _format_env_file
 from imbue.mngr.hosts.host import _is_transient_ssh_error
+from imbue.mngr.hosts.host import _merge_agent_type_provisioning
 from imbue.mngr.hosts.host import _parse_boot_time_output
 from imbue.mngr.hosts.host import _parse_uptime_output
 from imbue.mngr.interfaces.data_types import PyinfraConnector
@@ -41,9 +42,9 @@ from imbue.mngr.interfaces.host import AgentEnvironmentOptions
 from imbue.mngr.interfaces.host import AgentLabelOptions
 from imbue.mngr.interfaces.host import AgentProvisioningOptions
 from imbue.mngr.interfaces.host import CreateAgentOptions
-from imbue.mngr.interfaces.host import FileModificationSpec
 from imbue.mngr.interfaces.host import NamedCommand
 from imbue.mngr.interfaces.host import OnlineHostInterface
+from imbue.mngr.interfaces.host import UploadFileSpec
 from imbue.mngr.primitives import ActivitySource
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
@@ -2215,32 +2216,6 @@ def test_host_provision_agent_with_extra_provision_commands(
     assert "provisioned" in marker_file.read_text()
 
 
-def test_host_provision_agent_with_append_to_file(
-    local_host: Host,
-    temp_host_dir: Path,
-    temp_work_dir: Path,
-    temp_mngr_ctx: MngrContext,
-) -> None:
-    """provision_agent should append text to files."""
-    host = local_host
-    target_file = temp_work_dir / "bashrc"
-    target_file.write_text("existing content\n")
-
-    options = CreateAgentOptions(
-        name=AgentName("append-provision-agent"),
-        agent_type=AgentTypeName("generic"),
-        command=CommandString("sleep 1"),
-        provisioning=AgentProvisioningOptions(
-            append_to_files=(FileModificationSpec(remote_path=target_file, text="appended line\n"),),
-        ),
-    )
-
-    agent = host.create_agent_state(temp_work_dir, options)
-    host.provision_agent(agent, options, temp_mngr_ctx)
-
-    assert target_file.read_text() == "existing content\nappended line\n"
-
-
 def test_host_provision_agent_with_create_directories(
     local_host: Host,
     temp_host_dir: Path,
@@ -2760,3 +2735,90 @@ def test_apply_work_dir_extra_paths_share_same_host_replaces_stale_symlink(
     target = work_dir / ".venv"
     assert target.is_symlink()
     assert target.resolve() == (source_dir / ".venv").resolve()
+
+
+# =============================================================================
+# Tests for _merge_agent_type_provisioning
+# =============================================================================
+
+
+def test_merge_agent_type_provisioning_returns_unchanged_when_no_fields() -> None:
+    """_merge_agent_type_provisioning should return the original options when agent config has no provisioning."""
+    agent_config = AgentTypeConfig()
+    options = CreateAgentOptions()
+    result = _merge_agent_type_provisioning(agent_config, options)
+    assert result is options
+
+
+def test_merge_agent_type_provisioning_prepends_extra_provision_commands() -> None:
+    """Agent type extra_provision_command should be prepended before CLI commands."""
+    agent_config = AgentTypeConfig(extra_provision_command=("echo agent_type",))
+    options = CreateAgentOptions(
+        provisioning=AgentProvisioningOptions(extra_provision_commands=("echo cli",)),
+    )
+    result = _merge_agent_type_provisioning(agent_config, options)
+    assert result.provisioning.extra_provision_commands == ("echo agent_type", "echo cli")
+
+
+def test_merge_agent_type_provisioning_prepends_upload_files() -> None:
+    """Agent type upload_file specs should be parsed and prepended."""
+    agent_config = AgentTypeConfig(upload_file=("local.txt:/remote.txt",))
+    options = CreateAgentOptions(
+        provisioning=AgentProvisioningOptions(
+            upload_files=(UploadFileSpec(local_path=Path("cli.txt"), remote_path=Path("/cli.txt")),),
+        ),
+    )
+    result = _merge_agent_type_provisioning(agent_config, options)
+    assert len(result.provisioning.upload_files) == 2
+    assert result.provisioning.upload_files[0].local_path == Path("local.txt")
+    assert result.provisioning.upload_files[0].remote_path == Path("/remote.txt")
+    assert result.provisioning.upload_files[1].local_path == Path("cli.txt")
+
+
+def test_merge_agent_type_provisioning_prepends_env_vars() -> None:
+    """Agent type env should be parsed and prepended to environment.env_vars."""
+    agent_config = AgentTypeConfig(env=("AGENT_TYPE_VAR=1",))
+    options = CreateAgentOptions(
+        environment=AgentEnvironmentOptions(
+            env_vars=(EnvVar(key="CLI_VAR", value="2"),),
+        ),
+    )
+    result = _merge_agent_type_provisioning(agent_config, options)
+    assert len(result.environment.env_vars) == 2
+    assert result.environment.env_vars[0].key == "AGENT_TYPE_VAR"
+    assert result.environment.env_vars[0].value == "1"
+    assert result.environment.env_vars[1].key == "CLI_VAR"
+
+
+def test_merge_agent_type_provisioning_prepends_env_files() -> None:
+    """Agent type env_file should be parsed and prepended to environment.env_files."""
+    agent_config = AgentTypeConfig(env_file=("/etc/agent.env",))
+    options = CreateAgentOptions(
+        environment=AgentEnvironmentOptions(
+            env_files=(Path("/etc/cli.env"),),
+        ),
+    )
+    result = _merge_agent_type_provisioning(agent_config, options)
+    assert result.environment.env_files == (Path("/etc/agent.env"), Path("/etc/cli.env"))
+
+
+def test_merge_agent_type_provisioning_prepends_create_directories() -> None:
+    """Agent type create_directory should be parsed and prepended."""
+    agent_config = AgentTypeConfig(create_directory=("/tmp/mydir",))
+    options = CreateAgentOptions(
+        provisioning=AgentProvisioningOptions(create_directories=(Path("/tmp/existing"),)),
+    )
+    result = _merge_agent_type_provisioning(agent_config, options)
+    assert result.provisioning.create_directories == (Path("/tmp/mydir"), Path("/tmp/existing"))
+
+
+def test_merge_agent_type_provisioning_combines_provisioning_and_env() -> None:
+    """Both provisioning and env fields should be merged in one call."""
+    agent_config = AgentTypeConfig(
+        extra_provision_command=("echo setup",),
+        env=("KEY=val",),
+    )
+    options = CreateAgentOptions()
+    result = _merge_agent_type_provisioning(agent_config, options)
+    assert result.provisioning.extra_provision_commands == ("echo setup",)
+    assert result.environment.env_vars == (EnvVar(key="KEY", value="val"),)
