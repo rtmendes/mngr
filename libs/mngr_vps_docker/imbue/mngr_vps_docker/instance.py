@@ -302,7 +302,7 @@ class VpsDockerProvider(BaseProviderInstance):
         """Get or create the host store on the VPS.
 
         Creates the state container if it does not exist. Use
-        _get_host_store_readonly for read-only access that does not create
+        _get_existing_host_store for read-only access that does not create
         the container (e.g., during discovery).
         """
         state_container_name = ensure_state_container(
