@@ -64,12 +64,12 @@ class AgentDiscoveryHandler(FrozenModel):
             self._handle_local_agent(agent_id)
 
     @staticmethod
-    def _remote_host_dir(provider_name: str) -> str:
+    def _remote_host_dir() -> str:
         """Return the mngr host directory for a remote provider."""
         return _REMOTE_HOST_DIR
 
     def _handle_remote_agent(self, agent_id: AgentId, ssh_info: RemoteSSHInfo, provider_name: str) -> None:
-        host_dir = self._remote_host_dir(provider_name)
+        host_dir = self._remote_host_dir()
         agent_state_dir = f"{host_dir}/agents/{agent_id}"
         try:
             remote_port = self.tunnel_manager.setup_reverse_tunnel(
