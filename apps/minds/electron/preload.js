@@ -29,10 +29,6 @@ contextBridge.exposeInMainWorld('minds', {
   // Sidebar
   toggleSidebar: () => ipcRenderer.send('toggle-sidebar'),
 
-  // Chrome view expansion (for dropdowns that extend below the title bar)
-  expandChrome: () => ipcRenderer.send('expand-chrome'),
-  collapseChrome: () => ipcRenderer.send('collapse-chrome'),
-
   // Actions
   retry: () => ipcRenderer.send('retry'),
   openLogFile: () => ipcRenderer.send('open-log-file'),
