@@ -286,16 +286,17 @@ def test_random_name_endpoint(client: TestClient) -> None:
     assert len(data["name"]) > 0
 
 
-def test_create_chat_agent_succeeds(client: TestClient) -> None:
-    """Creating a chat agent returns 201 with an agent_id."""
-    response = client.post(
-        "/api/agents/create-chat",
-        json={"name": "test-chat"},
-    )
-    assert response.status_code == 201
-    data = response.json()
-    assert "agent_id" in data
-    assert len(data["agent_id"]) > 0
+def test_create_chat_agent_without_work_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Creating a chat agent without a primary agent work dir returns 400."""
+    monkeypatch.delenv("MNGR_AGENT_WORK_DIR", raising=False)
+    monkeypatch.delenv("MNGR_AGENT_ID", raising=False)
+    test_app = create_application()
+    with TestClient(test_app) as test_client:
+        response = test_client.post(
+            "/api/agents/create-chat",
+            json={"name": "test-chat"},
+        )
+    assert response.status_code == 400
 
 
 def test_create_worktree_agent_missing_agent(client: TestClient) -> None:
