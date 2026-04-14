@@ -173,13 +173,15 @@ def test_load_or_create_ssh_keypair_strips_whitespace_from_public_key(tmp_path: 
     """load_or_create_ssh_keypair should strip whitespace from the public key content."""
     key_dir = tmp_path / "keys"
     key_dir.mkdir()
-    # Write a public key file with trailing whitespace
-    (key_dir / "ssh_key").write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n")
-    (key_dir / "ssh_key.pub").write_text("ssh-rsa AAAA fakekey\n\n")
+    # Generate real keys, then add trailing whitespace to the public key file.
+    save_ssh_keypair(key_dir)
+    pub_path = key_dir / "ssh_key.pub"
+    original_content = pub_path.read_text().strip()
+    pub_path.write_text(original_content + "\n\n")
 
     _, public_content = load_or_create_ssh_keypair(key_dir)
     assert not public_content.endswith("\n")
-    assert public_content == "ssh-rsa AAAA fakekey"
+    assert public_content == original_content
 
 
 def test_load_or_create_ssh_keypair_custom_key_name(tmp_path: Path) -> None:

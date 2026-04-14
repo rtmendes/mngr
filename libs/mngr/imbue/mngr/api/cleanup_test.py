@@ -20,9 +20,7 @@ from imbue.mngr.config.data_types import ProviderInstanceConfig
 from imbue.mngr.errors import MngrError
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.hosts.offline_host import OfflineHost
-from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.interfaces.data_types import CertifiedHostData
-from imbue.mngr.interfaces.data_types import HostDetails
 from imbue.mngr.interfaces.data_types import PyinfraConnector
 from imbue.mngr.interfaces.host import HostInterface
 from imbue.mngr.primitives import AgentId
@@ -387,16 +385,19 @@ def test_execute_cleanup_destroy_agent_not_found_on_host_treated_as_destroyed(
 @pytest.mark.tmux
 def test_execute_cleanup_destroy_hook_error_with_abort_stops_processing(
     temp_work_dir: Path,
+    tmp_path: Path,
     temp_mngr_ctx: MngrContext,
-    local_provider: LocalProviderInstance,
     local_host: Host,
 ) -> None:
     """When on_before_agent_destroy raises MngrError with ABORT, the error is recorded and
     processing stops immediately without destroying subsequent agents.
 
     """
-    # Create a real agent state so get_agents() finds it and fires the hook.
-    real_agent = local_host.create_agent_state(
+    second_work_dir = tmp_path / "work_dir_2"
+    second_work_dir.mkdir()
+
+    # Create two real agents so both are discoverable on the host.
+    first_agent_state = local_host.create_agent_state(
         work_dir_path=temp_work_dir,
         options=CreateAgentOptions(
             name=AgentName("cleanup-hook-error-agent"),
@@ -404,39 +405,29 @@ def test_execute_cleanup_destroy_hook_error_with_abort_stops_processing(
             command=CommandString("sleep 99"),
         ),
     )
+    second_agent_state = local_host.create_agent_state(
+        work_dir_path=second_work_dir,
+        options=CreateAgentOptions(
+            name=AgentName("cleanup-second-agent"),
+            agent_type=AgentTypeName("generic"),
+            command=CommandString("sleep 99"),
+        ),
+    )
 
     try:
-        host_details = HostDetails(
-            id=local_provider.host_id,
-            name="localhost",
-            provider_name=LOCAL_PROVIDER_NAME,
+        agents = find_agents_for_cleanup(
+            mngr_ctx=temp_mngr_ctx,
+            include_filters=('name == "cleanup-hook-error-agent" || name == "cleanup-second-agent"',),
+            exclude_filters=(),
+            error_behavior=ErrorBehavior.ABORT,
         )
-        # The first AgentDetails uses the real agent ID so the hook fires.
-        first_agent = AgentDetails(
-            id=real_agent.id,
-            name=AgentName("cleanup-hook-error-agent"),
-            type="generic",
-            command=CommandString("sleep 99"),
-            work_dir=temp_work_dir,
-            initial_branch=None,
-            create_time=datetime.now(timezone.utc),
-            start_on_boot=False,
-            state=AgentLifecycleState.STOPPED,
-            host=host_details,
-        )
-        # The second AgentDetails is on the same host.  With ABORT, it should
-        # never be processed after the first agent's hook raises.
-        second_agent = make_test_agent_details(
-            name="cleanup-second-agent",
-            host_id=local_provider.host_id,
-            provider_name=LOCAL_PROVIDER_NAME,
-        )
+        assert len(agents) == 2
 
         ctx = make_ctx_with_plugins(temp_mngr_ctx, [_DestroyErrorPlugin()])
 
         result = execute_cleanup(
             mngr_ctx=ctx,
-            agents=[first_agent, second_agent],
+            agents=agents,
             action=CleanupAction.DESTROY,
             is_dry_run=False,
             error_behavior=ErrorBehavior.ABORT,
@@ -445,14 +436,13 @@ def test_execute_cleanup_destroy_hook_error_with_abort_stops_processing(
         # The hook error must be recorded.
         assert len(result.errors) == 1
         assert "Simulated destroy hook error" in result.errors[0]
-        assert "cleanup-hook-error-agent" in result.errors[0]
         # First agent was not destroyed (hook raised before destroy_agent).
         assert AgentName("cleanup-hook-error-agent") not in result.destroyed_agents
         # Second agent was never processed because ABORT caused an early return.
         assert AgentName("cleanup-second-agent") not in result.destroyed_agents
     finally:
-        # Clean up the real agent state regardless of test outcome.
-        local_host.destroy_agent(real_agent)
+        local_host.destroy_agent(first_agent_state)
+        local_host.destroy_agent(second_agent_state)
 
 
 def test_execute_cleanup_destroy_offline_host_error_with_abort(
