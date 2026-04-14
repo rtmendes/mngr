@@ -388,6 +388,18 @@ ipcMain.on('toggle-sidebar', () => {
   toggleSidebar();
 });
 
+ipcMain.on('expand-chrome', () => {
+  if (!mainWindow || mainWindow.isDestroyed() || !chromeView) return;
+  const { width, height } = mainWindow.getContentBounds();
+  chromeView.setBounds({ x: 0, y: 0, width, height });
+});
+
+ipcMain.on('collapse-chrome', () => {
+  if (!mainWindow || mainWindow.isDestroyed() || !chromeView) return;
+  const { width } = mainWindow.getContentBounds();
+  chromeView.setBounds({ x: 0, y: 0, width, height: TITLEBAR_HEIGHT });
+});
+
 ipcMain.on('retry', async () => {
   await shutdown();
 
