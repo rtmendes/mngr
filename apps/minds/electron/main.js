@@ -66,9 +66,7 @@ const TITLEBAR_CSS = `
 #minds-titlebar .minds-user-btn {
   -webkit-app-region: no-drag; background: none; border: none;
   color: #94a3b8; cursor: pointer; padding: 4px 10px; border-radius: 4px;
-  font-size: 12px; font-family: inherit;
-  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  display: block;
+  font-size: 12px; font-family: inherit; white-space: nowrap;
 }
 #minds-titlebar .minds-user-btn:hover { background: rgba(255,255,255,0.08); color: #e2e8f0; }
 #minds-titlebar .minds-user-dropdown {
