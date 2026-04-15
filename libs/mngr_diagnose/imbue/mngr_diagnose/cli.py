@@ -60,8 +60,13 @@ def diagnose(
         traceback_str = context.traceback_str
         mngr_version = context.mngr_version
         # Use error info as description if no explicit description given
-        if description is None and context.error_message is not None:
-            description = f"{context.error_type}: {context.error_message}"
+        if description is None:
+            if context.error_type is not None and context.error_message is not None:
+                description = f"{context.error_type}: {context.error_message}"
+            elif context.error_message is not None:
+                description = context.error_message
+            elif context.error_type is not None:
+                description = context.error_type
 
     # Clone or update the repo
     with ConcurrencyGroup(name="diagnose-clone") as cg:
