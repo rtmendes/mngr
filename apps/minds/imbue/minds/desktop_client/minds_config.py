@@ -62,6 +62,8 @@ class MindsConfig(MutableModel):
                 data["default_account_id"] = user_id
             elif "default_account_id" in data:
                 del data["default_account_id"]
+            else:
+                pass
             self._write_raw(data)
 
     def get_auto_open_requests_panel(self) -> bool:

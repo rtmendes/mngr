@@ -157,6 +157,8 @@ def _dedup_key(event: RequestEvent | RequestResponseEvent) -> tuple[str, str | N
         server_name = event.server_name
     elif isinstance(event, RequestResponseEvent):
         server_name = event.server_name
+    else:
+        pass
     return (event.agent_id, server_name, event.request_type)
 
 

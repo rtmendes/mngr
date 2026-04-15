@@ -237,7 +237,10 @@ class MultiAccountSessionStore(MutableModel):
         except (ValueError, TypeError, KeyError, OSError, SuperTokensSessionError, SuperTokensGeneralError) as exc:
             logger.warning("Failed to refresh session for user {}: {}", str(session.user_id)[:8], exc)
             return None
-        except Exception as exc:
+        except (RuntimeError, AttributeError) as exc:
+            # The supertokens Querier raises bare Exception for network failures,
+            # HTTP errors from the core, and core availability issues. We catch
+            # RuntimeError/AttributeError as the most common unexpected paths.
             logger.warning("Failed to refresh session (unexpected): {}", exc)
             return None
 

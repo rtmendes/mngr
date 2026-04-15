@@ -1383,7 +1383,7 @@ async def _handle_workspace_disassociate(
             if cf_client is not None:
                 try:
                     cf_client.delete_tunnel(AgentId(agent_id))
-                except Exception as e:
+                except (httpx.HTTPError, ValueError, OSError) as e:
                     logger.warning("Failed to delete tunnel during disassociation: {}", e)
             session_store.disassociate_workspace(str(account.user_id), agent_id)
     return Response(status_code=303, headers={"Location": f"/workspace/{agent_id}/settings"})
