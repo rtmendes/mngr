@@ -1069,15 +1069,30 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
   <style>"""
     + _PAGE_STYLES
     + """
+    .acl-row { display:flex; align-items:center; justify-content:space-between;
+      padding:8px 12px; border:1px solid #e2e8f0; border-radius:6px; margin:4px 0; }
+    .acl-existing { background:white; }
+    .acl-added { background:#f0fdf4; border-color:#bbf7d0; }
+    .acl-removed { background:#fef2f2; border-color:#fecaca; text-decoration:line-through; }
+    .acl-prefix { font-weight:600; margin-right:6px; font-size:14px; }
+    .acl-prefix-add { color:#16a34a; }
+    .acl-prefix-remove { color:#dc2626; }
+    .acl-x { background:none; border:none; cursor:pointer; color:#94a3b8;
+      font-size:18px; line-height:1; padding:0 4px; }
+    .acl-x:hover { color:#64748b; }
   </style>
 </head>
 <body>
   <div class="page">
+    {% if is_request %}
+    <h1>Share <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:18px;">{{ server_name }}</code>
+      in <a href="/forwarding/{{ agent_id }}/" style="font-size:20px;">{{ ws_name or agent_id }}</a>
+      {% if account_email %}(<a href="/accounts">{{ account_email }}</a>){% endif %}?</h1>
+    {% else %}
     <h1>{{ title }}</h1>
     {% if ws_name %}
-    <p class="subtitle">{{ ws_name }}{% if account_email %} &middot; {{ account_email }}{% endif %}</p>
-    {% else %}
-    <p class="subtitle">{{ agent_id }}</p>
+    <p class="subtitle"><a href="/forwarding/{{ agent_id }}/">{{ ws_name }}</a>{% if account_email %} &middot; <a href="/accounts">{{ account_email }}</a>{% endif %}</p>
+    {% endif %}
     {% endif %}
 
     {% if not has_account %}
@@ -1092,16 +1107,11 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
     {% else %}
 
     <div id="sharing-editor">
-      <div class="loading" id="loading-state">Loading sharing status...</div>
+      <div class="loading" id="loading-state">Loading...</div>
     </div>
 
     <div id="editor-content" style="display:none;">
-      <div id="status-display" style="margin:12px 0;">
-        <span class="status-dot" id="status-dot"></span>
-        <span id="status-text"></span>
-      </div>
-
-      <div id="url-section" style="display:none;">
+      <div id="url-section" style="display:none;margin-bottom:16px;">
         <p style="font-weight:500;margin-bottom:4px;">Shared URL</p>
         <div class="url-box">
           <input type="text" id="share-url" readonly onclick="this.select()">
@@ -1109,10 +1119,10 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
         </div>
       </div>
 
-      <h2 style="border-top:none;padding-top:0;margin-top:16px;">Access List</h2>
+      <h2 style="border-top:none;padding-top:0;margin-top:0;">Access List</h2>
       <div id="email-list"></div>
       <div class="input-row">
-        <input type="email" class="text-input" id="new-email" placeholder="user@example.com"
+        <input type="email" class="text-input" id="new-email" placeholder="Add email address"
           onkeydown="if(event.key==='Enter'){event.preventDefault();addEmail();}">
         <button class="btn btn-secondary" onclick="addEmail()">Add</button>
       </div>
@@ -1126,8 +1136,8 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
         </button>
         <span></span>
         {% endif %}
-        <button class="btn btn-success" id="action-btn" onclick="submitEnable()">
-          Enable Sharing
+        <button class="btn btn-success" id="action-btn" onclick="submitUpdate()">
+          Update
         </button>
       </div>
       <div id="submit-spinner" style="display:none;padding:16px 0;">
@@ -1137,46 +1147,95 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
   </div>
 
   <script>
-  var emails = {{ initial_emails | tojson }};
+  var proposedEmails = {{ initial_emails | tojson }};
   var serverName = {{ server_name | tojson }};
   var agentId = {{ agent_id | tojson }};
   var isRequest = {{ is_request | tojson }};
   var requestId = {{ request_id | tojson }};
-  var isEnabled = false;
 
-  function renderEmails() {
+  // Three-state ACL: existing (already on server), added (proposed new), removed (proposed removal)
+  var existing = [];  // emails currently on the server
+  var added = [];     // emails to add
+  var removed = [];   // emails to remove from existing
+
+  function renderACL() {
     var container = document.getElementById('email-list');
-    if (emails.length === 0) {
-      container.innerHTML = '<p style="color:#94a3b8;font-size:13px;">No one added yet</p>';
-      return;
-    }
-    container.innerHTML = emails.map(function(e) {
-      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;' +
-        'border:1px solid #e2e8f0;border-radius:6px;margin:4px 0;background:white;">' +
+    var rows = [];
+
+    // Existing emails (not removed)
+    existing.forEach(function(e) {
+      if (removed.indexOf(e) >= 0) return;
+      rows.push(
+        '<div class="acl-row acl-existing">' +
         '<span style="font-size:13px;color:#334155;">' + e + '</span>' +
-        '<button onclick="removeEmail(\\'' + e + '\\')" style="background:none;border:none;cursor:pointer;' +
-        'color:#94a3b8;font-size:18px;line-height:1;padding:0 4px;">&times;</button></div>';
-    }).join('');
+        '<button class="acl-x" onclick="markRemoved(\\'' + e + '\\')">&times;</button></div>'
+      );
+    });
+
+    // Added emails
+    added.forEach(function(e) {
+      rows.push(
+        '<div class="acl-row acl-added">' +
+        '<span><span class="acl-prefix acl-prefix-add">+</span>' +
+        '<span style="font-size:13px;color:#334155;">' + e + '</span></span>' +
+        '<button class="acl-x" onclick="unmarkAdded(\\'' + e + '\\')">&times;</button></div>'
+      );
+    });
+
+    // Removed emails
+    removed.forEach(function(e) {
+      rows.push(
+        '<div class="acl-row acl-removed">' +
+        '<span><span class="acl-prefix acl-prefix-remove">&minus;</span>' +
+        '<span style="font-size:13px;color:#94a3b8;">' + e + '</span></span>' +
+        '<button class="acl-x" onclick="unmarkRemoved(\\'' + e + '\\')">&times;</button></div>'
+      );
+    });
+
+    if (rows.length === 0) {
+      container.innerHTML = '<p style="color:#94a3b8;font-size:13px;">No one in the access list</p>';
+    } else {
+      container.innerHTML = rows.join('');
+    }
   }
 
   function addEmail() {
     var input = document.getElementById('new-email');
     var email = input.value.trim();
-    if (!email || emails.indexOf(email) >= 0) return;
-    emails.push(email);
+    if (!email) return;
+    // If it's in removed, just un-remove it (restore to existing)
+    if (removed.indexOf(email) >= 0) {
+      removed = removed.filter(function(e) { return e !== email; });
+    } else if (existing.indexOf(email) < 0 && added.indexOf(email) < 0) {
+      added.push(email);
+    }
     input.value = '';
-    renderEmails();
+    renderACL();
   }
 
-  function removeEmail(email) {
-    emails = emails.filter(function(e) { return e !== email; });
-    renderEmails();
+  function markRemoved(email) {
+    if (removed.indexOf(email) < 0) removed.push(email);
+    renderACL();
+  }
+
+  function unmarkAdded(email) {
+    added = added.filter(function(e) { return e !== email; });
+    renderACL();
+  }
+
+  function unmarkRemoved(email) {
+    removed = removed.filter(function(e) { return e !== email; });
+    renderACL();
+  }
+
+  function getFinalEmails() {
+    var result = existing.filter(function(e) { return removed.indexOf(e) < 0; });
+    return result.concat(added);
   }
 
   function setSubmitting(submitting) {
     document.getElementById('action-buttons').style.display = submitting ? 'none' : 'flex';
     document.getElementById('submit-spinner').style.display = submitting ? 'block' : 'none';
-    // Disable all inputs while submitting
     var inputs = document.querySelectorAll('input, button, select');
     inputs.forEach(function(el) { el.disabled = submitting; });
     var editor = document.getElementById('editor-content');
@@ -1184,16 +1243,13 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
     editor.style.pointerEvents = submitting ? 'none' : 'auto';
   }
 
-  function submitEnable() {
+  function submitUpdate() {
     setSubmitting(true);
     var form = new FormData();
-    form.append('emails', JSON.stringify(emails));
+    form.append('emails', JSON.stringify(getFinalEmails()));
     fetch('/sharing/' + agentId + '/' + serverName + '/enable', { method: 'POST', body: form })
       .then(function(r) { window.location.href = '/sharing/' + agentId + '/' + serverName; })
-      .catch(function(err) {
-        alert('Failed: ' + err.message);
-        setSubmitting(false);
-      });
+      .catch(function(err) { alert('Failed: ' + err.message); setSubmitting(false); });
   }
 
   function submitDisable() {
@@ -1201,20 +1257,14 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
     setSubmitting(true);
     fetch('/sharing/' + agentId + '/' + serverName + '/disable', { method: 'POST' })
       .then(function(r) { window.location.href = '/sharing/' + agentId + '/' + serverName; })
-      .catch(function(err) {
-        alert('Failed: ' + err.message);
-        setSubmitting(false);
-      });
+      .catch(function(err) { alert('Failed: ' + err.message); setSubmitting(false); });
   }
 
   function submitDeny() {
     setSubmitting(true);
     fetch('/requests/' + requestId + '/deny', { method: 'POST' })
       .then(function(r) { window.location.href = '/'; })
-      .catch(function(err) {
-        alert('Failed: ' + err.message);
-        setSubmitting(false);
-      });
+      .catch(function(err) { alert('Failed: ' + err.message); setSubmitting(false); });
   }
 
   function copyUrl() {
@@ -1225,49 +1275,50 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
     setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
   }
 
-  // Load current sharing status
+  // Load current sharing status, then compute the diff
   fetch('/api/sharing-status/' + agentId + '/' + serverName)
     .then(function(r) { return r.json(); })
     .then(function(data) {
       document.getElementById('loading-state').style.display = 'none';
       document.getElementById('editor-content').style.display = 'block';
 
-      isEnabled = data.enabled;
-      var dot = document.getElementById('status-dot');
-      var text = document.getElementById('status-text');
-      if (data.enabled) {
-        dot.className = 'status-dot status-enabled';
-        text.textContent = 'Sharing is enabled';
-        document.getElementById('action-btn').textContent = 'Update Sharing';
-        var disableBtn = document.getElementById('disable-btn');
-        if (disableBtn) disableBtn.style.display = 'inline-block';
-      } else {
-        document.getElementById('status-display').style.display = 'none';
-        document.getElementById('action-btn').textContent = 'Enable Sharing';
-      }
-
-      if (data.url) {
-        document.getElementById('url-section').style.display = 'block';
-        document.getElementById('share-url').value = data.url;
-      }
-
-      // Merge fetched emails with initial emails
+      // Extract existing emails from server
       if (data.auth_rules) {
         data.auth_rules.forEach(function(rule) {
           (rule.include || []).forEach(function(inc) {
-            if (inc.email && inc.email.email && emails.indexOf(inc.email.email) < 0) {
-              emails.push(inc.email.email);
+            if (inc.email && inc.email.email && existing.indexOf(inc.email.email) < 0) {
+              existing.push(inc.email.email);
             }
           });
         });
       }
-      renderEmails();
+
+      if (data.enabled && data.url) {
+        document.getElementById('url-section').style.display = 'block';
+        document.getElementById('share-url').value = data.url;
+      }
+
+      if (data.enabled) {
+        var disableBtn = document.getElementById('disable-btn');
+        if (disableBtn) disableBtn.style.display = 'inline-block';
+      }
+
+      // Compute diff: proposed emails that aren't in existing go to added
+      proposedEmails.forEach(function(e) {
+        if (existing.indexOf(e) < 0 && added.indexOf(e) < 0) {
+          added.push(e);
+        }
+      });
+
+      renderACL();
     })
     .catch(function(err) {
       document.getElementById('loading-state').innerHTML =
         '<p class="error">Failed to load sharing status: ' + err.message + '</p>';
       document.getElementById('editor-content').style.display = 'block';
-      renderEmails();
+      // Fall back: treat all proposed as added
+      added = proposedEmails.slice();
+      renderACL();
     });
   </script>
     {% endif %}
