@@ -57,6 +57,7 @@ from imbue.minds.desktop_client.request_events import append_response_event
 from imbue.minds.desktop_client.request_events import create_request_response_event
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
 from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
+from imbue.minds.desktop_client.api_v1 import inject_tunnel_token_into_agent
 from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token as _load_tunnel_token
 from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token as _save_tunnel_token
 from imbue.minds.desktop_client.supertokens_routes import create_supertokens_router
@@ -1412,8 +1413,8 @@ def _handle_requests_panel(
 
     cards = []
     for req in pending:
-        req_type = getattr(req, "request_type", "unknown")
-        server_name = getattr(req, "server_name", "")
+        req_type = req.request_type
+        server_name = req.server_name if isinstance(req, SharingRequestEvent) else ""
         agent_id = req.agent_id
         event_id = str(req.event_id)
         cards.append(
@@ -1549,7 +1550,7 @@ async def _handle_request_grant(
             # Get the backend URL for the service
             backend_url = backend_resolver.get_backend_url(parsed_id, parsed_server)
             if backend_url:
-                paths: WorkspacePaths | None = getattr(request.app.state, "api_v1_paths", None)
+                paths: WorkspacePaths = request.app.state.api_v1_paths
                 if paths:
                     stored_token = _load_tunnel_token(paths.data_dir, parsed_id)
                     if stored_token is None:
@@ -1560,17 +1561,16 @@ async def _handle_request_grant(
                 cf_client.add_service(parsed_id, parsed_server, backend_url)
 
     # Write response event
-    paths = getattr(request.app.state, "api_v1_paths", None)
-    if paths is not None:
-        response_event = create_request_response_event(
-            request_event_id=request_id,
-            status=RequestStatus.GRANTED,
-            agent_id=req_event.agent_id,
-            request_type=req_event.request_type,
-            server_name=getattr(req_event, "server_name", None),
-        )
-        append_response_event(paths.data_dir, response_event)
-        request.app.state.request_inbox = inbox.add_response(response_event)
+    paths: WorkspacePaths = request.app.state.api_v1_paths
+    response_event = create_request_response_event(
+        request_event_id=request_id,
+        status=RequestStatus.GRANTED,
+        agent_id=req_event.agent_id,
+        request_type=req_event.request_type,
+        server_name=req_event.server_name if isinstance(req_event, SharingRequestEvent) else None,
+    )
+    append_response_event(paths.data_dir, response_event)
+    request.app.state.request_inbox = inbox.add_response(response_event)
 
     return Response(status_code=303, headers={"Location": "/"})
 
@@ -1590,17 +1590,16 @@ async def _handle_request_deny(
     if req_event is None:
         return HTMLResponse(content="Request not found", status_code=404)
 
-    paths = getattr(request.app.state, "api_v1_paths", None)
-    if paths is not None:
-        response_event = create_request_response_event(
-            request_event_id=request_id,
-            status=RequestStatus.DENIED,
-            agent_id=req_event.agent_id,
-            request_type=req_event.request_type,
-            server_name=getattr(req_event, "server_name", None),
-        )
-        append_response_event(paths.data_dir, response_event)
-        request.app.state.request_inbox = inbox.add_response(response_event)
+    paths: WorkspacePaths = request.app.state.api_v1_paths
+    response_event = create_request_response_event(
+        request_event_id=request_id,
+        status=RequestStatus.DENIED,
+        agent_id=req_event.agent_id,
+        request_type=req_event.request_type,
+        server_name=req_event.server_name if isinstance(req_event, SharingRequestEvent) else None,
+    )
+    append_response_event(paths.data_dir, response_event)
+    request.app.state.request_inbox = inbox.add_response(response_event)
 
     return Response(status_code=303, headers={"Location": "/"})
 

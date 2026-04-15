@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 from imbue.minds.desktop_client.session_store import AccountSession
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
 from imbue.minds.desktop_client.session_store import UserInfo

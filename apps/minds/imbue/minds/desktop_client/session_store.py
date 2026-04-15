@@ -22,6 +22,7 @@ from supertokens_python.recipe.session.exceptions import SuperTokensSessionError
 from supertokens_python.recipe.session.syncio import refresh_session_without_request_response
 
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.primitives import NonEmptyStr
 
@@ -253,7 +254,9 @@ class MultiAccountSessionStore(MutableModel):
                 return
             if agent_id not in session.workspace_ids:
                 updated_ids = [*session.workspace_ids, agent_id]
-                sessions[user_id] = session.model_copy(update={"workspace_ids": updated_ids})
+                sessions[user_id] = session.model_copy_update(
+                    to_update(session.field_ref().workspace_ids, updated_ids),
+                )
                 self._write_all(sessions)
                 logger.info("Associated workspace {} with user {}", agent_id, user_id[:8])
 
@@ -266,7 +269,9 @@ class MultiAccountSessionStore(MutableModel):
                 return
             if agent_id in session.workspace_ids:
                 updated_ids = [wid for wid in session.workspace_ids if wid != agent_id]
-                sessions[user_id] = session.model_copy(update={"workspace_ids": updated_ids})
+                sessions[user_id] = session.model_copy_update(
+                    to_update(session.field_ref().workspace_ids, updated_ids),
+                )
                 self._write_all(sessions)
                 logger.info("Disassociated workspace {} from user {}", agent_id, user_id[:8])
 

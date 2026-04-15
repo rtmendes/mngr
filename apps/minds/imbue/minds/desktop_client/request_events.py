@@ -29,6 +29,7 @@ from imbue.imbue_common.event_envelope import EventSource
 from imbue.imbue_common.event_envelope import EventType
 from imbue.imbue_common.event_envelope import IsoTimestamp
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.imbue_common.model_update import to_update
 
 REQUESTS_EVENT_SOURCE_NAME: Final[str] = "requests"
 _RESPONSE_EVENTS_DIR: Final[str] = "events/requests"
@@ -175,11 +176,15 @@ class RequestInbox(FrozenModel):
 
     def add_request(self, event: RequestEvent) -> "RequestInbox":
         """Return a new inbox with the request added."""
-        return self.model_copy(update={"requests": [*self.requests, event]})
+        return self.model_copy_update(
+            to_update(self.field_ref().requests, [*self.requests, event]),
+        )
 
     def add_response(self, event: RequestResponseEvent) -> "RequestInbox":
         """Return a new inbox with the response added."""
-        return self.model_copy(update={"responses": [*self.responses, event]})
+        return self.model_copy_update(
+            to_update(self.field_ref().responses, [*self.responses, event]),
+        )
 
     def get_pending_requests(self) -> list[RequestEvent]:
         """Compute the list of pending (unresolved) requests.
