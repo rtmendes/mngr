@@ -101,6 +101,7 @@ _CLAUDE_HOME_SYNC_DIRS: Final[tuple[str, ...]] = ("skills", "agents", "commands"
 _CLAUDE_HOME_SYNC_FILES: Final[tuple[str, ...]] = ("keybindings.json",)
 
 _INSTALLED_PLUGINS_RELATIVE_PATH: Final[Path] = Path("plugins") / "installed_plugins.json"
+_KNOWN_MARKETPLACES_RELATIVE_PATH: Final[Path] = Path("plugins") / "known_marketplaces.json"
 
 _INSTALLED_PLUGINS_SENTINEL_PREFIX: Final[str] = "/__mngr_plugins_source__"
 """Sentinel prefix written into installPath values at deploy build time.
@@ -481,6 +482,51 @@ def _generate_installed_plugins_content(source_claude_dir: Path, target_config_d
         return None
     content = source_path.read_text()
     return _rewrite_installed_plugins_paths(content, source_claude_dir, target_config_dir)
+
+
+def _rewrite_known_marketplaces_paths(content: str, source_claude_dir: Path, target_config_dir: Path) -> str:
+    """Rewrite installLocation values in known_marketplaces.json for a target config dir.
+
+    Rebases absolute paths from source_claude_dir onto target_config_dir so that
+    Claude Code can find marketplace git clones in the per-agent config dir.
+    Without this, Claude Code re-clones marketplaces from GitHub on startup and
+    may invalidate plugin caches when the remote clone has a different HEAD.
+    """
+    data: dict[str, Any] = json.loads(content)
+    source_prefix = str(source_claude_dir) + "/"
+    for marketplace_name, marketplace_info in data.items():
+        install_location = marketplace_info.get("installLocation", "")
+        if install_location.startswith(source_prefix):
+            relative = install_location[len(source_prefix) :]
+            marketplace_info["installLocation"] = str(target_config_dir / relative)
+        else:
+            # Best-effort: extract relative path from last /plugins/ segment
+            marker_idx = install_location.rfind(_PLUGINS_DIR_MARKER)
+            if marker_idx != -1:
+                relative = "plugins/" + install_location[marker_idx + len(_PLUGINS_DIR_MARKER) :]
+                marketplace_info["installLocation"] = str(target_config_dir / relative)
+            else:
+                logger.warning(
+                    "Marketplace {!r} has installLocation {!r} that could not be rewritten "
+                    "(no '{}' segment found). Keeping path as-is; the marketplace may not "
+                    "work on the remote host.",
+                    marketplace_name,
+                    install_location,
+                    _PLUGINS_DIR_MARKER,
+                )
+    return json.dumps(data, indent=2) + "\n"
+
+
+def _generate_known_marketplaces_content(source_claude_dir: Path, target_config_dir: Path) -> str | None:
+    """Read known_marketplaces.json from source and rewrite paths to target.
+
+    Returns None if the file does not exist at source_claude_dir.
+    """
+    source_path = source_claude_dir / _KNOWN_MARKETPLACES_RELATIVE_PATH
+    if not source_path.exists():
+        return None
+    content = source_path.read_text()
+    return _rewrite_known_marketplaces_paths(content, source_claude_dir, target_config_dir)
 
 
 def _check_claude_installed(host: OnlineHostInterface) -> bool:
@@ -913,24 +959,37 @@ def _rsync_claude_home_directories(
 
 
 def _resolve_installed_plugins_sentinel(host: OnlineHostInterface) -> None:
-    """Resolve sentinel-prefixed installPaths in the claude home plugins directory.
+    """Resolve sentinel-prefixed paths in the claude home plugins directory.
 
-    Deploy images have installPath values rewritten to a sentinel prefix at
-    build time (because the container's home directory isn't known then). This
-    resolves them to the actual claude home path in place, so all downstream
+    Deploy images have paths rewritten to a sentinel prefix at build time
+    (because the container's home directory isn't known then). This resolves
+    them to the actual claude home path in place, so all downstream
     provisioning code can assume paths use the real claude home as the prefix.
 
-    No-op if the file doesn't exist or doesn't contain the sentinel.
+    Handles both installed_plugins.json (installPath) and
+    known_marketplaces.json (installLocation).
+
+    No-op if the files don't exist or don't contain the sentinel.
     """
     local_claude_dir = get_user_claude_config_dir()
+
     installed_plugins_path = local_claude_dir / _INSTALLED_PLUGINS_RELATIVE_PATH
-    if not installed_plugins_path.exists():
-        return
-    content = installed_plugins_path.read_text()
-    if _INSTALLED_PLUGINS_SENTINEL_PREFIX not in content:
-        return
-    rewritten = _rewrite_installed_plugins_paths(content, Path(_INSTALLED_PLUGINS_SENTINEL_PREFIX), local_claude_dir)
-    installed_plugins_path.write_text(rewritten)
+    if installed_plugins_path.exists():
+        content = installed_plugins_path.read_text()
+        if _INSTALLED_PLUGINS_SENTINEL_PREFIX in content:
+            rewritten = _rewrite_installed_plugins_paths(
+                content, Path(_INSTALLED_PLUGINS_SENTINEL_PREFIX), local_claude_dir
+            )
+            installed_plugins_path.write_text(rewritten)
+
+    known_marketplaces_path = local_claude_dir / _KNOWN_MARKETPLACES_RELATIVE_PATH
+    if known_marketplaces_path.exists():
+        content = known_marketplaces_path.read_text()
+        if _INSTALLED_PLUGINS_SENTINEL_PREFIX in content:
+            rewritten = _rewrite_known_marketplaces_paths(
+                content, Path(_INSTALLED_PLUGINS_SENTINEL_PREFIX), local_claude_dir
+            )
+            known_marketplaces_path.write_text(rewritten)
 
 
 def _load_claude_resource_script(filename: str) -> str:
@@ -1703,6 +1762,9 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
             installed_plugins = _generate_installed_plugins_content(source_claude_dir, config_dir)
             if installed_plugins:
                 generated_files[_INSTALLED_PLUGINS_RELATIVE_PATH] = installed_plugins
+            known_marketplaces = _generate_known_marketplaces_content(source_claude_dir, config_dir)
+            if known_marketplaces:
+                generated_files[_KNOWN_MARKETPLACES_RELATIVE_PATH] = known_marketplaces
 
         # Remote credentials: read locally, include in generated files for staging
         if not host.is_local and config.sync_claude_credentials:
@@ -2431,6 +2493,11 @@ def get_files_for_deploy(
                 # without needing to know the build machine's home directory
                 if relative_path == _INSTALLED_PLUGINS_RELATIVE_PATH:
                     content = _rewrite_installed_plugins_paths(
+                        file_path.read_text(), local_claude_dir, Path(_INSTALLED_PLUGINS_SENTINEL_PREFIX)
+                    )
+                    files[Path("~/.claude") / relative_path] = content
+                elif relative_path == _KNOWN_MARKETPLACES_RELATIVE_PATH:
+                    content = _rewrite_known_marketplaces_paths(
                         file_path.read_text(), local_claude_dir, Path(_INSTALLED_PLUGINS_SENTINEL_PREFIX)
                     )
                     files[Path("~/.claude") / relative_path] = content
