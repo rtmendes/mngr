@@ -30,6 +30,7 @@ from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
+from imbue.minds.desktop_client.session_store import derive_user_id_prefix
 from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
 from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
 from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token
@@ -125,8 +126,6 @@ def get_cf_client_with_auth(
     if multi_store is not None and agent_id is not None:
         account = multi_store.get_account_for_workspace(str(agent_id))
         if account is not None:
-            from imbue.minds.desktop_client.session_store import derive_user_id_prefix
-
             access_token = multi_store.get_access_token(str(account.user_id))
             if access_token is not None:
                 forwarding_url = cf_client.forwarding_url if cf_client else None

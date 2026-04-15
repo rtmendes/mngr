@@ -35,7 +35,7 @@ class MindsConfig(MutableModel):
             return {}
         try:
             return dict(tomlkit.loads(path.read_text()))
-        except (OSError, tomlkit.exceptions.TOMLKitError) as e:
+        except (OSError, ValueError) as e:
             logger.warning("Failed to read config.toml: {}", e)
             return {}
 

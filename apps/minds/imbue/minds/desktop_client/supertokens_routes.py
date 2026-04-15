@@ -45,6 +45,7 @@ from supertokens_python.types import RecipeUserId
 from supertokens_python.types.base import AccountInfoInput
 
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
+from imbue.minds.desktop_client.session_store import UserInfo
 from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
 from imbue.minds.desktop_client.templates_auth import render_auth_page
 from imbue.minds.desktop_client.templates_auth import render_check_email_page
@@ -68,8 +69,74 @@ def _json_response(data: dict[str, object], status_code: int = 200) -> Response:
     )
 
 
-def _get_session_store(request: Request) -> SuperTokensSessionStore | MultiAccountSessionStore:
-    return request.app.state.supertokens_session_store
+def _get_session_store(request: Request) -> SuperTokensSessionStore:
+    """Return the supertokens session store.
+
+    When the app uses MultiAccountSessionStore, a thin adapter wraps it
+    to provide the SuperTokensSessionStore interface expected by these routes.
+    """
+    store = request.app.state.supertokens_session_store
+    if isinstance(store, MultiAccountSessionStore):
+        return _MultiAccountSessionStoreAdapter(multi_store=store)
+    return store
+
+
+class _MultiAccountSessionStoreAdapter(SuperTokensSessionStore):
+    """Adapter that wraps MultiAccountSessionStore for supertokens routes.
+
+    Provides the SuperTokensSessionStore interface by operating on the
+    most recently added account (since the supertokens OAuth flow always
+    produces a session for the account that just signed in).
+    """
+
+    def __init__(self, multi_store: MultiAccountSessionStore) -> None:
+        # Initialize the parent with a dummy directory (we override all methods)
+        super().__init__(data_directory=multi_store.data_dir / "supertokens")
+        object.__setattr__(self, "_multi_store", multi_store)
+
+    def store_session(
+        self,
+        access_token: str,
+        refresh_token: str | None,
+        user_id: str,
+        email: str,
+        display_name: str | None = None,
+    ) -> None:
+        self._multi_store.add_or_update_session(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_id=user_id,
+            email=email,
+            display_name=display_name,
+        )
+
+    def get_user_info(self) -> "UserInfo | None":
+        accounts = self._multi_store.list_accounts()
+        if not accounts:
+            return None
+        # Return the first account's info (the supertokens routes only care
+        # about whether *any* account is signed in)
+        latest = accounts[-1]
+        return self._multi_store.get_user_info(str(latest.user_id))
+
+    def get_access_token(self) -> str | None:
+        accounts = self._multi_store.list_accounts()
+        if not accounts:
+            return None
+        latest = accounts[-1]
+        return self._multi_store.get_access_token(str(latest.user_id))
+
+    def is_signed_in(self) -> bool:
+        return self._multi_store.is_any_signed_in()
+
+    def has_signed_in_before(self) -> bool:
+        return self._multi_store.has_signed_in_before()
+
+    def clear_session(self) -> None:
+        # Clear the most recently added account
+        accounts = self._multi_store.list_accounts()
+        if accounts:
+            self._multi_store.remove_session(str(accounts[-1].user_id))
 
 
 def _get_server_port(request: Request) -> int:
@@ -81,7 +148,7 @@ def _get_output_format(request: Request) -> OutputFormat:
 
 
 async def _store_session_from_user(
-    session_store: SuperTokensSessionStore | MultiAccountSessionStore,
+    session_store: SuperTokensSessionStore,
     user_id: str,
     email: str,
     display_name: str | None = None,
@@ -92,15 +159,6 @@ async def _store_session_from_user(
         recipe_user_id=RecipeUserId(user_id),
     )
     tokens = session.get_all_session_tokens_dangerously()
-    if isinstance(session_store, MultiAccountSessionStore):
-        session_store.add_or_update_session(
-            access_token=tokens["accessToken"],
-            refresh_token=tokens["refreshToken"] or None,
-            user_id=user_id,
-            email=email,
-            display_name=display_name,
-        )
-        return
     session_store.store_session(
         access_token=tokens["accessToken"],
         refresh_token=tokens["refreshToken"] or None,
@@ -479,7 +537,7 @@ def _handle_settings_page(request: Request) -> HTMLResponse:
 
 
 def create_supertokens_router(
-    session_store: SuperTokensSessionStore | MultiAccountSessionStore,
+    session_store: SuperTokensSessionStore,
     server_port: int,
     output_format: OutputFormat,
 ) -> APIRouter:

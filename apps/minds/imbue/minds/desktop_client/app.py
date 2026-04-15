@@ -51,8 +51,14 @@ from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
 from imbue.minds.desktop_client.ssh_tunnel import parse_url_host_port
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.request_events import RequestInbox
+from imbue.minds.desktop_client.request_events import RequestStatus
+from imbue.minds.desktop_client.request_events import SharingRequestEvent
+from imbue.minds.desktop_client.request_events import append_response_event
+from imbue.minds.desktop_client.request_events import create_request_response_event
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
 from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
+from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token as _load_tunnel_token
+from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token as _save_tunnel_token
 from imbue.minds.desktop_client.supertokens_routes import create_supertokens_router
 from imbue.minds.desktop_client.templates import render_agent_servers_page
 from imbue.minds.desktop_client.templates import render_auth_error_page
@@ -1468,8 +1474,6 @@ def _handle_request_page(
     if req_event is None:
         return HTMLResponse(content="<p>Request not found</p>", status_code=404)
 
-    from imbue.minds.desktop_client.request_events import SharingRequestEvent
-
     is_sharing = isinstance(req_event, SharingRequestEvent)
     server_name = req_event.server_name if is_sharing else ""
     current_url = ""
@@ -1535,11 +1539,6 @@ async def _handle_request_grant(
     if req_event is None:
         return HTMLResponse(content="Request not found", status_code=404)
 
-    from imbue.minds.desktop_client.request_events import RequestStatus
-    from imbue.minds.desktop_client.request_events import SharingRequestEvent
-    from imbue.minds.desktop_client.request_events import append_response_event
-    from imbue.minds.desktop_client.request_events import create_request_response_event
-
     # Execute the sharing action if this is a sharing request
     is_sharing = isinstance(req_event, SharingRequestEvent)
     if is_sharing:
@@ -1550,18 +1549,13 @@ async def _handle_request_grant(
             # Get the backend URL for the service
             backend_url = backend_resolver.get_backend_url(parsed_id, parsed_server)
             if backend_url:
-                from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
-                from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token
-
                 paths: WorkspacePaths | None = getattr(request.app.state, "api_v1_paths", None)
                 if paths:
-                    stored_token = load_tunnel_token(paths.data_dir, parsed_id)
+                    stored_token = _load_tunnel_token(paths.data_dir, parsed_id)
                     if stored_token is None:
                         token, _ = cf_client.create_tunnel(parsed_id)
                         if token:
-                            save_tunnel_token(paths.data_dir, parsed_id, token)
-                            from imbue.minds.desktop_client.api_v1 import inject_tunnel_token_into_agent
-
+                            _save_tunnel_token(paths.data_dir, parsed_id, token)
                             inject_tunnel_token_into_agent(parsed_id, token)
                 cf_client.add_service(parsed_id, parsed_server, backend_url)
 
@@ -1595,10 +1589,6 @@ async def _handle_request_deny(
     req_event = inbox.get_request_by_id(request_id)
     if req_event is None:
         return HTMLResponse(content="Request not found", status_code=404)
-
-    from imbue.minds.desktop_client.request_events import RequestStatus
-    from imbue.minds.desktop_client.request_events import append_response_event
-    from imbue.minds.desktop_client.request_events import create_request_response_event
 
     paths = getattr(request.app.state, "api_v1_paths", None)
     if paths is not None:

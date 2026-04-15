@@ -117,6 +117,7 @@ def test_inbox_response_only_affects_matched_request() -> None:
     inbox = RequestInbox().add_request(event1).add_request(event2).add_response(response)
     pending = inbox.get_pending_requests()
     assert len(pending) == 1
+    assert isinstance(pending[0], SharingRequestEvent)
     assert pending[0].server_name == "api"
 
 
