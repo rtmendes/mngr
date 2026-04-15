@@ -49,6 +49,9 @@ from imbue.minds.desktop_client.proxy import rewrite_proxied_html
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
 from imbue.minds.desktop_client.ssh_tunnel import parse_url_host_port
+from imbue.minds.desktop_client.minds_config import MindsConfig
+from imbue.minds.desktop_client.request_events import RequestInbox
+from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
 from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
 from imbue.minds.desktop_client.supertokens_routes import create_supertokens_router
 from imbue.minds.desktop_client.templates import render_agent_servers_page
@@ -1212,6 +1215,406 @@ def _build_workspace_list(backend_resolver: BackendResolverInterface) -> list[di
     return workspaces
 
 
+# -- Account management routes --
+
+
+def _handle_accounts_page(
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """Render the manage accounts page."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+    session_store: MultiAccountSessionStore | None = request.app.state.session_store
+    minds_config: MindsConfig | None = request.app.state.minds_config
+    accounts = session_store.list_accounts() if session_store else []
+    default_account_id = minds_config.get_default_account_id() if minds_config else None
+    accounts_html = []
+    for acct in accounts:
+        is_default = str(acct.user_id) == default_account_id
+        accounts_html.append(
+            f'<div style="padding:12px;border:1px solid #334155;border-radius:8px;margin:8px 0;background:#1e293b;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+            f'<div><strong style="color:#e2e8f0;">{acct.email}</strong>'
+            f'{" (default)" if is_default else ""}'
+            f'<br><span style="color:#64748b;font-size:12px;">ID: {str(acct.user_id)[:16]}...</span>'
+            f'<br><span style="color:#64748b;font-size:12px;">Workspaces: {len(acct.workspace_ids)}</span></div>'
+            f'<div style="display:flex;gap:8px;">'
+            f'<form method="POST" action="/accounts/set-default" style="display:inline;">'
+            f'<input type="hidden" name="user_id" value="{acct.user_id}">'
+            f'<button type="submit" style="background:#334155;color:#94a3b8;border:none;padding:4px 12px;'
+            f'border-radius:4px;cursor:pointer;">{"Default" if is_default else "Set default"}</button></form>'
+            f'<form method="POST" action="/accounts/{acct.user_id}/logout" style="display:inline;">'
+            f'<button type="submit" style="background:#7f1d1d;color:#fca5a5;border:none;padding:4px 12px;'
+            f'border-radius:4px;cursor:pointer;">Log out</button></form></div></div></div>'
+        )
+    html = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Manage Accounts</title>'
+        '<style>body{font-family:-apple-system,sans-serif;background:#0f172a;color:#cbd5e1;'
+        'padding:24px;margin:0;}h1{font-size:20px;color:#e2e8f0;margin-bottom:16px;}'
+        'a{color:#60a5fa;text-decoration:none;}a:hover{text-decoration:underline;}</style></head>'
+        f'<body><h1>Manage Accounts</h1>'
+        f'{"".join(accounts_html) if accounts_html else "<p>No accounts logged in.</p>"}'
+        f'<div style="margin-top:16px;"><a href="/auth/login">Add account</a></div>'
+        f'<div style="margin-top:8px;"><a href="/">Back to workspaces</a></div>'
+        '</body></html>'
+    )
+    return HTMLResponse(content=html)
+
+
+async def _handle_set_default_account(
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """Set the default account for new workspaces."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+    form = await request.form()
+    user_id = str(form.get("user_id", ""))
+    minds_config: MindsConfig | None = request.app.state.minds_config
+    if minds_config and user_id:
+        minds_config.set_default_account_id(user_id)
+    return Response(status_code=303, headers={"Location": "/accounts"})
+
+
+async def _handle_account_logout(
+    user_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """Log out a specific account."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+    session_store: MultiAccountSessionStore | None = request.app.state.session_store
+    if session_store:
+        session_store.remove_session(user_id)
+    return Response(status_code=303, headers={"Location": "/accounts"})
+
+
+# -- Workspace settings routes --
+
+
+def _handle_workspace_settings(
+    agent_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """Render workspace settings page for associating/disassociating with accounts."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+    session_store: MultiAccountSessionStore | None = request.app.state.session_store
+    current_account = session_store.get_account_for_workspace(agent_id) if session_store else None
+    accounts = session_store.list_accounts() if session_store else []
+
+    if current_account:
+        content = (
+            f'<p>Currently associated with: <strong>{current_account.email}</strong></p>'
+            f'<form method="POST" action="/workspace/{agent_id}/disassociate">'
+            f'<p style="color:#f59e0b;font-size:13px;margin:8px 0;">Warning: Disassociating will '
+            f'remove all sharing (tunnels) for this workspace.</p>'
+            f'<button type="submit" style="background:#7f1d1d;color:#fca5a5;border:none;padding:8px 16px;'
+            f'border-radius:4px;cursor:pointer;">Disassociate from {current_account.email}</button></form>'
+        )
+    else:
+        options = "".join(
+            f'<option value="{acct.user_id}">{acct.email}</option>' for acct in accounts
+        )
+        if accounts:
+            form_action = f"/workspace/{agent_id}/associate"
+            content = (
+                '<p>This workspace is private (not associated with any account).</p>'
+                f'<form method="POST" action="{form_action}">'
+                '<select name="user_id" style="padding:8px;border-radius:4px;background:#1e293b;'
+                f'color:#e2e8f0;border:1px solid #334155;">{options}</select>'
+                '<button type="submit" style="margin-left:8px;background:#1e3a5f;color:#93c5fd;'
+                'border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Associate</button>'
+                '</form>'
+            )
+        else:
+            content = (
+                '<p>This workspace is private (not associated with any account).</p>'
+                '<p>No accounts available. <a href="/auth/login">Log in</a> first.</p>'
+            )
+
+    html = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Workspace Settings</title>'
+        '<style>body{font-family:-apple-system,sans-serif;background:#0f172a;color:#cbd5e1;'
+        'padding:24px;margin:0;}h1{font-size:20px;color:#e2e8f0;margin-bottom:16px;}'
+        'a{color:#60a5fa;text-decoration:none;}a:hover{text-decoration:underline;}</style></head>'
+        f'<body><h1>Workspace Settings</h1>'
+        f'<p style="color:#64748b;font-size:13px;">Agent: {agent_id}</p>'
+        f'{content}'
+        f'<div style="margin-top:16px;"><a href="/">Back to workspaces</a></div>'
+        '</body></html>'
+    )
+    return HTMLResponse(content=html)
+
+
+async def _handle_workspace_associate(
+    agent_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """Associate a workspace with an account."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+    form = await request.form()
+    user_id = str(form.get("user_id", ""))
+    session_store: MultiAccountSessionStore | None = request.app.state.session_store
+    if session_store and user_id:
+        session_store.associate_workspace(user_id, agent_id)
+    return Response(status_code=303, headers={"Location": f"/workspace/{agent_id}/settings"})
+
+
+async def _handle_workspace_disassociate(
+    agent_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """Disassociate a workspace from its account and tear down tunnels."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+    session_store: MultiAccountSessionStore | None = request.app.state.session_store
+    if session_store:
+        account = session_store.get_account_for_workspace(agent_id)
+        if account:
+            # Tear down Cloudflare tunnel
+            cf_client, _ = get_cf_client_with_auth(request, agent_id=AgentId(agent_id))
+            if cf_client is not None:
+                try:
+                    cf_client.delete_tunnel(AgentId(agent_id))
+                except Exception as e:
+                    logger.warning("Failed to delete tunnel during disassociation: {}", e)
+            session_store.disassociate_workspace(str(account.user_id), agent_id)
+    return Response(status_code=303, headers={"Location": f"/workspace/{agent_id}/settings"})
+
+
+# -- Requests panel routes --
+
+
+def _handle_requests_panel(
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """Render the right-side requests inbox panel."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return HTMLResponse(content="<p>Not authenticated</p>")
+    inbox: RequestInbox | None = request.app.state.request_inbox
+    pending = inbox.get_pending_requests() if inbox else []
+    minds_config: MindsConfig | None = request.app.state.minds_config
+    auto_open = minds_config.get_auto_open_requests_panel() if minds_config else True
+
+    cards = []
+    for req in pending:
+        req_type = getattr(req, "request_type", "unknown")
+        server_name = getattr(req, "server_name", "")
+        agent_id = req.agent_id
+        event_id = str(req.event_id)
+        cards.append(
+            f'<a href="/requests/{event_id}" style="display:block;padding:12px;border:1px solid #334155;'
+            f'border-radius:8px;margin:8px;background:#1e293b;text-decoration:none;color:inherit;">'
+            f'<div style="font-size:13px;color:#e2e8f0;font-weight:500;">{req_type}: {server_name}</div>'
+            f'<div style="font-size:11px;color:#64748b;margin-top:4px;">Agent: {agent_id[:16]}...</div>'
+            f'<div style="font-size:11px;color:#64748b;">{str(req.timestamp)}</div></a>'
+        )
+
+    html = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Requests</title>'
+        '<style>body{font-family:-apple-system,sans-serif;background:#0f172a;color:#cbd5e1;'
+        'margin:0;padding:0;overflow-y:auto;height:100vh;}'
+        'h2{font-size:15px;color:#e2e8f0;padding:12px;margin:0;border-bottom:1px solid #334155;}'
+        '</style></head>'
+        f'<body><h2>Requests ({len(pending)})</h2>'
+        f'<div>{"".join(cards) if cards else "<p style=padding:12px;color:#64748b;>No pending requests.</p>"}</div>'
+        f'<div style="position:fixed;bottom:0;left:0;right:0;padding:12px;border-top:1px solid #334155;'
+        f'background:#0f172a;">'
+        f'<label style="font-size:12px;color:#94a3b8;cursor:pointer;">'
+        f'<input type="checkbox" {"checked" if auto_open else ""} '
+        f'onchange="fetch(\'/_chrome/requests-auto-open\',{{method:\'POST\',headers:{{\'Content-Type\':'
+        f'\'application/json\'}},body:JSON.stringify({{enabled:this.checked}})}})"> '
+        f'Auto-open on new request</label></div>'
+        '</body></html>'
+    )
+    return HTMLResponse(content=html)
+
+
+async def _handle_requests_auto_open(
+    request: Request,
+) -> Response:
+    """Toggle the auto-open setting for the requests panel."""
+    minds_config: MindsConfig | None = request.app.state.minds_config
+    if minds_config:
+        try:
+            body = await request.json()
+            enabled = body.get("enabled", True)
+            minds_config.set_auto_open_requests_panel(bool(enabled))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return Response(status_code=200, content='{"ok": true}', media_type="application/json")
+
+
+def _handle_request_page(
+    request_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """Render the request editing page (sharing request form)."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+    inbox: RequestInbox | None = request.app.state.request_inbox
+    if inbox is None:
+        return HTMLResponse(content="<p>Request inbox not available</p>", status_code=500)
+    req_event = inbox.get_request_by_id(request_id)
+    if req_event is None:
+        return HTMLResponse(content="<p>Request not found</p>", status_code=404)
+
+    from imbue.minds.desktop_client.request_events import SharingRequestEvent
+
+    is_sharing = isinstance(req_event, SharingRequestEvent)
+    server_name = req_event.server_name if is_sharing else ""
+    current_url = ""
+    current_enabled = False
+    emails: list[str] = []
+    if is_sharing and req_event.current_status is not None:
+        current_url = req_event.current_status.url or ""
+        current_enabled = req_event.current_status.enabled
+        for rule in req_event.current_status.auth_rules:
+            for inc in rule.get("include", []):
+                if isinstance(inc, dict):
+                    email_obj = inc.get("email")
+                    if isinstance(email_obj, dict):
+                        email = email_obj.get("email")
+                        if email:
+                            emails.append(str(email))
+    if is_sharing:
+        emails.extend(req_event.suggested_emails)
+    emails = list(dict.fromkeys(emails))
+
+    html = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Sharing Request</title>'
+        '<style>body{font-family:-apple-system,sans-serif;background:#0f172a;color:#cbd5e1;'
+        'padding:24px;margin:0;}h1{font-size:20px;color:#e2e8f0;margin-bottom:16px;}'
+        'a{color:#60a5fa;text-decoration:none;}a:hover{text-decoration:underline;}'
+        '.btn{padding:8px 16px;border:none;border-radius:4px;cursor:pointer;font-size:14px;}'
+        '.btn-grant{background:#065f46;color:#6ee7b7;}'
+        '.btn-deny{background:#7f1d1d;color:#fca5a5;margin-left:8px;}'
+        '</style></head>'
+        f'<body><h1>Sharing Request: {server_name}</h1>'
+        f'<p style="color:#64748b;font-size:13px;">Agent: {req_event.agent_id}</p>'
+        f'<p>Status: {"Enabled" if current_enabled else "Not enabled"}</p>'
+        f'{"<p>URL: <code>" + current_url + "</code></p>" if current_url else ""}'
+        f'<div style="margin:16px 0;">'
+        f'<p style="font-size:14px;font-weight:500;">Access list:</p>'
+        f'{"".join("<p style=margin:4px 0;>" + e + "</p>" for e in emails) if emails else "<p style=color:#64748b;>No emails configured</p>"}'
+        f'</div>'
+        f'<div style="margin-top:24px;">'
+        f'<form method="POST" action="/requests/{request_id}/grant" style="display:inline;">'
+        f'<button type="submit" class="btn btn-grant">{"Enable" if not current_enabled else "Update"} Sharing</button></form>'
+        f'<form method="POST" action="/requests/{request_id}/deny" style="display:inline;">'
+        f'<button type="submit" class="btn btn-deny">Deny</button></form>'
+        f'</div>'
+        f'<div style="margin-top:16px;"><a href="/">Back to workspaces</a></div>'
+        '</body></html>'
+    )
+    return HTMLResponse(content=html)
+
+
+async def _handle_request_grant(
+    request_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+    backend_resolver: BackendResolverDep,
+) -> Response:
+    """Grant a request: execute the sharing action and write a response event."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+    inbox: RequestInbox | None = request.app.state.request_inbox
+    if inbox is None:
+        return HTMLResponse(content="Request inbox not available", status_code=500)
+    req_event = inbox.get_request_by_id(request_id)
+    if req_event is None:
+        return HTMLResponse(content="Request not found", status_code=404)
+
+    from imbue.minds.desktop_client.request_events import RequestStatus
+    from imbue.minds.desktop_client.request_events import SharingRequestEvent
+    from imbue.minds.desktop_client.request_events import append_response_event
+    from imbue.minds.desktop_client.request_events import create_request_response_event
+
+    # Execute the sharing action if this is a sharing request
+    is_sharing = isinstance(req_event, SharingRequestEvent)
+    if is_sharing:
+        cf_client, error_response = get_cf_client_with_auth(request, agent_id=AgentId(req_event.agent_id))
+        if cf_client is not None:
+            parsed_id = AgentId(req_event.agent_id)
+            parsed_server = ServerName(req_event.server_name)
+            # Get the backend URL for the service
+            backend_url = backend_resolver.get_backend_url(parsed_id, parsed_server)
+            if backend_url:
+                from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
+                from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token
+
+                paths: WorkspacePaths | None = getattr(request.app.state, "api_v1_paths", None)
+                if paths:
+                    stored_token = load_tunnel_token(paths.data_dir, parsed_id)
+                    if stored_token is None:
+                        token, _ = cf_client.create_tunnel(parsed_id)
+                        if token:
+                            save_tunnel_token(paths.data_dir, parsed_id, token)
+                            from imbue.minds.desktop_client.api_v1 import inject_tunnel_token_into_agent
+
+                            inject_tunnel_token_into_agent(parsed_id, token)
+                cf_client.add_service(parsed_id, parsed_server, backend_url)
+
+    # Write response event
+    paths = getattr(request.app.state, "api_v1_paths", None)
+    if paths is not None:
+        response_event = create_request_response_event(
+            request_event_id=request_id,
+            status=RequestStatus.GRANTED,
+            agent_id=req_event.agent_id,
+            request_type=req_event.request_type,
+            server_name=getattr(req_event, "server_name", None),
+        )
+        append_response_event(paths.data_dir, response_event)
+        request.app.state.request_inbox = inbox.add_response(response_event)
+
+    return Response(status_code=303, headers={"Location": "/"})
+
+
+async def _handle_request_deny(
+    request_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """Deny a request and write a response event."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+    inbox: RequestInbox | None = request.app.state.request_inbox
+    if inbox is None:
+        return HTMLResponse(content="Request inbox not available", status_code=500)
+    req_event = inbox.get_request_by_id(request_id)
+    if req_event is None:
+        return HTMLResponse(content="Request not found", status_code=404)
+
+    from imbue.minds.desktop_client.request_events import RequestStatus
+    from imbue.minds.desktop_client.request_events import append_response_event
+    from imbue.minds.desktop_client.request_events import create_request_response_event
+
+    paths = getattr(request.app.state, "api_v1_paths", None)
+    if paths is not None:
+        response_event = create_request_response_event(
+            request_event_id=request_id,
+            status=RequestStatus.DENIED,
+            agent_id=req_event.agent_id,
+            request_type=req_event.request_type,
+            server_name=getattr(req_event, "server_name", None),
+        )
+        append_response_event(paths.data_dir, response_event)
+        request.app.state.request_inbox = inbox.add_response(response_event)
+
+    return Response(status_code=303, headers={"Location": "/"})
+
+
 # -- App factory --
 
 
@@ -1226,7 +1629,10 @@ def create_desktop_client(
     notification_dispatcher: NotificationDispatcher | None = None,
     paths: WorkspacePaths | None = None,
     stream_manager: MngrStreamManager | None = None,
-    supertokens_session_store: SuperTokensSessionStore | None = None,
+    supertokens_session_store: SuperTokensSessionStore | MultiAccountSessionStore | None = None,
+    session_store: MultiAccountSessionStore | None = None,
+    minds_config: MindsConfig | None = None,
+    request_inbox: RequestInbox | None = None,
     server_port: int = 0,
     output_format: OutputFormat | None = None,
 ) -> FastAPI:
@@ -1272,6 +1678,9 @@ def create_desktop_client(
     app.state.telegram_orchestrator = telegram_orchestrator
     app.state.notification_dispatcher = notification_dispatcher
     app.state.supertokens_session_store = supertokens_session_store
+    app.state.session_store = session_store
+    app.state.minds_config = minds_config
+    app.state.request_inbox = request_inbox
     app.state.supertokens_server_port = server_port
     app.state.supertokens_output_format = output_format or OutputFormat.JSONL
     if paths is not None:
@@ -1302,6 +1711,23 @@ def create_desktop_client(
     app.get("/login")(_handle_login)
     app.get("/authenticate")(_handle_authenticate)
     app.get("/")(_handle_landing_page)
+
+    # Account management routes
+    app.get("/accounts")(_handle_accounts_page)
+    app.post("/accounts/set-default")(_handle_set_default_account)
+    app.post("/accounts/{user_id}/logout")(_handle_account_logout)
+
+    # Workspace settings routes
+    app.get("/workspace/{agent_id}/settings")(_handle_workspace_settings)
+    app.post("/workspace/{agent_id}/associate")(_handle_workspace_associate)
+    app.post("/workspace/{agent_id}/disassociate")(_handle_workspace_disassociate)
+
+    # Request inbox routes
+    app.get("/_chrome/requests-panel")(_handle_requests_panel)
+    app.post("/_chrome/requests-auto-open")(_handle_requests_auto_open)
+    app.get("/requests/{request_id}")(_handle_request_page)
+    app.post("/requests/{request_id}/grant")(_handle_request_grant)
+    app.post("/requests/{request_id}/deny")(_handle_request_deny)
 
     # Agent creation routes
     app.get("/create")(_handle_create_page)

@@ -44,6 +44,7 @@ from supertokens_python.syncio import get_user
 from supertokens_python.types import RecipeUserId
 from supertokens_python.types.base import AccountInfoInput
 
+from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
 from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
 from imbue.minds.desktop_client.templates_auth import render_auth_page
 from imbue.minds.desktop_client.templates_auth import render_check_email_page
@@ -67,7 +68,7 @@ def _json_response(data: dict[str, object], status_code: int = 200) -> Response:
     )
 
 
-def _get_session_store(request: Request) -> SuperTokensSessionStore:
+def _get_session_store(request: Request) -> SuperTokensSessionStore | MultiAccountSessionStore:
     return request.app.state.supertokens_session_store
 
 
@@ -80,7 +81,7 @@ def _get_output_format(request: Request) -> OutputFormat:
 
 
 async def _store_session_from_user(
-    session_store: SuperTokensSessionStore,
+    session_store: SuperTokensSessionStore | MultiAccountSessionStore,
     user_id: str,
     email: str,
     display_name: str | None = None,
@@ -91,6 +92,15 @@ async def _store_session_from_user(
         recipe_user_id=RecipeUserId(user_id),
     )
     tokens = session.get_all_session_tokens_dangerously()
+    if isinstance(session_store, MultiAccountSessionStore):
+        session_store.add_or_update_session(
+            access_token=tokens["accessToken"],
+            refresh_token=tokens["refreshToken"] or None,
+            user_id=user_id,
+            email=email,
+            display_name=display_name,
+        )
+        return
     session_store.store_session(
         access_token=tokens["accessToken"],
         refresh_token=tokens["refreshToken"] or None,
@@ -469,7 +479,7 @@ def _handle_settings_page(request: Request) -> HTMLResponse:
 
 
 def create_supertokens_router(
-    session_store: SuperTokensSessionStore,
+    session_store: SuperTokensSessionStore | MultiAccountSessionStore,
     server_port: int,
     output_format: OutputFormat,
 ) -> APIRouter:
