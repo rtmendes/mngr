@@ -601,8 +601,7 @@ def _pytest_configure(config: pytest.Config) -> None:
     for marker in _SHARED_MARKERS + _registered_markers:
         config.addinivalue_line("markers", marker)
 
-    # Auto-register marks for guarded resources so projects that call
-    # register_resource_guard() don't also need a separate register_marker().
+    # Register marks for guarded resources (skips any already registered above).
     registered_names = {m.split(":")[0].strip() for m in _SHARED_MARKERS + _registered_markers}
     for name in get_guarded_resource_names():
         if name not in registered_names:

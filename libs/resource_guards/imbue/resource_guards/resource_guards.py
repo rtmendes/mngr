@@ -79,10 +79,8 @@ def register_resource_guard(name: str) -> None:
     Call this from each project's conftest.py before register_conftest_hooks().
     The resource name must correspond to both a binary on PATH and a pytest
     mark name (e.g., register_resource_guard("tmux") guards the tmux binary
-    and enforces @pytest.mark.tmux).
-
-    The corresponding pytest mark is auto-registered by conftest_hooks during
-    pytest_configure, so a separate register_marker() call is not needed.
+    and enforces @pytest.mark.tmux). The corresponding pytest mark is
+    auto-registered during pytest_configure.
 
     Duplicate registrations are ignored.
     """
@@ -281,9 +279,8 @@ def register_sdk_guard(
     implementations into the infrastructure. Deduplicates by name so
     multiple conftest files can safely call the registration function.
 
-    The guard name is added to _guarded_resources immediately (so it is
-    visible at pytest_configure time for auto mark registration), while
-    the install/cleanup functions are deferred to create_sdk_resource_guards().
+    The guard name is added to _guarded_resources immediately; the
+    install/cleanup functions are deferred to create_sdk_resource_guards().
     """
     registered_names = {entry[0] for entry in _registered_sdk_guards}
     if name not in registered_names:
