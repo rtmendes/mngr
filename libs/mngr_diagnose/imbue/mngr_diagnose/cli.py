@@ -4,17 +4,28 @@ from typing import Final
 import click
 from loguru import logger
 
-from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.pure import pure
+from imbue.mngr.cli.common_opts import add_common_options
+from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.cli.create import create as create_cmd
 from imbue.mngr.cli.help_formatter import CommandHelpMetadata
 from imbue.mngr.cli.help_formatter import add_pager_help_option
 from imbue.mngr.cli.issue_reporting import get_mngr_version
+from imbue.mngr.config.data_types import CommonCliOptions
 from imbue.mngr_diagnose.clone import ensure_mngr_clone
 from imbue.mngr_diagnose.context_file import read_diagnose_context
 from imbue.mngr_diagnose.prompt import build_diagnose_initial_message
 
 DIAGNOSE_CLONE_DIR: Final[Path] = Path("/tmp/mngr-diagnose")
+
+
+class DiagnoseCliOptions(CommonCliOptions):
+    """CLI options for the diagnose command."""
+
+    description: str | None
+    clone_dir: str | None
+    context_file: str | None
+    agent_type: str | None
 
 
 @pure
@@ -48,36 +59,40 @@ def _build_description_from_context(error_type: str | None, error_message: str |
     default=None,
     help="Agent type [default: from config]",
 )
+@add_common_options
 @click.pass_context
-def diagnose(
-    ctx: click.Context,
-    description: str | None,
-    clone_dir: str | None,
-    context_file: str | None,
-    agent_type: str | None,
-) -> None:
+def diagnose(ctx: click.Context, **kwargs: object) -> None:
     """Launch an agent to diagnose a bug and prepare a GitHub issue.
 
     Clones the mngr repo (or reuses an existing clone) and creates an agent
     in a worktree to investigate the problem.
     """
-    resolved_clone_dir = Path(clone_dir) if clone_dir is not None else DIAGNOSE_CLONE_DIR
+    mngr_ctx, _output_opts, opts = setup_command_context(
+        ctx=ctx,
+        command_name="diagnose",
+        command_class=DiagnoseCliOptions,
+    )
+
+    resolved_clone_dir = Path(opts.clone_dir) if opts.clone_dir is not None else DIAGNOSE_CLONE_DIR
 
     # Read context file if provided
     traceback_str: str | None = None
     mngr_version = get_mngr_version()
 
-    if context_file is not None:
-        context = read_diagnose_context(Path(context_file))
+    if opts.context_file is not None:
+        context = read_diagnose_context(Path(opts.context_file))
         traceback_str = context.traceback_str
         mngr_version = context.mngr_version
         # Use error info as description if no explicit description given
-        if description is None:
+        if opts.description is None:
             description = _build_description_from_context(context.error_type, context.error_message)
+        else:
+            description = opts.description
+    else:
+        description = opts.description
 
     # Clone or update the repo
-    with ConcurrencyGroup(name="diagnose-clone") as cg:
-        ensure_mngr_clone(resolved_clone_dir, cg)
+    ensure_mngr_clone(resolved_clone_dir, mngr_ctx.concurrency_group)
 
     # Build the diagnostic message
     message = build_diagnose_initial_message(
@@ -88,7 +103,7 @@ def diagnose(
 
     logger.info("Launching diagnostic agent...")
 
-    # Build create command args
+    # Build create command args -- pass -y to auto-trust the clone directory
     create_args: list[str] = [
         "--from",
         f":{resolved_clone_dir}",
@@ -99,9 +114,10 @@ def diagnose(
         "--message",
         message,
         "--no-ensure-clean",
+        "-y",
     ]
-    if agent_type is not None:
-        create_args.extend(["--type", agent_type])
+    if opts.agent_type is not None:
+        create_args.extend(["--type", opts.agent_type])
 
     create_ctx = create_cmd.make_context("diagnose", create_args, parent=ctx)
     with create_ctx:

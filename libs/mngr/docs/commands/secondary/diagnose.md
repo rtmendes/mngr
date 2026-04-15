@@ -32,6 +32,22 @@ mngr diagnose [OPTIONS] [DESCRIPTION]
 
 **Options:**
 
+## Common
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
+| `-q`, `--quiet` | boolean | Suppress all console output | `False` |
+| `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
+| `--log-file` | path | Path to log file (overrides default ~/.mngr/events/logs/<timestamp>-<pid>.json) | None |
+| `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
+| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNGR_HEADLESS env var or 'headless' config key. | `False` |
+| `--safe` | boolean | Always query all providers during discovery (disable event-stream optimization). Use this when interfacing with mngr from multiple machines. | `False` |
+| `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
+| `--disable-plugin` | text | Disable a plugin [repeatable] | None |
+| `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
+| `-h`, `--help` | boolean | Show this message and exit. | `False` |
+
 ## Other Options
 
 | Name | Type | Description | Default |
@@ -39,7 +55,6 @@ mngr diagnose [OPTIONS] [DESCRIPTION]
 | `--clone-dir` | path | Clone location [default: /tmp/mngr-diagnose] | None |
 | `--context-file` | path | JSON file with error context (written by error handler) | None |
 | `--type` | text | Agent type [default: from config] | None |
-| `-h`, `--help` | boolean | Show this message and exit. | `False` |
 
 ## See Also
 

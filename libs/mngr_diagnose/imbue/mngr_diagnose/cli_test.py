@@ -146,6 +146,25 @@ def test_diagnose_no_type_omits_type_flag(
     assert "--type" not in captured_args[0]
 
 
+def test_diagnose_passes_auto_approve_flag(
+    tmp_path: Path,
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Diagnose passes -y to create so the clone directory is auto-trusted."""
+    captured_args = _stub_clone_and_capture_create_args(monkeypatch)
+
+    cli_runner.invoke(
+        diagnose,
+        ["error", "--clone-dir", str(tmp_path / "clone")],
+        obj=plugin_manager,
+    )
+
+    assert len(captured_args) == 1
+    assert "-y" in captured_args[0]
+
+
 def test_diagnose_default_clone_dir() -> None:
     """Default clone dir is /tmp/mngr-diagnose."""
     assert DIAGNOSE_CLONE_DIR == Path("/tmp/mngr-diagnose")
