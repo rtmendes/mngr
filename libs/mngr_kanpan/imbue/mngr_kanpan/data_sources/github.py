@@ -70,6 +70,13 @@ class PrField(FieldValue):
     def display(self) -> CellDisplay:
         return CellDisplay(text=f"#{self.number}", url=self.url)
 
+    def env_vars(self, key: str) -> dict[str, str]:
+        return {
+            "MNGR_FIELD_PR_NUMBER": str(self.number),
+            "MNGR_FIELD_PR_URL": self.url,
+            "MNGR_FIELD_PR_STATE": str(self.state),
+        }
+
 
 class CiField(FieldValue):
     """CI check status field value."""
@@ -80,6 +87,9 @@ class CiField(FieldValue):
         if self.status == CiStatus.UNKNOWN:
             return CellDisplay(text="")
         return CellDisplay(text=self.status.lower(), color=self.status.color)
+
+    def env_vars(self, key: str) -> dict[str, str]:
+        return {"MNGR_FIELD_CI_STATUS": str(self.status)}
 
 
 class CreatePrUrlField(FieldValue):
