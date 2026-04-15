@@ -1091,7 +1091,7 @@ def _field_cell_markup(entry: AgentBoardEntry, field_key: str) -> str | tuple[Ha
     if cell is None:
         return ""
     if cell.color is not None:
-        return (f"field_{field_key}_{cell.color}", cell.text)
+        return (f"field_{field_key}_{cell.color.replace(' ', '_')}", cell.text)
     return cell.text
 
 
@@ -1218,7 +1218,7 @@ def _build_field_color_palette(
     for entry in snapshot.entries:
         for field_key, cell in entry.cells.items():
             if cell.color is not None:
-                attr = f"field_{field_key}_{cell.color}"
+                attr = f"field_{field_key}_{cell.color.replace(' ', '_')}"
                 if attr not in seen:
                     seen.add(attr)
                     entries.append((attr, cell.color, ""))
