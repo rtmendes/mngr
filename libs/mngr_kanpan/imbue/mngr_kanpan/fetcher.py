@@ -280,7 +280,6 @@ def _cache_file_path(mngr_ctx: MngrContext) -> Path:
 def save_field_cache(
     mngr_ctx: MngrContext,
     cached_fields: dict[AgentName, dict[str, FieldValue]],
-    data_sources: Sequence[KanpanDataSource],
 ) -> None:
     """Persist cached fields to a local JSON file atomically.
 
