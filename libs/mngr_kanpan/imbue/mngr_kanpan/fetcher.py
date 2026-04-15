@@ -34,6 +34,7 @@ from imbue.mngr_kanpan.data_sources.github import PrState
 from imbue.mngr_kanpan.data_types import AgentBoardEntry
 from imbue.mngr_kanpan.data_types import BoardSection
 from imbue.mngr_kanpan.data_types import BoardSnapshot
+from imbue.mngr_kanpan.data_types import DataSourceConfig
 from imbue.mngr_kanpan.data_types import KanpanPluginConfig
 
 PLUGIN_NAME = "kanpan"
@@ -376,7 +377,7 @@ def collect_data_sources(
         if isinstance(source_config, dict):
             if not source_config.get("enabled", True):
                 continue
-        elif source_config is not None and hasattr(source_config, "enabled"):
+        elif isinstance(source_config, DataSourceConfig):
             if not source_config.enabled:
                 continue
         enabled_sources.append(source)
