@@ -3487,6 +3487,40 @@ def test_get_files_for_deploy_rewrites_install_paths_to_sentinel(temp_mngr_ctx: 
     assert marker_key not in result
 
 
+def test_get_files_for_deploy_rewrites_marketplace_paths_to_sentinel(
+    temp_mngr_ctx: MngrContext, tmp_path: Path
+) -> None:
+    """get_files_for_deploy rewrites installLocation values in known_marketplaces.json to use the sentinel prefix."""
+    claude_dir = Path.home() / ".claude"
+    plugins_dir = claude_dir / "plugins"
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+    (plugins_dir / "known_marketplaces.json").write_text(
+        json.dumps(
+            {
+                "imbue-code-guardian": {
+                    "source": {"source": "github", "repo": "imbue-ai/code-guardian"},
+                    "installLocation": f"{claude_dir}/plugins/marketplaces/imbue-code-guardian",
+                    "lastUpdated": "2026-04-08T23:35:41.300Z",
+                }
+            }
+        )
+    )
+
+    result = get_files_for_deploy(
+        mngr_ctx=temp_mngr_ctx, include_user_settings=True, include_project_settings=False, repo_root=tmp_path
+    )
+
+    marketplaces_json_key = Path("~/.claude/plugins/known_marketplaces.json")
+    assert marketplaces_json_key in result
+    marketplaces_json_content = result[marketplaces_json_key]
+    assert isinstance(marketplaces_json_content, str)
+    data = json.loads(marketplaces_json_content)
+    assert (
+        data["imbue-code-guardian"]["installLocation"]
+        == "/__mngr_plugins_source__/plugins/marketplaces/imbue-code-guardian"
+    )
+
+
 # =============================================================================
 # _build_settings_json tests
 # =============================================================================
