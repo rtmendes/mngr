@@ -855,3 +855,51 @@ def test_register_resource_guard_auto_registers_pytest_mark(
     """)
     result = pytester.runpytest_subprocess("-n0", "--no-header", "-p", "no:cacheprovider", "--strict-markers")
     result.assert_outcomes(passed=1)
+
+
+# Conftest that mirrors the README example: standalone pytest_configure
+# using get_guarded_resource_names() to register marks (no conftest_hooks).
+_PYTESTER_STANDALONE_CONFTEST = """\
+import os
+from imbue.resource_guards.resource_guards import (
+    get_guarded_resource_names,
+    register_resource_guard,
+    start_resource_guards,
+    stop_resource_guards,
+)
+
+os.environ.pop("_PYTEST_GUARD_WRAPPER_DIR", None)
+
+register_resource_guard("cat")
+
+def pytest_configure(config):
+    for name in get_guarded_resource_names():
+        config.addinivalue_line("markers", f"{name}: marks tests that use {name}")
+
+def pytest_sessionstart(session):
+    start_resource_guards(session)
+
+def pytest_sessionfinish(session, exitstatus):
+    stop_resource_guards()
+"""
+
+
+def test_standalone_pytest_configure_registers_marks(
+    pytester: pytest.Pytester,
+) -> None:
+    """The README pattern (pytest_configure + get_guarded_resource_names) works.
+
+    Verifies that external users who don't use conftest_hooks can register
+    marks via their own pytest_configure and get_guarded_resource_names().
+    """
+    pytester.makeconftest(_PYTESTER_STANDALONE_CONFTEST)
+    pytester.makepyfile("""
+        import subprocess
+        import pytest
+
+        @pytest.mark.cat
+        def test_cat_dev_null():
+            subprocess.run(["cat", "/dev/null"], check=True)
+    """)
+    result = pytester.runpytest_subprocess("-n0", "--no-header", "-p", "no:cacheprovider", "--strict-markers")
+    result.assert_outcomes(passed=1)
