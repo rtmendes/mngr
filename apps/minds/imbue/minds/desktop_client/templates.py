@@ -1041,6 +1041,25 @@ _PAGE_STYLES: Final[str] = """
 """
 
 
+_ASSOCIATE_SNIPPET: Final[str] = """
+    <div class="card" style="margin:12px 0;">
+      <p style="font-weight:500;margin-bottom:8px;">This workspace needs to be associated with an account before sharing can be configured.</p>
+      {% if accounts %}
+      <form method="POST" action="/workspace/{{ agent_id }}/associate" style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+        <select name="user_id" class="select-input">
+          {% for acct in accounts %}
+          <option value="{{ acct.user_id }}">{{ acct.email }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary">Associate</button>
+      </form>
+      {% else %}
+      <p style="margin-top:8px;"><a href="/auth/login">Sign in or create an account</a> to enable sharing.</p>
+      {% endif %}
+    </div>
+"""
+
+
 _SHARING_EDITOR_TEMPLATE: Final[str] = (
     """<!DOCTYPE html>
 <html>
@@ -1055,6 +1074,18 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
   <div class="page">
     <h1>{{ title }}</h1>
     <p class="subtitle">{{ agent_id }}</p>
+
+    {% if not has_account %}
+    """
+    + _ASSOCIATE_SNIPPET
+    + """
+    {% if is_request %}
+    <form method="POST" action="/requests/{{ request_id }}/deny" style="margin-top:8px;">
+      <button type="submit" class="btn btn-danger">Deny request</button>
+    </form>
+    {% endif %}
+    <div style="margin-top:24px;"><a href="/">&larr; Back to workspaces</a></div>
+    {% else %}
 
     <div id="sharing-editor">
       <div class="loading" id="loading-state">Loading sharing status...</div>
@@ -1238,6 +1269,7 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
       renderEmails();
     });
   </script>
+    {% endif %}
 </body>
 </html>"""
 )
@@ -1251,6 +1283,8 @@ def render_sharing_editor(
     initial_emails: list[str] | None = None,
     is_request: bool = False,
     request_id: str = "",
+    has_account: bool = True,
+    accounts: Sequence[object] | None = None,
 ) -> str:
     """Render the sharing editor page used for both request approval and direct editing."""
     template = _JINJA_ENV.from_string(_SHARING_EDITOR_TEMPLATE)
@@ -1261,6 +1295,8 @@ def render_sharing_editor(
         initial_emails=initial_emails or [],
         is_request=is_request,
         request_id=request_id,
+        has_account=has_account,
+        accounts=accounts or [],
     )
 
 
@@ -1288,19 +1324,9 @@ _WORKSPACE_SETTINGS_TEMPLATE: Final[str] = (
     <button class="btn btn-danger" id="disassociate-btn" onclick="submitDisassociate()">Disassociate</button>
     <span id="disassociate-spinner" style="display:none;color:#94a3b8;margin-left:8px;">Disassociating...</span>
     {% else %}
-    <p>This workspace is private (not associated with any account).</p>
-      {% if accounts %}
-    <form method="POST" action="/workspace/{{ agent_id }}/associate" style="margin-top:8px;">
-      <select name="user_id" class="select-input">
-        {% for acct in accounts %}
-        <option value="{{ acct.user_id }}">{{ acct.email }}</option>
-        {% endfor %}
-      </select>
-      <button type="submit" class="btn btn-primary" style="margin-left:8px;">Associate</button>
-    </form>
-      {% else %}
-    <p><a href="/auth/login">Log in</a> to associate this workspace with an account.</p>
-      {% endif %}
+    """
+    + _ASSOCIATE_SNIPPET
+    + """
     {% endif %}
     </div>
 

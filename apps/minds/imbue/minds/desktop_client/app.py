@@ -1492,6 +1492,10 @@ def _handle_request_page(
         emails.extend(req_event.suggested_emails)
     emails = list(dict.fromkeys(emails))
 
+    session_store: MultiAccountSessionStore | None = request.app.state.session_store
+    has_account = session_store.get_account_for_workspace(req_event.agent_id) is not None if session_store else False
+    accounts = session_store.list_accounts() if session_store else []
+
     html = render_sharing_editor(
         agent_id=req_event.agent_id,
         server_name=server_name,
@@ -1499,6 +1503,8 @@ def _handle_request_page(
         initial_emails=emails,
         is_request=True,
         request_id=request_id,
+        has_account=has_account,
+        accounts=accounts,
     )
     return HTMLResponse(content=html)
 
@@ -1512,11 +1518,18 @@ def _handle_sharing_page(
     """Render the sharing editor page for direct editing (from workspace settings)."""
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content="Not authenticated")
+
+    session_store: MultiAccountSessionStore | None = request.app.state.session_store
+    has_account = session_store.get_account_for_workspace(agent_id) is not None if session_store else False
+    accounts = session_store.list_accounts() if session_store else []
+
     html = render_sharing_editor(
         agent_id=agent_id,
         server_name=server_name,
         title=f"Sharing: {server_name}",
         is_request=False,
+        has_account=has_account,
+        accounts=accounts,
     )
     return HTMLResponse(content=html)
 
