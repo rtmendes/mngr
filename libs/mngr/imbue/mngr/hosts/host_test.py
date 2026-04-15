@@ -706,17 +706,17 @@ def test_ensure_work_dir_exists_reinstates_worktree(
     assert (worktree_path / ".git").exists()
 
 
-def test_ensure_work_dir_exists_raises_when_source_repo_unknown(
+def test_ensure_work_dir_exists_raises_when_no_source_repo_label(
     local_provider: LocalProviderInstance,
     temp_host_dir: Path,
     tmp_path: Path,
 ) -> None:
-    """_ensure_work_dir_exists should raise when source repo cannot be determined."""
+    """_ensure_work_dir_exists should raise when no source_repo_path label is set."""
     missing_dir = tmp_path / "worktrees" / "gone"
     host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
     assert isinstance(host, Host)
 
-    # Set up agent with a branch but no source_repo_path label and no siblings
+    # Set up agent with a branch but no source_repo_path label
     agent_id = AgentId.generate()
     agent_dir = local_provider.host_dir / "agents" / str(agent_id)
     agent_dir.mkdir(parents=True)
@@ -744,7 +744,7 @@ def test_ensure_work_dir_exists_raises_when_source_repo_unknown(
         agent_config=AgentTypeConfig(command=CommandString("sleep 1")),
     )
 
-    with pytest.raises(AgentStartError, match="source repository cannot be determined"):
+    with pytest.raises(AgentStartError, match="no source_repo_path label is set"):
         host._ensure_work_dir_exists(agent)
 
 

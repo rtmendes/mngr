@@ -94,7 +94,6 @@ from imbue.mngr.utils.git_utils import GIT_MIRROR_PUSH_REFSPECS
 from imbue.mngr.utils.git_utils import get_current_git_branch
 from imbue.mngr.utils.git_utils import get_git_author_info
 from imbue.mngr.utils.git_utils import get_git_remote_url
-from imbue.mngr.utils.git_utils import parse_worktree_git_file
 from imbue.mngr.utils.polling import wait_for
 
 
@@ -1103,36 +1102,14 @@ class Host(BaseHost, OnlineHostInterface):
         certified_data = self.get_certified_data()
         return str(work_dir) in certified_data.generated_work_dirs
 
-    def _find_source_repo_for_worktree(self, missing_work_dir: Path) -> Path | None:
-        """Find the source git repository for a missing worktree.
-
-        Scans other agents on this host for existing worktrees that share the
-        same parent directory, then reads their .git file to locate the source
-        repository. Returns None if no sibling worktree can be found.
-        """
-        missing_parent = missing_work_dir.parent
-        for other_agent in self.get_agents():
-            other_dir = other_agent.work_dir
-            if other_dir == missing_work_dir:
-                continue
-            if other_dir.parent != missing_parent:
-                continue
-            # Read the .git file via command so this works on remote hosts too
-            result = self.execute_idempotent_command(f"cat {shlex.quote(str(other_dir / '.git'))}")
-            if not result.success:
-                continue
-            parsed = parse_worktree_git_file(result.stdout)
-            if parsed is not None:
-                return parsed
-        return None
-
     def _ensure_work_dir_exists(self, agent: AgentInterface) -> None:
         """Verify the agent's work_dir exists, reinstating a missing worktree if possible.
 
         tmux's -c flag silently falls back to $HOME when the directory does not
         exist, which causes the agent to launch in the wrong place and hang on a
         trust dialog. This method detects the missing directory early and attempts
-        to recreate the git worktree from the agent's stored branch name.
+        to recreate the git worktree from the agent's stored branch name and
+        source_repo_path label.
 
         Raises AgentStartError if the directory is missing and cannot be restored.
         """
@@ -1147,25 +1124,21 @@ class Host(BaseHost, OnlineHostInterface):
                 f"Work directory {agent.work_dir} does not exist and is not a git worktree (no branch recorded)",
             )
 
+        source_repo_label = agent.get_labels().get("source_repo_path")
+        if source_repo_label is None:
+            raise AgentStartError(
+                str(agent.name),
+                f"Work directory {agent.work_dir} is missing and no source_repo_path label is set"
+                " (agent was created before worktree reinstatement support was added)",
+            )
+        source_repo = Path(source_repo_label)
+
         logger.warning(
             "Agent {} work_dir {} is missing, attempting to reinstate worktree on branch {}",
             agent.name,
             agent.work_dir,
             branch,
         )
-
-        # Prefer the stored label; fall back to scanning sibling worktrees
-        labels = agent.get_labels()
-        source_repo_label = labels.get("source_repo_path")
-        if source_repo_label is not None:
-            source_repo = Path(source_repo_label)
-        else:
-            source_repo = self._find_source_repo_for_worktree(agent.work_dir)
-        if source_repo is None:
-            raise AgentStartError(
-                str(agent.name),
-                f"Work directory {agent.work_dir} is missing and the source repository cannot be determined",
-            )
 
         # Prune stale worktree bookkeeping so git allows re-adding this path
         prune_result = self.execute_idempotent_command(f"git -C {shlex.quote(str(source_repo))} worktree prune")
