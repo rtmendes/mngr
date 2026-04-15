@@ -344,7 +344,7 @@ def _offer_diagnose(
         diagnose_ctx = diagnose_command.make_context("diagnose", diagnose_args, parent=root_ctx)
         with diagnose_ctx:
             diagnose_command.invoke(diagnose_ctx)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("Diagnose command failed: {}", exc)
 
 
