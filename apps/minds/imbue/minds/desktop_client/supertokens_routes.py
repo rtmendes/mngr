@@ -47,8 +47,8 @@ from supertokens_python.types.base import AccountInfoInput
 from pydantic import PrivateAttr
 
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
-from imbue.minds.desktop_client.session_store import UserInfo
 from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
+from imbue.minds.desktop_client.supertokens_auth import UserInfo
 from imbue.minds.desktop_client.templates_auth import render_auth_page
 from imbue.minds.desktop_client.templates_auth import render_check_email_page
 from imbue.minds.desktop_client.templates_auth import render_forgot_password_page
@@ -121,7 +121,15 @@ class _MultiAccountSessionStoreAdapter(SuperTokensSessionStore):
         if not accounts:
             return None
         latest = accounts[-1]
-        return self._multi_store.get_user_info(str(latest.user_id))
+        info = self._multi_store.get_user_info(str(latest.user_id))
+        if info is None:
+            return None
+        return UserInfo(
+            user_id=info.user_id,
+            email=info.email,
+            display_name=info.display_name,
+            user_id_prefix=info.user_id_prefix,
+        )
 
     def get_access_token(self) -> str | None:
         accounts = self._multi_store.list_accounts()
