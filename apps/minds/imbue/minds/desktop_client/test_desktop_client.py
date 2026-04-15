@@ -10,6 +10,9 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from imbue.minds.config.data_types import WorkspacePaths
+from imbue.minds.desktop_client.minds_config import MindsConfig
+from imbue.minds.desktop_client.request_events import RequestInbox
+from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
 from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.app import _build_workspace_list
 from imbue.minds.desktop_client.app import create_desktop_client
@@ -1472,10 +1475,6 @@ def _create_test_client_with_stores(
     tmp_path: Path,
 ) -> tuple[TestClient, FileAuthStore]:
     """Create a desktop client with session store and config for testing new routes."""
-    from imbue.minds.desktop_client.minds_config import MindsConfig
-    from imbue.minds.desktop_client.request_events import RequestInbox
-    from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
-
     auth_dir = tmp_path / "auth"
     auth_store = FileAuthStore(data_directory=auth_dir)
     session_store = MultiAccountSessionStore(data_dir=tmp_path)
@@ -1514,8 +1513,6 @@ def test_accounts_page_shows_empty_when_no_accounts(tmp_path: Path) -> None:
 
 def test_accounts_page_shows_logged_in_accounts(tmp_path: Path) -> None:
     """The /accounts page lists logged-in accounts."""
-    from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
-
     client, auth_store = _create_test_client_with_stores(tmp_path)
     _authenticate_client(client, auth_store)
 
@@ -1575,8 +1572,6 @@ def test_request_page_not_found(tmp_path: Path) -> None:
 
 def test_set_default_account(tmp_path: Path) -> None:
     """Setting a default account works correctly."""
-    from imbue.minds.desktop_client.minds_config import MindsConfig
-
     client, auth_store = _create_test_client_with_stores(tmp_path)
     _authenticate_client(client, auth_store)
     response = client.post(
@@ -1599,8 +1594,6 @@ def test_auto_open_toggle(tmp_path: Path) -> None:
         json={"enabled": False},
     )
     assert response.status_code == 200
-
-    from imbue.minds.desktop_client.minds_config import MindsConfig
 
     config = MindsConfig(data_dir=tmp_path)
     assert config.get_auto_open_requests_panel() is False
