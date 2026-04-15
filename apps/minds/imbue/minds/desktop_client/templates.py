@@ -1280,13 +1280,13 @@ _WORKSPACE_SETTINGS_TEMPLATE: Final[str] = (
     <p class="subtitle">{{ agent_id }}</p>
 
     <h2>Account</h2>
+    <div id="account-section">
     {% if current_account %}
     <p>Associated with: <strong>{{ current_account.email }}</strong></p>
-    <form method="POST" action="/workspace/{{ agent_id }}/disassociate">
-      <p class="warning">Disassociating will remove all sharing (tunnels) for this workspace.
-        You will need to set up sharing again after re-associating.</p>
-      <button type="submit" class="btn btn-danger">Disassociate</button>
-    </form>
+    <p class="warning">Disassociating will remove all sharing (tunnels) for this workspace.
+      You will need to set up sharing again after re-associating.</p>
+    <button class="btn btn-danger" id="disassociate-btn" onclick="submitDisassociate()">Disassociate</button>
+    <span id="disassociate-spinner" style="display:none;color:#94a3b8;margin-left:8px;">Disassociating...</span>
     {% else %}
     <p>This workspace is private (not associated with any account).</p>
       {% if accounts %}
@@ -1302,6 +1302,7 @@ _WORKSPACE_SETTINGS_TEMPLATE: Final[str] = (
     <p><a href="/auth/login">Log in</a> to associate this workspace with an account.</p>
       {% endif %}
     {% endif %}
+    </div>
 
     <h2>Sharing</h2>
     {% for server in servers %}
@@ -1315,7 +1316,7 @@ _WORKSPACE_SETTINGS_TEMPLATE: Final[str] = (
 
     {% if telegram_section %}
     <h2>Telegram</h2>
-    {{ telegram_section }}
+    {{ telegram_section | safe }}
     {% endif %}
 
     <h2>Danger Zone</h2>
@@ -1326,11 +1327,29 @@ _WORKSPACE_SETTINGS_TEMPLATE: Final[str] = (
     <div style="margin-top:24px;"><a href="/">&larr; Back to workspaces</a></div>
   </div>
 
-  {% if telegram_js %}
   <script>
-  {{ telegram_js }}
-  </script>
+  function submitDisassociate() {
+    var btn = document.getElementById('disassociate-btn');
+    var spinner = document.getElementById('disassociate-spinner');
+    btn.disabled = true;
+    spinner.style.display = 'inline';
+    var section = document.getElementById('account-section');
+    section.style.opacity = '0.5';
+    section.style.pointerEvents = 'none';
+    fetch('/workspace/{{ agent_id }}/disassociate', { method: 'POST' })
+      .then(function() { window.location.reload(); })
+      .catch(function(err) {
+        alert('Failed: ' + err.message);
+        btn.disabled = false;
+        spinner.style.display = 'none';
+        section.style.opacity = '1';
+        section.style.pointerEvents = 'auto';
+      });
+  }
+  {% if telegram_js %}
+  {{ telegram_js | safe }}
   {% endif %}
+  </script>
 </body>
 </html>"""
 )
