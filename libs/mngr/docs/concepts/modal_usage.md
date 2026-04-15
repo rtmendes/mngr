@@ -30,7 +30,7 @@ A typical Modal template includes `--dangerously-skip-permissions` since Modal s
 Example template:
 
 ```toml
-[create_templates.my-modal]
+[create_templates.modal]
 provider = "modal"
 agent_args = ["--dangerously-skip-permissions"]
 pass_env = ["GH_TOKEN"]
