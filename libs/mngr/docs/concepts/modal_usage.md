@@ -143,4 +143,4 @@ mngr destroy my-agent
 
 ## What else is possible
 
-The Modal provider supports GPUs, custom Docker images, persistent volumes, network restrictions, and more. See the [Modal provider reference](core_plugins/providers/modal.md) for the full set of build arguments.
+The Modal provider supports GPUs, custom Docker images, persistent volumes, network restrictions, and more. See the [Modal provider reference](../core_plugins/providers/modal.md) for the full set of build arguments.
