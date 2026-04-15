@@ -300,9 +300,6 @@ class GitHubDataSourceConfig(FrozenModel):
     )
 
 
-_DEFAULT_CONFIG = GitHubDataSourceConfig()
-
-
 class GitHubDataSource(FrozenModel):
     """Fetches GitHub PR, CI, conflict, and unresolved comment data.
 
