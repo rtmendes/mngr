@@ -30,7 +30,7 @@ A typical Modal template includes `--dangerously-skip-permissions` since Modal s
 Example template:
 
 ```toml
-[create_templates.modal]
+[create_templates.my-modal]
 provider = "modal"
 agent_args = ["--dangerously-skip-permissions"]
 pass_env = ["GH_TOKEN"]
@@ -109,24 +109,17 @@ mngr push my-agent:config ./config
 
 See [mngr pull](../commands/primary/pull.md) and [mngr push](../commands/primary/push.md) for all options.
 
-## Snapshots
+## Lifecycle
 
-Modal sandboxes are terminated after their timeout expires. To preserve state across termination, take a snapshot before stopping:
+`mngr stop`, `mngr start`, `mngr connect`, and `mngr destroy` all work the same as for local agents.
+
+Modal sandboxes are also terminated after their timeout expires. `mngr stop` automatically takes a snapshot before terminating, and `mngr start` restores from it. You can also create named snapshots manually:
 
 ```bash
-mngr snapshot create my-agent
 mngr snapshot create my-agent --name before-refactor
 ```
 
-`mngr start` restores from the most recent snapshot. Without one, state is lost when the sandbox is terminated.
-
 Snapshots are fast, incremental, and persist after the sandbox is gone. See [mngr snapshot](../commands/secondary/snapshot.md) for details.
-
-## Cleanup
-
-```bash
-mngr destroy my-agent
-```
 
 ## What else is possible
 
