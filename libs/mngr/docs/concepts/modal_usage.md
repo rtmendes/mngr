@@ -109,33 +109,18 @@ mngr push my-agent:config ./config
 
 See [mngr pull](../commands/primary/pull.md) and [mngr push](../commands/primary/push.md) for all options.
 
-## Stopping and restarting
-
-`mngr stop` stops the agent's tmux session, but the Modal sandbox itself keeps running (and continues consuming resources) until it is terminated by timeout, idle detection, or `mngr destroy`.
-
-To preserve state across sandbox termination, take a snapshot first (see [Snapshots](#snapshots)). `mngr start` restores from the most recent snapshot — without one, state is not preserved if the sandbox is terminated.
-
-```bash
-# Take a snapshot to preserve state, then stop the agent session
-mngr snapshot create my-agent
-mngr stop my-agent
-
-# Later: restore from snapshot and reconnect
-mngr start my-agent
-mngr connect my-agent
-```
-
 ## Snapshots
 
-Modal supports native filesystem snapshots, which are fast and incremental:
+Modal sandboxes are terminated after their timeout expires. To preserve state across termination, take a snapshot before stopping:
 
 ```bash
 mngr snapshot create my-agent
 mngr snapshot create my-agent --name before-refactor
-mngr snapshot list my-agent
 ```
 
-Snapshots persist even after the sandbox is terminated. See [mngr snapshot](../commands/secondary/snapshot.md) for details.
+`mngr start` restores from the most recent snapshot. Without one, state is lost when the sandbox is terminated.
+
+Snapshots are fast, incremental, and persist after the sandbox is gone. See [mngr snapshot](../commands/secondary/snapshot.md) for details.
 
 ## Cleanup
 
