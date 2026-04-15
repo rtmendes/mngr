@@ -42,7 +42,7 @@ mngr schedule add [OPTIONS] [POSITIONAL_NAME]
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
 | `--name` | text | Name for this scheduled trigger. If not specified, a random name is generated. | None |
-| `--command` | choice (`create` &#x7C; `start` &#x7C; `message` &#x7C; `exec` &#x7C; `run`) | Which mngr command to run when triggered. | None |
+| `--command` | choice (`create` &#x7C; `start` &#x7C; `message` &#x7C; `exec`) | Which mngr command to run when triggered. | None |
 | `--args` | text | Arguments to pass to the mngr command (as a string). | None |
 | `--schedule` | text | Cron schedule expression defining when the command runs (e.g. '0 2 * * *'). | None |
 
@@ -214,7 +214,7 @@ mngr schedule update [OPTIONS] [POSITIONAL_NAME]
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
 | `--name` | text | Name for this scheduled trigger. If not specified, a random name is generated. | None |
-| `--command` | choice (`create` &#x7C; `start` &#x7C; `message` &#x7C; `exec` &#x7C; `run`) | Which mngr command to run when triggered. | None |
+| `--command` | choice (`create` &#x7C; `start` &#x7C; `message` &#x7C; `exec`) | Which mngr command to run when triggered. | None |
 | `--args` | text | Arguments to pass to the mngr command (as a string). | None |
 | `--schedule` | text | Cron schedule expression defining when the command runs (e.g. '0 2 * * *'). | None |
 

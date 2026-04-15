@@ -189,6 +189,25 @@ def _resolve_early_agent_type(opts: CreateCliOptions) -> str | None:
     return _resolve_agent_type_name(opts.type, opts.positional_agent_type, opts.command)
 
 
+def _validate_command_accepted(agent_type_name: str, command: str | None) -> None:
+    """Raise UserInputError if -c/--command is used with an agent type that does not accept it.
+
+    Unregistered types (which fall back to the default BaseAgent) are always
+    considered command-accepting, since running arbitrary commands is their
+    primary purpose.
+    """
+    if not command:
+        return
+    if not is_agent_class_registered(agent_type_name):
+        return
+    agent_class = get_agent_class(agent_type_name)
+    if not issubclass(agent_class, CommandAcceptingAgentMixin):
+        raise UserInputError(
+            f"Agent type '{agent_type_name}' does not accept -c/--command. "
+            f"Only command-accepting agent types (like 'generic' or 'headless_command') support -c."
+        )
+
+
 def _resolve_online_host(
     opts: CreateCliOptions,
     address: AgentAddress,
@@ -610,14 +629,7 @@ def create(ctx: click.Context, **kwargs) -> None:
         if resolved_agent_type is not None:
             agent_class = get_agent_class(resolved_agent_type)
             if issubclass(agent_class, StreamingHeadlessAgentMixin):
-                # Validate that -c/--command is only used with agent types that accept it.
-                # This mirrors the same check in _parse_agent_opts for the non-headless path.
-                if opts.command and is_agent_class_registered(resolved_agent_type):
-                    if not issubclass(agent_class, CommandAcceptingAgentMixin):
-                        raise UserInputError(
-                            f"Agent type '{resolved_agent_type}' does not accept -c/--command. "
-                            f"Only command-accepting agent types (like 'generic' or 'headless_command') support -c."
-                        )
+                _validate_command_accepted(resolved_agent_type, opts.command)
                 _create_headless(mngr_ctx, output_opts, opts, address, resolved_agent_type)
                 return
 
@@ -1440,16 +1452,8 @@ def _parse_agent_opts(
 
     resolved_agent_type = _resolve_agent_type_name(opts.type, opts.positional_agent_type, opts.command)
 
-    # Validate that -c/--command is only used with agent types that accept it.
-    # Unregistered types (which fall back to the default BaseAgent) are always
-    # command-accepting since running arbitrary commands is their primary purpose.
-    if opts.command and resolved_agent_type is not None and is_agent_class_registered(resolved_agent_type):
-        agent_class = get_agent_class(resolved_agent_type)
-        if not issubclass(agent_class, CommandAcceptingAgentMixin):
-            raise UserInputError(
-                f"Agent type '{resolved_agent_type}' does not accept -c/--command. "
-                f"Only command-accepting agent types (like 'generic' or 'headless_command') support -c."
-            )
+    if resolved_agent_type is not None:
+        _validate_command_accepted(resolved_agent_type, opts.command)
 
     is_clone = source_agent_state_dir is not None
 
