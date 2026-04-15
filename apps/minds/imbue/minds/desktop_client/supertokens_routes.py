@@ -82,11 +82,11 @@ def _get_latest_user_info(session_store: MultiAccountSessionStore) -> UserInfo |
 
 
 def _get_server_port(request: Request) -> int:
-    return request.app.state.supertokens_server_port
+    return request.app.state.auth_server_port
 
 
 def _get_output_format(request: Request) -> OutputFormat:
-    return request.app.state.supertokens_output_format
+    return request.app.state.auth_output_format
 
 
 async def _store_session_from_user(
@@ -206,11 +206,22 @@ async def _handle_signin_api(request: Request) -> Response:
 
 
 async def _handle_signout_api(request: Request) -> Response:
-    """Handle sign-out."""
+    """Handle sign-out for a specific account.
+
+    Expects a JSON body with a ``user_id`` field identifying which account
+    to sign out. If no user_id is provided, returns an error.
+    """
     session_store = _get_session_store(request)
-    accounts = session_store.list_accounts()
-    if accounts:
-        session_store.remove_session(str(accounts[-1].user_id))
+    try:
+        body = await request.json()
+        user_id = body.get("user_id")
+    except (json.JSONDecodeError, ValueError):
+        user_id = None
+
+    if not user_id:
+        return _json_response({"status": "ERROR", "message": "user_id is required"}, 400)
+
+    session_store.remove_session(str(user_id))
     return _json_response({"status": "OK"})
 
 

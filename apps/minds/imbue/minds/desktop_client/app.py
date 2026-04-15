@@ -1667,8 +1667,8 @@ def create_desktop_client(
     app.state.session_store = session_store
     app.state.minds_config = minds_config
     app.state.request_inbox = request_inbox
-    app.state.supertokens_server_port = server_port
-    app.state.supertokens_output_format = output_format or OutputFormat.JSONL
+    app.state.auth_server_port = server_port
+    app.state.auth_output_format = output_format or OutputFormat.JSONL
     if paths is not None:
         app.state.api_v1_paths = paths
     if http_client is not None:
