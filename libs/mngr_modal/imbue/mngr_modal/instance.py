@@ -2342,6 +2342,39 @@ log "=== Shutdown script completed ==="
             logger.debug("Found {} running host ID(s) for app={}", len(running_host_ids), self.app_name)
             return running_host_ids
 
+    def _fetch_discovery_data(
+        self, cg: ConcurrencyGroup
+    ) -> tuple[set[HostId], list[HostRecord], dict[HostId, list[dict[str, Any]]]]:
+        """Run the parallel fetch of sandbox IDs and host/agent records."""
+        with log_span("Parallel fetch: sandbox IDs + host/agent records"):
+            with ConcurrencyGroupExecutor(
+                parent_cg=cg, name=f"modal_discover_hosts_and_agents_{self.name}", max_workers=3
+            ) as executor:
+                running_ids_future = executor.submit(self._list_running_host_ids, cg)
+                host_and_agent_future = executor.submit(self._list_all_host_and_agent_records, cg)
+
+            running_host_ids = running_ids_future.result()
+            all_host_records, agent_data_by_host_id = host_and_agent_future.result()
+        return running_host_ids, all_host_records, agent_data_by_host_id
+
+    def _fetch_discovery_data_with_not_found_retry(
+        self, cg: ConcurrencyGroup
+    ) -> tuple[set[HostId], list[HostRecord], dict[HostId, list[dict[str, Any]]]]:
+        """Fetch discovery data, retrying once on ModalProxyNotFoundError.
+
+        A transient network issue (e.g. bad wifi) can cause Modal's API to
+        return a spurious not-found error for the environment, app, or volume.
+        One retry is usually enough for the request to succeed on a better
+        connection.  Other ModalProxyError subtypes (auth, rate-limit, etc.)
+        are NOT retried here -- they propagate immediately.
+        """
+        try:
+            return self._fetch_discovery_data(cg)
+        except ModalProxyNotFoundError as e:
+            logger.warning("Modal discovery got not-found error, retrying once: {}", e)
+            self._full_sandbox_list_cache = None
+            return self._fetch_discovery_data(cg)
+
     @handle_modal_auth_error
     def discover_hosts_and_agents(
         self,
@@ -2360,15 +2393,9 @@ log "=== Shutdown script completed ==="
         """
         with log_span("Modal discover_hosts_and_agents for provider={}", self.name):
             try:
-                with log_span("Parallel fetch: sandbox IDs + host/agent records"):
-                    with ConcurrencyGroupExecutor(
-                        parent_cg=cg, name=f"modal_discover_hosts_and_agents_{self.name}", max_workers=3
-                    ) as executor:
-                        running_ids_future = executor.submit(self._list_running_host_ids, cg)
-                        host_and_agent_future = executor.submit(self._list_all_host_and_agent_records, cg)
-
-                    running_host_ids = running_ids_future.result()
-                    all_host_records, agent_data_by_host_id = host_and_agent_future.result()
+                running_host_ids, all_host_records, agent_data_by_host_id = (
+                    self._fetch_discovery_data_with_not_found_retry(cg)
+                )
             except ModalProxyAuthError as e:
                 raise ModalAuthError() from e
             except ModalProxyError as e:
