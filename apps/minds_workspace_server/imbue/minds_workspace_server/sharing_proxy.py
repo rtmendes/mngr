@@ -134,16 +134,18 @@ def request_sharing_edit(server_name: str, is_user_requested: bool = True) -> No
         }
         # Extract emails from auth rules for convenience
         for rule in status.auth_rules:
-            includes = rule.get("include", [])
+            includes = rule.get("include")
             if not isinstance(includes, list):
                 continue
             for inc_item in includes:
                 if not isinstance(inc_item, dict):
                     continue
-                email_entry = inc_item.get("email")
+                inc_dict: dict[str, object] = inc_item
+                email_entry = inc_dict.get("email")
                 if not isinstance(email_entry, dict):
                     continue
-                email_value = email_entry.get("email")
+                email_dict: dict[str, object] = email_entry
+                email_value = email_dict.get("email")
                 if email_value:
                     suggested_emails.append(str(email_value))
     except SharingProxyError:
