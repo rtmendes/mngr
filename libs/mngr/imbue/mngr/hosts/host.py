@@ -1129,8 +1129,7 @@ class Host(BaseHost, OnlineHostInterface):
         if source_repo_label is None:
             raise AgentStartError(
                 str(agent.name),
-                f"Work directory {agent.work_dir} is missing and no source_repo_path label is set"
-                " (agent was created before worktree reinstatement support was added)",
+                f"Work directory {agent.work_dir} is missing and no source_repo_path label is set",
             )
         source_repo = Path(source_repo_label)
 
