@@ -69,7 +69,7 @@ PALETTE = [
     ("section_cancelled", "dark gray", ""),
     ("section_in_review", "light cyan", ""),
     ("section_in_progress", "yellow", ""),
-    ("section_draft", "light blue", ""),
+    ("section_draft", "dark cyan", ""),
     ("section_prs_failed", "light red", ""),
     # CI checks (only failing and pending get color; passing is default)
     ("check_failing", "light red", ""),
