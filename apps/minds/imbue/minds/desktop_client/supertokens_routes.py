@@ -77,7 +77,7 @@ def _get_session_store(request: Request) -> SuperTokensSessionStore:
     """
     store = request.app.state.supertokens_session_store
     if isinstance(store, MultiAccountSessionStore):
-        return _MultiAccountSessionStoreAdapter(multi_store=store)
+        return _MultiAccountSessionStoreAdapter.create(store)
     return store
 
 
@@ -87,12 +87,18 @@ class _MultiAccountSessionStoreAdapter(SuperTokensSessionStore):
     Provides the SuperTokensSessionStore interface by operating on the
     most recently added account (since the supertokens OAuth flow always
     produces a session for the account that just signed in).
+
+    Constructed via Pydantic (no __init__) with a data_directory pointing
+    to the multi_store's data_dir. The _multi_store is injected via
+    object.__setattr__ after construction.
     """
 
-    def __init__(self, multi_store: MultiAccountSessionStore) -> None:
-        # Initialize the parent with a dummy directory (we override all methods)
-        super().__init__(data_directory=multi_store.data_dir / "supertokens")
-        object.__setattr__(self, "_multi_store", multi_store)
+    @staticmethod
+    def create(multi_store: MultiAccountSessionStore) -> "_MultiAccountSessionStoreAdapter":
+        """Create an adapter wrapping the given multi-account store."""
+        adapter = _MultiAccountSessionStoreAdapter(data_directory=multi_store.data_dir / "supertokens")
+        object.__setattr__(adapter, "_multi_store", multi_store)
+        return adapter
 
     def store_session(
         self,

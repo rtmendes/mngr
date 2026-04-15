@@ -11,6 +11,7 @@ import base64
 import binascii
 import json
 import threading
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -93,8 +94,6 @@ def _jwt_seconds_until_expiry(token: str) -> float | None:
         exp = payload.get("exp")
         if exp is None:
             return None
-        import time
-
         return float(exp) - time.time()
     except (IndexError, ValueError, json.JSONDecodeError, binascii.Error):
         return None
