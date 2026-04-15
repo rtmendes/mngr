@@ -2191,7 +2191,6 @@ class Host(BaseHost, OnlineHostInterface):
         work_dir_path: Path,
         options: CreateAgentOptions,
         created_branch_name: str | None = None,
-        source_repo_path: Path | None = None,
     ) -> AgentInterface:
         """Create the agent state directory and return the agent.
 
@@ -2262,10 +2261,7 @@ class Host(BaseHost, OnlineHostInterface):
                 "ready_timeout_seconds": options.ready_timeout_seconds,
                 "permissions": [],
                 "start_on_boot": False,
-                "labels": {
-                    **options.label_options.labels,
-                    **({"source_repo_path": str(source_repo_path)} if source_repo_path is not None else {}),
-                },
+                "labels": dict(options.label_options.labels),
                 "created_branch_name": created_branch_name,
             }
 

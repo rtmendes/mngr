@@ -442,7 +442,6 @@ class OnlineHostInterface(HostInterface, ABC):
         work_dir_path: Path,
         options: CreateAgentOptions,
         created_branch_name: str | None = None,
-        source_repo_path: Path | None = None,
     ) -> AgentInterface:
         """Create the state directory and metadata for a new agent."""
         ...

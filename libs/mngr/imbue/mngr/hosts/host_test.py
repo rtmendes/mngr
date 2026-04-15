@@ -561,63 +561,38 @@ def test_get_created_branch_name_returns_none_when_null(
 # =========================================================================
 
 
-def test_create_agent_state_stores_source_repo_path_label(
+def test_source_repo_path_label_stored_via_label_options(
     local_host: Host,
     temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
-    """create_agent_state should store source_repo_path as a label."""
+    """source_repo_path passed as a regular label should be stored in data.json."""
     options = CreateAgentOptions(
         name=AgentName("test-source-label"),
         agent_type=AgentTypeName("generic"),
         command=CommandString("sleep 1"),
+        label_options=AgentLabelOptions(labels={"source_repo_path": "/tmp/my-source-repo"}),
     )
 
-    agent = local_host.create_agent_state(
-        temp_work_dir,
-        options,
-        created_branch_name="mngr/my-branch",
-        source_repo_path=Path("/tmp/my-source-repo"),
-    )
+    agent = local_host.create_agent_state(temp_work_dir, options, created_branch_name="mngr/my-branch")
 
     assert agent.get_labels()["source_repo_path"] == "/tmp/my-source-repo"
 
 
-def test_create_agent_state_omits_source_repo_path_label_when_none(
+def test_source_repo_path_label_coexists_with_user_labels(
     local_host: Host,
     temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
-    """create_agent_state should not add a source_repo_path label when not provided."""
-    options = CreateAgentOptions(
-        name=AgentName("test-no-source-label"),
-        agent_type=AgentTypeName("generic"),
-        command=CommandString("sleep 1"),
-    )
-
-    agent = local_host.create_agent_state(temp_work_dir, options)
-
-    assert "source_repo_path" not in agent.get_labels()
-
-
-def test_create_agent_state_merges_source_repo_path_with_user_labels(
-    local_host: Host,
-    temp_host_dir: Path,
-    temp_work_dir: Path,
-) -> None:
-    """source_repo_path label should coexist with user-provided labels."""
+    """source_repo_path label should coexist with other user-provided labels."""
     options = CreateAgentOptions(
         name=AgentName("test-merged-labels"),
         agent_type=AgentTypeName("generic"),
         command=CommandString("sleep 1"),
-        label_options=AgentLabelOptions(labels={"team": "infra"}),
+        label_options=AgentLabelOptions(labels={"team": "infra", "source_repo_path": "/repos/myproject"}),
     )
 
-    agent = local_host.create_agent_state(
-        temp_work_dir,
-        options,
-        source_repo_path=Path("/repos/myproject"),
-    )
+    agent = local_host.create_agent_state(temp_work_dir, options)
 
     labels = agent.get_labels()
     assert labels["team"] == "infra"

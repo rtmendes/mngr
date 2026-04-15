@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Final
 from typing import cast
 
@@ -6,6 +5,7 @@ from loguru import logger
 
 from imbue.imbue_common.logging import log_call
 from imbue.imbue_common.logging import log_span
+from imbue.imbue_common.model_update import to_update
 from imbue.mngr.api.data_types import CreateAgentResult
 from imbue.mngr.api.discovery_events import emit_discovery_events_for_host
 from imbue.mngr.api.providers import get_provider_instance
@@ -16,6 +16,7 @@ from imbue.mngr.errors import HostNameConflictError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.hosts.host import HostLocation
 from imbue.mngr.interfaces.agent import AgentInterface
+from imbue.mngr.interfaces.host import AgentLabelOptions
 from imbue.mngr.interfaces.host import CreateAgentOptions
 from imbue.mngr.interfaces.host import HostEnvironmentOptions
 from imbue.mngr.interfaces.host import NewHostOptions
@@ -78,7 +79,6 @@ def create(
     mngr_ctx: MngrContext,
     create_work_dir: bool = True,
     created_branch_name: str | None = None,
-    source_repo_path: Path | None = None,
 ) -> CreateAgentResult:
     """Create and run an agent.
 
@@ -141,7 +141,18 @@ def create(
                 work_dir_result = host.create_agent_work_dir(source_location.host, source_location.path, agent_options)
                 work_dir_path = work_dir_result.path
                 created_branch_name = work_dir_result.created_branch_name
-                source_repo_path = work_dir_result.source_repo_path
+                if work_dir_result.source_repo_path is not None:
+                    agent_options = agent_options.model_copy_update(
+                        to_update(
+                            agent_options.field_ref().label_options,
+                            AgentLabelOptions(
+                                labels={
+                                    "source_repo_path": str(work_dir_result.source_repo_path),
+                                    **agent_options.label_options.labels,
+                                }
+                            ),
+                        ),
+                    )
             with log_span("Calling on_after_initial_file_copy hooks"):
                 mngr_ctx.pm.hook.on_after_initial_file_copy(
                     agent_options=agent_options, host=host, work_dir_path=work_dir_path
@@ -156,12 +167,7 @@ def create(
 
         # Create the agent state (registers the agent with the host)
         with log_span("Creating agent state in work directory {}", work_dir_path):
-            agent = host.create_agent_state(
-                work_dir_path,
-                agent_options,
-                created_branch_name=created_branch_name,
-                source_repo_path=source_repo_path,
-            )
+            agent = host.create_agent_state(work_dir_path, agent_options, created_branch_name=created_branch_name)
 
         # Run provisioning for the agent (hooks, dependency installation, etc.)
         with log_span("Calling on_before_provisioning hooks"):
