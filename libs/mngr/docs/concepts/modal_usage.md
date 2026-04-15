@@ -34,7 +34,10 @@ Example template:
 provider = "modal"
 agent_args = ["--dangerously-skip-permissions"]
 pass_env = ["GH_TOKEN"]
+extra_window = ["github_setup='ssh-keyscan github.com >> ~/.ssh/known_hosts && git remote set-url origin https://github.com/<org>/<repo>.git && gh auth setup-git'"]
 ```
+
+The `extra_window` creates a tmux window that trusts GitHub's host key, switches the remote to HTTPS (since the sandbox won't have your SSH keys), and configures git to authenticate via `gh` (which uses `GH_TOKEN`).
 
 See [Create Templates](../customization.md#create-templates) for the full set of template options.
 
