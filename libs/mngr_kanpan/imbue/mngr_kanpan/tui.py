@@ -1100,7 +1100,7 @@ class _ColumnDef(FrozenModel):
     name: str
     header: str
     text_fn: Callable[[AgentBoardEntry], str]
-    markup_fn: Callable[[AgentBoardEntry], str | tuple[Hashable, str]]
+    markup_fn: Callable[[AgentBoardEntry], str | tuple[Hashable, str] | list[str | tuple[Hashable, str]]]
     flexible: bool
 
 
@@ -1125,7 +1125,7 @@ class _FieldCellMarkupFn(FrozenModel):
 # Built-in column definitions for name and state (always present)
 _BUILTIN_COLUMN_DEFS: list[_ColumnDef] = [
     _ColumnDef(
-        name="name", header="  NAME", text_fn=_get_name_cell_text, markup_fn=_get_name_cell_text, flexible=False
+        name="name", header="  NAME", text_fn=_get_name_cell_text, markup_fn=_get_name_cell_markup, flexible=False
     ),
     _ColumnDef(
         name="state", header="STATE", text_fn=_get_state_cell_text, markup_fn=_get_state_cell_markup, flexible=False
