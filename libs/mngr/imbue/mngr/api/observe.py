@@ -423,8 +423,6 @@ class AgentObserver(MutableModel):
             self._handle_full_snapshot(event)
         elif isinstance(event, HostDestroyedEvent):
             self._handle_host_destroyed(event)
-        else:
-            pass
 
     def _handle_full_snapshot(self, event: FullDiscoverySnapshotEvent) -> None:
         """Update known hosts from a full discovery snapshot and sync activity streams."""
