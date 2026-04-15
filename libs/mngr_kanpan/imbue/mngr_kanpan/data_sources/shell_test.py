@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import cast
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.config.data_types import MngrContext
@@ -77,8 +78,7 @@ def test_build_shell_env_with_other_field() -> None:
 
 def _make_real_mngr_ctx(cg: ConcurrencyGroup) -> MngrContext:
     """Build a minimal mngr_ctx with a real active ConcurrencyGroup."""
-    ctx: MngrContext = SimpleNamespace(concurrency_group=cg)  # ty: ignore[invalid-assignment]
-    return ctx
+    return cast(MngrContext, SimpleNamespace(concurrency_group=cg))
 
 
 def test_compute_success() -> None:
