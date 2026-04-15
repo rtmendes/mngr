@@ -44,13 +44,8 @@ from supertokens_python.syncio import get_user
 from supertokens_python.types import RecipeUserId
 from supertokens_python.types.base import AccountInfoInput
 
-from pydantic import PrivateAttr
-
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
-from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
-from imbue.minds.desktop_client.supertokens_auth import SuperTokensUserId as AuthSuperTokensUserId
-from imbue.minds.desktop_client.supertokens_auth import UserIdPrefix as AuthUserIdPrefix
-from imbue.minds.desktop_client.supertokens_auth import UserInfo
+from imbue.minds.desktop_client.session_store import UserInfo
 from imbue.minds.desktop_client.templates_auth import render_auth_page
 from imbue.minds.desktop_client.templates_auth import render_check_email_page
 from imbue.minds.desktop_client.templates_auth import render_forgot_password_page
@@ -73,83 +68,17 @@ def _json_response(data: dict[str, object], status_code: int = 200) -> Response:
     )
 
 
-def _get_session_store(request: Request) -> SuperTokensSessionStore:
-    """Return the supertokens session store.
-
-    When the app uses MultiAccountSessionStore, a thin adapter wraps it
-    to provide the SuperTokensSessionStore interface expected by these routes.
-    """
-    store = request.app.state.supertokens_session_store
-    if isinstance(store, MultiAccountSessionStore):
-        return _MultiAccountSessionStoreAdapter.create(store)
-    return store
+def _get_session_store(request: Request) -> MultiAccountSessionStore:
+    """Return the multi-account session store from app state."""
+    return request.app.state.session_store
 
 
-class _MultiAccountSessionStoreAdapter(SuperTokensSessionStore):
-    """Adapter that wraps MultiAccountSessionStore for supertokens routes.
-
-    Provides the SuperTokensSessionStore interface by operating on the
-    most recently added account (since the supertokens OAuth flow always
-    produces a session for the account that just signed in).
-    """
-
-    _multi_store: MultiAccountSessionStore = PrivateAttr()
-
-    @staticmethod
-    def create(multi_store: MultiAccountSessionStore) -> "_MultiAccountSessionStoreAdapter":
-        """Create an adapter wrapping the given multi-account store."""
-        adapter = _MultiAccountSessionStoreAdapter(data_directory=multi_store.data_dir / "supertokens")
-        adapter._multi_store = multi_store
-        return adapter
-
-    def store_session(
-        self,
-        access_token: str,
-        refresh_token: str | None,
-        user_id: str,
-        email: str,
-        display_name: str | None = None,
-    ) -> None:
-        self._multi_store.add_or_update_session(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user_id=user_id,
-            email=email,
-            display_name=display_name,
-        )
-
-    def get_user_info(self) -> UserInfo | None:
-        accounts = self._multi_store.list_accounts()
-        if not accounts:
-            return None
-        latest = accounts[-1]
-        info = self._multi_store.get_user_info(str(latest.user_id))
-        if info is None:
-            return None
-        return UserInfo(
-            user_id=AuthSuperTokensUserId(str(info.user_id)),
-            email=info.email,
-            display_name=info.display_name,
-            user_id_prefix=AuthUserIdPrefix(str(info.user_id_prefix)),
-        )
-
-    def get_access_token(self) -> str | None:
-        accounts = self._multi_store.list_accounts()
-        if not accounts:
-            return None
-        latest = accounts[-1]
-        return self._multi_store.get_access_token(str(latest.user_id))
-
-    def is_signed_in(self) -> bool:
-        return self._multi_store.is_any_signed_in()
-
-    def has_signed_in_before(self) -> bool:
-        return self._multi_store.has_signed_in_before()
-
-    def clear_session(self) -> None:
-        accounts = self._multi_store.list_accounts()
-        if accounts:
-            self._multi_store.remove_session(str(accounts[-1].user_id))
+def _get_latest_user_info(session_store: MultiAccountSessionStore) -> UserInfo | None:
+    """Return user info for the most recently added account, or None."""
+    accounts = session_store.list_accounts()
+    if not accounts:
+        return None
+    return session_store.get_user_info(str(accounts[-1].user_id))
 
 
 def _get_server_port(request: Request) -> int:
@@ -161,18 +90,18 @@ def _get_output_format(request: Request) -> OutputFormat:
 
 
 async def _store_session_from_user(
-    session_store: SuperTokensSessionStore,
+    session_store: MultiAccountSessionStore,
     user_id: str,
     email: str,
     display_name: str | None = None,
 ) -> None:
-    """Create a SuperTokens session and store the tokens on disk."""
+    """Create a SuperTokens session and store the tokens in the multi-account store."""
     session = await create_new_session_without_request_response(
         tenant_id=_TENANT_ID,
         recipe_user_id=RecipeUserId(user_id),
     )
     tokens = session.get_all_session_tokens_dangerously()
-    session_store.store_session(
+    session_store.add_or_update_session(
         access_token=tokens["accessToken"],
         refresh_token=tokens["refreshToken"] or None,
         user_id=user_id,
@@ -279,14 +208,16 @@ async def _handle_signin_api(request: Request) -> Response:
 async def _handle_signout_api(request: Request) -> Response:
     """Handle sign-out."""
     session_store = _get_session_store(request)
-    session_store.clear_session()
+    accounts = session_store.list_accounts()
+    if accounts:
+        session_store.remove_session(str(accounts[-1].user_id))
     return _json_response({"status": "OK"})
 
 
 def _handle_status_api(request: Request) -> Response:
     """Return current auth status and user info."""
     session_store = _get_session_store(request)
-    user_info = session_store.get_user_info()
+    user_info = _get_latest_user_info(session_store)
     if user_info is None:
         return _json_response({"signedIn": False})
     return _json_response(
@@ -303,7 +234,7 @@ def _handle_status_api(request: Request) -> Response:
 def _handle_email_verified_api(request: Request) -> Response:
     """Check if the current user's email is verified."""
     session_store = _get_session_store(request)
-    user_info = session_store.get_user_info()
+    user_info = _get_latest_user_info(session_store)
     if user_info is None:
         return _json_response({"verified": False, "signedIn": False})
     user = get_user(str(user_info.user_id))
@@ -319,7 +250,7 @@ def _handle_email_verified_api(request: Request) -> Response:
 def _handle_resend_verification_api(request: Request) -> Response:
     """Resend the email verification email."""
     session_store = _get_session_store(request)
-    user_info = session_store.get_user_info()
+    user_info = _get_latest_user_info(session_store)
     if user_info is None:
         return _json_response({"status": "ERROR", "message": "Not signed in"}, 401)
     user = get_user(str(user_info.user_id))
@@ -340,7 +271,7 @@ def _handle_resend_verification_api(request: Request) -> Response:
 def _handle_check_email_page(request: Request) -> HTMLResponse:
     """Render the 'check your email' page."""
     session_store = _get_session_store(request)
-    user_info = session_store.get_user_info()
+    user_info = _get_latest_user_info(session_store)
     email = user_info.email if user_info else "your email"
     return HTMLResponse(render_check_email_page(email=email))
 
@@ -520,7 +451,7 @@ async def _handle_verify_email(request: Request, token: str = "", tenantId: str 
 def _handle_settings_page(request: Request) -> HTMLResponse:
     """Render the account settings page."""
     session_store = _get_session_store(request)
-    user_info = session_store.get_user_info()
+    user_info = _get_latest_user_info(session_store)
     if user_info is None:
         return HTMLResponse(
             status_code=302,
@@ -550,7 +481,7 @@ def _handle_settings_page(request: Request) -> HTMLResponse:
 
 
 def create_supertokens_router(
-    session_store: SuperTokensSessionStore | MultiAccountSessionStore,
+    session_store: MultiAccountSessionStore,
     server_port: int,
     output_format: OutputFormat,
 ) -> APIRouter:

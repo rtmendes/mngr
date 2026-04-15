@@ -157,12 +157,11 @@ def start_desktop_client(
     for resp in response_events:
         request_inbox = request_inbox.add_response(resp)
 
-    # Initialize SuperTokens if configured
-    supertokens_session_store = _init_supertokens(
+    # Initialize SuperTokens SDK if configured
+    _init_supertokens(
         data_directory=data_directory,
         host=host,
         port=port,
-        session_store=session_store,
     )
 
     # Generate a one-time login URL for the user
@@ -205,7 +204,6 @@ def start_desktop_client(
         notification_dispatcher=notification_dispatcher,
         paths=paths,
         stream_manager=stream_manager,
-        supertokens_session_store=supertokens_session_store,
         session_store=session_store,
         minds_config=minds_config,
         request_inbox=request_inbox,
@@ -234,13 +232,12 @@ def _init_supertokens(
     data_directory: Path,
     host: str,
     port: int,
-    session_store: MultiAccountSessionStore | None = None,
-) -> MultiAccountSessionStore | None:
-    """Initialize the SuperTokens SDK and return a session store, or None if not configured."""
+) -> None:
+    """Initialize the SuperTokens SDK if configured."""
     connection_uri = os.environ.get("SUPERTOKENS_CONNECTION_URI")
     if not connection_uri:
         logger.info("SuperTokens not configured (SUPERTOKENS_CONNECTION_URI not set)")
-        return None
+        return
 
     api_key = os.environ.get("SUPERTOKENS_API_KEY")
     google_client_id = os.environ.get("GOOGLE_CLIENT_ID")
@@ -307,9 +304,7 @@ def _init_supertokens(
         mode="asgi",
     )
 
-    effective_store = session_store if session_store is not None else MultiAccountSessionStore(data_dir=data_directory)
     logger.info("SuperTokens initialized (core: {})", connection_uri)
-    return effective_store
 
 
 def _build_cloudflare_client() -> CloudflareForwardingClient | None:

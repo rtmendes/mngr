@@ -56,7 +56,6 @@ from imbue.minds.desktop_client.request_events import SharingRequestEvent
 from imbue.minds.desktop_client.request_events import append_response_event
 from imbue.minds.desktop_client.request_events import create_request_response_event
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
-from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
 from imbue.minds.desktop_client.api_v1 import inject_tunnel_token_into_agent
 from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token as _load_tunnel_token
 from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token as _save_tunnel_token
@@ -1618,7 +1617,6 @@ def create_desktop_client(
     notification_dispatcher: NotificationDispatcher | None = None,
     paths: WorkspacePaths | None = None,
     stream_manager: MngrStreamManager | None = None,
-    supertokens_session_store: SuperTokensSessionStore | MultiAccountSessionStore | None = None,
     session_store: MultiAccountSessionStore | None = None,
     minds_config: MindsConfig | None = None,
     request_inbox: RequestInbox | None = None,
@@ -1666,7 +1664,6 @@ def create_desktop_client(
     app.state.cloudflare_client = cloudflare_client
     app.state.telegram_orchestrator = telegram_orchestrator
     app.state.notification_dispatcher = notification_dispatcher
-    app.state.supertokens_session_store = supertokens_session_store
     app.state.session_store = session_store
     app.state.minds_config = minds_config
     app.state.request_inbox = request_inbox
@@ -1678,9 +1675,9 @@ def create_desktop_client(
         app.state.http_client = http_client
 
     # Mount the SuperTokens auth routes
-    if supertokens_session_store is not None:
+    if session_store is not None:
         supertokens_router = create_supertokens_router(
-            session_store=supertokens_session_store,
+            session_store=session_store,
             server_port=server_port,
             output_format=output_format or OutputFormat.JSONL,
         )
