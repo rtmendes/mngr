@@ -1084,16 +1084,9 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
 </head>
 <body>
   <div class="page">
-    {% if is_request %}
     <h1>Share <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:18px;">{{ server_name }}</code>
       in <a href="/forwarding/{{ agent_id }}/" style="font-size:20px;">{{ ws_name or agent_id }}</a>
       {% if account_email %}(<a href="/accounts">{{ account_email }}</a>){% endif %}?</h1>
-    {% else %}
-    <h1>{{ title }}</h1>
-    {% if ws_name %}
-    <p class="subtitle"><a href="/forwarding/{{ agent_id }}/">{{ ws_name }}</a>{% if account_email %} &middot; <a href="/accounts">{{ account_email }}</a>{% endif %}</p>
-    {% endif %}
-    {% endif %}
 
     {% if not has_account %}
     """
@@ -1282,28 +1275,37 @@ _SHARING_EDITOR_TEMPLATE: Final[str] = (
       document.getElementById('loading-state').style.display = 'none';
       document.getElementById('editor-content').style.display = 'block';
 
-      // Extract existing emails from server
+      // Extract emails from auth_rules
+      var serverEmails = [];
       if (data.auth_rules) {
         data.auth_rules.forEach(function(rule) {
           (rule.include || []).forEach(function(inc) {
-            if (inc.email && inc.email.email && existing.indexOf(inc.email.email) < 0) {
-              existing.push(inc.email.email);
+            if (inc.email && inc.email.email && serverEmails.indexOf(inc.email.email) < 0) {
+              serverEmails.push(inc.email.email);
             }
           });
         });
       }
 
-      if (data.enabled && data.url) {
-        document.getElementById('url-section').style.display = 'block';
-        document.getElementById('share-url').value = data.url;
-      }
-
       if (data.enabled) {
+        // Sharing is already on: server emails are "existing"
+        existing = serverEmails;
+        document.getElementById('action-btn').textContent = 'Update';
+        if (data.url) {
+          document.getElementById('url-section').style.display = 'block';
+          document.getElementById('share-url').value = data.url;
+        }
         var disableBtn = document.getElementById('disable-btn');
         if (disableBtn) disableBtn.style.display = 'inline-block';
+      } else {
+        // Not yet enabled: default tunnel permissions + proposed are all "added"
+        serverEmails.forEach(function(e) {
+          if (added.indexOf(e) < 0) added.push(e);
+        });
+        document.getElementById('action-btn').textContent = 'Share';
       }
 
-      // Compute diff: proposed emails that aren't in existing go to added
+      // Proposed emails that aren't already existing or added go to added
       proposedEmails.forEach(function(e) {
         if (existing.indexOf(e) < 0 && added.indexOf(e) < 0) {
           added.push(e);
