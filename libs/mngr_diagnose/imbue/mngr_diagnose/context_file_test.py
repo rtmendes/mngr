@@ -38,4 +38,4 @@ def test_read_minimal_context(tmp_path: Path) -> None:
 
 def test_diagnose_context_is_frozen() -> None:
     ctx = DiagnoseContext(mngr_version="0.2.4")
-    assert ctx.model_config.get("frozen") is True or hasattr(ctx, "model_fields")
+    assert ctx.model_config.get("frozen") is True
