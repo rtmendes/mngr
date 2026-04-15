@@ -951,11 +951,12 @@ def _finish_refresh(loop: MainLoop, state: _KanpanState) -> None:
     try:
         fetch_result = state.refresh_future.result()
         new_snapshot = fetch_result.snapshot
-        # Update in-memory field cache
-        state.cached_fields = fetch_result.cached_fields
-        # Persist cache to disk after full refreshes
+        # Update in-memory field cache only for full refreshes: local-only refreshes do not
+        # produce remote fields (PR, CI, etc.), so overwriting would lose the remote data that
+        # the next full refresh needs as its cached_fields input.
         if not was_local_only:
-            save_field_cache(state.mngr_ctx, state.cached_fields, state.data_sources)
+            state.cached_fields = fetch_result.cached_fields
+            save_field_cache(state.mngr_ctx, state.cached_fields)
         # For local-only refreshes, carry forward fields from previous snapshot
         if was_local_only and state.snapshot is not None:
             new_snapshot = _carry_forward_fields(state.snapshot, new_snapshot)
