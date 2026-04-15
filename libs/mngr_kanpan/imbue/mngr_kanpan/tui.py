@@ -1138,12 +1138,7 @@ _BUILTIN_COLUMN_DEFS: list[_ColumnDef] = [
 def _build_data_source_column_defs(
     data_sources: Sequence[KanpanDataSource],
 ) -> list[_ColumnDef]:
-    """Build column definitions from data source declarations.
-
-    Returns all column defs, including those with empty headers. Empty-header
-    columns (e.g. create_pr_url) are excluded from the default column order but
-    can be added explicitly via column_order config.
-    """
+    """Build column definitions from data source declarations."""
     defs: list[_ColumnDef] = []
     seen: set[str] = set()
     for source in data_sources:
@@ -1151,6 +1146,9 @@ def _build_data_source_column_defs(
             if field_key in seen:
                 continue
             seen.add(field_key)
+            # Skip empty headers (infrastructure columns like create_pr_url)
+            if not header:
+                continue
             defs.append(
                 _ColumnDef(
                     name=field_key,
@@ -1171,13 +1169,12 @@ def _assemble_column_defs(
 ) -> list[_ColumnDef]:
     """Assemble the final ordered list of column definitions.
 
-    If column_order is None, default ordering is: builtins + non-empty-header source columns.
-    If column_order is provided, definitions are returned in that order (all source defs,
-    including empty-header ones, are available in the registry for explicit use).
+    If column_order is None, default ordering is: builtins + source columns.
+    If column_order is provided, definitions are returned in that order.
     The last column always gets flexible=True.
     """
     if column_order is None:
-        result = builtin_defs + [d for d in source_defs if d.header]
+        result = builtin_defs + source_defs
     else:
         registry: dict[str, _ColumnDef] = {d.name: d for d in builtin_defs + source_defs}
         result = [registry[name] for name in column_order if name in registry]
