@@ -38,14 +38,16 @@ def test_schedule_run_and_remove_modal_trigger() -> None:
 
     try:
         # Step 1: Deploy a trigger that runs mngr create with a headless agent type.
-        # mngr create auto-detects headless agent types (StreamingHeadlessAgentMixin)
-        # and streams their output, which run_scheduled_trigger() returns via fn.remote().
+        # mngr create detects headless agent types (StreamingHeadlessAgentMixin)
+        # and streams their output when --foreground is set.  The -S flag
+        # configures the headless_command agent type's command at runtime.
         add_result = deploy_test_trigger(
             trigger_name,
             env,
             _ENABLED_PLUGINS,
             command="create",
-            args="--type headless_command -c 'echo hello-from-schedule-run'",
+            args="--type headless_command --foreground"
+            " -S agent_types.headless_command.command='echo hello-from-schedule-run'",
         )
         assert add_result.returncode == 0, (
             f"schedule add failed\nstdout: {add_result.stdout}\nstderr: {add_result.stderr}"
