@@ -27,8 +27,6 @@ def _create_modal_agent(
             "--no-ensure-clean",
             "--source",
             str(temp_source_dir),
-            "--",
-            "sleep 99123",
         ],
         capture_output=True,
         text=True,

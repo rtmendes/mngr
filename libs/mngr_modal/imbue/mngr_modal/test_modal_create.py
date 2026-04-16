@@ -333,8 +333,6 @@ def test_mngr_create_transfers_git_repo_with_untracked_files(
             "--no-ensure-clean",
             "--source",
             str(temp_git_repo),
-            "--",
-            "sleep 3600",
         ],
         capture_output=True,
         text=True,
@@ -374,8 +372,6 @@ def test_mngr_create_transfers_git_repo_with_new_branch(
             "--no-ensure-clean",
             "--source",
             str(temp_git_repo),
-            "--",
-            "git rev-parse --abbrev-ref HEAD && sleep 3600",
         ],
         capture_output=True,
         text=True,
@@ -414,7 +410,6 @@ def test_mngr_create_with_default_dockerfile_on_modal(
     This test is marked as release since it takes longer due to the image build.
     """
     agent_name = f"test-modal-default-df-{get_short_random_string()}"
-    unique_marker = f"default-dockerfile-{get_short_random_string()}"
 
     dockerfile_path = _get_mngr_default_dockerfile_path(modal_test_sleep_agent_type)
     assert dockerfile_path.exists(), f"Default Dockerfile not found at {dockerfile_path}"
@@ -455,8 +450,6 @@ def test_mngr_create_with_default_dockerfile_on_modal(
             f"--file={dockerfile_path}",
             "-b",
             f"context-dir={temp_dir_with_tar}",
-            "--",
-            f"echo {unique_marker} && which uv && which claude && sleep 30",
         ],
         capture_output=True,
         text=True,
