@@ -5,6 +5,7 @@ import json
 import pytest
 
 from imbue.mngr.e2e.conftest import E2eSession
+from imbue.mngr.utils.testing import TEST_SLEEP_COMMAND
 from imbue.skitwright.expect import expect
 
 
@@ -30,7 +31,7 @@ def test_create_with_custom_command(e2e: E2eSession) -> None:
         comment="Verify the agent's sleep command is running",
     )
     expect(ps_result).to_succeed()
-    expect(ps_result.stdout).to_contain("sleep 99999")
+    expect(ps_result.stdout).to_contain(TEST_SLEEP_COMMAND)
 
 
 @pytest.mark.release
