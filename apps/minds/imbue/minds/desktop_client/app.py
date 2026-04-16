@@ -1589,6 +1589,7 @@ async def _handle_sharing_enable(
     except json.JSONDecodeError:
         emails = []
 
+    sharing_succeeded = False
     cf_client, error_response = get_cf_client_with_auth(request, agent_id=AgentId(agent_id))
     if cf_client is not None:
         parsed_id = AgentId(agent_id)
@@ -1603,6 +1604,7 @@ async def _handle_sharing_enable(
                     _save_tunnel_token(paths.data_dir, parsed_id, token)
                     inject_tunnel_token_into_agent(parsed_id, token)
             cf_client.add_service(parsed_id, parsed_server, backend_url)
+            sharing_succeeded = True
             # Apply auth rules if emails were provided
             if emails:
                 rules: list[dict[str, object]] = [
@@ -1610,9 +1612,9 @@ async def _handle_sharing_enable(
                 ]
                 cf_client.set_service_auth(parsed_id, str(parsed_server), rules)
 
-    # If there's a pending request for this agent/server, mark it as granted
+    # If there's a pending request for this agent/server, mark it as granted only if sharing succeeded
     inbox: RequestInbox | None = request.app.state.request_inbox
-    if inbox is not None:
+    if inbox is not None and sharing_succeeded:
         for req in inbox.get_pending_requests():
             if isinstance(req, SharingRequestEvent) and req.agent_id == agent_id and req.server_name == server_name:
                 paths = request.app.state.api_v1_paths
