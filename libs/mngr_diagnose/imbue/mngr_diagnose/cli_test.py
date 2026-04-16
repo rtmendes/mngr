@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,8 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.cli.issue_reporting import get_mngr_version
 from imbue.mngr_diagnose.cli import DIAGNOSE_CLONE_DIR
 from imbue.mngr_diagnose.cli import diagnose
+
+_MNGR_PYPROJECT = Path(__file__).resolve().parents[4] / "libs" / "mngr" / "pyproject.toml"
 
 
 def _stub_clone_and_capture_create_args(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
@@ -43,11 +46,10 @@ def _stub_clone_and_capture_create_args(monkeypatch: pytest.MonkeyPatch) -> list
     return captured
 
 
-def test_get_mngr_version() -> None:
-    """get_mngr_version returns a version string."""
-    version = get_mngr_version()
-    assert isinstance(version, str)
-    assert len(version) > 0
+def test_get_mngr_version_matches_pyproject() -> None:
+    """get_mngr_version returns the version declared in mngr's pyproject.toml."""
+    expected = tomllib.loads(_MNGR_PYPROJECT.read_text())["project"]["version"]
+    assert get_mngr_version() == expected
 
 
 def test_diagnose_with_context_file(
