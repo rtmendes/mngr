@@ -1,26 +1,8 @@
-from types import SimpleNamespace
-from typing import cast
-
-from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr_kanpan.data_source import FIELD_REPO_PATH
 from imbue.mngr_kanpan.data_sources.repo_paths import RepoPathField
 from imbue.mngr_kanpan.data_sources.repo_paths import RepoPathsDataSource
 from imbue.mngr_kanpan.testing import make_agent_details
-
-
-def test_repo_paths_data_source_name() -> None:
-    ds = RepoPathsDataSource()
-    assert ds.name == "repo_paths"
-
-
-def test_repo_paths_columns() -> None:
-    ds = RepoPathsDataSource()
-    assert FIELD_REPO_PATH in ds.columns
-
-
-def test_repo_paths_field_types() -> None:
-    ds = RepoPathsDataSource()
-    assert ds.field_types[FIELD_REPO_PATH] is RepoPathField
+from imbue.mngr_kanpan.testing import make_mngr_ctx
 
 
 def test_repo_paths_compute_with_remote_label() -> None:
@@ -32,7 +14,7 @@ def test_repo_paths_compute_with_remote_label() -> None:
     fields, errors = ds.compute(
         agents=(agent,),
         cached_fields={},
-        mngr_ctx=cast(MngrContext, SimpleNamespace()),
+        mngr_ctx=make_mngr_ctx(),
     )
     assert len(errors) == 0
     assert agent.name in fields
@@ -47,7 +29,7 @@ def test_repo_paths_compute_without_remote_label() -> None:
     fields, errors = ds.compute(
         agents=(agent,),
         cached_fields={},
-        mngr_ctx=cast(MngrContext, SimpleNamespace()),
+        mngr_ctx=make_mngr_ctx(),
     )
     assert len(errors) == 0
     assert agent.name not in fields

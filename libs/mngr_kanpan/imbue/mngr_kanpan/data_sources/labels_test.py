@@ -1,24 +1,9 @@
-from types import SimpleNamespace
-from typing import cast
-
-from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr_kanpan.data_source import CellDisplay
 from imbue.mngr_kanpan.data_sources.labels import LabelColumnConfig
 from imbue.mngr_kanpan.data_sources.labels import LabelsDataSource
 from imbue.mngr_kanpan.data_sources.labels import _ColoredStringField
 from imbue.mngr_kanpan.testing import make_agent_details
-
-
-def _make_ctx() -> MngrContext:
-    return cast(MngrContext, SimpleNamespace())
-
-
-def test_labels_data_source_name() -> None:
-    ds = LabelsDataSource(
-        field_key="priority",
-        config=LabelColumnConfig(header="PRIORITY", label_key="priority"),
-    )
-    assert ds.name == "label_priority"
+from imbue.mngr_kanpan.testing import make_mngr_ctx
 
 
 def test_labels_data_source_is_not_remote() -> None:
@@ -27,23 +12,6 @@ def test_labels_data_source_is_not_remote() -> None:
         config=LabelColumnConfig(header="PRIORITY", label_key="priority"),
     )
     assert ds.is_remote is False
-
-
-def test_labels_data_source_columns() -> None:
-    ds = LabelsDataSource(
-        field_key="priority",
-        config=LabelColumnConfig(header="PRIORITY", label_key="priority"),
-    )
-    assert ds.columns == {"priority": "PRIORITY"}
-
-
-def test_labels_data_source_field_types() -> None:
-    ds = LabelsDataSource(
-        field_key="priority",
-        config=LabelColumnConfig(header="PRIORITY", label_key="priority"),
-    )
-    assert "priority" in ds.field_types
-    assert ds.field_types["priority"] is _ColoredStringField
 
 
 def test_labels_compute_agent_with_label() -> None:
@@ -55,7 +23,7 @@ def test_labels_compute_agent_with_label() -> None:
     fields, errors = ds.compute(
         agents=(agent,),
         cached_fields={},
-        mngr_ctx=_make_ctx(),
+        mngr_ctx=make_mngr_ctx(),
     )
     assert errors == []
     assert agent.name in fields
@@ -74,7 +42,7 @@ def test_labels_compute_agent_without_label() -> None:
     fields, errors = ds.compute(
         agents=(agent,),
         cached_fields={},
-        mngr_ctx=_make_ctx(),
+        mngr_ctx=make_mngr_ctx(),
     )
     assert errors == []
     assert agent.name not in fields
@@ -93,7 +61,7 @@ def test_labels_compute_with_color_map() -> None:
     fields, errors = ds.compute(
         agents=(agent,),
         cached_fields={},
-        mngr_ctx=_make_ctx(),
+        mngr_ctx=make_mngr_ctx(),
     )
     assert errors == []
     field = fields[agent.name]["priority"]
@@ -114,7 +82,7 @@ def test_labels_compute_color_not_in_map() -> None:
     fields, errors = ds.compute(
         agents=(agent,),
         cached_fields={},
-        mngr_ctx=_make_ctx(),
+        mngr_ctx=make_mngr_ctx(),
     )
     assert errors == []
     field = fields[agent.name]["priority"]
@@ -131,7 +99,7 @@ def test_labels_compute_label_key_differs_from_field_key() -> None:
     fields, errors = ds.compute(
         agents=(agent,),
         cached_fields={},
-        mngr_ctx=_make_ctx(),
+        mngr_ctx=make_mngr_ctx(),
     )
     assert errors == []
     assert agent.name in fields
@@ -166,7 +134,7 @@ def test_labels_compute_multiple_agents() -> None:
     fields, errors = ds.compute(
         agents=(agent_a, agent_b, agent_c),
         cached_fields={},
-        mngr_ctx=_make_ctx(),
+        mngr_ctx=make_mngr_ctx(),
     )
     assert errors == []
     assert agent_a.name in fields

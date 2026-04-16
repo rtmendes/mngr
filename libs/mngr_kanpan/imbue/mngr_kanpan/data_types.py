@@ -18,6 +18,7 @@ class BoardSection(UpperCaseStrEnum):
     """Sections for grouping agents on the board, based on PR state."""
 
     STILL_COOKING = auto()
+    PR_DRAFT = auto()
     PRS_FAILED = auto()
     PR_BEING_REVIEWED = auto()
     PR_MERGED = auto()
@@ -98,7 +99,8 @@ class KanpanPluginConfig(PluginConfig):
     column_order: list[str] | None = Field(
         default=None,
         description="Display order for columns. Uses field keys from data sources. "
-        "Built-in names: name, state, commits_ahead, pr, ci, create_pr_url, conflicts, unresolved. "
+        "Built-in column names: name, state. "
+        "Data source field keys: commits_ahead, pr, ci, create_pr_url, conflicts, unresolved. "
         "If None, defaults to columns declared by data sources.",
     )
     section_order: list[BoardSection] | None = Field(

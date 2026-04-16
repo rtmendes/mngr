@@ -33,6 +33,11 @@ from imbue.mngr.cli.urwid_utils import create_urwid_screen_preserving_terminal
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.primitives import AgentLifecycleState
 from imbue.mngr.primitives import AgentName
+from imbue.mngr_kanpan.data_source import BoolField
+from imbue.mngr_kanpan.data_source import CellDisplay
+from imbue.mngr_kanpan.data_source import FIELD_CREATE_PR_URL
+from imbue.mngr_kanpan.data_source import FIELD_MUTED
+from imbue.mngr_kanpan.data_source import FIELD_PR
 from imbue.mngr_kanpan.data_source import FieldValue
 from imbue.mngr_kanpan.data_source import KanpanDataSource
 from imbue.mngr_kanpan.data_types import AgentBoardEntry
@@ -69,6 +74,7 @@ PALETTE = [
     ("section_cancelled", "dark gray", ""),
     ("section_in_review", "light cyan", ""),
     ("section_in_progress", "yellow", ""),
+    ("section_draft", "light blue", ""),
     ("section_prs_failed", "light red", ""),
     # CI checks (only failing and pending get color; passing is default)
     ("check_failing", "light red", ""),
@@ -87,6 +93,7 @@ BOARD_SECTION_ORDER: tuple[BoardSection, ...] = (
     BoardSection.PR_MERGED,
     BoardSection.PR_CLOSED,
     BoardSection.PR_BEING_REVIEWED,
+    BoardSection.PR_DRAFT,
     BoardSection.STILL_COOKING,
     BoardSection.PRS_FAILED,
     BoardSection.MUTED,
@@ -97,6 +104,7 @@ _SECTION_PREFIX: dict[BoardSection, str] = {
     BoardSection.PR_MERGED: "Done",
     BoardSection.PR_CLOSED: "Cancelled",
     BoardSection.PR_BEING_REVIEWED: "In review",
+    BoardSection.PR_DRAFT: "In progress",
     BoardSection.STILL_COOKING: "In progress",
     BoardSection.PRS_FAILED: "In progress",
     BoardSection.MUTED: "Muted",
@@ -106,6 +114,7 @@ _SECTION_SUFFIX: dict[BoardSection, str] = {
     BoardSection.PR_MERGED: "PR merged",
     BoardSection.PR_CLOSED: "PR closed",
     BoardSection.PR_BEING_REVIEWED: "PR pending",
+    BoardSection.PR_DRAFT: "draft PR",
     BoardSection.STILL_COOKING: "no PR yet",
     BoardSection.PRS_FAILED: "PRs failed",
     BoardSection.MUTED: "",
@@ -115,6 +124,7 @@ _SECTION_ATTR: dict[BoardSection, str] = {
     BoardSection.PR_MERGED: "section_done",
     BoardSection.PR_CLOSED: "section_cancelled",
     BoardSection.PR_BEING_REVIEWED: "section_in_review",
+    BoardSection.PR_DRAFT: "section_draft",
     BoardSection.STILL_COOKING: "section_in_progress",
     BoardSection.PRS_FAILED: "section_prs_failed",
     BoardSection.MUTED: "section_muted",
@@ -676,12 +686,29 @@ def _finish_batch_execution(state: _KanpanState, results: list[str]) -> None:
         _start_local_refresh(state.loop, state)
 
 
+def _apply_mute_to_entry(entry: AgentBoardEntry, is_muted: bool) -> AgentBoardEntry:
+    """Return an updated AgentBoardEntry with the mute state applied.
+
+    Updates fields, cells, section, and is_muted so the board renders correctly.
+    """
+    updated_fields = {**entry.fields, FIELD_MUTED: BoolField(value=is_muted)}
+    updated_cells = {key: field.display() for key, field in updated_fields.items()}
+    updated_section = compute_section(updated_fields)
+    ref = entry.field_ref()
+    return entry.model_copy_update(
+        to_update(ref.is_muted, is_muted),
+        to_update(ref.fields, updated_fields),
+        to_update(ref.cells, updated_cells),
+        to_update(ref.section, updated_section),
+    )
+
+
 def _update_snapshot_mute(state: _KanpanState, agent_name: AgentName, is_muted: bool) -> None:
-    """Update the snapshot in-place by toggling is_muted on the named agent."""
+    """Update the snapshot in-place by toggling mute state on the named agent."""
     if state.snapshot is None:
         return
     new_entries = tuple(
-        entry.model_copy(update={"is_muted": is_muted}) if entry.name == agent_name else entry
+        _apply_mute_to_entry(entry, is_muted) if entry.name == agent_name else entry
         for entry in state.snapshot.entries
     )
     state.snapshot = state.snapshot.model_copy_update(
@@ -927,11 +954,12 @@ def _finish_refresh(loop: MainLoop, state: _KanpanState) -> None:
     try:
         fetch_result = state.refresh_future.result()
         new_snapshot = fetch_result.snapshot
-        # Update in-memory field cache
-        state.cached_fields = fetch_result.cached_fields
-        # Persist cache to disk after full refreshes
+        # Update in-memory field cache only for full refreshes: local-only refreshes do not
+        # produce remote fields (PR, CI, etc.), so overwriting would lose the remote data that
+        # the next full refresh needs as its cached_fields input.
         if not was_local_only:
-            save_field_cache(state.mngr_ctx, state.cached_fields, state.data_sources)
+            state.cached_fields = fetch_result.cached_fields
+            save_field_cache(state.mngr_ctx, state.cached_fields)
         # For local-only refreshes, carry forward fields from previous snapshot
         if was_local_only and state.snapshot is not None:
             new_snapshot = _carry_forward_fields(state.snapshot, new_snapshot)
@@ -1052,9 +1080,23 @@ def _get_name_cell_markup(
     return f"  {entry.name}"
 
 
+def _resolve_cell(entry: AgentBoardEntry, field_key: str) -> CellDisplay | None:
+    """Resolve the CellDisplay for a field key, with fallbacks.
+
+    For the 'pr' column, falls back to 'create_pr_url' when no PR exists,
+    so the PR column shows '+PR' with a create link when there's no open PR.
+    """
+    cell = entry.cells.get(field_key)
+    if cell is not None:
+        return cell
+    if field_key == FIELD_PR:
+        return entry.cells.get(FIELD_CREATE_PR_URL)
+    return None
+
+
 def _field_cell_text(entry: AgentBoardEntry, field_key: str) -> str:
     """Get plain text for a field-based column cell."""
-    cell = entry.cells.get(field_key)
+    cell = _resolve_cell(entry, field_key)
     if cell is None:
         return ""
     return cell.text
@@ -1062,11 +1104,11 @@ def _field_cell_text(entry: AgentBoardEntry, field_key: str) -> str:
 
 def _field_cell_markup(entry: AgentBoardEntry, field_key: str) -> str | tuple[Hashable, str]:
     """Build urwid text markup for a field-based column cell."""
-    cell = entry.cells.get(field_key)
+    cell = _resolve_cell(entry, field_key)
     if cell is None:
         return ""
     if cell.color is not None:
-        return (f"field_{field_key}_{cell.color}", cell.text)
+        return (f"field_{field_key}_{cell.color.replace(' ', '_')}", cell.text)
     return cell.text
 
 
@@ -1076,7 +1118,7 @@ class _ColumnDef(FrozenModel):
     name: str
     header: str
     text_fn: Callable[[AgentBoardEntry], str]
-    markup_fn: Callable[[AgentBoardEntry], str | tuple[Hashable, str]]
+    markup_fn: Callable[[AgentBoardEntry], str | tuple[Hashable, str] | list[str | tuple[Hashable, str]]]
     flexible: bool
 
 
@@ -1101,7 +1143,7 @@ class _FieldCellMarkupFn(FrozenModel):
 # Built-in column definitions for name and state (always present)
 _BUILTIN_COLUMN_DEFS: list[_ColumnDef] = [
     _ColumnDef(
-        name="name", header="  NAME", text_fn=_get_name_cell_text, markup_fn=_get_name_cell_text, flexible=False
+        name="name", header="  NAME", text_fn=_get_name_cell_text, markup_fn=_get_name_cell_markup, flexible=False
     ),
     _ColumnDef(
         name="state", header="STATE", text_fn=_get_state_cell_text, markup_fn=_get_state_cell_markup, flexible=False
@@ -1190,7 +1232,7 @@ def _build_field_color_palette(
     for entry in snapshot.entries:
         for field_key, cell in entry.cells.items():
             if cell.color is not None:
-                attr = f"field_{field_key}_{cell.color}"
+                attr = f"field_{field_key}_{cell.color.replace(' ', '_')}"
                 if attr not in seen:
                     seen.add(attr)
                     entries.append((attr, cell.color, ""))
@@ -1248,8 +1290,8 @@ def _build_agent_row(
 
     cols: list[tuple[int, Text] | Text] = []
     for defn in column_defs:
-        cell = entry.cells.get(defn.name)
-        cell_url = cell.url if cell is not None else None
+        resolved = _resolve_cell(entry, defn.name)
+        cell_url = resolved.url if resolved is not None else None
         if cell_url:
             hyperlink_widget = _HyperlinkText(cell_markup[defn.name])
             hyperlink_widget._hyperlink_url = cell_url
