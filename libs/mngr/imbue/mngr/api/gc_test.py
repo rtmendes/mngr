@@ -2040,12 +2040,6 @@ class _DestroyableProvider(MockProviderInstance):
 
     destroyed_hosts: list[HostId] = Field(default_factory=list)
 
-    def get_host(self, host: HostId | HostName) -> HostInterface:
-        for h in self.mock_hosts:
-            if h.id == host or h.get_name() == host:
-                return h
-        return super().get_host(host)
-
     def destroy_host(self, host: HostInterface | HostId) -> None:
         host_id = host.id if isinstance(host, HostInterface) else host
         self.destroyed_hosts.append(host_id)
@@ -2138,9 +2132,9 @@ def test_gc_machines_skips_host_on_auth_error_during_discover(
 ) -> None:
     """gc_machines skips hosts that raise HostAuthenticationError during discover_agents.
 
-    Previously, auth failures triggered immediate destruction. This was
-    dangerous because a transient SSH failure could destroy a host with
-    running agents (see ssh-password-auth postmortem).
+    Auth errors are treated conservatively: if we cannot authenticate, we
+    cannot verify whether the host has running agents, so it must not be
+    destroyed.
     """
     host = _make_remote_host(
         local_provider,
