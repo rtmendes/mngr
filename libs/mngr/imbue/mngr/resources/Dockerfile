@@ -15,7 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     ripgrep \
     rsync \
-    sqlite3 \
     tini \
     tmux \
     unison \
