@@ -60,3 +60,15 @@ def test_message_includes_agent_instructions() -> None:
     assert "python scripts/open-issue.py" in msg
     assert "Root cause analysis" in msg
     assert "worktree of the repository" in msg
+
+
+def test_message_includes_environment_section() -> None:
+    msg = build_diagnose_initial_message(
+        description="test",
+        traceback_str=None,
+        mngr_version="0.2.4",
+    )
+    assert "mngr version: 0.2.4" in msg
+    assert "Python version" in msg
+    assert "python3 --version" in msg
+    assert "uname -s -r" in msg
