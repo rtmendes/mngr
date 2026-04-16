@@ -55,7 +55,8 @@ _LANDING_PAGE_TEMPLATE: Final[str] = (
       padding: 20px 16px; font-size: 14px; color: #334155;
       border-bottom: 1px solid #f1f5f9; vertical-align: middle;
     }
-    tbody td:last-child { text-align: right; width: 48px; }
+    tbody td:last-child { width: 48px; }
+    tbody td:last-child .menu-btn { float: right; }
     .ws-name { font-weight: 500; color: #0f172a; }
     .shared-with { color: #94a3b8; }
     .menu-wrapper { position: relative; display: inline-block; }
@@ -847,7 +848,8 @@ function renderWorkspaces(workspaces) {
   });
   var html = '';
   keys.forEach(function(key) {
-    html += '<div style="padding:8px 12px 2px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">' + key + '</div>';
+    var label = key === 'Private' ? 'PRIVATE' : key;
+    html += '<div style="padding:8px 12px 2px;font-size:11px;color:#64748b;letter-spacing:0.3px;">' + label + '</div>';
     groups[key].forEach(function(w) {
       html += '<div class="sidebar-item" onclick="selectWorkspace(\\'' + w.id + '\\')">' + (w.name || w.id) + '</div>';
     });
@@ -947,7 +949,8 @@ function renderWorkspaces(workspaces) {
   });
   var html = '';
   keys.forEach(function(key) {
-    html += '<div style="padding:8px 12px 2px;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">' + key + '</div>';
+    var label = key === 'Private' ? 'PRIVATE' : key;
+    html += '<div style="padding:8px 12px 2px;font-size:11px;color:#64748b;letter-spacing:0.3px;">' + label + '</div>';
     groups[key].forEach(function(w) {
       html += '<div class="sidebar-item" onclick="selectWorkspace(\\'' + w.id + '\\')">' + (w.name || w.id) + '</div>';
     });

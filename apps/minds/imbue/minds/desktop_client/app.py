@@ -1417,16 +1417,19 @@ def _handle_requests_panel(
     auto_open = minds_config.get_auto_open_requests_panel() if minds_config else True
 
     cards = []
+    backend_resolver: BackendResolverInterface = request.app.state.backend_resolver
     for req in pending:
-        req_type = req.request_type
         server_name = req.server_name if isinstance(req, SharingRequestEvent) else ""
-        agent_id = req.agent_id
+        parsed_id = AgentId(req.agent_id)
+        ws_name = backend_resolver.get_workspace_name(parsed_id) or ""
+        if not ws_name:
+            info = backend_resolver.get_agent_display_info(parsed_id)
+            ws_name = info.agent_name if info else req.agent_id[:16]
         event_id = str(req.event_id)
         cards.append(
             f'<div class="req-card" onclick="navigateToRequest(\'{event_id}\')">'
-            f'<div style="font-size:13px;color:#e2e8f0;font-weight:500;">{req_type}: {server_name}</div>'
-            f'<div style="font-size:11px;color:#64748b;margin-top:4px;">Agent: {agent_id[:16]}...</div>'
-            f'<div style="font-size:11px;color:#64748b;">{str(req.timestamp)}</div></div>'
+            f'<div style="font-size:13px;color:#e2e8f0;font-weight:500;">sharing: {ws_name}</div>'
+            f'<div style="font-size:12px;color:#64748b;margin-top:2px;">{server_name}</div></div>'
         )
 
     html = (
