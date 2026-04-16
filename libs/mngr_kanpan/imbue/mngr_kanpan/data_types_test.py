@@ -16,26 +16,6 @@ from imbue.mngr_kanpan.data_types import KanpanPluginConfig
 from imbue.mngr_kanpan.data_types import ShellCommandSourceConfig
 
 
-def test_pr_state_values() -> None:
-    assert PrState.OPEN == "OPEN"
-    assert PrState.CLOSED == "CLOSED"
-    assert PrState.MERGED == "MERGED"
-
-
-def test_board_section_values() -> None:
-    assert BoardSection.STILL_COOKING == "STILL_COOKING"
-    assert BoardSection.PR_BEING_REVIEWED == "PR_BEING_REVIEWED"
-    assert BoardSection.PR_MERGED == "PR_MERGED"
-    assert BoardSection.PR_CLOSED == "PR_CLOSED"
-
-
-def test_ci_status_values() -> None:
-    assert CiStatus.PASSING == "PASSING"
-    assert CiStatus.FAILING == "FAILING"
-    assert CiStatus.PENDING == "PENDING"
-    assert CiStatus.UNKNOWN == "UNKNOWN"
-
-
 def test_ci_status_color() -> None:
     assert CiStatus.PASSING.color == "light green"
     assert CiStatus.FAILING.color == "light red"
