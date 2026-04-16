@@ -385,10 +385,12 @@ def gc_snapshots(
     error_behavior: ErrorBehavior,
     result: GcResult,
 ) -> None:
-    """Garbage collect snapshots from destroyed hosts.
+    """Garbage collect old snapshots from destroyed hosts.
 
-    Only deletes snapshots from hosts that are in DESTROYED state -- these
-    snapshots serve no purpose because the host can never be resumed.
+    Only deletes snapshots from hosts that are in DESTROYED state, and only
+    after the snapshot exceeds the provider's minimum destroyed-snapshot age
+    (default 30 days).  Younger snapshots are preserved so users can recover
+    via ``mngr create --snapshot``.
 
     Snapshots on RUNNING, PAUSED, and STOPPED hosts are never deleted:
     - PAUSED/STOPPED hosts need their snapshots for resumption
