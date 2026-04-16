@@ -62,7 +62,10 @@ fi
 update-alternatives --set iptables /usr/sbin/iptables-legacy
 update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
 
-dockerd --iptables=false --ip6tables=false &
+# Disable IPv6 in dockerd -- Modal sandbox IPv6 routing to Docker Hub
+# (registry-1.docker.io, auth.docker.io) is unreliable, causing
+# "network is unreachable" errors on image pulls. Force IPv4-only.
+dockerd --iptables=false --ip6tables=false --ipv6=false &
 
 # Wait for Docker daemon to be ready
 timeout 30 sh -c 'until /usr/local/bin/docker info >/dev/null 2>&1; do sleep 1; done'
