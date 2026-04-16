@@ -27,6 +27,7 @@ from imbue.mngr.interfaces.data_types import VolumeFileType
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
+from imbue.mngr.primitives import HostState
 from imbue.mngr.primitives import ProviderBackendName
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SnapshotId
@@ -903,10 +904,11 @@ def test_destroy_host(
     with pytest.raises(ModalProxyError, match="terminated"):
         sandbox.exec("echo", "should fail")
 
-    # Snapshots cleared
+    # Snapshots preserved (for gc_snapshots to age-gate), but host marked DESTROYED
     updated = testing_provider._read_host_record(host_id, use_cache=False)
     assert updated is not None
-    assert len(updated.certified_host_data.snapshots) == 0
+    assert len(updated.certified_host_data.snapshots) == 1
+    assert updated.certified_host_data.stop_reason == HostState.DESTROYED.value
 
     # Agents removed
     agents = testing_provider.list_persisted_agent_data_for_host(host_id)
