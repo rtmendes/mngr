@@ -351,7 +351,7 @@ def _gc_single_host(
         min_age_seconds = provider.get_min_online_host_age_seconds()
         if host_age_seconds < min_age_seconds:
             logger.trace(
-                "Skipped GC for host {} (age {:.0f}s < minimum {}s)",
+                "Skipped GC for host {} (age {:.0f}s < minimum {:.0f}s)",
                 host.id,
                 host_age_seconds,
                 min_age_seconds,
