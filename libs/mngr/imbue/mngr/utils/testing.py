@@ -24,6 +24,7 @@ from uuid import uuid4
 
 import pluggy
 import pytest
+import tomlkit
 from click.testing import CliRunner
 from loguru import logger
 from pydantic import Field
@@ -33,9 +34,9 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.model_update import to_update
 from imbue.mngr.cli.create import create as create_command
 from imbue.mngr.config.consts import PROFILES_DIRNAME
-from imbue.mngr.config.consts import ROOT_CONFIG_FILENAME
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.config.loader import get_or_create_profile_dir
 from imbue.mngr.errors import MngrError
 from imbue.mngr.hosts.tmux import build_tmux_capture_pane_command
 from imbue.mngr.interfaces.data_types import AgentDetails
@@ -268,45 +269,45 @@ in-process cli_runner tests) and by the e2e conftest (for subprocess
 invocations of the real ``mngr`` binary). Its command is ``sleep 99999``.
 """
 
-_TEST_SLEEP_COMMAND: Final[str] = "sleep 99999"
+TEST_SLEEP_COMMAND: Final[str] = "sleep 99999"
+"""Shell command the ``test_sleep`` agent type runs. Keep the e2e conftest in sync."""
+
+
+def _append_agent_type_to_settings(profile_dir: Path, type_name: str, command: str) -> None:
+    """Append ``[agent_types.<type_name>]`` with ``command = <command>`` to the profile's settings.toml."""
+    settings_path = profile_dir / "settings.toml"
+    doc = tomlkit.parse(settings_path.read_text()) if settings_path.exists() else tomlkit.document()
+    agent_types = doc.setdefault("agent_types", tomlkit.table())
+    type_table = tomlkit.table()
+    type_table["command"] = command
+    agent_types[type_name] = type_table
+    settings_path.write_text(tomlkit.dumps(doc))
 
 
 def register_test_sleep_agent_type(host_dir: Path) -> None:
-    """Seed a profile under ``host_dir`` that defines the ``test_sleep`` agent type.
+    """Ensure a profile under ``host_dir`` defines the ``test_sleep`` agent type.
 
-    Tests that exercise the CLI need to be able to spin up a long-running
-    placeholder agent. Previously they did this via ``mngr create
-    --command 'sleep 99999'``; with that flag gone, the equivalent is
-    ``mngr create --type test_sleep``. This function writes the minimal
-    profile skeleton (``config.toml`` + ``profiles/<id>/settings.toml``)
-    so the config loader picks up the type without each test having to
-    duplicate the setup.
+    Tests that exercise the CLI need a long-running placeholder agent. Previously
+    they used ``mngr create --command 'sleep 99999'``; with that flag gone, the
+    equivalent is ``mngr create --type test_sleep``. This function delegates
+    profile bootstrap to ``get_or_create_profile_dir`` (so we don't duplicate
+    the production profile-creation logic) and then appends the agent type to
+    the profile's ``settings.toml``. Idempotent: if ``test_sleep`` is already
+    defined, ``tomlkit`` overwrites it with the same value.
     """
-    config_path = host_dir / ROOT_CONFIG_FILENAME
-    if config_path.exists():
-        return
-    profile_id = uuid4().hex
-    profile_dir = host_dir / PROFILES_DIRNAME / profile_id
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(f'profile = "{profile_id}"\n')
-    settings_path = profile_dir / "settings.toml"
-    settings_path.write_text(f'[agent_types.{TEST_SLEEP_AGENT_TYPE}]\ncommand = "{_TEST_SLEEP_COMMAND}"\n')
+    profile_dir = get_or_create_profile_dir(host_dir)
+    _append_agent_type_to_settings(profile_dir, TEST_SLEEP_AGENT_TYPE, TEST_SLEEP_COMMAND)
 
 
 def register_test_agent_type(host_dir: Path, type_name: str, command: str) -> None:
-    """Append a custom agent type to the test profile's ``settings.toml``.
+    """Register a custom agent type in the test profile's ``settings.toml``.
 
-    Use this in tests that need a specific command (e.g. something that
-    echoes a marker before sleeping). The profile skeleton is assumed to
-    exist already (the autouse setup calls ``register_test_sleep_agent_type``
-    which creates it).
+    Use this in tests that need a specific command (e.g. something that echoes
+    a marker before sleeping). Delegates profile lookup to
+    ``get_or_create_profile_dir`` so no ad-hoc config parsing is needed.
     """
-    config_path = host_dir / ROOT_CONFIG_FILENAME
-    profile_id = config_path.read_text().split('"')[1]
-    profile_dir = host_dir / PROFILES_DIRNAME / profile_id
-    settings_path = profile_dir / "settings.toml"
-    existing = settings_path.read_text() if settings_path.exists() else ""
-    settings_path.write_text(existing + f"\n[agent_types.{type_name}]\ncommand = {json.dumps(command)}\n")
+    profile_dir = get_or_create_profile_dir(host_dir)
+    _append_agent_type_to_settings(profile_dir, type_name, command)
 
 
 def setup_mngr_test_environment(

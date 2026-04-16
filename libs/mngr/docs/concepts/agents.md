@@ -32,14 +32,14 @@ mngr create my-agent claude --idle-timeout 1h      # Override timeout
 
 ## Running a Custom Command
 
-Any program on `PATH` can be used as an agent type. When the type name is not a registered agent type (like `claude` or `codex`), mngr runs it directly as the command:
+When the agent type name is not registered (like `claude` or `codex`), mngr runs it directly as the command, looked up via `PATH`:
 
 ```bash
 mngr create my-agent python -- -m http.server 8080   # Run python with args
-mngr create my-agent ./my-script.sh                  # Run a custom script
+mngr create my-agent my-script -- --flag             # Run a custom script
 ```
 
-To run a literal command with spaces, define an agent type in your config with the desired command (see [Agent Types](./agent_types.md)).
+The type name must be alphanumeric (with dashes/underscores allowed in the middle) -- it's reused as a filesystem and tmux identifier -- so paths like `./script.sh` and names with dots (`python3.12`) don't work as bare type names. To run a literal command that isn't a plain identifier, define an agent type in your config with the desired command (see [Agent Types](./agent_types.md)).
 
 See [`mngr create`](../commands/primary/create.md) for all available options.
 

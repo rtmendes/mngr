@@ -373,7 +373,7 @@ def e2e(
     # Register the `test_sleep` agent type so tests can start a long-running
     # placeholder agent via `--type test_sleep` (replaces the removed
     # `--command` flag). Keep the command string in sync with
-    # imbue.mngr.utils.plugin_testing.TEST_SLEEP_COMMAND.
+    # imbue.mngr.utils.testing.TEST_SLEEP_COMMAND.
     settings_path = project_config_dir / "settings.local.toml"
     settings_path.write_text(
         "[commands.create]\n"

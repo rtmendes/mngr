@@ -5,7 +5,7 @@ An agent type is a named configuration that tells `mngr` how to set up and run a
 ```bash
 mngr create my-agent claude        # "claude" is the agent type
 mngr create my-agent codex         # "codex" is the agent type
-mngr create my-agent ./my-script   # any command can be an agent type
+mngr create my-agent my-script     # any command on PATH whose name is a plain identifier
 ```
 
 To run a literal command with spaces or shell metacharacters, define a [custom agent type](#custom-agent-types) with that command.
