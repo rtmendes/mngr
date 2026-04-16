@@ -383,7 +383,7 @@ def test_mngr_create_transfers_git_repo_with_new_branch(
     assert "Done." in result.stdout, f"Expected 'Done.' in output: {result.stdout}"
 
 
-def _get_mngr_default_dockerfile_path(modal_test_sleep_agent_type) -> Path:
+def _get_mngr_default_dockerfile_path() -> Path:
     """Get the path to the mngr default Dockerfile from the resources package."""
     resources_dir = importlib.resources.files(resources)
     dockerfile_resource = resources_dir / "Dockerfile"
@@ -411,7 +411,7 @@ def test_mngr_create_with_default_dockerfile_on_modal(
     """
     agent_name = f"test-modal-default-df-{get_short_random_string()}"
 
-    dockerfile_path = _get_mngr_default_dockerfile_path(modal_test_sleep_agent_type)
+    dockerfile_path = _get_mngr_default_dockerfile_path()
     assert dockerfile_path.exists(), f"Default Dockerfile not found at {dockerfile_path}"
 
     tar_dir = tmp_path / "tar_output"
