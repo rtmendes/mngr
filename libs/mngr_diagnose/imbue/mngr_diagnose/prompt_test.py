@@ -69,6 +69,4 @@ def test_message_includes_environment_section() -> None:
         mngr_version="0.2.4",
     )
     assert "mngr version: 0.2.4" in msg
-    assert "Python version" in msg
-    assert "python3 --version" in msg
-    assert "uname -s -r" in msg
+    assert "relevant to the issue" in msg
