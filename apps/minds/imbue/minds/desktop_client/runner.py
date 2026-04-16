@@ -215,7 +215,7 @@ def _init_supertokens(
     connection_uri: str,
     host: str,
     port: int,
-) -> SuperTokensSessionStore | None:
+) -> SuperTokensSessionStore:
     """Initialize the SuperTokens SDK and return a session store.
 
     The connection URI is supplied by MindsConfig (defaulted to the dev
