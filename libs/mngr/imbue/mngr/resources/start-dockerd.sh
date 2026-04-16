@@ -65,7 +65,10 @@ fi
 # Disable IPv6 in dockerd -- Modal sandbox IPv6 routing to Docker Hub
 # (registry-1.docker.io, auth.docker.io) is unreliable, causing
 # "network is unreachable" errors on image pulls. Force IPv4-only.
-dockerd --iptables=false --ip6tables=false --ipv6=false &
+# Use explicit public DNS (1.1.1.1, 8.8.8.8) -- the Docker bridge's default
+# DNS forwarder cannot resolve upstream in gVisor sandboxes, causing
+# "no such host" errors on image pulls.
+dockerd --iptables=false --ip6tables=false --ipv6=false --dns=1.1.1.1 --dns=8.8.8.8 &
 
 # Wait for Docker daemon to be ready
 timeout 30 sh -c 'until /usr/local/bin/docker info >/dev/null 2>&1; do sleep 1; done'
