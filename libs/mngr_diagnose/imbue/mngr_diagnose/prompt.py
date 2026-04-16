@@ -23,6 +23,7 @@ def build_diagnose_initial_message(
         "",
         "The issue body must include an **Environment** section with:",
         f"- mngr version: {mngr_version}",
+        "- Commit hash inspected: run `git rev-parse HEAD` in this worktree",
         "- Versions of any other tools relevant to the issue",
         "",
         "If the information provided is not detailed enough for you to know where to start",

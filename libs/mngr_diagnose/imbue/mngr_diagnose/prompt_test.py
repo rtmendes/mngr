@@ -69,4 +69,5 @@ def test_message_includes_environment_section() -> None:
         mngr_version="0.2.4",
     )
     assert "mngr version: 0.2.4" in msg
+    assert "git rev-parse HEAD" in msg
     assert "relevant to the issue" in msg
