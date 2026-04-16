@@ -116,8 +116,11 @@ if modal.is_local():
         [
             # Guard with -d because Modal's add_local_dir skips empty directories,
             # so /staging/project/ won't exist when no plugins stage project files.
-            "RUN [ -d /staging/home ] && cp -a /staging/home/. $HOME/ || true",
-            "RUN [ -d /staging/project ] && cp -a /staging/project/. . || true",
+            # Use `if`/`then`/`fi` (not `&& cp || true`) so that a genuine cp
+            # failure (e.g. permission denied) still fails the build rather than
+            # being swallowed alongside the missing-directory case.
+            'RUN if [ -d /staging/home ]; then cp -a /staging/home/. "$HOME"/; fi',
+            "RUN if [ -d /staging/project ]; then cp -a /staging/project/. .; fi",
         ]
     )
 else:
