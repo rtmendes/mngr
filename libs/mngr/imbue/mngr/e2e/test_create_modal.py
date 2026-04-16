@@ -62,7 +62,7 @@ def test_create_modal_no_connect_message(e2e: E2eSession) -> None:
             f"Expected command to succeed but got exit code {result.exit_code}\n"
             f"  Command: {result.command}\n"
             f"  Stderr:\n    {result.stderr}\n"
-            f"  {diagnostics}"
+            f"{diagnostics}"
         )
 
 
