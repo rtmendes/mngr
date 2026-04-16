@@ -33,6 +33,7 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.model_update import to_update
 from imbue.mngr.cli.create import create as create_command
 from imbue.mngr.config.consts import PROFILES_DIRNAME
+from imbue.mngr.config.consts import ROOT_CONFIG_FILENAME
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import MngrError
@@ -255,6 +256,59 @@ def assert_home_is_temp_directory() -> None:
         )
 
 
+TEST_SLEEP_AGENT_TYPE: Final[str] = "test_sleep"
+"""Name of the long-running agent type registered by the test environment.
+
+Use in place of the removed ``--command`` flag::
+
+    mngr create my-task --type test_sleep --no-ensure-clean
+
+The agent type is registered by ``setup_mngr_test_environment`` (for
+in-process cli_runner tests) and by the e2e conftest (for subprocess
+invocations of the real ``mngr`` binary). Its command is ``sleep 99999``.
+"""
+
+_TEST_SLEEP_COMMAND: Final[str] = "sleep 99999"
+
+
+def register_test_sleep_agent_type(host_dir: Path) -> None:
+    """Seed a profile under ``host_dir`` that defines the ``test_sleep`` agent type.
+
+    Tests that exercise the CLI need to be able to spin up a long-running
+    placeholder agent. Previously they did this via ``mngr create
+    --command 'sleep 99999'``; with that flag gone, the equivalent is
+    ``mngr create --type test_sleep``. This function writes the minimal
+    profile skeleton (``config.toml`` + ``profiles/<id>/settings.toml``)
+    so the config loader picks up the type without each test having to
+    duplicate the setup.
+    """
+    config_path = host_dir / ROOT_CONFIG_FILENAME
+    if config_path.exists():
+        return
+    profile_id = uuid4().hex
+    profile_dir = host_dir / PROFILES_DIRNAME / profile_id
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(f'profile = "{profile_id}"\n')
+    settings_path = profile_dir / "settings.toml"
+    settings_path.write_text(f'[agent_types.{TEST_SLEEP_AGENT_TYPE}]\ncommand = "{_TEST_SLEEP_COMMAND}"\n')
+
+
+def register_test_agent_type(host_dir: Path, type_name: str, command: str) -> None:
+    """Append a custom agent type to the test profile's ``settings.toml``.
+
+    Use this in tests that need a specific command (e.g. something that
+    echoes a marker before sleeping). The profile skeleton is assumed to
+    exist already (the autouse setup calls ``register_test_sleep_agent_type``
+    which creates it).
+    """
+    config_path = host_dir / ROOT_CONFIG_FILENAME
+    profile_id = config_path.read_text().split('"')[1]
+    profile_dir = host_dir / PROFILES_DIRNAME / profile_id
+    settings_path = profile_dir / "settings.toml"
+    existing = settings_path.read_text() if settings_path.exists() else ""
+    settings_path.write_text(existing + f"\n[agent_types.{type_name}]\ncommand = {json.dumps(command)}\n")
+
+
 def setup_mngr_test_environment(
     home_dir: Path,
     host_dir: Path,
@@ -277,6 +331,7 @@ def setup_mngr_test_environment(
     monkeypatch.setenv("MNGR_PREFIX", prefix)
     monkeypatch.setenv("MNGR_ROOT_NAME", root_name)
     monkeypatch.delenv("MNGR_PROJECT_DIR", raising=False)
+    register_test_sleep_agent_type(host_dir)
 
     # Unison derives its config directory from $HOME. Since we override HOME
     # above, unison tries to create its config dir inside the temp home, which
@@ -601,12 +656,14 @@ def create_test_agent_via_cli(
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
     agent_name: str,
-    agent_cmd: str = "sleep 482917",
 ) -> str:
     """Create a test agent via the CLI and return the session name.
 
     This encapsulates the common pattern of creating a source agent for
     integration tests that need an existing agent (e.g., clone, migrate).
+    The agent runs the ``test_sleep`` agent type registered by
+    ``setup_mngr_test_environment`` (``sleep 99999``), which keeps it alive
+    for the duration of the test.
 
     The caller should wrap this call inside a tmux_session_cleanup context
     manager to ensure the session is cleaned up even if assertions fail.
@@ -618,8 +675,8 @@ def create_test_agent_via_cli(
         [
             "--name",
             agent_name,
-            "--command",
-            agent_cmd,
+            "--type",
+            TEST_SLEEP_AGENT_TYPE,
             "--source",
             str(temp_work_dir),
             "--transfer=none",
