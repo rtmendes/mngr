@@ -81,10 +81,7 @@ test-offload-acceptance args="":
     tmpdir=$(mktemp -d)
     trap "rm -rf $tmpdir" EXIT
 
-    # Generate .dockerignore from .gitignore: remove the current.tar.gz line
-    # (needed in the Docker build context) and add .git/ (not in .gitignore).
-    grep -v 'current\.tar\.gz' .gitignore > .dockerignore
-    echo '.git/' >> .dockerignore
+    just _generate-dockerignore
 
     ./scripts/make_tar_of_repo.sh $BASE_COMMIT $tmpdir
     export OFFLOAD_PATCH_UUID=`uv run python -c"import uuid;print(uuid.uuid4())"`
@@ -96,7 +93,8 @@ test-offload-acceptance args="":
     trap "rm -f current.tar.gz .dockerignore; rm -rf /tmp/$OFFLOAD_PATCH_UUID; rm -rf $tmpdir" EXIT
 
     # Run offload, and make sure to specifically permit error code 2 (flaky tests). Any other error code is a failure.
-    offload -c offload-modal-acceptance.toml {{args}} run --copy-dir="/tmp/$OFFLOAD_PATCH_UUID:/offload-upload" --env "MODAL_TOKEN_ID=$MODAL_TOKEN_ID" --env "MODAL_TOKEN_SECRET=$MODAL_TOKEN_SECRET" || [[ $? -eq 2 ]]
+    # MODAL_IMAGE_BUILDER_VERSION=2025.06 is required for enable_docker support (Docker-in-Docker alpha).
+    MODAL_IMAGE_BUILDER_VERSION=2025.06 offload -c offload-modal-acceptance.toml {{args}} run --copy-dir="/tmp/$OFFLOAD_PATCH_UUID:/offload-upload" --env "MODAL_TOKEN_ID=$MODAL_TOKEN_ID" --env "MODAL_TOKEN_SECRET=$MODAL_TOKEN_SECRET" || [[ $? -eq 2 ]]
 
 # Run release tests on Modal via Offload (with Docker-in-Docker)
 test-offload-release args="":
