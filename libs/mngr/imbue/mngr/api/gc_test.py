@@ -855,6 +855,47 @@ def test_gc_snapshots_preserves_young_destroyed_host_snapshots(
     assert gc_mock_provider.deleted_snapshots == []
 
 
+def test_gc_snapshots_respects_custom_snapshot_age(
+    temp_host_dir: Path,
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """gc_snapshots uses the provider's configured min_destroyed_snapshot_age_seconds.
+
+    With a short age (1 hour), a 2-hour-old snapshot on a DESTROYED host should be deleted.
+    """
+    # Configure provider with a 1-hour snapshot retention
+    config = MngrConfig(
+        prefix=temp_mngr_ctx.config.prefix,
+        default_min_destroyed_snapshot_age_seconds=3600.0,
+    )
+    ctx = temp_mngr_ctx.model_copy_update(
+        to_update(temp_mngr_ctx.field_ref().config, config),
+    )
+    provider = MockProviderInstance(
+        name=ProviderInstanceName("custom-age-provider"),
+        host_dir=temp_host_dir,
+        mngr_ctx=ctx,
+    )
+
+    host = _make_offline_host(provider, ctx, stop_reason=HostState.DESTROYED.value, days_old=1)
+    provider.mock_hosts = [host]
+
+    two_hours_ago = datetime.now(timezone.utc) - timedelta(hours=2)
+    snapshot = _make_snapshot_info(created_at=two_hours_ago)
+    provider.mock_snapshots = [snapshot]
+
+    result = GcResult()
+    gc_snapshots(
+        hosts_by_provider=_hosts_for(provider),
+        dry_run=False,
+        error_behavior=ErrorBehavior.ABORT,
+        result=result,
+    )
+
+    assert len(result.snapshots_destroyed) == 1
+    assert provider.deleted_snapshots == [(host.id, snapshot.id)]
+
+
 # =========================================================================
 # gc_volumes tests
 # =========================================================================
