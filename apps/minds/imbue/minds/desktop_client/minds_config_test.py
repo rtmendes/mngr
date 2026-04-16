@@ -63,12 +63,19 @@ def test_persistence_across_instances(tmp_path: Path) -> None:
     assert config2.get_auto_open_requests_panel() is False
 
 
-def test_corrupt_toml_returns_defaults(tmp_path: Path) -> None:
-    """A corrupt config.toml is handled gracefully with defaults."""
+def test_corrupt_toml_raises(tmp_path: Path) -> None:
+    """A corrupt config.toml raises MindsConfigError rather than silently
+    returning defaults. Silent fallback would hide data corruption -- e.g.
+    the next ``set_*`` call would overwrite the unparseable file with a
+    fresh one derived from an empty dict, losing whatever the user had
+    intended to be stored.
+    """
     config = _make_config(tmp_path)
     (tmp_path / "config.toml").write_text("not valid toml {{{")
-    assert config.get_default_account_id() is None
-    assert config.get_auto_open_requests_panel() is True
+    with pytest.raises(MindsConfigError):
+        config.get_default_account_id()
+    with pytest.raises(MindsConfigError):
+        config.get_auto_open_requests_panel()
 
 
 def test_multiple_settings_coexist(tmp_path: Path) -> None:

@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Final
 
 import tomlkit
-from loguru import logger
 from pydantic import AnyUrl
 from pydantic import Field
 from pydantic import PrivateAttr
@@ -60,15 +59,24 @@ class MindsConfig(MutableModel):
         return self.data_dir / _CONFIG_FILENAME
 
     def _read_raw(self) -> dict[str, object]:
-        """Read the TOML config file. Returns empty dict if missing or corrupt."""
+        """Read the TOML config file.
+
+        Returns an empty dict if the file does not exist (no config yet).
+        Raises MindsConfigError if the file exists but cannot be read or
+        parsed -- we refuse to silently fall back to defaults in that case
+        because doing so would hide data corruption from the user.
+        """
         path = self._config_path
         if not path.exists():
             return {}
         try:
-            return dict(tomlkit.loads(path.read_text()))
-        except (OSError, ValueError) as e:
-            logger.warning("Failed to read config.toml: {}", e)
-            return {}
+            text = path.read_text()
+        except OSError as e:
+            raise MindsConfigError(f"Cannot read {path}: {e}") from e
+        try:
+            return dict(tomlkit.loads(text))
+        except ValueError as e:
+            raise MindsConfigError(f"Failed to parse {path}: {e}") from e
 
     def _write_raw(self, data: dict[str, object]) -> None:
         """Write the config data to TOML file atomically."""
