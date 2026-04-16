@@ -11,7 +11,7 @@ import pytest
 from imbue.mngr.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
 
-_REMOTE_TIMEOUT = 210.0
+_REMOTE_TIMEOUT = 120.0
 
 
 # All tests in this file invoke the Modal CLI indirectly (via environment_create
