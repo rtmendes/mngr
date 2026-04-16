@@ -326,6 +326,25 @@ is used as the relative path under the target config dir's plugins/ directory.
 """
 
 
+def _rebase_plugin_path(path: str, source_claude_dir: Path, target_config_dir: Path) -> str | None:
+    """Rebase an absolute plugin/marketplace path from source to target config dir.
+
+    Returns the rebased path, or None if the path could not be rewritten
+    (no '/plugins/' segment found). Handles two cases:
+    1. Path starts with source_claude_dir -- direct prefix replacement.
+    2. Path has a '/plugins/' segment -- best-effort extraction of the
+       relative path after the last '/plugins/' occurrence.
+    """
+    source_prefix = str(source_claude_dir) + "/"
+    if path.startswith(source_prefix):
+        return str(target_config_dir / path[len(source_prefix) :])
+    marker_idx = path.rfind(_PLUGINS_DIR_MARKER)
+    if marker_idx != -1:
+        relative = "plugins/" + path[marker_idx + len(_PLUGINS_DIR_MARKER) :]
+        return str(target_config_dir / relative)
+    return None
+
+
 def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, target_config_dir: Path) -> str:
     """Rewrite installPath values in installed_plugins.json for a target config dir.
 
@@ -342,16 +361,11 @@ def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, targ
     for plugin_name, plugin_entries in data.get("plugins", {}).items():
         for entry in plugin_entries:
             install_path = entry.get("installPath", "")
-            if install_path.startswith(source_prefix):
-                relative = install_path[len(source_prefix) :]
-                entry["installPath"] = str(target_config_dir / relative)
-            else:
-                # Best-effort rewrite: extract relative path from last /plugins/ segment.
-                marker_idx = install_path.rfind(_PLUGINS_DIR_MARKER)
-                if marker_idx != -1:
-                    relative = "plugins/" + install_path[marker_idx + len(_PLUGINS_DIR_MARKER) :]
-                    expected_path = str(source_claude_dir / relative)
-                    entry["installPath"] = str(target_config_dir / relative)
+            rewritten = _rebase_plugin_path(install_path, source_claude_dir, target_config_dir)
+            if rewritten is not None:
+                # Log warnings for best-effort rewrites (path didn't start with expected prefix).
+                if not install_path.startswith(source_prefix):
+                    expected_path = str(source_claude_dir / rewritten[len(str(target_config_dir)) + 1 :])
                     if _MNGR_AGENT_CONFIG_DIR_MARKER in install_path:
                         logger.warning(
                             "Plugin {!r} in {} has installPath pointing to a previous mngr agent's "
@@ -381,16 +395,17 @@ def _rewrite_installed_plugins_paths(content: str, source_claude_dir: Path, targ
                             source_claude_dir,
                             installed_plugins_path,
                         )
-                else:
-                    logger.warning(
-                        "Plugin {!r} in {} has installPath {!r} that could not be rewritten "
-                        "(no '{}' segment found). Keeping path as-is; the plugin may not "
-                        "work on the remote host.",
-                        plugin_name,
-                        installed_plugins_path,
-                        install_path,
-                        _PLUGINS_DIR_MARKER,
-                    )
+                entry["installPath"] = rewritten
+            else:
+                logger.warning(
+                    "Plugin {!r} in {} has installPath {!r} that could not be rewritten "
+                    "(no '{}' segment found). Keeping path as-is; the plugin may not "
+                    "work on the remote host.",
+                    plugin_name,
+                    installed_plugins_path,
+                    install_path,
+                    _PLUGINS_DIR_MARKER,
+                )
     return json.dumps(data, indent=2) + "\n"
 
 
@@ -495,27 +510,20 @@ def _rewrite_known_marketplaces_paths(content: str, source_claude_dir: Path, tar
     may invalidate plugin caches when the remote clone has a different HEAD.
     """
     data: dict[str, Any] = json.loads(content)
-    source_prefix = str(source_claude_dir) + "/"
     for marketplace_name, marketplace_info in data.items():
         install_location = marketplace_info.get("installLocation", "")
-        if install_location.startswith(source_prefix):
-            relative = install_location[len(source_prefix) :]
-            marketplace_info["installLocation"] = str(target_config_dir / relative)
+        rewritten = _rebase_plugin_path(install_location, source_claude_dir, target_config_dir)
+        if rewritten is not None:
+            marketplace_info["installLocation"] = rewritten
         else:
-            # Best-effort: extract relative path from last /plugins/ segment
-            marker_idx = install_location.rfind(_PLUGINS_DIR_MARKER)
-            if marker_idx != -1:
-                relative = "plugins/" + install_location[marker_idx + len(_PLUGINS_DIR_MARKER) :]
-                marketplace_info["installLocation"] = str(target_config_dir / relative)
-            else:
-                logger.warning(
-                    "Marketplace {!r} has installLocation {!r} that could not be rewritten "
-                    "(no '{}' segment found). Keeping path as-is; the marketplace may not "
-                    "work on the remote host.",
-                    marketplace_name,
-                    install_location,
-                    _PLUGINS_DIR_MARKER,
-                )
+            logger.warning(
+                "Marketplace {!r} has installLocation {!r} that could not be rewritten "
+                "(no '{}' segment found). Keeping path as-is; the marketplace may not "
+                "work on the remote host.",
+                marketplace_name,
+                install_location,
+                _PLUGINS_DIR_MARKER,
+            )
     return json.dumps(data, indent=2) + "\n"
 
 
