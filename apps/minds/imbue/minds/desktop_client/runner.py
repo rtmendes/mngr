@@ -9,7 +9,6 @@ from typing import Final
 import paramiko
 import uvicorn
 from loguru import logger
-from pydantic import AnyUrl
 from pydantic import Field
 from supertokens_python import InputAppInfo
 from supertokens_python import SupertokensConfig
@@ -23,7 +22,6 @@ from supertokens_python.recipe.thirdparty.provider import ProviderConfig
 from supertokens_python.recipe.thirdparty.provider import ProviderInput
 
 from imbue.imbue_common.frozen_model import FrozenModel
-from imbue.minds.config.data_types import MindsConfig
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.api_v1 import inject_tunnel_token_into_agent
@@ -36,11 +34,14 @@ from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingUrl
 from imbue.minds.desktop_client.cloudflare_client import CloudflareSecret
 from imbue.minds.desktop_client.cloudflare_client import CloudflareUsername
 from imbue.minds.desktop_client.cloudflare_client import OwnerEmail
+from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.notification import NotificationDispatcher
+from imbue.minds.desktop_client.request_events import RequestInbox
+from imbue.minds.desktop_client.request_events import load_response_events
+from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
-from imbue.minds.desktop_client.supertokens_auth import SuperTokensSessionStore
 from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import OutputFormat
@@ -49,6 +50,8 @@ from imbue.minds.utils.output import emit_event
 from imbue.mngr.primitives import AgentId
 
 _ONE_TIME_CODE_LENGTH: Final[int] = 32
+
+_DEFAULT_MNGR_HOST_DIR: Final[Path] = Path.home() / ".mngr"
 
 
 _REMOTE_HOST_DIR: Final[str] = "/mngr"
@@ -59,8 +62,14 @@ class AgentDiscoveryHandler(FrozenModel):
 
     tunnel_manager: SSHTunnelManager = Field(description="SSH tunnel manager for reverse tunnels")
     server_port: int = Field(description="Local server port to forward")
-    mngr_host_dir: Path = Field(description="Base mngr host directory for local agents")
-    data_dir: Path = Field(description="Minds data directory for looking up stored tunnel tokens")
+    mngr_host_dir: Path = Field(
+        default_factory=lambda: _DEFAULT_MNGR_HOST_DIR,
+        description="Base mngr host directory for local agents (defaults to ~/.mngr)",
+    )
+    data_dir: Path = Field(
+        default_factory=lambda: _DEFAULT_MNGR_HOST_DIR.parent / ".minds",
+        description="Minds data directory for looking up stored tunnel tokens",
+    )
 
     def __call__(self, agent_id: AgentId, ssh_info: RemoteSSHInfo | None, provider_name: str) -> None:
         if ssh_info is not None:
@@ -113,8 +122,7 @@ class AgentDiscoveryHandler(FrozenModel):
 
 
 def start_desktop_client(
-    paths: WorkspacePaths,
-    minds_config: MindsConfig,
+    data_directory: Path,
     host: str,
     port: int,
     output_format: OutputFormat,
@@ -127,20 +135,31 @@ def start_desktop_client(
     format (human-readable text or JSONL event). Unless --no-browser is
     set, the URL is opened in the system browser.
     """
+    paths = WorkspacePaths(data_dir=data_directory)
     auth_store = FileAuthStore(data_directory=paths.auth_dir)
     backend_resolver = MngrCliBackendResolver()
     stream_manager = MngrStreamManager(resolver=backend_resolver)
     tunnel_manager = SSHTunnelManager()
 
-    cloudflare_client = _build_cloudflare_client(minds_config.cloudflare_forwarding_url)
+    cloudflare_client = _build_cloudflare_client()
     agent_creator = AgentCreator(paths=paths)
     telegram_orchestrator = TelegramSetupOrchestrator(paths=paths)
     is_electron = os.getenv("MINDS_ELECTRON") == "1"
     notification_dispatcher = NotificationDispatcher(is_electron=is_electron)
+    minds_config = MindsConfig(data_dir=data_directory)
 
-    supertokens_session_store = _init_supertokens(
-        data_directory=paths.data_dir,
-        connection_uri=str(minds_config.supertokens_connection_uri),
+    # Initialize multi-account session store
+    session_store = MultiAccountSessionStore(data_dir=data_directory)
+
+    # Initialize request inbox from stored response events
+    response_events = load_response_events(data_directory)
+    request_inbox = RequestInbox()
+    for resp in response_events:
+        request_inbox = request_inbox.add_response(resp)
+
+    # Initialize SuperTokens SDK if configured
+    _init_supertokens(
+        data_directory=data_directory,
         host=host,
         port=port,
     )
@@ -166,8 +185,7 @@ def start_desktop_client(
     discovery_handler = AgentDiscoveryHandler(
         tunnel_manager=tunnel_manager,
         server_port=port,
-        mngr_host_dir=paths.mngr_host_dir,
-        data_dir=paths.data_dir,
+        data_dir=data_directory,
     )
     stream_manager.add_on_agent_discovered_callback(discovery_handler)
     stream_manager.start()
@@ -185,9 +203,10 @@ def start_desktop_client(
         telegram_orchestrator=telegram_orchestrator,
         notification_dispatcher=notification_dispatcher,
         paths=paths,
-        minds_config=minds_config,
         stream_manager=stream_manager,
-        supertokens_session_store=supertokens_session_store,
+        session_store=session_store,
+        minds_config=minds_config,
+        request_inbox=request_inbox,
         server_port=port,
         output_format=output_format,
     )
@@ -211,16 +230,15 @@ def start_desktop_client(
 
 def _init_supertokens(
     data_directory: Path,
-    connection_uri: str,
     host: str,
     port: int,
-) -> SuperTokensSessionStore:
-    """Initialize the SuperTokens SDK and return a session store.
+) -> None:
+    """Initialize the SuperTokens SDK if configured."""
+    connection_uri = os.environ.get("SUPERTOKENS_CONNECTION_URI")
+    if not connection_uri:
+        logger.info("SuperTokens not configured (SUPERTOKENS_CONNECTION_URI not set)")
+        return
 
-    The connection URI is supplied by MindsConfig (defaulted to the dev
-    deployment, overridable via env var). The API key and OAuth client
-    credentials remain env-var-only since they are secrets.
-    """
     api_key = os.environ.get("SUPERTOKENS_API_KEY")
     google_client_id = os.environ.get("GOOGLE_CLIENT_ID")
     google_client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
@@ -286,43 +304,30 @@ def _init_supertokens(
         mode="asgi",
     )
 
-    session_store = SuperTokensSessionStore(
-        data_directory=data_directory / "supertokens",
-    )
     logger.info("SuperTokens initialized (core: {})", connection_uri)
-    return session_store
 
 
-def _build_cloudflare_client(forwarding_url: AnyUrl) -> CloudflareForwardingClient | None:
-    """Build a CloudflareForwardingClient from minds config + env-var-only auth fields.
+def _build_cloudflare_client() -> CloudflareForwardingClient | None:
+    """Build a CloudflareForwardingClient from environment variables, or None if not configured.
 
-    The forwarding URL always comes from MindsConfig (with built-in default).
-    Basic auth credentials (username, secret, owner_email) stay env-var-only
-    because they are secrets. If both username and secret are unset the
-    resulting client has no usable auth mode on its own, so we return None
-    instead -- callers (api_v1.get_cf_client_with_auth) already handle the
-    ``None`` case by building a SuperTokens-enriched client from scratch using
-    ``minds_config.cloudflare_forwarding_url``. Returning None also preserves
-    the pre-existing ``app.state.cloudflare_client is None`` check in
-    app.py:_handle_agent_servers_page, which skips unauthenticated calls on
-    the raw client.
+    Only CLOUDFLARE_FORWARDING_URL is required. Basic Auth fields (username, secret,
+    owner_email) are optional and only used as a fallback when SuperTokens is not configured.
     """
+    forwarding_url = os.environ.get("CLOUDFLARE_FORWARDING_URL")
+    if not forwarding_url:
+        logger.info(
+            "Cloudflare forwarding not configured (CLOUDFLARE_FORWARDING_URL not set), tunnel features disabled"
+        )
+        return None
+
     username = os.environ.get("CLOUDFLARE_FORWARDING_USERNAME")
     secret = os.environ.get("CLOUDFLARE_FORWARDING_SECRET")
     owner_email = os.environ.get("OWNER_EMAIL")
 
-    if not (username and secret):
-        logger.info(
-            "Cloudflare Basic Auth not configured "
-            "(CLOUDFLARE_FORWARDING_USERNAME/CLOUDFLARE_FORWARDING_SECRET unset); "
-            "raw Cloudflare client disabled. SuperTokens-enriched client will be used when a user is signed in."
-        )
-        return None
-
     return CloudflareForwardingClient(
-        forwarding_url=CloudflareForwardingUrl(str(forwarding_url)),
-        username=CloudflareUsername(username),
-        secret=CloudflareSecret(secret),
+        forwarding_url=CloudflareForwardingUrl(forwarding_url),
+        username=CloudflareUsername(username) if username else None,
+        secret=CloudflareSecret(secret) if secret else None,
         owner_email=OwnerEmail(owner_email) if owner_email else None,
     )
 
