@@ -292,10 +292,13 @@ def _gc_single_host(
         # if so, then we permanently delete the associated data (to prevent data from accumulating)
         if not isinstance(host, OnlineHostInterface):
             seconds_since_stopped = host.get_seconds_since_stopped()
-            if (
-                seconds_since_stopped is not None
-                and seconds_since_stopped > provider.get_max_destroyed_host_persisted_seconds()
-            ):
+            # Gate on max of both thresholds so snapshot records survive long
+            # enough for gc_snapshots to find and clean them up.
+            min_offline_age = max(
+                provider.get_max_destroyed_host_persisted_seconds(),
+                provider.get_min_destroyed_snapshot_age_seconds(),
+            )
+            if seconds_since_stopped is not None and seconds_since_stopped > min_offline_age:
                 agent_refs = host.discover_agents()
                 if len(agent_refs) == 0 or host.get_state() in (
                     HostState.FAILED,
@@ -348,7 +351,7 @@ def _gc_single_host(
             logger.warning("Cannot determine age of host {} during GC, skipping: {}", host.id, e)
             return
         host_age_seconds = (datetime.now(timezone.utc) - certified_data.created_at).total_seconds()
-        min_age_seconds = _MIN_HOST_AGE_DAYS * 86400
+        min_age_seconds = provider.get_min_online_host_age_seconds()
         if host_age_seconds < min_age_seconds:
             logger.trace(
                 "Skipped GC for host {} (age {:.0f}s < minimum {}s)",
@@ -391,10 +394,13 @@ def gc_snapshots(
     - PAUSED/STOPPED hosts need their snapshots for resumption
     - RUNNING hosts may have snapshots for backup/restore purposes
     """
+    now = datetime.now(timezone.utc)
     for provider, host_refs in hosts_by_provider:
         if not provider.supports_snapshots:
             logger.trace("Skipped provider {} (does not support snapshots)", provider.name)
             continue
+
+        min_snapshot_age_seconds = provider.get_min_destroyed_snapshot_age_seconds()
 
         try:
             for host_ref in host_refs:
@@ -412,6 +418,17 @@ def gc_snapshots(
                     snapshots = provider.list_snapshots(host_ref.host_id)
 
                     for snapshot in snapshots:
+                        snapshot_age_seconds = (now - snapshot.created_at).total_seconds()
+                        if snapshot_age_seconds < min_snapshot_age_seconds:
+                            logger.trace(
+                                "Skipped snapshot {} on host {} (age {:.0f}s < minimum {:.0f}s)",
+                                snapshot.id,
+                                host_ref.host_id,
+                                snapshot_age_seconds,
+                                min_snapshot_age_seconds,
+                            )
+                            continue
+
                         if not dry_run:
                             provider.delete_snapshot(host_ref.host_id, snapshot.id)
 
@@ -478,15 +495,6 @@ def gc_volumes(
             result.errors.append(error_msg)
             _handle_error(error_msg, error_behavior, exc=e)
 
-
-_MIN_HOST_AGE_DAYS: Final[int] = 30
-"""Minimum age (in days) before GC will destroy an online host.
-
-Hosts younger than this are never destroyed by GC, even if they have no
-agents.  This protects against transient states (e.g. a host that is
-temporarily empty between agent creation and discovery) and against
-aggressive destruction triggered by momentary SSH failures.
-"""
 
 _LOG_MAX_AGE_DAYS: Final[int] = 30
 

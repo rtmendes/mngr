@@ -2041,11 +2041,15 @@ log "=== Shutdown script completed ==="
 
     @handle_modal_auth_error
     def destroy_host(self, host: HostInterface | HostId) -> None:
-        """Destroy a Modal sandbox permanently."""
+        """Destroy a Modal sandbox permanently.
+
+        Snapshot records are intentionally preserved so that gc_snapshots can
+        age-gate their deletion (keeping them around for recovery via
+        ``mngr create --snapshot``).
+        """
         self.stop_host(host, create_snapshot=False)
         host_id = host.id if isinstance(host, HostInterface) else host
         self._destroy_agents_on_host(host_id)
-        self._clear_snapshots_from_host_record(host_id)
         # FOLLOWUP: once Modal enables deleting Images, this will be the place to do it
         if self.config.is_host_volume_created:
             self._delete_host_volume(host_id)

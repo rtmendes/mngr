@@ -93,3 +93,15 @@ class BaseProviderInstance(ProviderInstanceInterface):
             return provider_config.destroyed_host_persisted_seconds
         # Fall back to the global default
         return self.mngr_ctx.config.default_destroyed_host_persisted_seconds
+
+    def get_min_online_host_age_seconds(self) -> float:
+        provider_config = self.mngr_ctx.config.providers.get(self.name)
+        if provider_config is not None and provider_config.min_online_host_age_seconds is not None:
+            return provider_config.min_online_host_age_seconds
+        return self.mngr_ctx.config.default_min_online_host_age_seconds
+
+    def get_min_destroyed_snapshot_age_seconds(self) -> float:
+        provider_config = self.mngr_ctx.config.providers.get(self.name)
+        if provider_config is not None and provider_config.min_destroyed_snapshot_age_seconds is not None:
+            return provider_config.min_destroyed_snapshot_age_seconds
+        return self.mngr_ctx.config.default_min_destroyed_snapshot_age_seconds
