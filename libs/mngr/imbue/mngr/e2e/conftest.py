@@ -21,6 +21,7 @@ from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.consts import ROOT_CONFIG_FILENAME
 from imbue.mngr.config.data_types import USER_ID_FILENAME
 from imbue.mngr.utils.polling import poll_until
+from imbue.mngr.utils.testing import TEST_SLEEP_COMMAND
 from imbue.mngr.utils.testing import init_git_repo
 from imbue.skitwright.runner import run_command
 from imbue.skitwright.session import Session
@@ -372,8 +373,8 @@ def e2e(
     #
     # Register the `test_sleep` agent type so tests can start a long-running
     # placeholder agent via `--type test_sleep` (replaces the removed
-    # `--command` flag). Keep the command string in sync with
-    # imbue.mngr.utils.testing.TEST_SLEEP_COMMAND.
+    # `--command` flag). The command string is shared with the in-process
+    # test fixtures via imbue.mngr.utils.testing.TEST_SLEEP_COMMAND.
     settings_path = project_config_dir / "settings.local.toml"
     settings_path.write_text(
         "[commands.create]\n"
@@ -383,12 +384,12 @@ def e2e(
         'connect_command = "mngr-e2e-connect"\n'
         "\n"
         "[agent_types.test_sleep]\n"
-        'command = "sleep 99999"\n'
+        f'command = "{TEST_SLEEP_COMMAND}"\n'
         "\n"
         # Used by test_create_with_env to verify env var propagation: prints
         # MNGR_TEST_VAR before sleeping so the value appears in the tmux pane.
         "[agent_types.test_env_echo]\n"
-        'command = "echo MNGR_TEST_VAR=$MNGR_TEST_VAR && sleep 99999"\n'
+        f'command = "echo MNGR_TEST_VAR=$MNGR_TEST_VAR && {TEST_SLEEP_COMMAND}"\n'
     )
 
     # Ensure .claude/settings.local.json is gitignored. Remote providers
