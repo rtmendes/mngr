@@ -49,8 +49,10 @@ function getAccessMode(): AccessMode {
 
 // SVG path constants for tab action icons
 const SVG_CLOSE = '<line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/>';
-const SVG_TRASH = '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>';
-const SVG_SHARE = '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>';
+const SVG_TRASH =
+  '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>';
+const SVG_SHARE =
+  '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>';
 
 function getApplicationUrl(appName: string, rawUrl: string, agentId: string): string {
   const hostname = window.location.hostname;
@@ -188,7 +190,19 @@ interface CustomTabOptions {
 function createCustomTab(
   options: { id: string; name: string },
   tabOptions: CustomTabOptions,
-): { element: HTMLElement; init: (params: { title: string; api: { close: () => void; onDidTitleChange: (cb: (e: { title: string }) => void) => { dispose: () => void }; isActive: boolean; onDidActiveChange: (cb: (e: { isActive: boolean }) => void) => { dispose: () => void } } }) => void; dispose: () => void } {
+): {
+  element: HTMLElement;
+  init: (params: {
+    title: string;
+    api: {
+      close: () => void;
+      onDidTitleChange: (cb: (e: { title: string }) => void) => { dispose: () => void };
+      isActive: boolean;
+      onDidActiveChange: (cb: (e: { isActive: boolean }) => void) => { dispose: () => void };
+    };
+  }) => void;
+  dispose: () => void;
+} {
   const element = document.createElement("div");
   element.className = "dv-default-tab dv-custom-tab";
 
@@ -391,7 +405,8 @@ function createAddTabButton(agentId: string, dockviewState: AgentDockviewState):
           const header = document.createElement("div");
           header.className = "dockview-add-tab-dropdown-header";
           header.textContent = item.label;
-          header.style.cssText = "padding: 4px 12px; font-size: 0.75em; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;";
+          header.style.cssText =
+            "padding: 4px 12px; font-size: 0.75em; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;";
           dropdown.appendChild(header);
           continue;
         }
@@ -451,12 +466,7 @@ function focusOrCreateChatPanelForAgent(
   addChatPanel(agentId, chatAgentId, chatAgentName, state);
 }
 
-function addChatPanel(
-  agentId: string,
-  chatAgentId: string,
-  chatAgentName: string,
-  state: AgentDockviewState,
-): void {
+function addChatPanel(agentId: string, chatAgentId: string, chatAgentName: string, state: AgentDockviewState): void {
   const panelId = `chat-${chatAgentId}`;
   const title = chatAgentName;
   const params: PanelParams = { panelType: "chat", agentId, chatAgentId };
@@ -469,7 +479,6 @@ function addChatPanel(
     renderer: "always",
   });
 }
-
 
 function openIframeTab(
   agentId: string,
@@ -733,11 +742,7 @@ function showAgentDockview(agentId: string): void {
   }
 }
 
-async function executeDestroy(
-  agentId: string,
-  panelId: string,
-  dockviewAgentId: string,
-): Promise<void> {
+async function executeDestroy(agentId: string, panelId: string, dockviewAgentId: string): Promise<void> {
   const chatChildren = getChatAgentsForParent(agentId);
 
   // Cascade: destroy children first
@@ -859,61 +864,65 @@ export const DockviewWorkspace: m.Component<{ agentId: string | null }> = {
       );
     }
 
-    return m("div", {
-      class: "dockview-workspace",
-      style: "width: 100%; height: 100%;",
-    }, [
-      showNewChatModal && newChatParentAgentId
-        ? m(CreateAgentModal, {
-            mode: "chat",
-            parentAgentId: newChatParentAgentId,
-            onCreated(newAgentId: string, newAgentName: string) {
-              showNewChatModal = false;
-              const state = agentDockviews.get(agentId);
-              if (state) {
-                focusOrCreateChatPanelForAgent(agentId, newAgentId, newAgentName, state);
-              }
-            },
-            onCancel() {
-              showNewChatModal = false;
-            },
-          })
-        : null,
+    return m(
+      "div",
+      {
+        class: "dockview-workspace",
+        style: "width: 100%; height: 100%;",
+      },
+      [
+        showNewChatModal && newChatParentAgentId
+          ? m(CreateAgentModal, {
+              mode: "chat",
+              parentAgentId: newChatParentAgentId,
+              onCreated(newAgentId: string, newAgentName: string) {
+                showNewChatModal = false;
+                const state = agentDockviews.get(agentId);
+                if (state) {
+                  focusOrCreateChatPanelForAgent(agentId, newAgentId, newAgentName, state);
+                }
+              },
+              onCancel() {
+                showNewChatModal = false;
+              },
+            })
+          : null,
 
-      showDestroyDialog && destroyTargetAgentId && destroyTargetAgentName
-        ? m(DestroyConfirmDialog, {
-            agentName: destroyTargetAgentName,
-            chatChildren: getChatAgentsForParent(destroyTargetAgentId),
-            onConfirm() {
-              showDestroyDialog = false;
-              const targetId = destroyTargetAgentId!;
-              const panelId = destroyTargetPanelId!;
-              const dvAgentId = destroyTargetDockviewAgentId!;
-              destroyTargetAgentId = null;
-              destroyTargetAgentName = null;
-              destroyTargetPanelId = null;
-              destroyTargetDockviewAgentId = null;
-              executeDestroy(targetId, panelId, dvAgentId);
-            },
-            onCancel() {
-              showDestroyDialog = false;
-              destroyTargetAgentId = null;
-              destroyTargetAgentName = null;
-              destroyTargetPanelId = null;
-              destroyTargetDockviewAgentId = null;
-            },
-          })
-        : null,
+        showDestroyDialog && destroyTargetAgentId && destroyTargetAgentName
+          ? m(DestroyConfirmDialog, {
+              agentName: destroyTargetAgentName,
+              chatChildren: getChatAgentsForParent(destroyTargetAgentId),
+              onConfirm() {
+                showDestroyDialog = false;
+                const targetId = destroyTargetAgentId!;
+                const panelId = destroyTargetPanelId!;
+                const dvAgentId = destroyTargetDockviewAgentId!;
+                destroyTargetAgentId = null;
+                destroyTargetAgentName = null;
+                destroyTargetPanelId = null;
+                destroyTargetDockviewAgentId = null;
+                executeDestroy(targetId, panelId, dvAgentId);
+              },
+              onCancel() {
+                showDestroyDialog = false;
+                destroyTargetAgentId = null;
+                destroyTargetAgentName = null;
+                destroyTargetPanelId = null;
+                destroyTargetDockviewAgentId = null;
+              },
+            })
+          : null,
 
-      showShareModal && shareServerName
-        ? m(ShareModal, {
-            serverName: shareServerName,
-            onClose() {
-              showShareModal = false;
-              shareServerName = null;
-            },
-          })
-        : null,
-    ]);
+        showShareModal && shareServerName
+          ? m(ShareModal, {
+              serverName: shareServerName,
+              onClose() {
+                showShareModal = false;
+                shareServerName = null;
+              },
+            })
+          : null,
+      ],
+    );
   },
 };

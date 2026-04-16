@@ -88,11 +88,7 @@ export const AgentSelector: m.Component = {
       [
         m(EmptySlot, { name: "sidebar-before-list" }),
         !wsConnected && !hasItems
-          ? m(
-              "p",
-              { class: "conversation-selector-empty mt-2 px-5 text-sm text-text-secondary" },
-              "Connecting...",
-            )
+          ? m("p", { class: "conversation-selector-empty mt-2 px-5 text-sm text-text-secondary" }, "Connecting...")
           : !hasItems
             ? m(
                 "p",
@@ -102,18 +98,10 @@ export const AgentSelector: m.Component = {
             : m(
                 "div",
                 { class: "conversation-selector-list-wrapper flex-1 overflow-y-auto" },
-                m(
-                  "ul",
-                  { class: "conversation-selector-list" },
-                  [
-                    ...agents.map((agent) =>
-                      renderAgentItem(agent, agent.id === currentAgentId, selectorItemClaimed),
-                    ),
-                    ...protoAgents.map((proto) =>
-                      renderProtoAgentItem(proto, proto.agent_id === currentAgentId),
-                    ),
-                  ],
-                ),
+                m("ul", { class: "conversation-selector-list" }, [
+                  ...agents.map((agent) => renderAgentItem(agent, agent.id === currentAgentId, selectorItemClaimed)),
+                  ...protoAgents.map((proto) => renderProtoAgentItem(proto, proto.agent_id === currentAgentId)),
+                ]),
               ),
       ],
     );

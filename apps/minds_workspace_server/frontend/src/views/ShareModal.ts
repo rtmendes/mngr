@@ -50,10 +50,12 @@ function extractEmails(status: SharingStatus): string[] {
 
 function buildAuthRules(emails: string[]): Array<{ action: string; include: Array<{ email: { email: string } }> }> {
   if (emails.length === 0) return [];
-  return [{
-    action: "allow",
-    include: emails.map((email) => ({ email: { email } })),
-  }];
+  return [
+    {
+      action: "allow",
+      include: emails.map((email) => ({ email: { email } })),
+    },
+  ];
 }
 
 async function fetchStatus(serverName: string): Promise<void> {
@@ -174,14 +176,19 @@ function renderEmailList(emails: string[], serverName: string, isEnabled: boolea
   return m("div.share-modal-emails", [
     emails.length === 0
       ? null
-      : m("ul.share-modal-email-list",
+      : m(
+          "ul.share-modal-email-list",
           emails.map((email) =>
             m("li.share-modal-email-item", { key: email }, [
               m("span", email),
-              m("button.share-modal-email-remove", {
-                title: "Remove",
-                onclick: () => removeEmail(emails, email, serverName, isEnabled),
-              }, "x"),
+              m(
+                "button.share-modal-email-remove",
+                {
+                  title: "Remove",
+                  onclick: () => removeEmail(emails, email, serverName, isEnabled),
+                },
+                "x",
+              ),
             ]),
           ),
         ),
@@ -190,7 +197,9 @@ function renderEmailList(emails: string[], serverName: string, isEnabled: boolea
         type: "email",
         placeholder: "user@example.com",
         value: modalNewEmail,
-        oninput: (e: Event) => { modalNewEmail = (e.target as HTMLInputElement).value; },
+        oninput: (e: Event) => {
+          modalNewEmail = (e.target as HTMLInputElement).value;
+        },
         onkeydown: (e: KeyboardEvent) => {
           if (e.key === "Enter" && modalNewEmail.trim()) {
             e.preventDefault();
@@ -198,10 +207,14 @@ function renderEmailList(emails: string[], serverName: string, isEnabled: boolea
           }
         },
       }),
-      m("button.share-modal-btn.share-modal-btn-secondary", {
-        disabled: !modalNewEmail.trim(),
-        onclick: () => addEmail(emails, serverName, isEnabled),
-      }, "Add"),
+      m(
+        "button.share-modal-btn.share-modal-btn-secondary",
+        {
+          disabled: !modalNewEmail.trim(),
+          onclick: () => addEmail(emails, serverName, isEnabled),
+        },
+        "Add",
+      ),
     ]),
   ]);
 }
@@ -220,69 +233,103 @@ export const ShareModal: m.Component<ShareModalAttrs> = {
     const isEnabled = modalStatus?.enabled ?? false;
     const title = isEnabled ? `Edit ${serverName} sharing` : `Share ${serverName} with...`;
 
-    const close = () => { resetModalState(); onClose(); };
+    const close = () => {
+      resetModalState();
+      onClose();
+    };
 
-    return m("div.share-modal-overlay", { onclick: (e: Event) => { if (e.target === e.currentTarget) close(); } }, [
-      m("div.share-modal", [
-        m("div.share-modal-header", [
-          m("h3.share-modal-title", title),
-          m("button.share-modal-close-x", { onclick: close, title: "Close" }, "x"),
-        ]),
+    return m(
+      "div.share-modal-overlay",
+      {
+        onclick: (e: Event) => {
+          if (e.target === e.currentTarget) close();
+        },
+      },
+      [
+        m("div.share-modal", [
+          m("div.share-modal-header", [
+            m("h3.share-modal-title", title),
+            m("button.share-modal-close-x", { onclick: close, title: "Close" }, "x"),
+          ]),
 
-        modalLoading
-          ? m("p.share-modal-loading", "Loading...")
-          : modalError
-            ? m("div", [
-                m("p.share-modal-error", modalError),
-                m("button.share-modal-btn.share-modal-btn-secondary", {
-                  onclick: () => fetchStatus(serverName),
-                }, "Retry"),
-              ])
-            : isEnabled
+          modalLoading
+            ? m("p.share-modal-loading", "Loading...")
+            : modalError
               ? m("div", [
-                  m("div.share-modal-url-row", [
-                    m("input.share-modal-url-input", {
-                      type: "text",
-                      readonly: true,
-                      value: modalStatus?.url ?? "(URL not available)",
-                      onclick: (e: Event) => (e.target as HTMLInputElement).select(),
-                    }),
-                    m("button.share-modal-btn.share-modal-btn-secondary", {
-                      onclick: () => {
-                        if (modalStatus?.url) {
-                          navigator.clipboard.writeText(modalStatus.url);
-                          modalCopied = true;
-                          setTimeout(() => { modalCopied = false; m.redraw(); }, 2000);
-                        }
-                      },
-                    }, modalCopied ? "Copied" : "Copy"),
-                  ]),
-                  renderEmailList(emails, serverName, true),
-                  m("div.share-modal-footer", [
-                    m("div.share-modal-footer-left", [
-                      m("button.share-modal-btn.share-modal-btn-secondary", { onclick: close }, "Cancel"),
-                      m("button.share-modal-btn.share-modal-btn-destructive", {
-                        disabled: modalActionInProgress,
-                        onclick: () => disableSharing(serverName),
-                      }, "Disable sharing"),
-                    ]),
-                    m("button.share-modal-btn.share-modal-btn", {
-                      disabled: modalActionInProgress,
-                      onclick: () => updateAuth(serverName, emails),
-                    }, modalActionInProgress ? "Updating..." : "Update"),
-                  ]),
+                  m("p.share-modal-error", modalError),
+                  m(
+                    "button.share-modal-btn.share-modal-btn-secondary",
+                    {
+                      onclick: () => fetchStatus(serverName),
+                    },
+                    "Retry",
+                  ),
                 ])
-              : m("div", [
-                  renderEmailList(emails, serverName, false),
-                  m("div.share-modal-footer", [
-                    m("button.share-modal-btn.share-modal-btn-secondary", { onclick: close }, "Cancel"),
-                    m("button.share-modal-btn.share-modal-btn", {
-                      disabled: modalActionInProgress,
-                      onclick: () => enableSharing(serverName, emails),
-                    }, modalActionInProgress ? "Enabling..." : "Enable sharing"),
+              : isEnabled
+                ? m("div", [
+                    m("div.share-modal-url-row", [
+                      m("input.share-modal-url-input", {
+                        type: "text",
+                        readonly: true,
+                        value: modalStatus?.url ?? "(URL not available)",
+                        onclick: (e: Event) => (e.target as HTMLInputElement).select(),
+                      }),
+                      m(
+                        "button.share-modal-btn.share-modal-btn-secondary",
+                        {
+                          onclick: () => {
+                            if (modalStatus?.url) {
+                              navigator.clipboard.writeText(modalStatus.url);
+                              modalCopied = true;
+                              setTimeout(() => {
+                                modalCopied = false;
+                                m.redraw();
+                              }, 2000);
+                            }
+                          },
+                        },
+                        modalCopied ? "Copied" : "Copy",
+                      ),
+                    ]),
+                    renderEmailList(emails, serverName, true),
+                    m("div.share-modal-footer", [
+                      m("div.share-modal-footer-left", [
+                        m("button.share-modal-btn.share-modal-btn-secondary", { onclick: close }, "Cancel"),
+                        m(
+                          "button.share-modal-btn.share-modal-btn-destructive",
+                          {
+                            disabled: modalActionInProgress,
+                            onclick: () => disableSharing(serverName),
+                          },
+                          "Disable sharing",
+                        ),
+                      ]),
+                      m(
+                        "button.share-modal-btn.share-modal-btn",
+                        {
+                          disabled: modalActionInProgress,
+                          onclick: () => updateAuth(serverName, emails),
+                        },
+                        modalActionInProgress ? "Updating..." : "Update",
+                      ),
+                    ]),
+                  ])
+                : m("div", [
+                    renderEmailList(emails, serverName, false),
+                    m("div.share-modal-footer", [
+                      m("button.share-modal-btn.share-modal-btn-secondary", { onclick: close }, "Cancel"),
+                      m(
+                        "button.share-modal-btn.share-modal-btn",
+                        {
+                          disabled: modalActionInProgress,
+                          onclick: () => enableSharing(serverName, emails),
+                        },
+                        modalActionInProgress ? "Enabling..." : "Enable sharing",
+                      ),
+                    ]),
                   ]),
-                ]),
-      ]),
-    ]);
+        ]),
+      ],
+    );
   },
 };
