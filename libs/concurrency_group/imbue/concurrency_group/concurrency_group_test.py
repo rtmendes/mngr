@@ -1,7 +1,6 @@
 import contextlib
 from pathlib import Path
 from threading import Event
-from threading import Thread
 from time import monotonic
 from typing import Any
 from typing import Final
@@ -380,23 +379,30 @@ def _enter_child_group_on_thread(
 
 
 def test_parent_exit_waits_for_child_group_on_other_thread_to_exit() -> None:
-    # Regression test: when a child CG is created on a worker thread (sibling-hierarchy
-    # pattern), parent.__exit__ on the main thread used to race against the child's own
-    # exit, raising a spurious ChildConcurrencyGroupDidNotExitError. The parent must wait
-    # for the child to settle before checking its state.
+    # When a child CG is created on a worker thread (sibling-hierarchy pattern),
+    # parent.__exit__ on the main thread must wait for the child to finish its own
+    # __exit__ before checking the child's state, otherwise a spurious
+    # ChildConcurrencyGroupDidNotExitError can be raised.
     release = Event()
     child_entered = Event()
     top = ConcurrencyGroup(name="top", exit_timeout_seconds=5.0)
     top.__enter__()
     thread = ObservableThread(target=_enter_child_group_on_thread, args=(top, child_entered, release), daemon=True)
     thread.start()
-    child_entered.wait(timeout=5.0)
-    # Release the worker on a separate thread so the main thread reaches __exit__ first and
-    # has to wait for the child to settle.
-    Thread(target=release.set).start()
-    top.__exit__(None, None, None)
-    assert top._children[0].state == ConcurrencyGroupState.EXITED
-    thread.join(timeout=5.0)
+    try:
+        child_entered.wait(timeout=5.0)
+        # Release the worker on a separate thread so the main thread reaches __exit__ first
+        # and has to wait for the child to settle.
+        releaser = ObservableThread(target=release.set, daemon=True)
+        releaser.start()
+        try:
+            top.__exit__(None, None, None)
+            assert top._children[0].state == ConcurrencyGroupState.EXITED
+        finally:
+            releaser.join(timeout=5.0)
+    finally:
+        release.set()
+        thread.join(timeout=5.0)
 
 
 def test_exhausted_concurrency_group_cannot_be_entered_again() -> None:
