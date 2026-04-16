@@ -1103,71 +1103,30 @@ class Host(BaseHost, OnlineHostInterface):
         return str(work_dir) in certified_data.generated_work_dirs
 
     def _ensure_work_dir_exists(self, agent: AgentInterface) -> None:
-        """Verify the agent's work_dir exists, reinstating a missing worktree if possible.
+        """Verify the agent's work_dir exists before starting.
 
         tmux's -c flag silently falls back to $HOME when the directory does not
         exist, which causes the agent to launch in the wrong place and hang on a
-        trust dialog. This method detects the missing directory early and attempts
-        to recreate the git worktree from the agent's stored branch name and
-        source_repo_path label.
-
-        Raises AgentStartError if the directory is missing and cannot be restored.
+        trust dialog. This method detects the missing directory early and raises
+        a clear error with a recovery command.
         """
         check = self.execute_idempotent_command(f"test -d {shlex.quote(str(agent.work_dir))}")
         if check.success:
             return
 
         branch = agent.get_created_branch_name()
-        source_repo_label = agent.get_labels().get("source_repo_path")
-
         if branch is None:
             raise AgentStartError(
                 str(agent.name),
-                f"Work directory {agent.work_dir} does not exist and no branch is recorded for this agent",
+                f"Work directory {agent.work_dir} does not exist",
             )
 
-        if source_repo_label is None:
-            raise AgentStartError(
-                str(agent.name),
-                f"Work directory {agent.work_dir} is missing and no source_repo_path label is set."
-                f" Set it with: mngr label {agent.name} -l source_repo_path=/path/to/repo",
-            )
-        source_repo = Path(source_repo_label)
-
-        # Verify the branch still exists in the source repo before attempting reinstatement
-        branch_check = self.execute_idempotent_command(
-            f"git -C {shlex.quote(str(source_repo))} rev-parse --verify {shlex.quote('refs/heads/' + branch)}"
+        raise AgentStartError(
+            str(agent.name),
+            f"Work directory {agent.work_dir} does not exist."
+            f" To recreate it, run:\n"
+            f"  git worktree add {agent.work_dir} {branch}",
         )
-        if not branch_check.success:
-            raise AgentStartError(
-                str(agent.name),
-                f"Branch {branch} no longer exists in {source_repo}",
-            )
-
-        logger.warning(
-            "Agent {} work_dir {} is missing, attempting to reinstate worktree on branch {}",
-            agent.name,
-            agent.work_dir,
-            branch,
-        )
-
-        # Prune stale worktree bookkeeping so git allows re-adding this path
-        prune_result = self.execute_idempotent_command(f"git -C {shlex.quote(str(source_repo))} worktree prune")
-        if not prune_result.success:
-            logger.warning("git worktree prune failed: {}", prune_result.stderr)
-
-        mkdir_cmd = f"mkdir -p {shlex.quote(str(agent.work_dir.parent))}"
-        add_cmd = (
-            f"git -C {shlex.quote(str(source_repo))} worktree add"
-            f" {shlex.quote(str(agent.work_dir))} {shlex.quote(branch)}"
-        )
-        result = self.execute_stateful_command(f"{mkdir_cmd} && {add_cmd}")
-        if not result.success:
-            raise AgentStartError(
-                str(agent.name),
-                f"Failed to reinstate worktree at {agent.work_dir} on branch {branch}: {result.stderr}",
-            )
-        logger.info("Reinstated missing worktree for agent {} at {}", agent.name, agent.work_dir)
 
     def set_plugin_data(self, plugin_name: str, data: dict[str, Any]) -> None:
         """Set certified plugin data in data.json."""
@@ -2143,11 +2102,7 @@ class Host(BaseHost, OnlineHostInterface):
                     host, source_path, work_dir_path, self.mngr_ctx.config.work_dir_extra_paths
                 )
 
-                return CreateWorkDirResult(
-                    path=work_dir_path,
-                    created_branch_name=created_branch,
-                    source_repo_path=source_path,
-                )
+                return CreateWorkDirResult(path=work_dir_path, created_branch_name=created_branch)
 
         with log_span("Creating git worktree", path=str(work_dir_path), branch=branch_label):
             git_c = f"git -C {shlex.quote(str(source_path))}"
@@ -2180,11 +2135,7 @@ class Host(BaseHost, OnlineHostInterface):
                 host, source_path, work_dir_path, self.mngr_ctx.config.work_dir_extra_paths
             )
 
-            return CreateWorkDirResult(
-                path=work_dir_path,
-                created_branch_name=created_branch,
-                source_repo_path=source_path,
-            )
+            return CreateWorkDirResult(path=work_dir_path, created_branch_name=created_branch)
 
     def create_agent_state(
         self,

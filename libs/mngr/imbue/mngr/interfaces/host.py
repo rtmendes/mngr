@@ -513,10 +513,6 @@ class CreateWorkDirResult(FrozenModel):
         default=None,
         description="Name of the git branch created for this work directory, if any",
     )
-    source_repo_path: Path | None = Field(
-        default=None,
-        description="Path to the source git repository this worktree was created from, if any",
-    )
 
 
 class AgentGitOptions(FrozenModel):

@@ -2,12 +2,10 @@
 
 import io
 import json
-import shutil
 from collections.abc import Callable
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
-from subprocess import run as subprocess_run
 from typing import Any
 from typing import IO
 from typing import cast
@@ -557,49 +555,6 @@ def test_get_created_branch_name_returns_none_when_null(
 
 
 # =========================================================================
-# Tests for source_repo_path label
-# =========================================================================
-
-
-def test_source_repo_path_label_stored_via_label_options(
-    local_host: Host,
-    temp_host_dir: Path,
-    temp_work_dir: Path,
-) -> None:
-    """source_repo_path passed as a regular label should be stored in data.json."""
-    options = CreateAgentOptions(
-        name=AgentName("test-source-label"),
-        agent_type=AgentTypeName("generic"),
-        command=CommandString("sleep 1"),
-        label_options=AgentLabelOptions(labels={"source_repo_path": "/tmp/my-source-repo"}),
-    )
-
-    agent = local_host.create_agent_state(temp_work_dir, options, created_branch_name="mngr/my-branch")
-
-    assert agent.get_labels()["source_repo_path"] == "/tmp/my-source-repo"
-
-
-def test_source_repo_path_label_coexists_with_user_labels(
-    local_host: Host,
-    temp_host_dir: Path,
-    temp_work_dir: Path,
-) -> None:
-    """source_repo_path label should coexist with other user-provided labels."""
-    options = CreateAgentOptions(
-        name=AgentName("test-merged-labels"),
-        agent_type=AgentTypeName("generic"),
-        command=CommandString("sleep 1"),
-        label_options=AgentLabelOptions(labels={"team": "infra", "source_repo_path": "/repos/myproject"}),
-    )
-
-    agent = local_host.create_agent_state(temp_work_dir, options)
-
-    labels = agent.get_labels()
-    assert labels["team"] == "infra"
-    assert labels["source_repo_path"] == "/repos/myproject"
-
-
-# =========================================================================
 # Tests for _ensure_work_dir_exists
 # =========================================================================
 
@@ -611,7 +566,6 @@ def test_ensure_work_dir_exists_succeeds_when_dir_exists(
 ) -> None:
     """_ensure_work_dir_exists should be a no-op when the directory exists."""
     agent, host = _create_testable_agent(local_provider, temp_host_dir, temp_work_dir)
-    # Should not raise
     host._ensure_work_dir_exists(agent)
 
 
@@ -620,133 +574,32 @@ def test_ensure_work_dir_exists_raises_when_no_branch(
     temp_host_dir: Path,
     tmp_path: Path,
 ) -> None:
-    """_ensure_work_dir_exists should raise AgentStartError when dir is missing and no branch."""
+    """_ensure_work_dir_exists should raise with plain message when no branch is recorded."""
     missing_dir = tmp_path / "nonexistent"
     agent, host = _create_testable_agent(local_provider, temp_host_dir, missing_dir)
 
-    with pytest.raises(AgentStartError, match="no branch is recorded"):
+    with pytest.raises(AgentStartError, match="does not exist"):
         host._ensure_work_dir_exists(agent)
 
 
-def test_ensure_work_dir_exists_reinstates_worktree(
-    local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
-    temp_git_repo: Path,
-    tmp_path: Path,
-) -> None:
-    """_ensure_work_dir_exists should recreate a missing worktree from source repo label."""
-    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
-    assert isinstance(host, Host)
-
-    # Create a branch in the source repo
-    subprocess_run(
-        ["git", "-C", str(temp_git_repo), "checkout", "-b", "mngr/restore-test"],
-        check=True,
-        capture_output=True,
-    )
-    subprocess_run(
-        ["git", "-C", str(temp_git_repo), "checkout", "-"],
-        check=True,
-        capture_output=True,
-    )
-
-    # Create a worktree, then delete it to simulate the bug
-    worktree_path = tmp_path / "worktrees" / "test-agent-abc"
-    worktree_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess_run(
-        ["git", "-C", str(temp_git_repo), "worktree", "add", str(worktree_path), "mngr/restore-test"],
-        check=True,
-        capture_output=True,
-    )
-    # Remove the worktree directory (simulating prune/deletion)
-    shutil.rmtree(worktree_path)
-
-    # Create agent state pointing to the missing worktree
-    options = CreateAgentOptions(
-        name=AgentName("test-reinstate"),
-        agent_type=AgentTypeName("generic"),
-        command=CommandString("sleep 1"),
-        label_options=AgentLabelOptions(labels={"source_repo_path": str(temp_git_repo)}),
-    )
-    agent = host.create_agent_state(
-        worktree_path,
-        options,
-        created_branch_name="mngr/restore-test",
-    )
-
-    # This should reinstate the worktree
-    host._ensure_work_dir_exists(agent)
-
-    assert worktree_path.exists()
-    assert (worktree_path / ".git").exists()
-
-
-def test_ensure_work_dir_exists_raises_when_no_source_repo_label(
+def test_ensure_work_dir_exists_raises_with_recovery_command(
     local_provider: LocalProviderInstance,
     temp_host_dir: Path,
     tmp_path: Path,
 ) -> None:
-    """_ensure_work_dir_exists should raise when no source_repo_path label is set."""
+    """_ensure_work_dir_exists should include a git worktree add command when branch is known."""
     missing_dir = tmp_path / "worktrees" / "gone"
     host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
     assert isinstance(host, Host)
 
-    # Set up agent with a branch but no source_repo_path label
-    agent_id = AgentId.generate()
-    agent_dir = local_provider.host_dir / "agents" / str(agent_id)
-    agent_dir.mkdir(parents=True)
-    data = {
-        "id": str(agent_id),
-        "name": "test-no-source",
-        "type": "test",
-        "command": "sleep 1",
-        "work_dir": str(missing_dir),
-        "create_time": datetime.now(timezone.utc).isoformat(),
-        "created_branch_name": "mngr/some-branch",
-        "labels": {},
-    }
-    (agent_dir / "data.json").write_text(json.dumps(data))
-
-    agent = _TestableAgent(
-        id=agent_id,
-        name=AgentName("test-no-source"),
-        agent_type=AgentTypeName("test"),
-        work_dir=missing_dir,
-        create_time=datetime.now(timezone.utc),
-        host_id=host.id,
-        host=host,
-        mngr_ctx=local_provider.mngr_ctx,
-        agent_config=AgentTypeConfig(command=CommandString("sleep 1")),
-    )
-
-    with pytest.raises(AgentStartError, match="no source_repo_path label is set.*mngr label"):
-        host._ensure_work_dir_exists(agent)
-
-
-def test_ensure_work_dir_exists_raises_when_branch_deleted(
-    local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
-    temp_git_repo: Path,
-    tmp_path: Path,
-) -> None:
-    """_ensure_work_dir_exists should raise when the branch no longer exists in the source repo."""
-    missing_dir = tmp_path / "worktrees" / "deleted-branch"
-    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
-    assert isinstance(host, Host)
-
     options = CreateAgentOptions(
-        name=AgentName("test-deleted-branch"),
+        name=AgentName("test-recovery-cmd"),
         agent_type=AgentTypeName("generic"),
         command=CommandString("sleep 1"),
-        label_options=AgentLabelOptions(labels={"source_repo_path": str(temp_git_repo)}),
     )
-    agent = host.create_agent_state(
-        missing_dir,
-        options,
-        created_branch_name="mngr/nonexistent-branch",
-    )
+    agent = host.create_agent_state(missing_dir, options, created_branch_name="mngr/my-branch")
 
-    with pytest.raises(AgentStartError, match="no longer exists"):
+    with pytest.raises(AgentStartError, match="git worktree add.*mngr/my-branch"):
         host._ensure_work_dir_exists(agent)
 
 
