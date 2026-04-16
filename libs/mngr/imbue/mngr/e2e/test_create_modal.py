@@ -211,7 +211,7 @@ def test_create_modal_dockerfile_and_context(e2e: E2eSession) -> None:
     """)
     # Create the Dockerfile and context directory so the build args have real targets
     e2e.run(
-        "echo 'FROM python:3.11-slim' > Dockerfile.agent && mkdir -p agent-context",
+        "echo 'FROM python:3.12-slim' > Dockerfile.agent && mkdir -p agent-context",
         comment="create Dockerfile and context",
     )
     result = e2e.run(
