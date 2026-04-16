@@ -1,5 +1,4 @@
 import asyncio
-import functools
 import json
 import os
 import queue
@@ -1749,10 +1748,15 @@ async def _handle_request_deny(
     return Response(status_code=303, headers={"Location": "/"})
 
 
-def _handle_request_event(app: FastAPI, agent_id_str: str, raw_line: str) -> None:
+_request_event_apps: dict[int, FastAPI] = {}
+
+
+def _handle_request_event_callback(agent_id_str: str, raw_line: str) -> None:
     """Process an incoming request event and add it to the app's inbox."""
     event = parse_request_event(raw_line)
-    if event is not None:
+    if event is None:
+        return
+    for app in _request_event_apps.values():
         current_inbox: RequestInbox | None = app.state.request_inbox
         if current_inbox is not None:
             app.state.request_inbox = current_inbox.add_request(event)
@@ -1832,7 +1836,8 @@ def create_desktop_client(
 
     # Register callback to process incoming request events from agents
     if isinstance(backend_resolver, MngrCliBackendResolver):
-        backend_resolver.add_on_request_callback(functools.partial(_handle_request_event, app))
+        _request_event_apps[id(backend_resolver)] = app
+        backend_resolver.add_on_request_callback(_handle_request_event_callback)
 
     # Mount the SuperTokens auth routes
     if session_store is not None:
