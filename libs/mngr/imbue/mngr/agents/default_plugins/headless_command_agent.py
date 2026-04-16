@@ -12,7 +12,6 @@ from imbue.mngr.agents.base_headless_agent import TAIL_POLL_INTERVAL
 from imbue.mngr.agents.base_headless_agent import TAIL_POLL_TIMEOUT
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.interfaces.agent import AgentInterface
-from imbue.mngr.interfaces.agent import CommandAcceptingAgentMixin
 from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import CommandString
 from imbue.mngr.utils.polling import poll_until
@@ -69,7 +68,7 @@ class HeadlessCommandConfig(AgentTypeConfig):
     """Config for the headless_command agent type."""
 
 
-class HeadlessCommand(BaseHeadlessAgent[HeadlessCommandConfig], CommandAcceptingAgentMixin):
+class HeadlessCommand(BaseHeadlessAgent[HeadlessCommandConfig]):
     """Agent type that runs an arbitrary command headlessly and captures its output.
 
     Redirects stdout/stderr to files so callers can read output programmatically
