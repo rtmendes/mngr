@@ -24,6 +24,13 @@ import { apiUrl } from "../base-path";
 import { EmptySlot } from "./EmptySlot";
 import { MessageInput } from "./MessageInput";
 import { renderUserMessage, renderAssistantMessage } from "./message-renderers";
+import { getTerminalUrl } from "./DockviewWorkspace";
+
+function getAgentTerminalUrl(): string {
+  const baseUrl = getTerminalUrl();
+  const separator = baseUrl.includes("?") ? "&" : "?";
+  return `${baseUrl}${separator}arg=agent`;
+}
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 40;
 
@@ -331,7 +338,10 @@ export function ChatPanel(): m.Component<{ agentId: string }> {
     const messageNodes: m.Vnode[] = [];
     for (const event of events) {
       if (event.type === "user_message") {
-        messageNodes.push(renderUserMessage(event));
+        const userNode = renderUserMessage(event);
+        if (userNode !== null) {
+          messageNodes.push(userNode);
+        }
       } else if (event.type === "assistant_message") {
         messageNodes.push(renderAssistantMessage(event, toolResults, agentId));
       }
@@ -373,6 +383,17 @@ export function ChatPanel(): m.Component<{ agentId: string }> {
         isProtoAgent(agentId) ? null : m("footer", { class: "app-footer" }, [
           m(EmptySlot, { name: "conversation-before-input" }),
           m(MessageInput, { agentId }),
+          m("div", { class: "chat-agent-terminal-link" }, [
+            m(
+              "a",
+              {
+                href: getAgentTerminalUrl(),
+                target: "_blank",
+                rel: "noopener noreferrer",
+              },
+              "Open agent terminal",
+            ),
+          ]),
         ]),
       ]);
     },

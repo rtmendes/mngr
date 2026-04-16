@@ -283,6 +283,15 @@ _CREATE_FORM_TEMPLATE: Final[str] = (
           </select>
         </div>
       </div>
+      <div class="form-group">
+        <div class="form-label">
+          <label for="include_env_file">Include .env file</label>
+          <p class="help-text">Ships a local ".env" to the agent host. Ignored for git URLs.</p>
+        </div>
+        <div class="form-input">
+          <input type="checkbox" id="include_env_file" name="include_env_file" value="1">
+        </div>
+      </div>
     </form>
   </div>
 </body>

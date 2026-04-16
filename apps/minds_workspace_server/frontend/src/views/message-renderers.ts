@@ -19,6 +19,12 @@ export function isCollapsibleUserMessage(content: string): { label: string } | n
   return null;
 }
 
+export function isHiddenUserMessage(content: string): boolean {
+  // The /welcome bootstrap message is injected by the minds desktop client as
+  // the agent's initial prompt. Hiding it keeps the first visible turn clean.
+  return content.trim() === "/welcome";
+}
+
 export function StableUserMessage(): m.Component<{ event: TranscriptEvent }> {
   let renderedEventId: string | null = null;
   return {
@@ -59,8 +65,11 @@ export function StableUserMessage(): m.Component<{ event: TranscriptEvent }> {
   };
 }
 
-export function renderUserMessage(event: TranscriptEvent): m.Vnode {
+export function renderUserMessage(event: TranscriptEvent): m.Vnode | null {
   const content = event.content || "";
+  if (isHiddenUserMessage(content)) {
+    return null;
+  }
   const collapsible = isCollapsibleUserMessage(content);
   const messageClass = collapsible ? "message message-system-collapsed" : "message message-user";
   return m("div", { class: messageClass, key: event.event_id }, [m(StableUserMessage, { event })]);

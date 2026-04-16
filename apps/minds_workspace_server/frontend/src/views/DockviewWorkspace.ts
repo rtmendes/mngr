@@ -72,7 +72,7 @@ function getApplicationUrl(appName: string, rawUrl: string, agentId: string): st
   return rawUrl;
 }
 
-function getTerminalUrl(): string {
+export function getTerminalUrl(): string {
   const hostname = window.location.hostname;
 
   // Cloudflare proxy: terminal--agentid--username.domain

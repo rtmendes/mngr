@@ -842,6 +842,8 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
     git_url = str(form.get("git_url", "")).strip()
     agent_name = str(form.get("agent_name", "")).strip()
     branch = str(form.get("branch", "")).strip()
+    # HTML checkboxes submit their value only when checked; absence means unchecked.
+    include_env_file = form.get("include_env_file") is not None
     try:
         launch_mode = LaunchMode(str(form.get("launch_mode", LaunchMode.LOCAL.value)))
     except ValueError:
@@ -850,7 +852,13 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
         html = render_create_form(git_url="", agent_name=agent_name, branch=branch, launch_mode=launch_mode)
         return HTMLResponse(content=html, status_code=400)
 
-    agent_id = agent_creator.start_creation(git_url, agent_name=agent_name, branch=branch, launch_mode=launch_mode)
+    agent_id = agent_creator.start_creation(
+        git_url,
+        agent_name=agent_name,
+        branch=branch,
+        launch_mode=launch_mode,
+        include_env_file=include_env_file,
+    )
     return Response(status_code=303, headers={"Location": "/creating/{}".format(agent_id)})
 
 
@@ -891,6 +899,7 @@ async def _handle_create_agent_api(request: Request, auth_store: AuthStoreDep) -
     git_url = str(body.get("git_url", "")).strip()
     agent_name = str(body.get("agent_name", "")).strip()
     branch = str(body.get("branch", "")).strip()
+    include_env_file = bool(body.get("include_env_file", False))
     try:
         launch_mode = LaunchMode(str(body.get("launch_mode", LaunchMode.LOCAL.value)))
     except ValueError:
@@ -906,7 +915,13 @@ async def _handle_create_agent_api(request: Request, auth_store: AuthStoreDep) -
             media_type="application/json",
         )
 
-    agent_id = agent_creator.start_creation(git_url, agent_name=agent_name, branch=branch, launch_mode=launch_mode)
+    agent_id = agent_creator.start_creation(
+        git_url,
+        agent_name=agent_name,
+        branch=branch,
+        launch_mode=launch_mode,
+        include_env_file=include_env_file,
+    )
     return Response(
         content=json.dumps({"agent_id": str(agent_id), "status": "CLONING"}),
         media_type="application/json",

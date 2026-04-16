@@ -160,6 +160,40 @@ def test_build_mngr_create_command_lima_mode() -> None:
     assert "MNGR_PREFIX" in [cmd[i + 1] for i, v in enumerate(cmd) if v == "--pass-host-env"]
 
 
+def test_build_mngr_create_command_adds_welcome_initial_message() -> None:
+    cmd, _api_key = _build_mngr_create_command(
+        launch_mode=LaunchMode.DEV,
+        agent_name=AgentName("test-agent"),
+        agent_id=AgentId(),
+    )
+    assert "--message" in cmd
+    # The welcome message is sent as the very first user prompt so a /welcome
+    # skill can produce a greeting without any other user interaction.
+    assert cmd[cmd.index("--message") + 1] == "/welcome"
+
+
+def test_build_mngr_create_command_with_host_env_file(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("FOO=bar\n")
+    cmd, _api_key = _build_mngr_create_command(
+        launch_mode=LaunchMode.LOCAL,
+        agent_name=AgentName("test-agent"),
+        agent_id=AgentId(),
+        host_env_file=env_path,
+    )
+    assert "--host-env-file" in cmd
+    assert cmd[cmd.index("--host-env-file") + 1] == str(env_path)
+
+
+def test_build_mngr_create_command_omits_host_env_file_by_default() -> None:
+    cmd, _api_key = _build_mngr_create_command(
+        launch_mode=LaunchMode.LOCAL,
+        agent_name=AgentName("test-agent"),
+        agent_id=AgentId(),
+    )
+    assert "--host-env-file" not in cmd
+
+
 def test_build_mngr_create_command_cloud_mode() -> None:
     cmd, _api_key = _build_mngr_create_command(
         launch_mode=LaunchMode.CLOUD,
