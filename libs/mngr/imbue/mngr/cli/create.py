@@ -1785,11 +1785,11 @@ The agent type defaults to 'claude' if not specified. Any command in your
 PATH can also be used as an agent type. Arguments after -- are passed
 directly to the agent command.
 
-For headless agent types (those implementing StreamingHeadlessAgentMixin,
-like headless_command and headless_claude), create automatically uses the
-headless flow: it creates a temporary directory, streams the agent's output
-to stdout, and destroys the agent when done. No --connect/--no-connect flag
-applies in this mode.
+Headless agent types (those implementing StreamingHeadlessAgentMixin,
+like headless_command and headless_claude) require the --foreground flag.
+This runs the headless flow: creates a temporary directory, streams the
+agent's output to stdout, and destroys the agent when done. Source,
+provisioning, environment, and connection flags do not apply.
 
 For local agents in git repos, mngr creates a git worktree that shares objects
 with your original repository. For remote agents, the repo is transferred
