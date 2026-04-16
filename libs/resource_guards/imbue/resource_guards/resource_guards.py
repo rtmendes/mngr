@@ -61,11 +61,16 @@ class _PerTestGuardState:
 # process via the _PYTEST_GUARD_WRAPPER_DIR env var.
 # _session_env_patcher is the patch.dict that manages PATH and _PYTEST_GUARD_WRAPPER_DIR;
 # stopping it automatically restores PATH to its original value.
-# _guarded_resources is populated by register_resource_guard() and register_sdk_guard();
-# the hooks read from it at session start.
+# _binary_guarded_resources is populated only by register_resource_guard() and drives
+# PATH wrapper script creation. _guarded_resources is the union of binary and SDK
+# guard names (populated by register_resource_guard() and register_sdk_guard()); it
+# drives pytest mark registration, per-test env var setup, and violation checks. The
+# distinction matters so we only create wrapper scripts for names that were meant to
+# guard a real binary -- SDK-only names must not produce stray wrapper scripts.
 _guard_wrapper_dir: str | None = None
 _owns_guard_wrapper_dir: bool = False
 _session_env_patcher: patch.dict | None = None  # ty: ignore[invalid-type-form]
+_binary_guarded_resources: list[str] = []
 _guarded_resources: list[str] = []
 
 # Module-level state for SDK guards. Each entry is (name, install_fn, cleanup_fn).
@@ -83,6 +88,8 @@ def register_resource_guard(name: str) -> None:
 
     Duplicate registrations are ignored.
     """
+    if name not in _binary_guarded_resources:
+        _binary_guarded_resources.append(name)
     if name not in _guarded_resources:
         _guarded_resources.append(name)
 
@@ -180,11 +187,13 @@ exit 127
 
 
 def create_resource_guard_wrappers() -> None:
-    """Create wrapper scripts for guarded resources and prepend to PATH.
+    """Create wrapper scripts for binary-guarded resources and prepend to PATH.
 
     Each wrapper intercepts calls to the corresponding binary and enforces
     that the test has the appropriate pytest mark. The list of resources
-    comes from prior register_resource_guard() calls.
+    comes from prior register_resource_guard() calls; SDK-only guards are
+    intentionally excluded so they do not produce stray wrapper scripts
+    named after internal SDK identifiers.
 
     For xdist: the controller creates the wrappers and modifies PATH. Workers
     inherit the modified PATH and wrapper directory via environment variables.
@@ -205,7 +214,7 @@ def create_resource_guard_wrappers() -> None:
     _guard_wrapper_dir = tempfile.mkdtemp(prefix="pytest_resource_guards_")
     _owns_guard_wrapper_dir = True
 
-    for resource in _guarded_resources:
+    for resource in _binary_guarded_resources:
         real_path = shutil.which(resource)
         wrapper_path = Path(_guard_wrapper_dir) / resource
         if real_path is not None:

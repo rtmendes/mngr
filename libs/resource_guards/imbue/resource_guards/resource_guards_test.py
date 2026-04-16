@@ -357,6 +357,25 @@ def test_get_guarded_resource_names_returns_binary_and_sdk_guards(
     assert "sdk_guard" in names
 
 
+def test_sdk_only_guard_does_not_create_binary_wrapper(
+    isolated_guard_state: None,
+) -> None:
+    """SDK-only guard names must not produce PATH wrapper scripts.
+
+    Binary wrappers are only meaningful for names registered via
+    register_resource_guard(). Creating a wrapper for an SDK-only guard
+    would silently shadow any binary with the same name on PATH.
+    """
+    register_sdk_guard("sdk_only", lambda: None, lambda: None)
+    create_resource_guard_wrappers()
+
+    wrapper_dir = resource_guards._guard_wrapper_dir
+    assert wrapper_dir is not None
+    assert not (Path(wrapper_dir) / "sdk_only").exists()
+
+    cleanup_resource_guard_wrappers()
+
+
 def test_register_guarded_resource_markers(
     isolated_guard_state: None,
     pytestconfig: pytest.Config,
