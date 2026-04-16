@@ -157,25 +157,19 @@ def _split_address_and_target_path(raw: str) -> tuple[str, Path | None]:
 def _resolve_agent_type_name(
     type_flag: str | None,
     positional_agent_type: str | None,
-    command: str | None,
 ) -> str | None:
     """Resolve the agent type name from CLI options.
 
     Shared logic for both the early headless detection path and the full
     _parse_agent_opts path. Returns the resolved type name, or None when
-    neither --type nor positional agent type is set and no --command flag
-    implies "generic".
+    neither --type nor positional agent type is set (caller defaults to "claude").
 
-    Precedence: --type flag > positional argument > --command implying "generic".
+    Precedence: --type flag > positional argument.
     """
     resolved = type_flag
     if positional_agent_type and resolved is None:
         resolved = positional_agent_type
-    if resolved is not None:
-        return resolved
-    if command:
-        return "generic"
-    return None
+    return resolved
 
 
 @pure
@@ -184,7 +178,7 @@ def _resolve_early_agent_type(opts: CreateCliOptions) -> str | None:
 
     Returns the resolved type name, or None when defaulting to "claude".
     """
-    return _resolve_agent_type_name(opts.type, opts.positional_agent_type, None)
+    return _resolve_agent_type_name(opts.type, opts.positional_agent_type)
 
 
 _HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
@@ -1507,7 +1501,7 @@ def _parse_agent_opts(
             f"but --type says '{opts.type}'. Use one or the other."
         )
 
-    resolved_agent_type = _resolve_agent_type_name(opts.type, opts.positional_agent_type, None)
+    resolved_agent_type = _resolve_agent_type_name(opts.type, opts.positional_agent_type)
 
     is_clone = source_agent_state_dir is not None
 

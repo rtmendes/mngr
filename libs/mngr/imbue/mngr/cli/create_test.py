@@ -707,23 +707,18 @@ def test_split_cli_args_empty() -> None:
 
 
 def test_resolve_agent_type_name_type_flag_wins() -> None:
-    """--type flag takes precedence over positional and command."""
-    assert _resolve_agent_type_name("headless_command", "claude", "echo") == "headless_command"
+    """--type flag takes precedence over positional."""
+    assert _resolve_agent_type_name("headless_command", "claude") == "headless_command"
 
 
 def test_resolve_agent_type_name_positional_fallback() -> None:
     """Positional arg used when --type is None."""
-    assert _resolve_agent_type_name(None, "headless_claude", None) == "headless_claude"
-
-
-def test_resolve_agent_type_name_command_implies_generic() -> None:
-    """--command without explicit type resolves to 'generic'."""
-    assert _resolve_agent_type_name(None, None, "echo hello") == "generic"
+    assert _resolve_agent_type_name(None, "headless_claude") == "headless_claude"
 
 
 def test_resolve_agent_type_name_all_none() -> None:
     """All None returns None (default to claude)."""
-    assert _resolve_agent_type_name(None, None, None) is None
+    assert _resolve_agent_type_name(None, None) is None
 
 
 # =============================================================================
@@ -805,7 +800,7 @@ def test_create_headless_streams_output(
 
 
 # =============================================================================
-# Tests for -c/--command validation in the early headless detection path
+# Tests for incompatible flag rejection on the headless path
 # =============================================================================
 
 
