@@ -324,25 +324,21 @@ def test_get_all_provider_instances_skips_unavailable_configured_provider(
     """
     _backend_registry[_UNAVAILABLE_BACKEND_NAME] = _UnavailableProviderBackend
     _provider_config_registry[_UNAVAILABLE_BACKEND_NAME] = ProviderInstanceConfig
-    try:
-        unavailable_name = ProviderInstanceName("my-unavailable-provider")
-        config = MngrConfig(
-            default_host_dir=temp_mngr_ctx.config.default_host_dir,
-            prefix=mngr_test_prefix,
-            providers={
-                unavailable_name: ProviderInstanceConfig(backend=_UNAVAILABLE_BACKEND_NAME),
-            },
-        )
-        mngr_ctx = MngrContext(config=config, pm=temp_mngr_ctx.pm, profile_dir=temp_mngr_ctx.profile_dir)
+    unavailable_name = ProviderInstanceName("my-unavailable-provider")
+    config = MngrConfig(
+        default_host_dir=temp_mngr_ctx.config.default_host_dir,
+        prefix=mngr_test_prefix,
+        providers={
+            unavailable_name: ProviderInstanceConfig(backend=_UNAVAILABLE_BACKEND_NAME),
+        },
+    )
+    mngr_ctx = MngrContext(config=config, pm=temp_mngr_ctx.pm, profile_dir=temp_mngr_ctx.profile_dir)
 
-        providers = get_all_provider_instances(mngr_ctx)
+    providers = get_all_provider_instances(mngr_ctx)
 
-        provider_names = [p.name for p in providers]
-        assert unavailable_name not in provider_names
-        assert LOCAL_PROVIDER_NAME in provider_names
-    finally:
-        del _backend_registry[_UNAVAILABLE_BACKEND_NAME]
-        del _provider_config_registry[_UNAVAILABLE_BACKEND_NAME]
+    provider_names = [p.name for p in providers]
+    assert unavailable_name not in provider_names
+    assert LOCAL_PROVIDER_NAME in provider_names
 
 
 def test_get_all_provider_instances_skips_unavailable_default_backend(
@@ -355,18 +351,14 @@ def test_get_all_provider_instances_skips_unavailable_default_backend(
     """
     _backend_registry[_UNAVAILABLE_BACKEND_NAME] = _UnavailableProviderBackend
     _provider_config_registry[_UNAVAILABLE_BACKEND_NAME] = ProviderInstanceConfig
-    try:
-        config = MngrConfig(
-            default_host_dir=temp_mngr_ctx.config.default_host_dir,
-            prefix=mngr_test_prefix,
-        )
-        mngr_ctx = MngrContext(config=config, pm=temp_mngr_ctx.pm, profile_dir=temp_mngr_ctx.profile_dir)
+    config = MngrConfig(
+        default_host_dir=temp_mngr_ctx.config.default_host_dir,
+        prefix=mngr_test_prefix,
+    )
+    mngr_ctx = MngrContext(config=config, pm=temp_mngr_ctx.pm, profile_dir=temp_mngr_ctx.profile_dir)
 
-        providers = get_all_provider_instances(mngr_ctx)
+    providers = get_all_provider_instances(mngr_ctx)
 
-        provider_names = [p.name for p in providers]
-        assert ProviderInstanceName(str(_UNAVAILABLE_BACKEND_NAME)) not in provider_names
-        assert LOCAL_PROVIDER_NAME in provider_names
-    finally:
-        del _backend_registry[_UNAVAILABLE_BACKEND_NAME]
-        del _provider_config_registry[_UNAVAILABLE_BACKEND_NAME]
+    provider_names = [p.name for p in providers]
+    assert ProviderInstanceName(str(_UNAVAILABLE_BACKEND_NAME)) not in provider_names
+    assert LOCAL_PROVIDER_NAME in provider_names
