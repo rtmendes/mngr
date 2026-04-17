@@ -402,10 +402,10 @@ def test_mngr_create_with_default_dockerfile_on_modal(
 ) -> None:
     """Test creating an agent on Modal using the mngr default Dockerfile.
 
-    This verifies that the default Dockerfile in libs/mngr/imbue/mngr/resources/Dockerfile:
-    1. Builds successfully on Modal
-    2. Has the expected tools installed (uv, claude code)
-    3. Can run agents properly
+    This verifies that the default Dockerfile in libs/mngr/imbue/mngr/resources/Dockerfile
+    builds successfully on Modal and that ``mngr create`` can launch an agent on
+    the resulting image (the agent itself just sleeps; this test does not verify
+    which tools end up in the image).
 
     This test is marked as release since it takes longer due to the image build.
     """
