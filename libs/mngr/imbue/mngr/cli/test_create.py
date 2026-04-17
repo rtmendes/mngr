@@ -737,7 +737,6 @@ def test_template_cli_args_take_precedence(
     mngr_test_root_name: str,
     plugin_manager: pluggy.PluginManager,
     tmp_path: Path,
-    test_sleep_agent_type: str,
 ) -> None:
     """Test that CLI arguments override template values."""
     agent_name = f"test-template-cli-{int(time.time())}"
