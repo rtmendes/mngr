@@ -53,14 +53,15 @@ class E2eSession(Session):
         cleaned = textwrap.dedent(block).strip() + "\n"
         (self.output_dir / "tutorial_block.txt").write_text(cleaned)
 
-    def make_sleep_agent_type(self, command: str | None = None) -> str:
+    def make_sleep_agent_type(self, command: str) -> str:
         """Declare a long-running placeholder agent type in settings.local.toml and return its name.
 
-        Replaces the removed ``--command`` flag for e2e (subprocess) tests. Each
-        call mints a unique type name (``test_sleep_<uuid hex>``) and, unless
-        ``command`` is given, a unique ``sleep <N>`` so leaked processes show
-        up with a distinct identifier in ``ps`` output. Pass the returned
-        name to ``mngr`` as ``--type <name>``.
+        Replaces the removed ``--command`` flag for e2e (subprocess) tests.
+        ``command`` is a required pinned shell command (typically
+        ``"sleep <N>"`` with a value hand-picked to be distinguishable in
+        ``ps`` output) -- the pinned value is the traceability identifier
+        back to the specific test. Pass the returned name to ``mngr`` as
+        ``--type <name>``.
         """
         return make_test_sleep_agent_type_at(self.settings_local_path, command=command)
 

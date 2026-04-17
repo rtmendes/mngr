@@ -41,7 +41,6 @@ from imbue.mngr.utils.testing import init_git_repo
 from imbue.mngr.utils.testing import isolate_git
 from imbue.mngr.utils.testing import isolate_tmux_server
 from imbue.mngr.utils.testing import make_mngr_ctx
-from imbue.mngr.utils.testing import make_test_sleep_agent_type
 from imbue.mngr.utils.testing import setup_mngr_test_environment
 from imbue.mngr.utils.testing import worker_test_ids
 
@@ -249,20 +248,6 @@ def temp_config(temp_host_dir: Path, mngr_test_prefix: str) -> MngrConfig:
         prefix=mngr_test_prefix,
         is_error_reporting_enabled=False,
     )
-
-
-@pytest.fixture
-def test_sleep_agent_type(temp_host_dir: Path) -> str:
-    """Mint a one-off long-running placeholder agent type for this test.
-
-    Replaces the removed ``--command`` flag. Each invocation of this fixture
-    mints a fresh ``test_sleep_<uuid>`` type with a unique ``sleep <N>``
-    command, so leaked agents are distinguishable in ``ps`` / tmux. Pass to
-    the CLI as ``--type <value>``. Tests that need multiple placeholder
-    agents with distinct identifiers should call
-    ``make_test_sleep_agent_type(temp_host_dir)`` directly.
-    """
-    return make_test_sleep_agent_type(temp_host_dir)
 
 
 @pytest.fixture

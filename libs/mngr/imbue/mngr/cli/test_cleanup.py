@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from imbue.mngr.cli.cleanup import cleanup
 from imbue.mngr.cli.create import create
 from imbue.mngr.utils.polling import wait_for
+from imbue.mngr.utils.testing import make_test_sleep_agent_type
 from imbue.mngr.utils.testing import tmux_session_cleanup
 from imbue.mngr.utils.testing import tmux_session_exists
 
@@ -199,9 +200,10 @@ def test_cleanup_destroy_single_agent(
     temp_work_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
-    test_sleep_agent_type: str,
+    temp_host_dir: Path,
 ) -> None:
     """Test that cleanup --yes destroys a real agent."""
+    test_sleep_agent_type = make_test_sleep_agent_type(temp_host_dir, "sleep 100001")
     agent_name = f"test-cleanup-destroy-{int(time.time())}"
     session_name = f"{mngr_test_prefix}{agent_name}"
 
@@ -231,9 +233,10 @@ def test_cleanup_dry_run_with_real_agent(
     temp_work_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
-    test_sleep_agent_type: str,
+    temp_host_dir: Path,
 ) -> None:
     """Test that cleanup --dry-run --yes lists agents but does not destroy them."""
+    test_sleep_agent_type = make_test_sleep_agent_type(temp_host_dir, "sleep 100002")
     agent_name = f"test-cleanup-dryrun-{int(time.time())}"
     session_name = f"{mngr_test_prefix}{agent_name}"
 
@@ -265,9 +268,10 @@ def test_cleanup_stop_action_with_real_agent(
     temp_work_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
-    test_sleep_agent_type: str,
+    temp_host_dir: Path,
 ) -> None:
     """Test that cleanup --stop --yes stops a running agent."""
+    test_sleep_agent_type = make_test_sleep_agent_type(temp_host_dir, "sleep 100003")
     agent_name = f"test-cleanup-stop-{int(time.time())}"
     session_name = f"{mngr_test_prefix}{agent_name}"
 
@@ -292,9 +296,10 @@ def test_cleanup_destroy_multiple_agents(
     temp_work_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
-    test_sleep_agent_type: str,
+    temp_host_dir: Path,
 ) -> None:
     """Test that cleanup --yes destroys multiple agents at once."""
+    test_sleep_agent_type = make_test_sleep_agent_type(temp_host_dir, "sleep 100004")
     timestamp = int(time.time())
     agent_name1 = f"test-cleanup-multi1-{timestamp}"
     agent_name2 = f"test-cleanup-multi2-{timestamp}"
@@ -335,9 +340,10 @@ def test_cleanup_destroy_with_provider_filter_matches(
     temp_work_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
-    test_sleep_agent_type: str,
+    temp_host_dir: Path,
 ) -> None:
     """Test that --provider local matches and destroys local agents."""
+    test_sleep_agent_type = make_test_sleep_agent_type(temp_host_dir, "sleep 100005")
     agent_name = f"test-cleanup-provfilt-{int(time.time())}"
     session_name = f"{mngr_test_prefix}{agent_name}"
 
@@ -367,9 +373,10 @@ def test_cleanup_destroy_with_provider_filter_excludes(
     temp_work_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
-    test_sleep_agent_type: str,
+    temp_host_dir: Path,
 ) -> None:
     """Test that --provider nonexistent does not destroy local agents."""
+    test_sleep_agent_type = make_test_sleep_agent_type(temp_host_dir, "sleep 100006")
     agent_name = f"test-cleanup-provexcl-{int(time.time())}"
     session_name = f"{mngr_test_prefix}{agent_name}"
 
@@ -397,9 +404,10 @@ def test_cleanup_destroy_json_output_with_real_agent(
     temp_work_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
-    test_sleep_agent_type: str,
+    temp_host_dir: Path,
 ) -> None:
     """Test that cleanup --yes --format json outputs structured result with real agent."""
+    test_sleep_agent_type = make_test_sleep_agent_type(temp_host_dir, "sleep 100007")
     agent_name = f"test-cleanup-json-{int(time.time())}"
     session_name = f"{mngr_test_prefix}{agent_name}"
 

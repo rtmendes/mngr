@@ -1,6 +1,5 @@
 import json
 import os
-import random
 import re
 import selectors
 import shlex
@@ -273,42 +272,32 @@ def write_agent_type_to_settings_toml(settings_path: Path, type_name: str, comma
     settings_path.write_text(tomlkit.dumps(doc))
 
 
-def unique_sleep_command() -> str:
-    """Return ``sleep <N>`` with a large random N.
-
-    Using a different N per test means a leaked ``sleep`` process can be
-    traced back to the test that spawned it by inspecting ``ps`` output.
-    """
-    return f"sleep {random.randint(10_000_000, 99_999_999)}"
-
-
-def make_test_sleep_agent_type_at(settings_path: Path, command: str | None = None) -> str:
+def make_test_sleep_agent_type_at(settings_path: Path, command: str) -> str:
     """Declare a long-running placeholder agent type in ``settings_path`` and return its name.
+
+    ``command`` is a required pinned shell command (typically ``"sleep <N>"``
+    with a value hand-picked to be distinguishable in ``ps`` output). The
+    pinned value is the traceability identifier: a leaked ``sleep <N>`` in
+    ``ps`` can be grepped back to the test that spawned it.
 
     Shared by the per-test profile factory (``make_test_sleep_agent_type``)
     and the e2e session helper (``E2eSession.make_sleep_agent_type``) so that
-    the ``test_sleep_<uuid hex>`` name scheme and default ``sleep <N>`` command
-    live in exactly one place. Callers that write to a pre-bootstrapped
-    settings file (e.g. the e2e ``settings.local.toml``) go through this
-    function directly; callers that just have a host dir should use
-    ``make_test_sleep_agent_type`` instead.
+    the ``test_sleep_<uuid hex>`` name scheme lives in exactly one place.
+    Callers that write to a pre-bootstrapped settings file (e.g. the e2e
+    ``settings.local.toml``) go through this function directly; callers that
+    just have a host dir should use ``make_test_sleep_agent_type`` instead.
     """
     type_name = f"test_sleep_{uuid4().hex}"
-    write_agent_type_to_settings_toml(
-        settings_path,
-        type_name,
-        command if command is not None else unique_sleep_command(),
-    )
+    write_agent_type_to_settings_toml(settings_path, type_name, command)
     return type_name
 
 
-def make_test_sleep_agent_type(host_dir: Path, command: str | None = None) -> str:
+def make_test_sleep_agent_type(host_dir: Path, command: str) -> str:
     """Declare a long-running placeholder agent type in ``host_dir``'s profile and return its name.
 
-    Replaces the removed ``--command`` flag. Each call mints a unique type name
-    (``test_sleep_<uuid hex>``) and, unless ``command`` is given, a unique
-    ``sleep <N>`` command, so a leaked agent shows up with a distinct
-    identifier in both tmux session names and ``ps`` output.
+    Replaces the removed ``--command`` flag. ``command`` is required and should
+    be a pinned shell command (typically ``"sleep <N>"``) -- that pinned value
+    is the traceability identifier back to the specific test.
 
     The type is written to the profile's ``settings.toml`` in one shot
     (creating the profile if needed via ``get_or_create_profile_dir``), so
@@ -666,18 +655,15 @@ def create_test_agent_via_cli(
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
     agent_name: str,
-    command: str | None = None,
+    command: str,
 ) -> str:
     """Create a test agent via the CLI and return the session name.
 
-    Mints a fresh long-running ``test_sleep_<uuid>`` agent type (unique per
-    call, so leaked processes are distinguishable) and creates an agent of
-    that type. Used by integration tests that just need an existing agent to
-    operate on (e.g., clone, migrate, destroy).
-
-    If ``command`` is given, the minted agent type runs that command instead
-    of the default ``sleep <N>``. This is useful for tests that need the
-    agent to emit a marker string, tail a file, etc.
+    Mints a fresh ``test_sleep_<uuid>`` agent type whose command is the
+    pinned ``command`` string (typically ``"sleep <N>"`` with a value
+    hand-picked to be distinguishable in ``ps`` output) and creates an
+    agent of that type. Used by integration tests that just need an
+    existing agent to operate on (e.g., clone, migrate, destroy).
 
     The caller should wrap this call inside a tmux_session_cleanup context
     manager to ensure the session is cleaned up even if assertions fail.

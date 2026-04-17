@@ -12,7 +12,7 @@ from imbue.skitwright.expect import expect
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_default(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100070")
     e2e.write_tutorial_block("""
     # running mngr create is strictly better than running claude! It's less letters to type :-D
     # running this command launches claude (Claude Code) immediately *in a new worktree*
@@ -36,7 +36,7 @@ def test_create_default(e2e: E2eSession) -> None:
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_in_place(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100071")
     e2e.write_tutorial_block("""
     # if you want the default behavior of claude (starting in-place), you can specify that:
     mngr create --transfer=none
@@ -68,7 +68,7 @@ def test_create_in_place(e2e: E2eSession) -> None:
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_short_forms(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100072")
     e2e.write_tutorial_block("""
     # you can use a short form for most commands (like create) as well--the above command is the same as these:
     mngr create my-task claude
@@ -130,7 +130,7 @@ def test_create_codex_agent(e2e: E2eSession) -> None:
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_with_agent_args(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100073")
     e2e.write_tutorial_block("""
     # you can specify the arguments to the *agent* (ie, send args to claude rather than mngr)
     # by using `--` to separate the agent arguments from the mngr arguments:
@@ -156,7 +156,7 @@ def test_create_with_agent_args(e2e: E2eSession) -> None:
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_named_agent(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100074")
     e2e.write_tutorial_block("""
     # when creating agents to accomplish tasks, it's recommended that you give them a name to make it easier to manage them:
     mngr create my-task
@@ -178,7 +178,7 @@ def test_create_named_agent(e2e: E2eSession) -> None:
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_with_json_output(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100075")
     e2e.write_tutorial_block("""
     # you can control output format for scripting:
     mngr create my-task --no-connect --format json
@@ -201,7 +201,7 @@ def test_create_with_json_output(e2e: E2eSession) -> None:
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_headless(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100076")
     e2e.write_tutorial_block("""
     # mngr is very much meant to be used for scripting and automation, so nothing requires interactivity.
     # if you want to be sure that interactivity is disabled, you can use the --headless flag:

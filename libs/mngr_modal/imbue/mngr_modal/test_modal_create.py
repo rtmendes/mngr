@@ -20,6 +20,7 @@ import pytest
 from imbue.mngr import resources
 from imbue.mngr.utils.testing import ModalSubprocessTestEnv
 from imbue.mngr.utils.testing import get_short_random_string
+from imbue.mngr.utils.testing import make_test_sleep_agent_type
 
 
 @pytest.mark.acceptance
@@ -301,7 +302,7 @@ RUN echo "About to fail with marker: {unique_failure_marker}" && exit 1
 def test_mngr_create_transfers_git_repo_with_untracked_files(
     temp_git_repo: Path,
     modal_subprocess_env: ModalSubprocessTestEnv,
-    modal_test_sleep_agent_type: str,
+    modal_test_session_host_dir: Path,
 ) -> None:
     """Test that agent creation with git repo source succeeds on Modal.
 
@@ -313,6 +314,7 @@ def test_mngr_create_transfers_git_repo_with_untracked_files(
     Note: The actual file transfer logic is verified by unit tests in test_host.py.
     This acceptance test verifies the end-to-end flow works on Modal.
     """
+    modal_test_sleep_agent_type = make_test_sleep_agent_type(modal_test_session_host_dir, "sleep 100109")
     agent_name = f"test-modal-git-{get_short_random_string()}"
     unique_marker = f"git-transfer-test-{get_short_random_string()}"
 
@@ -349,7 +351,7 @@ def test_mngr_create_transfers_git_repo_with_untracked_files(
 def test_mngr_create_transfers_git_repo_with_new_branch(
     temp_git_repo: Path,
     modal_subprocess_env: ModalSubprocessTestEnv,
-    modal_test_sleep_agent_type: str,
+    modal_test_session_host_dir: Path,
 ) -> None:
     """Test that git transfer creates a new branch on the remote.
 
@@ -357,6 +359,7 @@ def test_mngr_create_transfers_git_repo_with_new_branch(
     1. All local branches and tags are pushed via git
     2. A new branch is created with the specified prefix
     """
+    modal_test_sleep_agent_type = make_test_sleep_agent_type(modal_test_session_host_dir, "sleep 100110")
     agent_name = f"test-modal-branch-{get_short_random_string()}"
 
     result = subprocess.run(
@@ -398,7 +401,7 @@ def test_mngr_create_with_default_dockerfile_on_modal(
     tmp_path: Path,
     temp_source_dir: Path,
     modal_subprocess_env: ModalSubprocessTestEnv,
-    modal_test_sleep_agent_type: str,
+    modal_test_session_host_dir: Path,
 ) -> None:
     """Test creating an agent on Modal using the mngr default Dockerfile.
 
@@ -409,6 +412,7 @@ def test_mngr_create_with_default_dockerfile_on_modal(
 
     This test is marked as release since it takes longer due to the image build.
     """
+    modal_test_sleep_agent_type = make_test_sleep_agent_type(modal_test_session_host_dir, "sleep 100111")
     agent_name = f"test-modal-default-df-{get_short_random_string()}"
 
     dockerfile_path = _get_mngr_default_dockerfile_path()

@@ -28,7 +28,6 @@ from imbue.mngr.utils.testing import delete_modal_volumes_in_environment
 from imbue.mngr.utils.testing import generate_test_environment_name
 from imbue.mngr.utils.testing import get_subprocess_test_env
 from imbue.mngr.utils.testing import make_mngr_ctx
-from imbue.mngr.utils.testing import make_test_sleep_agent_type
 from imbue.mngr.utils.testing import register_modal_test_app
 from imbue.mngr.utils.testing import register_modal_test_environment
 from imbue.mngr.utils.testing import register_modal_test_volume
@@ -252,19 +251,6 @@ def modal_test_session_host_dir(tmp_path_factory: pytest.TempPathFactory) -> Pat
     host_dir = tmp_path_factory.mktemp("modal_session") / "mngr"
     host_dir.mkdir(parents=True, exist_ok=True)
     return host_dir
-
-
-@pytest.fixture
-def modal_test_sleep_agent_type(modal_test_session_host_dir: Path) -> str:
-    """Mint a long-running agent type in the session-scoped Modal host dir.
-
-    Modal subprocess tests share the session host dir (so their settings
-    propagate to the subprocess ``mngr`` they spawn). Scoped per-test (not
-    per-session) so each test mints a fresh ``test_sleep_<uuid>`` with a
-    distinct ``sleep <N>`` -- leaked processes stay traceable to the test
-    that spawned them.
-    """
-    return make_test_sleep_agent_type(modal_test_session_host_dir)
 
 
 @pytest.fixture(scope="session")

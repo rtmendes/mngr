@@ -42,7 +42,7 @@ def test_create_with_custom_command(e2e: E2eSession) -> None:
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_with_idle_mode_and_timeout(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100077")
     e2e.write_tutorial_block("""
     # this enables some pretty interesting use cases, like running servers or other programs (besides AI agents)
     # this makes debugging easy--you can snapshot when a task is complete, then later connect to that exact machine state:
@@ -64,7 +64,7 @@ def test_create_with_idle_mode_and_timeout(e2e: E2eSession) -> None:
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_with_extra_tmux_windows(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100078")
     e2e.write_tutorial_block("""
     # alternatively, you can simply add extra tmux windows that run alongside your agent:
     mngr create my-task -w server="npm run dev" -w logs="tail -f app.log"
@@ -87,7 +87,7 @@ def test_create_with_extra_tmux_windows(e2e: E2eSession) -> None:
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_with_no_ensure_clean(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100079")
     e2e.write_tutorial_block("""
     # by default, mngr aborts the create command if the working tree has uncommitted changes. You can avoid this by doing:
     mngr create my-task --no-ensure-clean
@@ -113,7 +113,7 @@ def test_create_with_no_ensure_clean(e2e: E2eSession) -> None:
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_with_connect_command(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100080")
     e2e.write_tutorial_block("""
     # you can use a custom connect command instead of the default (eg, useful for, say, connecting in a new iterm window instead of the current one)
     mngr create my-task --connect-command "my_script.sh"
@@ -138,7 +138,7 @@ def test_create_with_connect_command(e2e: E2eSession) -> None:
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_create_with_message(e2e: E2eSession) -> None:
-    sleep_agent_type = e2e.make_sleep_agent_type()
+    sleep_agent_type = e2e.make_sleep_agent_type("sleep 100081")
     e2e.write_tutorial_block("""
     # you can send a message when starting the agent (great for scripting):
     mngr create my-task --no-connect --message "Do the thing"

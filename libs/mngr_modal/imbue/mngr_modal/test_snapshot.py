@@ -10,6 +10,7 @@ import pytest
 from imbue.imbue_common.logging import log_span
 from imbue.mngr.utils.testing import ModalSubprocessTestEnv
 from imbue.mngr.utils.testing import get_short_random_string
+from imbue.mngr.utils.testing import make_test_sleep_agent_type
 
 
 def _extract_json(output: str) -> dict[str, Any]:
@@ -75,12 +76,13 @@ def _destroy_modal_agent(
 def test_snapshot_create_then_list_on_modal(
     temp_source_dir: Path,
     modal_subprocess_env: ModalSubprocessTestEnv,
-    modal_test_sleep_agent_type: str,
+    modal_test_session_host_dir: Path,
 ) -> None:
     """Test snapshot functionality on a Modal agent
 
     Creates a real Modal agent, takes a snapshot, lists it to verify it exists
     """
+    modal_test_sleep_agent_type = make_test_sleep_agent_type(modal_test_session_host_dir, "sleep 100114")
     agent_name = f"test-snap-lifecycle-{get_short_random_string()}"
     env = modal_subprocess_env.env
 
@@ -131,12 +133,13 @@ def test_snapshot_create_then_list_on_modal(
 def test_snapshot_destroy_then_list_on_modal(
     temp_source_dir: Path,
     modal_subprocess_env: ModalSubprocessTestEnv,
-    modal_test_sleep_agent_type: str,
+    modal_test_session_host_dir: Path,
 ) -> None:
     """Test snapshot deletion on a Modal agent.
 
     Destroys all original snapshots and verifies they are gone.
     """
+    modal_test_sleep_agent_type = make_test_sleep_agent_type(modal_test_session_host_dir, "sleep 100115")
     agent_name = f"test-snap-lifecycle-{get_short_random_string()}"
     env = modal_subprocess_env.env
 

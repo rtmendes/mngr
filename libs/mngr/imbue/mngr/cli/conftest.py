@@ -157,7 +157,7 @@ def _create_and_track_test_agent(
     plugin_manager: pluggy.PluginManager,
     created_sessions: list[str],
     agent_name: str,
-    agent_cmd: str | None = None,
+    agent_cmd: str,
 ) -> str:
     """Create a test agent via CLI and track its session for cleanup."""
     session_name = create_test_agent_via_cli(
@@ -180,21 +180,25 @@ def create_test_agent(
     temp_host_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
-) -> Generator[Callable[..., str], None, None]:
+) -> Generator[Callable[[str, str], str], None, None]:
     """Factory fixture that creates test agents via CLI and cleans up automatically.
 
     Usage:
         def test_something(create_test_agent):
-            session_name = create_test_agent("my-agent")
+            session_name = create_test_agent("my-agent", "sleep 987654")
             # or with a custom command the agent should run:
             session_name = create_test_agent("my-agent", "echo MARKER && sleep 99")
             # ... test logic ...
             # cleanup happens automatically on fixture teardown
 
+    The command is required and should be a pinned shell command
+    (typically ``"sleep <N>"`` with a per-test-unique value) so leaked
+    agents are grep-able in ``ps`` back to the specific test.
+
     Supports creating multiple agents per test -- all are cleaned up.
     """
     created_sessions: list[str] = []
-    yield lambda agent_name, agent_cmd=None: _create_and_track_test_agent(
+    yield lambda agent_name, agent_cmd: _create_and_track_test_agent(
         cli_runner,
         temp_work_dir,
         temp_host_dir,
