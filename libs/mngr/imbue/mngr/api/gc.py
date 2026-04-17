@@ -386,7 +386,7 @@ def gc_snapshots(
 
     Only deletes snapshots from hosts that were in DESTROYED state at
     discovery time, and only after the snapshot exceeds the provider's
-    ``destroyed_host_persisted_seconds`` threshold (default 30 days).
+    ``destroyed_host_persisted_seconds`` threshold (default 7 days).
     Younger snapshots are preserved so users can recover via
     ``mngr create --snapshot``.
 
