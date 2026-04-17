@@ -1,4 +1,4 @@
-def is_environment_not_found_error(e: BaseException) -> bool:
+def is_environment_not_found_error(e: Exception) -> bool:
     """Check if a not-found exception indicates the Modal environment itself is gone.
 
     Modal uses one not-found exception type for both "path doesn't exist on volume"
