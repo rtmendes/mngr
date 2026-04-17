@@ -32,7 +32,7 @@ mngr create my-agent claude --idle-timeout 1h      # Override timeout
 
 ## Running a Custom Command
 
-When the agent type name is not registered (like `claude` or `codex`), mngr runs it directly as the command, looked up via `PATH`:
+Unlike the registered types (`claude`, `codex`, etc.), any other type name is looked up on `PATH` and run directly as the command:
 
 ```bash
 mngr create my-agent python -- -m http.server 8080   # Run python with args
