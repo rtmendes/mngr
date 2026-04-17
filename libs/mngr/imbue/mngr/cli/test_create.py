@@ -631,7 +631,7 @@ def test_edit_message_empty_content_does_not_send(
 
     # Mint an agent type that emits the marker and then waits on stdin so we
     # can confirm the agent is ready before checking editor behavior.
-    marker_type = make_test_sleep_agent_type(temp_host_dir, command=f"echo '{marker_text}' && cat")
+    marker_type = make_test_sleep_agent_type(temp_host_dir, f"echo '{marker_text}' && cat")
 
     # Create a script that clears the file (simulating user saving empty file)
     editor_script = tmp_path / "test_editor.sh"
@@ -854,8 +854,8 @@ def test_ensure_clean_rejects_dirty_worktree_by_default(
     temp_host_dir: Path,
 ) -> None:
     """Creating an agent from a dirty git repo fails when ensure-clean is enabled (the default)."""
-    # Make the repo dirty by creating an untracked file
     test_sleep_agent_type = make_test_sleep_agent_type(temp_host_dir, "sleep 100019")
+    # Make the repo dirty by creating an untracked file
     (temp_git_repo / "dirty.txt").write_text("uncommitted change")
 
     result = cli_runner.invoke(
@@ -885,8 +885,8 @@ def test_ensure_clean_skipped_with_explicit_base_branch(
     plugin_manager: pluggy.PluginManager,
 ) -> None:
     """Creating an agent with an explicit base branch skips the ensure-clean check."""
-    # Create a second branch to use as base
     test_sleep_agent_type = make_test_sleep_agent_type(temp_host_dir, "sleep 100020")
+    # Create a second branch to use as base
     subprocess.run(
         ["git", "branch", "other-branch"],
         cwd=temp_git_repo,
@@ -934,8 +934,8 @@ def test_ensure_clean_skipped_with_explicit_base_branch_git_mirror_mode(
     plugin_manager: pluggy.PluginManager,
 ) -> None:
     """Ensure-clean check is skipped with an explicit base branch even in git-mirror mode (not just worktree)."""
-    # Create a second branch to use as base
     test_sleep_agent_type = make_test_sleep_agent_type(temp_host_dir, "sleep 100021")
+    # Create a second branch to use as base
     subprocess.run(
         ["git", "branch", "other-branch"],
         cwd=temp_git_repo,
