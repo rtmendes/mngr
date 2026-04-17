@@ -217,7 +217,7 @@ _CREATE_FORM_TEMPLATE: Final[str] = (
           <p class="help-text">Ships a local ".env" to the agent host. Ignored for git URLs.</p>
         </div>
         <div class="form-input">
-          <input type="checkbox" id="include_env_file" name="include_env_file" value="1">
+          <input type="checkbox" id="include_env_file" name="include_env_file" value="1" checked>
         </div>
       </div>
     </form>
@@ -928,7 +928,7 @@ h2 {
 </style>
 </head>
 <body>
-<h2>Workspaces</h2>
+<h2>Projects</h2>
 <div id="sidebar-workspaces">
   <div class="sidebar-empty">No projects</div>
 </div>
