@@ -72,29 +72,30 @@ gh repo view "<OWNER>/<REPO>" --json name,visibility,url        # visibility sho
 git rev-list --count HEAD                                       # commit count -- quick sanity
 ```
 
-### 5. Print the GH_TOKEN creation URL (pre-filled)
+### 5. Print the GH_TOKEN creation URL (pre-filled, fine-grained)
 
-The user will want a `GH_TOKEN` scoped to the new private repo. Tokens cannot be created programmatically, but GitHub's creation pages accept query parameters that pre-fill most of the form. Hand the user a URL with as much pre-filled as possible.
+The user wants fine-grained PATs, scoped to the new repo, with no expiration. Build this URL:
 
-**Classic PAT URL (fully pre-fills scopes -- recommended if the user just wants a working token fast):**
+```
+https://github.com/settings/personal-access-tokens/new?name=<REPO>&description=<REPO>%20token&target_name=<OWNER>&expires_in=none&contents=write&metadata=read&pull_requests=write&issues=write&workflows=write
+```
 
+Query parameters GitHub honors on this page:
+- `name` -- token name (<=40 chars, URL-encoded).
+- `description` -- token description (<=1024 chars, URL-encoded; use `%20` for spaces).
+- `target_name` -- resource owner (user or org slug).
+- `expires_in` -- integer 1-366 OR the literal string `none` for no expiration. Default to `none` per the user's standing preference.
+- Per-permission params: `<permission>=<access_level>`, where access_level is `read`, `write`, or `admin`. Defaults chosen here: `contents=write`, `metadata=read` (both required for basic git read/write), `pull_requests=write`, `issues=write`, `workflows=write`. Drop or add ones to match the user's intent; ask if it's unclear.
+
+**What GitHub does NOT accept via URL (must be clicked manually):**
+- Repository selection (single repo vs all). `target_name` only picks the owner. The user still has to: under "Repository access" choose "Only select repositories" and add `<OWNER>/<REPO>`.
+
+When reporting back, substitute the real values (don't leave literal `<OWNER>` / `<REPO>` in the URL you hand the user) and call out the one manual step above.
+
+Only offer a classic-PAT fallback if the user explicitly asks for one. If they do, it is:
 ```
 https://github.com/settings/tokens/new?description=<REPO>%20token&scopes=repo,workflow
 ```
-
-GitHub's classic-token page honors `scopes=` (comma-separated) and `description=` URL parameters -- the scope checkboxes will already be checked when the page loads. `repo` alone is enough for a private-repo token; add `workflow` only if the user plans to modify `.github/workflows/` via the token. URL-encode spaces in the description (`%20`).
-
-**Fine-grained PAT URL (least-privilege, recommended for long-lived automation; but some fields must still be picked manually):**
-
-```
-https://github.com/settings/personal-access-tokens/new?name=<REPO>&description=<REPO>%20token&target_name=<OWNER>&expires_in_days=90
-```
-
-GitHub's fine-grained page honors `name`, `description`, `target_name` (the resource owner), and `expires_in_days`. It does NOT accept URL parameters for permissions or repository selection, so the user still has to:
-- Under "Repository access": pick "Only select repositories" and add `<OWNER>/<REPO>`.
-- Under "Repository permissions": set **Contents: Read and write** and **Metadata: Read-only** (and **Pull requests**, **Workflows**, **Actions** if they plan to automate those).
-
-Default-recommend the fine-grained URL. Tell the user "the classic URL is faster but broader" and let them pick.
 
 ### 6. Report
 
@@ -103,7 +104,7 @@ Report back:
 - Web URL: `https://github.com/<OWNER>/<REPO>`.
 - Local path: `~/project/<REPO>`.
 - Commit count (from `git rev-list --count HEAD`) -- sanity check that history came across.
-- Both token-creation URLs from step 5, with the pre-fill values actually substituted in (don't leave literal `<REPO>` / `<OWNER>` in the URL you show the user).
+- The fine-grained PAT URL from step 5 with real values substituted in (don't leave literal `<REPO>` / `<OWNER>` in the URL you show the user), plus the one-line reminder that repo selection still needs a manual click.
 
 ## Things not to do
 
