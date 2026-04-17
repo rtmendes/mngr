@@ -281,4 +281,4 @@
 
 # ignore demos
 **/recordings
-/.dockerignore
+apps/minds_workspace_server/package-lock.json
