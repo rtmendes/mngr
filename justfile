@@ -26,7 +26,9 @@ run target:
 # modifies during builds (which causes Modal upload errors).
 [private]
 _generate-dockerignore:
-    grep -v 'current\.tar\.gz' .gitignore > .dockerignore
+    # Strip current.tar.gz (needed in docker build context) and /.dockerignore
+    # (would cause .dockerignore to ignore itself when .gitignore lists it).
+    grep -vE 'current\.tar\.gz|^/?\.dockerignore$' .gitignore > .dockerignore
     echo '.git/' >> .dockerignore
     echo '.offload-image-cache' >> .dockerignore
     # Glob covers .offload-cache-key and every per-target .offload-<target>-cache-key
