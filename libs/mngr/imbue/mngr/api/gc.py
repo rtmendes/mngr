@@ -30,7 +30,6 @@ from imbue.mngr.interfaces.data_types import BuildCacheInfo
 from imbue.mngr.interfaces.data_types import LogFileInfo
 from imbue.mngr.interfaces.data_types import SizeBytes
 from imbue.mngr.interfaces.data_types import WorkDirInfo
-from imbue.mngr.interfaces.host import HostInterface
 from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.interfaces.provider_instance import ProviderInstanceInterface
 from imbue.mngr.primitives import DiscoveredHost
@@ -358,12 +357,10 @@ def _gc_single_host(
             )
             return
 
-        host_to_destroy: HostInterface = host
-
         if not dry_run:
-            mngr_ctx.pm.hook.on_before_host_destroy(host=host_to_destroy, mngr_ctx=mngr_ctx)
-            provider.destroy_host(host_to_destroy)
-            mngr_ctx.pm.hook.on_host_destroyed(host=host_to_destroy, mngr_ctx=mngr_ctx)
+            mngr_ctx.pm.hook.on_before_host_destroy(host=host, mngr_ctx=mngr_ctx)
+            provider.destroy_host(host)
+            mngr_ctx.pm.hook.on_host_destroyed(host=host, mngr_ctx=mngr_ctx)
             emit_host_destroyed(mngr_ctx.config, host_ref.host_id, [])
 
         with results_lock:
