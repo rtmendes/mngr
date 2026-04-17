@@ -25,6 +25,7 @@ from imbue.mngr.primitives import HostState
 from imbue.mngr.utils.polling import wait_for
 from imbue.mngr.utils.testing import ModalSubprocessTestEnv
 from imbue.mngr.utils.testing import get_short_random_string
+from imbue.mngr.utils.testing import make_test_sleep_agent_type
 
 
 class MngrListError(Exception):
@@ -118,6 +119,7 @@ def _get_host_state(
 def test_idle_shutdown_creates_both_initial_and_idle_snapshots(
     tmp_path: Path,
     modal_subprocess_env: ModalSubprocessTestEnv,
+    modal_test_session_host_dir: Path,
 ) -> None:
     """Test that idle shutdown creates both initial and idle snapshots.
 
@@ -130,6 +132,7 @@ def test_idle_shutdown_creates_both_initial_and_idle_snapshots(
        - Idle snapshot (created during shutdown)
     """
     # Use a unique agent name for this test
+    modal_test_sleep_agent_type = make_test_sleep_agent_type(modal_test_session_host_dir, "sleep 100112")
     agent_name = f"test-idle-snap-{get_short_random_string()}"
 
     source_dir = tmp_path / "source"
@@ -169,7 +172,7 @@ def test_idle_shutdown_creates_both_initial_and_idle_snapshots(
             "mngr",
             "create",
             f"{agent_name}@.modal",
-            "test_sleep",
+            modal_test_sleep_agent_type,
             "--no-connect",
             "--no-ensure-clean",
             "--source",

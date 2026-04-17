@@ -5,6 +5,7 @@ import pytest
 
 from imbue.mngr.utils.testing import ModalSubprocessTestEnv
 from imbue.mngr.utils.testing import get_short_random_string
+from imbue.mngr.utils.testing import make_test_sleep_agent_type
 from imbue.mngr.utils.testing import run_mngr_subprocess
 
 
@@ -25,6 +26,7 @@ def _get_agent_info(agent_name: str, env: dict[str, str]) -> dict | None:
 def test_provision_stopped_modal_agent(
     tmp_path: Path,
     modal_subprocess_env: ModalSubprocessTestEnv,
+    modal_test_session_host_dir: Path,
 ) -> None:
     """Provisioning a stopped Modal agent preserves identity and data.
 
@@ -38,6 +40,7 @@ def test_provision_stopped_modal_agent(
     - Existing env vars are preserved
     - User commands execute on the host
     """
+    modal_test_sleep_agent_type = make_test_sleep_agent_type(modal_test_session_host_dir, "sleep 100113")
     agent_name = f"test-modal-prov-stopped-{get_short_random_string()}"
     env_marker = f"PROV_TEST_MARKER={get_short_random_string()}"
     source_dir = tmp_path / "source"
@@ -49,13 +52,11 @@ def test_provision_stopped_modal_agent(
     result = run_mngr_subprocess(
         "create",
         f"{agent_name}@.modal",
-        "test_sleep",
+        modal_test_sleep_agent_type,
         "--no-connect",
         "--no-ensure-clean",
         "--source",
         str(source_dir),
-        "--type",
-        "test_sleep",
         "--env",
         env_marker,
         env=env,

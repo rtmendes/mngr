@@ -37,6 +37,7 @@ from imbue.mngr.cli.create import _try_reuse_existing_agent
 from imbue.mngr.cli.create import create
 from imbue.mngr.config.data_types import CreateCliOptions
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.config.loader import get_or_create_profile_dir
 from imbue.mngr.errors import UserInputError
 from imbue.mngr.hosts.host import HostLocation
 from imbue.mngr.interfaces.data_types import HostLifecycleOptions
@@ -58,7 +59,7 @@ from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr.utils.editor import EditorSession
 from imbue.mngr.utils.logging import LoggingSuppressor
-from imbue.mngr.utils.testing import register_test_agent_type
+from imbue.mngr.utils.testing import write_agent_type_to_settings_toml
 
 # =============================================================================
 # Tests for _CreateCommand.parse_args (-- passthrough arg handling)
@@ -783,7 +784,8 @@ def test_create_headless_streams_output(
     Registers a custom headless_command-based agent type with a specific command
     via settings.toml (since --command is not a CLI flag).
     """
-    register_test_agent_type(temp_host_dir, "headless_command", "echo headless-test-output")
+    profile_dir = get_or_create_profile_dir(temp_host_dir)
+    write_agent_type_to_settings_toml(profile_dir / "settings.toml", "headless_command", "echo headless-test-output")
     result = cli_runner.invoke(
         create,
         [

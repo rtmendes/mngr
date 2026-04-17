@@ -24,6 +24,7 @@ from uuid import uuid4
 
 import pluggy
 import pytest
+import tomlkit
 from click.testing import CliRunner
 from loguru import logger
 from pydantic import Field
@@ -33,9 +34,9 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.model_update import to_update
 from imbue.mngr.cli.create import create as create_command
 from imbue.mngr.config.consts import PROFILES_DIRNAME
-from imbue.mngr.config.consts import ROOT_CONFIG_FILENAME
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.config.loader import get_or_create_profile_dir
 from imbue.mngr.errors import MngrError
 from imbue.mngr.hosts.tmux import build_tmux_capture_pane_command
 from imbue.mngr.interfaces.data_types import AgentDetails
@@ -256,63 +257,55 @@ def assert_home_is_temp_directory() -> None:
         )
 
 
-TEST_SLEEP_AGENT_TYPE: Final[str] = "test_sleep"
-"""Name of the long-running agent type registered by the test environment.
+def write_agent_type_to_settings_toml(settings_path: Path, type_name: str, command: str) -> None:
+    """Upsert ``[agent_types.<type_name>] command = <command>`` in a TOML settings file.
 
-Use in place of the removed ``--command`` flag::
-
-    mngr create my-task --type test_sleep --no-ensure-clean
-
-The agent type is registered by ``setup_mngr_test_environment`` (for
-in-process cli_runner tests) and by the e2e conftest (for subprocess
-invocations of the real ``mngr`` binary). Its command is ``sleep 99999``.
-"""
-
-_TEST_SLEEP_COMMAND: Final[str] = "sleep 99999"
-
-
-def register_test_sleep_agent_type(host_dir: Path) -> None:
-    """Seed a profile under ``host_dir`` that defines the ``test_sleep`` agent type.
-
-    Tests that exercise the CLI need to be able to spin up a long-running
-    placeholder agent. Previously they did this via ``mngr create
-    --command 'sleep 99999'``; with that flag gone, the equivalent is
-    ``mngr create --type test_sleep``. This function writes the minimal
-    profile skeleton (``config.toml`` + ``profiles/<id>/settings.toml``)
-    so the config loader picks up the type without each test having to
-    duplicate the setup.
+    Creates the file if absent. Used by the test-sleep factories below and by
+    the e2e session helper; both need to declare an agent type in a TOML file
+    the CLI (or subprocess mngr) will load.
     """
-    config_path = host_dir / ROOT_CONFIG_FILENAME
-    if config_path.exists():
-        return
-    profile_id = uuid4().hex
-    profile_dir = host_dir / PROFILES_DIRNAME / profile_id
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(f'profile = "{profile_id}"\n')
-    settings_path = profile_dir / "settings.toml"
-    settings_path.write_text(f'[agent_types.{TEST_SLEEP_AGENT_TYPE}]\ncommand = "{_TEST_SLEEP_COMMAND}"\n')
+    doc = tomlkit.parse(settings_path.read_text()) if settings_path.exists() else tomlkit.document()
+    agent_types = doc.setdefault("agent_types", tomlkit.table())
+    type_table = tomlkit.table()
+    type_table["command"] = command
+    agent_types[type_name] = type_table
+    settings_path.write_text(tomlkit.dumps(doc))
 
 
-def register_test_agent_type(host_dir: Path, type_name: str, command: str, parent_type: str | None = None) -> None:
-    """Append a custom agent type to the test profile's ``settings.toml``.
+def make_test_sleep_agent_type_at(settings_path: Path, command: str) -> str:
+    """Declare a long-running placeholder agent type in ``settings_path`` and return its name.
 
-    Use this in tests that need a specific command (e.g. something that
-    echoes a marker before sleeping). The profile skeleton is assumed to
-    exist already (the autouse setup calls ``register_test_sleep_agent_type``
-    which creates it).
+    ``command`` is a required pinned shell command (typically ``"sleep <N>"``
+    with a value hand-picked to be distinguishable in ``ps`` output). The
+    pinned value is the traceability identifier: a leaked ``sleep <N>`` in
+    ``ps`` can be grepped back to the test that spawned it.
 
-    Set ``parent_type`` to inherit from a specific agent class (e.g.
-    ``"headless_command"`` for headless agents).
+    Shared by the per-test profile factory (``make_test_sleep_agent_type``)
+    and the e2e session helper (``E2eSession.make_sleep_agent_type``) so that
+    the ``test_sleep_<uuid hex>`` name scheme lives in exactly one place.
+    Callers that write to a pre-bootstrapped settings file (e.g. the e2e
+    ``settings.local.toml``) go through this function directly; callers that
+    just have a host dir should use ``make_test_sleep_agent_type`` instead.
     """
-    config_path = host_dir / ROOT_CONFIG_FILENAME
-    profile_id = config_path.read_text().split('"')[1]
-    profile_dir = host_dir / PROFILES_DIRNAME / profile_id
-    settings_path = profile_dir / "settings.toml"
-    existing = settings_path.read_text() if settings_path.exists() else ""
-    toml_block = f"\n[agent_types.{type_name}]\ncommand = {json.dumps(command)}\n"
-    if parent_type is not None:
-        toml_block += f"parent_type = {json.dumps(parent_type)}\n"
-    settings_path.write_text(existing + toml_block)
+    type_name = f"test_sleep_{uuid4().hex}"
+    write_agent_type_to_settings_toml(settings_path, type_name, command)
+    return type_name
+
+
+def make_test_sleep_agent_type(host_dir: Path, command: str) -> str:
+    """Declare a long-running placeholder agent type in ``host_dir``'s profile and return its name.
+
+    Replaces the removed ``--command`` flag. ``command`` is required and should
+    be a pinned shell command (typically ``"sleep <N>"``) -- that pinned value
+    is the traceability identifier back to the specific test.
+
+    The type is written to the profile's ``settings.toml`` in one shot
+    (creating the profile if needed via ``get_or_create_profile_dir``), so
+    callers do not have to bootstrap a profile first. Pass the returned name
+    to the CLI as ``--type <name>``.
+    """
+    profile_dir = get_or_create_profile_dir(host_dir)
+    return make_test_sleep_agent_type_at(profile_dir / "settings.toml", command=command)
 
 
 def setup_mngr_test_environment(
@@ -337,7 +330,6 @@ def setup_mngr_test_environment(
     monkeypatch.setenv("MNGR_PREFIX", prefix)
     monkeypatch.setenv("MNGR_ROOT_NAME", root_name)
     monkeypatch.delenv("MNGR_PROJECT_DIR", raising=False)
-    register_test_sleep_agent_type(host_dir)
 
     # Unison derives its config directory from $HOME. Since we override HOME
     # above, unison tries to create its config dir inside the temp home, which
@@ -659,22 +651,25 @@ def tmux_session_exists(session_name: str) -> bool:
 def create_test_agent_via_cli(
     cli_runner: CliRunner,
     temp_work_dir: Path,
+    temp_host_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
     agent_name: str,
+    command: str,
 ) -> str:
     """Create a test agent via the CLI and return the session name.
 
-    This encapsulates the common pattern of creating a source agent for
-    integration tests that need an existing agent (e.g., clone, migrate).
-    The agent runs the ``test_sleep`` agent type registered by
-    ``setup_mngr_test_environment`` (``sleep 99999``), which keeps it alive
-    for the duration of the test.
+    Mints a fresh ``test_sleep_<uuid>`` agent type whose command is the
+    pinned ``command`` string (typically ``"sleep <N>"`` with a value
+    hand-picked to be distinguishable in ``ps`` output) and creates an
+    agent of that type. Used by integration tests that just need an
+    existing agent to operate on (e.g., clone, migrate, destroy).
 
     The caller should wrap this call inside a tmux_session_cleanup context
     manager to ensure the session is cleaned up even if assertions fail.
     """
     session_name = f"{mngr_test_prefix}{agent_name}"
+    agent_type = make_test_sleep_agent_type(temp_host_dir, command=command)
 
     create_result = cli_runner.invoke(
         create_command,
@@ -682,7 +677,7 @@ def create_test_agent_via_cli(
             "--name",
             agent_name,
             "--type",
-            TEST_SLEEP_AGENT_TYPE,
+            agent_type,
             "--source",
             str(temp_work_dir),
             "--transfer=none",
