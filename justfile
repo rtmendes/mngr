@@ -84,13 +84,12 @@ test-offload-acceptance args="":
     tmpdir=$(mktemp -d)
     trap "rm -rf $tmpdir" EXIT
 
-    # Invalidate offload's image cache when build inputs change.
-    # Include the Docker startup scripts COPY'd into the image so that edits
-    # to those scripts also invalidate the cache.
+    # Invalidate offload's image cache when build inputs change. The
+    # acceptance config uses libs/mngr/imbue/mngr/resources/Dockerfile
+    # (the Docker startup scripts are only inputs for the release
+    # recipe, which uses Dockerfile.release and COPYs them in).
     CACHE_KEY=$(cat .offload-base-commit \
-        libs/mngr/imbue/mngr/resources/Dockerfile.release \
-        libs/mngr/imbue/mngr/resources/start-dockerd.sh \
-        libs/mngr/imbue/mngr/resources/ensure-dockerd.sh \
+        libs/mngr/imbue/mngr/resources/Dockerfile \
         offload-modal-acceptance.toml | shasum -a 256 | cut -d' ' -f1)
     CACHE_KEY_FILE=".offload-acceptance-cache-key"
     if [ -f "$CACHE_KEY_FILE" ] && [ "$(cat "$CACHE_KEY_FILE")" = "$CACHE_KEY" ]; then
