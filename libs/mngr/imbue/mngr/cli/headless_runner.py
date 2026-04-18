@@ -22,7 +22,6 @@ from imbue.mngr.interfaces.host import CreateAgentOptions
 from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import AgentTypeName
-from imbue.mngr.primitives import CommandString
 from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import LOCAL_PROVIDER_NAME
 from imbue.mngr.primitives import OutputFormat
@@ -90,7 +89,6 @@ def headless_agent_output(
     mngr_ctx: MngrContext,
     agent_type: AgentTypeName,
     agent_args: tuple[str, ...] = (),
-    command: CommandString | None = None,
     label_options: AgentLabelOptions | None = None,
     name: AgentName | None = None,
     pre_create_setup: Callable[[OnlineHostInterface, Path], None] | None = None,
@@ -116,7 +114,6 @@ def headless_agent_output(
         agent_options = CreateAgentOptions(
             agent_type=agent_type,
             agent_args=agent_args,
-            command=command,
             label_options=label_options or AgentLabelOptions(),
             target_path=work_path,
             name=name,
