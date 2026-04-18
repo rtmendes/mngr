@@ -26,6 +26,7 @@ from imbue.mngr.errors import HostConnectionError
 from imbue.mngr.errors import HostOfflineError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import ProviderUnavailableError
+from imbue.mngr.hosts.common import get_seconds_since_last_activity
 from imbue.mngr.interfaces.data_types import BuildCacheInfo
 from imbue.mngr.interfaces.data_types import LogFileInfo
 from imbue.mngr.interfaces.data_types import SizeBytes
@@ -338,22 +339,27 @@ def _gc_single_host(
             logger.warning("Failed to connect to host {} during gc, skipping: {}", host.id, e)
             return
 
-        # Only destroy hosts that are old enough.  Young hosts may be
-        # temporarily empty (e.g. between agent creation and discovery).
+        # Only destroy hosts that have been quiet for long enough.  Young or
+        # recently-touched hosts may be mid-setup, being debugged via SSH, or
+        # otherwise in active use outside of mngr's view.
         try:
-            certified_data = host.get_certified_data()
+            seconds_since_activity = get_seconds_since_last_activity(host)
         except (HostAuthenticationError, HostConnectionError) as e:
-            # Cannot determine age -- err on the side of caution.  HostConnectionError
+            # Cannot determine activity -- err on the side of caution.  HostConnectionError
             # also catches its HostOfflineError subclass.
-            logger.warning("Cannot determine age of host {} during GC, skipping: {}", host.id, e)
+            logger.warning("Cannot determine last activity of host {} during GC, skipping: {}", host.id, e)
             return
-        host_age_seconds = (datetime.now(timezone.utc) - certified_data.created_at).total_seconds()
+        if seconds_since_activity is None:
+            # No activity recorded -- conservative: skip.  Should be rare for
+            # mngr-managed hosts (BOOT is recorded on create/start).
+            logger.warning("No activity recorded for host {} during GC, skipping", host.id)
+            return
         min_age_seconds = provider.get_min_online_host_age_seconds()
-        if host_age_seconds < min_age_seconds:
+        if seconds_since_activity < min_age_seconds:
             logger.trace(
-                "Skipped GC for host {} (age {:.0f}s < minimum {:.0f}s)",
+                "Skipped GC for host {} (last activity {:.0f}s ago < minimum {:.0f}s)",
                 host.id,
-                host_age_seconds,
+                seconds_since_activity,
                 min_age_seconds,
             )
             return

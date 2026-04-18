@@ -50,6 +50,7 @@ from imbue.mngr.interfaces.data_types import PyinfraConnector
 from imbue.mngr.interfaces.data_types import SnapshotInfo
 from imbue.mngr.interfaces.data_types import VolumeInfo
 from imbue.mngr.interfaces.host import HostInterface
+from imbue.mngr.primitives import ActivitySource
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import DiscoveredAgent
 from imbue.mngr.primitives import DiscoveredHost
@@ -2078,6 +2079,7 @@ class _RemoteHost(Host):
     """Host subclass that appears remote (is_local=False) with configurable certified data."""
 
     mock_certified_data: CertifiedHostData | None = None
+    mock_last_activity_time: datetime | None = None
 
     @property
     def is_local(self) -> bool:
@@ -2090,6 +2092,12 @@ class _RemoteHost(Host):
         if self.mock_certified_data is not None:
             return self.mock_certified_data
         return super().get_certified_data()
+
+    def get_reported_activity_time(self, activity_type: ActivitySource) -> datetime | None:
+        # Report mock_last_activity_time for BOOT so gc sees it as the most recent activity.
+        if activity_type == ActivitySource.BOOT and self.mock_last_activity_time is not None:
+            return self.mock_last_activity_time
+        return None
 
 
 class _RemoteAuthErrorOnDiscoverHost(_RemoteHost):
@@ -2106,11 +2114,11 @@ class _RemoteConnectionErrorOnDiscoverHost(_RemoteHost):
         raise HostConnectionError("simulated connection failure from test")
 
 
-class _CertifiedDataAuthErrorHost(_RemoteHost):
-    """Remote host where get_certified_data raises HostAuthenticationError."""
+class _ActivityTimeAuthErrorHost(_RemoteHost):
+    """Remote host where get_reported_activity_time raises HostAuthenticationError."""
 
-    def get_certified_data(self) -> CertifiedHostData:
-        raise HostAuthenticationError("simulated auth error reading certified data from test")
+    def get_reported_activity_time(self, activity_type: ActivitySource) -> datetime | None:
+        raise HostAuthenticationError("simulated auth error reading activity time from test")
 
 
 class _DestroyableProvider(MockProviderInstance):
@@ -2126,19 +2134,20 @@ class _DestroyableProvider(MockProviderInstance):
 def _make_remote_host(
     provider: LocalProviderInstance,
     *,
-    created_seconds_ago: float = 0,
+    last_activity_seconds_ago: float = 0,
     host_cls: type[_RemoteHost] = _RemoteHost,
 ) -> _RemoteHost:
-    """Create a _RemoteHost (or subclass) with configurable age."""
+    """Create a _RemoteHost (or subclass) with configurable time since last activity."""
     pyinfra_host = provider._create_local_pyinfra_host()
     connector = PyinfraConnector(pyinfra_host)
     host_id = HostId.generate()
-    created_at = datetime.now(timezone.utc) - timedelta(seconds=created_seconds_ago)
+    now = datetime.now(timezone.utc)
+    last_activity_time = now - timedelta(seconds=last_activity_seconds_ago)
     certified_data = CertifiedHostData(
         host_id=str(host_id),
         host_name="remote-test-host",
-        created_at=created_at,
-        updated_at=datetime.now(timezone.utc),
+        created_at=now,
+        updated_at=now,
     )
     return host_cls(
         id=host_id,
@@ -2146,6 +2155,7 @@ def _make_remote_host(
         provider_instance=provider,
         mngr_ctx=provider.mngr_ctx,
         mock_certified_data=certified_data,
+        mock_last_activity_time=last_activity_time,
     )
 
 
@@ -2155,7 +2165,7 @@ def test_gc_machines_skips_young_online_host_with_no_agents(
     temp_host_dir: Path,
 ) -> None:
     """gc_machines skips online hosts with no agents that are younger than the minimum age."""
-    host = _make_remote_host(local_provider, created_seconds_ago=60)
+    host = _make_remote_host(local_provider, last_activity_seconds_ago=60)
     provider = _DestroyableProvider(
         name=ProviderInstanceName("test-remote"),
         host_dir=temp_host_dir,
@@ -2182,7 +2192,7 @@ def test_gc_machines_destroys_old_online_host_with_no_agents(
     temp_host_dir: Path,
 ) -> None:
     """gc_machines destroys online hosts with no agents that exceed the minimum age."""
-    host = _make_remote_host(local_provider, created_seconds_ago=_DEFAULT_MIN_ONLINE_HOST_AGE_SECONDS + 60)
+    host = _make_remote_host(local_provider, last_activity_seconds_ago=_DEFAULT_MIN_ONLINE_HOST_AGE_SECONDS + 60)
     provider = _DestroyableProvider(
         name=ProviderInstanceName("test-remote-old"),
         host_dir=temp_host_dir,
@@ -2216,7 +2226,7 @@ def test_gc_machines_skips_host_on_auth_error_during_discover(
     """
     host = _make_remote_host(
         local_provider,
-        created_seconds_ago=_DEFAULT_MIN_ONLINE_HOST_AGE_SECONDS + 60,
+        last_activity_seconds_ago=_DEFAULT_MIN_ONLINE_HOST_AGE_SECONDS + 60,
         host_cls=_RemoteAuthErrorOnDiscoverHost,
     )
     provider = _DestroyableProvider(
@@ -2247,7 +2257,7 @@ def test_gc_machines_skips_host_on_connection_error_during_discover(
     """gc_machines skips hosts that raise HostConnectionError during discover_agents."""
     host = _make_remote_host(
         local_provider,
-        created_seconds_ago=_DEFAULT_MIN_ONLINE_HOST_AGE_SECONDS + 60,
+        last_activity_seconds_ago=_DEFAULT_MIN_ONLINE_HOST_AGE_SECONDS + 60,
         host_cls=_RemoteConnectionErrorOnDiscoverHost,
     )
     provider = _DestroyableProvider(
@@ -2276,7 +2286,7 @@ def test_gc_machines_dry_run_identifies_but_does_not_destroy_old_online_host(
     temp_host_dir: Path,
 ) -> None:
     """gc_machines dry run reports old online hosts but does not actually destroy them."""
-    host = _make_remote_host(local_provider, created_seconds_ago=_DEFAULT_MIN_ONLINE_HOST_AGE_SECONDS + 60)
+    host = _make_remote_host(local_provider, last_activity_seconds_ago=_DEFAULT_MIN_ONLINE_HOST_AGE_SECONDS + 60)
     provider = _DestroyableProvider(
         name=ProviderInstanceName("test-dry-run"),
         host_dir=temp_host_dir,
@@ -2297,15 +2307,15 @@ def test_gc_machines_dry_run_identifies_but_does_not_destroy_old_online_host(
     assert provider.destroyed_hosts == []
 
 
-def test_gc_machines_skips_host_when_certified_data_unreadable(
+def test_gc_machines_skips_host_when_activity_time_unreadable(
     local_provider: LocalProviderInstance,
     temp_mngr_ctx: MngrContext,
     temp_host_dir: Path,
 ) -> None:
-    """gc_machines skips hosts where get_certified_data fails (cannot determine age)."""
+    """gc_machines skips hosts where get_reported_activity_time fails (cannot determine activity)."""
     host = _make_remote_host(
         local_provider,
-        host_cls=_CertifiedDataAuthErrorHost,
+        host_cls=_ActivityTimeAuthErrorHost,
     )
     provider = _DestroyableProvider(
         name=ProviderInstanceName("test-cert-error"),
