@@ -83,7 +83,7 @@ jobs:
           cov_count=$(find test-results/ -name ".coverage" -type f 2>/dev/null | wc -l | tr -d ' ')
           junit_count=$(find test-results/junit-parts/ -name "sb-*.xml" 2>/dev/null | wc -l | tr -d ' ')
           echo "=== Coverage-data delivery diagnostic ==="
-          echo "  .coverage* files collected:       $cov_count"
+          echo "  .coverage files collected:        $cov_count"
           echo "  per-sandbox junit files (sb-*.xml): $junit_count"
           if [ "$cov_count" != "$junit_count" ]; then
             if [ "$junit_count" -gt "$cov_count" ]; then
