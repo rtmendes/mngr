@@ -190,7 +190,9 @@ _HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
     ("ensure_clean", "--ensure-clean/--no-ensure-clean"),
     ("include_unclean", "--include-unclean/--exclude-unclean"),
     ("include_gitignored", "--include-gitignored/--no-include-gitignored"),
-    ("target_path", "--target-path"),
+    # --target-path is handled separately via the resolved target_path value,
+    # since the :PATH suffix on the positional address also sets target_path
+    # and is_param_explicit only detects the --target-path CLI flag.
     ("env", "--env"),
     ("env_file", "--env-file"),
     ("pass_env", "--pass-env"),
@@ -220,17 +222,29 @@ _HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _reject_incompatible_headless_flags(ctx: click.Context, agent_type_name: str) -> None:
+def _reject_incompatible_headless_flags(
+    ctx: click.Context,
+    agent_type_name: str,
+    target_path: Path | None,
+) -> None:
     """Raise UserInputError if any flags incompatible with the headless path were explicitly set.
 
     The headless path skips source resolution, git operations, provisioning,
     environment setup, and connection. Flags for those features are silently
     ignored, which could confuse users. This function catches that early.
+
+    ``target_path`` is the resolved value from either the ``--target-path``
+    flag or the ``:PATH`` suffix on the positional address. Both feed into
+    the same ignored-by-headless code path, so we check the resolved value
+    instead of only the CLI flag source.
     """
     explicit_flags: list[str] = []
     for param_name, display_name in _HEADLESS_INCOMPATIBLE_FLAGS:
         if is_param_explicit(ctx, param_name):
             explicit_flags.append(display_name)
+
+    if target_path is not None:
+        explicit_flags.append("--target-path or :PATH suffix")
 
     if explicit_flags:
         flags_str = ", ".join(explicit_flags)
@@ -692,7 +706,7 @@ def create(ctx: click.Context, **kwargs) -> None:
 
         if is_headless:
             assert resolved_agent_type is not None
-            _reject_incompatible_headless_flags(ctx, resolved_agent_type)
+            _reject_incompatible_headless_flags(ctx, resolved_agent_type, target_path)
             _create_headless(mngr_ctx, output_opts, opts, address, resolved_agent_type)
             return
 
