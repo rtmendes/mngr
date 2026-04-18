@@ -153,7 +153,6 @@ def test_diagnose_forwards_unknown_options_to_create(
 
 
 def test_diagnose_rejects_reserved_flags(
-    tmp_path: Path,
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
     monkeypatch: pytest.MonkeyPatch,
@@ -172,7 +171,6 @@ def test_diagnose_rejects_reserved_flags(
 
 
 def test_diagnose_rejects_reserved_message_flag(
-    tmp_path: Path,
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
     monkeypatch: pytest.MonkeyPatch,
@@ -191,7 +189,6 @@ def test_diagnose_rejects_reserved_message_flag(
 
 
 def test_diagnose_rejects_reserved_flag_with_equals_form(
-    tmp_path: Path,
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
     monkeypatch: pytest.MonkeyPatch,
