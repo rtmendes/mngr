@@ -1,31 +1,35 @@
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
 import click
 from loguru import logger
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.pure import pure
-from imbue.mngr.cli.common_opts import add_common_options
-from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.cli.create import create as create_cmd
 from imbue.mngr.cli.help_formatter import CommandHelpMetadata
 from imbue.mngr.cli.help_formatter import add_pager_help_option
 from imbue.mngr.cli.issue_reporting import get_mngr_version
-from imbue.mngr.config.data_types import CommonCliOptions
 from imbue.mngr_diagnose.clone import ensure_mngr_clone
 from imbue.mngr_diagnose.context_file import read_diagnose_context
 from imbue.mngr_diagnose.prompt import build_diagnose_initial_message
 
 DIAGNOSE_CLONE_DIR: Final[Path] = Path("/tmp/mngr-diagnose")
 
-
-class DiagnoseCliOptions(CommonCliOptions):
-    """CLI options for the diagnose command."""
-
-    description: str | None
-    clone_dir: str | None
-    context_file: str | None
-    agent_type: str | None
+# Create options that diagnose owns and so the user must not pass via pass-through.
+# These are the flags diagnose hardcodes when invoking create.
+_RESERVED_CREATE_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "--from",
+        "--source",
+        "--transfer",
+        "--branch",
+        "--message",
+        "--message-file",
+        "--edit-message",
+    }
+)
 
 
 @pure
@@ -39,8 +43,24 @@ def _build_description_from_context(error_type: str | None, error_message: str |
     return error_type or error_message
 
 
-@click.command()
-@click.argument("description", required=False, default=None)
+def _reject_reserved_options(args: Sequence[str], ctx: click.Context) -> None:
+    """Raise a UsageError if any reserved create option appears in args."""
+    for arg in args:
+        flag_name = arg.split("=", 1)[0]
+        if flag_name in _RESERVED_CREATE_OPTIONS:
+            raise click.UsageError(
+                f"Cannot pass {flag_name} to diagnose: this flag is set automatically. "
+                f"Reserved flags: {', '.join(sorted(_RESERVED_CREATE_OPTIONS))}",
+                ctx=ctx,
+            )
+
+
+@click.command(context_settings={"ignore_unknown_options": True})
+@click.option(
+    "--description",
+    default=None,
+    help="Free-text description of the problem.",
+)
 @click.option(
     "--clone-dir",
     type=click.Path(),
@@ -53,46 +73,45 @@ def _build_description_from_context(error_type: str | None, error_message: str |
     default=None,
     help="JSON file with error context (written by error handler)",
 )
-@click.option(
-    "--type",
-    "agent_type",
-    default=None,
-    help="Agent type [default: from config]",
-)
-@add_common_options
+@click.argument("create_args", nargs=-1, type=click.UNPROCESSED)
 @click.pass_context
-def diagnose(ctx: click.Context, **kwargs: object) -> None:
+def diagnose(
+    ctx: click.Context,
+    description: str | None,
+    clone_dir: str | None,
+    context_file: str | None,
+    create_args: tuple[str, ...],
+) -> None:
     """Launch an agent to diagnose a bug and prepare a GitHub issue.
 
     Clones the mngr repo (or reuses an existing clone) and creates an agent
     in a worktree to investigate the problem.
-    """
-    mngr_ctx, _output_opts, opts = setup_command_context(
-        ctx=ctx,
-        command_name="diagnose",
-        command_class=DiagnoseCliOptions,
-    )
 
-    resolved_clone_dir = Path(opts.clone_dir) if opts.clone_dir is not None else DIAGNOSE_CLONE_DIR
+    Any options not listed below are forwarded to the underlying `mngr create`
+    command, so you can use any create option (e.g. --provider, --type,
+    --idle-timeout, --env). Options that diagnose sets automatically (--from,
+    --source, --transfer, --branch, --message, --message-file, --edit-message)
+    cannot be overridden.
+    """
+    _reject_reserved_options(create_args, ctx)
+
+    resolved_clone_dir = Path(clone_dir) if clone_dir is not None else DIAGNOSE_CLONE_DIR
 
     # Read context file if provided
     traceback_str: str | None = None
     mngr_version = get_mngr_version()
 
-    if opts.context_file is not None:
-        context = read_diagnose_context(Path(opts.context_file))
+    if context_file is not None:
+        context = read_diagnose_context(Path(context_file))
         traceback_str = context.traceback_str
         mngr_version = context.mngr_version
         # Use error info as description if no explicit description given
-        if opts.description is None:
+        if description is None:
             description = _build_description_from_context(context.error_type, context.error_message)
-        else:
-            description = opts.description
-    else:
-        description = opts.description
 
     # Clone or update the repo
-    ensure_mngr_clone(resolved_clone_dir, mngr_ctx.concurrency_group)
+    with ConcurrencyGroup(name="diagnose-clone") as cg:
+        ensure_mngr_clone(resolved_clone_dir, cg)
 
     # Build the diagnostic message
     message = build_diagnose_initial_message(
@@ -103,8 +122,10 @@ def diagnose(ctx: click.Context, **kwargs: object) -> None:
 
     logger.info("Launching diagnostic agent...")
 
-    # Build create command args
-    create_args: list[str] = [
+    # Diagnose-owned create args, then user-provided pass-through args.
+    # Click's last-wins semantics let pass-through args override defaults like
+    # --no-ensure-clean if the user really wants to.
+    full_create_args: list[str] = [
         "--from",
         f":{resolved_clone_dir}",
         "--transfer",
@@ -114,11 +135,10 @@ def diagnose(ctx: click.Context, **kwargs: object) -> None:
         "--message",
         message,
         "--no-ensure-clean",
+        *create_args,
     ]
-    if opts.agent_type is not None:
-        create_args.extend(["--type", opts.agent_type])
 
-    create_ctx = create_cmd.make_context("diagnose", create_args, parent=ctx)
+    create_ctx = create_cmd.make_context("diagnose", full_create_args, parent=ctx)
     with create_ctx:
         create_cmd.invoke(create_ctx)
 
@@ -126,20 +146,33 @@ def diagnose(ctx: click.Context, **kwargs: object) -> None:
 CommandHelpMetadata(
     key="diagnose",
     one_line_description="Launch an agent to diagnose a bug and prepare a GitHub issue",
-    synopsis="mngr diagnose [DESCRIPTION] [--context-file PATH] [--clone-dir PATH] [--type TYPE]",
+    synopsis="mngr diagnose [--description TEXT] [--context-file PATH] [--clone-dir PATH] [CREATE_OPTIONS...]",
     description="""Launch a diagnostic agent that investigates a bug in the mngr codebase.
 
 The agent works in a worktree of a local clone of the mngr repository
 (cloned to --clone-dir, default /tmp/mngr-diagnose). It analyzes the
 error, finds the root cause, and prepares a GitHub issue for user review.
 
-Provide a description as a positional argument, a --context-file written
-by the error handler, or both. If neither is provided, the agent will
-ask the user for details interactively.""",
+Provide a description via --description, a --context-file written by the
+error handler, or both. If neither is provided, the agent will ask the
+user for details interactively.
+
+Any options not recognized by diagnose are forwarded to `mngr create`, so
+you can use any create option (e.g. --provider, --type, --idle-timeout).
+The following flags are reserved by diagnose and cannot be passed through:
+--from, --source, --transfer, --branch, --message, --message-file,
+--edit-message.""",
     examples=(
-        ("Diagnose a described problem", 'mngr diagnose "create fails with spaces in path"'),
+        ("Diagnose a described problem", 'mngr diagnose --description "create fails with spaces in path"'),
         ("Diagnose from error context", "mngr diagnose --context-file /tmp/mngr-diagnose-context-abc123.json"),
-        ("Both description and context", 'mngr diagnose "spaces bug" --context-file /tmp/ctx.json'),
+        (
+            "Diagnose on a different provider",
+            'mngr diagnose --description "modal-only bug" --provider modal',
+        ),
+        (
+            "Diagnose with a specific agent type",
+            'mngr diagnose --description "error" --type opencode',
+        ),
     ),
     see_also=(("create", "Create an agent (full option set)"),),
 ).register()

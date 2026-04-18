@@ -37,7 +37,10 @@ def _stub_clone_and_capture_create_args(monkeypatch: pytest.MonkeyPatch) -> list
     original_make_context = click.Command.make_context
 
     def capturing_make_context(self: click.Command, info_name: str, args: list[str], **kwargs: Any) -> click.Context:
-        if info_name == "diagnose" and "--from" in args:
+        # Distinguish the inner call (from diagnose -> create) from the outer
+        # CLI invocation: the inner call always passes "git-worktree" (hardcoded
+        # by diagnose), the outer call carries user-supplied CLI args.
+        if info_name == "diagnose" and "git-worktree" in args:
             captured.append(args)
             raise SystemExit(0)
         return original_make_context(self, info_name, args, **kwargs)
@@ -103,7 +106,7 @@ def test_diagnose_with_description(
 
     cli_runner.invoke(
         diagnose,
-        ["test error description", "--clone-dir", str(tmp_path / "clone")],
+        ["--description", "test error description", "--clone-dir", str(tmp_path / "clone")],
         obj=plugin_manager,
     )
 
@@ -113,18 +116,29 @@ def test_diagnose_with_description(
     assert "test error description" in args[msg_idx]
 
 
-def test_diagnose_with_agent_type(
+def test_diagnose_forwards_unknown_options_to_create(
     tmp_path: Path,
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Diagnose with --type passes it through to create."""
+    """Options not recognized by diagnose are forwarded verbatim to create."""
     captured_args = _stub_clone_and_capture_create_args(monkeypatch)
 
     cli_runner.invoke(
         diagnose,
-        ["error", "--type", "opencode", "--clone-dir", str(tmp_path / "clone")],
+        [
+            "--description",
+            "error",
+            "--clone-dir",
+            str(tmp_path / "clone"),
+            "--type",
+            "opencode",
+            "--provider",
+            "modal",
+            "--idle-timeout",
+            "5m",
+        ],
         obj=plugin_manager,
     )
 
@@ -132,25 +146,67 @@ def test_diagnose_with_agent_type(
     args = captured_args[0]
     assert "--type" in args
     assert "opencode" in args
+    assert "--provider" in args
+    assert "modal" in args
+    assert "--idle-timeout" in args
+    assert "5m" in args
 
 
-def test_diagnose_no_type_omits_type_flag(
+def test_diagnose_rejects_reserved_flags(
     tmp_path: Path,
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When --type is not specified, the create args should not contain --type."""
-    captured_args = _stub_clone_and_capture_create_args(monkeypatch)
+    """Diagnose refuses pass-through args that conflict with its hardcoded create options."""
+    _stub_clone_and_capture_create_args(monkeypatch)
 
-    cli_runner.invoke(
+    result = cli_runner.invoke(
         diagnose,
-        ["error", "--clone-dir", str(tmp_path / "clone")],
+        ["--description", "error", "--from", "@some-host"],
         obj=plugin_manager,
     )
 
-    assert len(captured_args) == 1
-    assert "--type" not in captured_args[0]
+    assert result.exit_code != 0
+    assert "Cannot pass --from to diagnose" in result.output
+
+
+def test_diagnose_rejects_reserved_message_flag(
+    tmp_path: Path,
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Diagnose refuses --message in pass-through (it builds the message itself)."""
+    _stub_clone_and_capture_create_args(monkeypatch)
+
+    result = cli_runner.invoke(
+        diagnose,
+        ["--description", "error", "--message", "user-supplied"],
+        obj=plugin_manager,
+    )
+
+    assert result.exit_code != 0
+    assert "Cannot pass --message" in result.output
+
+
+def test_diagnose_rejects_reserved_flag_with_equals_form(
+    tmp_path: Path,
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reserved flag detection handles --flag=value form too."""
+    _stub_clone_and_capture_create_args(monkeypatch)
+
+    result = cli_runner.invoke(
+        diagnose,
+        ["--description", "error", "--branch=feature"],
+        obj=plugin_manager,
+    )
+
+    assert result.exit_code != 0
+    assert "Cannot pass --branch to diagnose" in result.output
 
 
 def test_diagnose_does_not_pass_auto_approve(
@@ -164,7 +220,7 @@ def test_diagnose_does_not_pass_auto_approve(
 
     cli_runner.invoke(
         diagnose,
-        ["error", "--clone-dir", str(tmp_path / "clone")],
+        ["--description", "error", "--clone-dir", str(tmp_path / "clone")],
         obj=plugin_manager,
     )
 

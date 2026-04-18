@@ -6,7 +6,7 @@
 **Synopsis:**
 
 ```text
-mngr diagnose [DESCRIPTION] [--context-file PATH] [--clone-dir PATH] [--type TYPE]
+mngr diagnose [--description TEXT] [--context-file PATH] [--clone-dir PATH] [CREATE_OPTIONS...]
 ```
 
 Launch an agent to diagnose a bug and prepare a GitHub issue.
@@ -17,44 +17,35 @@ The agent works in a worktree of a local clone of the mngr repository
 (cloned to --clone-dir, default /tmp/mngr-diagnose). It analyzes the
 error, finds the root cause, and prepares a GitHub issue for user review.
 
-Provide a description as a positional argument, a --context-file written
-by the error handler, or both. If neither is provided, the agent will
-ask the user for details interactively.
+Provide a description via --description, a --context-file written by the
+error handler, or both. If neither is provided, the agent will ask the
+user for details interactively.
+
+Any options not recognized by diagnose are forwarded to `mngr create`, so
+you can use any create option (e.g. --provider, --type, --idle-timeout).
+The following flags are reserved by diagnose and cannot be passed through:
+--from, --source, --transfer, --branch, --message, --message-file,
+--edit-message.
 
 **Usage:**
 
 ```text
-mngr diagnose [OPTIONS] [DESCRIPTION]
+mngr diagnose [OPTIONS] [CREATE_ARGS]...
 ```
 ## Arguments
 
-- `DESCRIPTION`: The description (optional)
+- `CREATE_ARGS`: Additional arguments passed through
 
 **Options:**
-
-## Common
-
-| Name | Type | Description | Default |
-| ---- | ---- | ----------- | ------- |
-| `--format` | text | Output format (human, json, jsonl, FORMAT): Output format for results. When a template is provided, fields use standard python templating like 'name: {agent.name}' See below for available fields. | `human` |
-| `-q`, `--quiet` | boolean | Suppress all console output | `False` |
-| `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
-| `--log-file` | path | Path to log file (overrides default ~/.mngr/events/logs/<timestamp>-<pid>.json) | None |
-| `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
-| `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNGR_HEADLESS env var or 'headless' config key. | `False` |
-| `--safe` | boolean | Always query all providers during discovery (disable event-stream optimization). Use this when interfacing with mngr from multiple machines. | `False` |
-| `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
-| `--disable-plugin` | text | Disable a plugin [repeatable] | None |
-| `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
-| `-h`, `--help` | boolean | Show this message and exit. | `False` |
 
 ## Other Options
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
+| `--description` | text | Free-text description of the problem. | None |
 | `--clone-dir` | path | Clone location [default: /tmp/mngr-diagnose] | None |
 | `--context-file` | path | JSON file with error context (written by error handler) | None |
-| `--type` | text | Agent type [default: from config] | None |
+| `-h`, `--help` | boolean | Show this message and exit. | `False` |
 
 ## See Also
 
@@ -65,7 +56,7 @@ mngr diagnose [OPTIONS] [DESCRIPTION]
 **Diagnose a described problem**
 
 ```bash
-$ mngr diagnose "create fails with spaces in path"
+$ mngr diagnose --description "create fails with spaces in path"
 ```
 
 **Diagnose from error context**
@@ -74,8 +65,14 @@ $ mngr diagnose "create fails with spaces in path"
 $ mngr diagnose --context-file /tmp/mngr-diagnose-context-abc123.json
 ```
 
-**Both description and context**
+**Diagnose on a different provider**
 
 ```bash
-$ mngr diagnose "spaces bug" --context-file /tmp/ctx.json
+$ mngr diagnose --description "modal-only bug" --provider modal
+```
+
+**Diagnose with a specific agent type**
+
+```bash
+$ mngr diagnose --description "error" --type opencode
 ```
