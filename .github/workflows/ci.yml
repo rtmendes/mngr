@@ -80,7 +80,7 @@ jobs:
           # Drift in per-package coverage across runs (with zero test failures) most
           # likely means some sandbox dropped its .coverage file while still
           # reporting tests via junit. If these counts differ, that's the cause.
-          cov_count=$(find test-results/ -name ".coverage*" -type f 2>/dev/null | wc -l | tr -d ' ')
+          cov_count=$(find test-results/ -name ".coverage" -type f 2>/dev/null | wc -l | tr -d ' ')
           junit_count=$(find test-results/junit-parts/ -name "sb-*.xml" 2>/dev/null | wc -l | tr -d ' ')
           echo "=== Coverage-data delivery diagnostic ==="
           echo "  .coverage* files collected:       $cov_count"
