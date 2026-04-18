@@ -2134,15 +2134,21 @@ class _DestroyableProvider(MockProviderInstance):
 def _make_remote_host(
     provider: LocalProviderInstance,
     *,
-    last_activity_seconds_ago: float = 0,
+    last_activity_seconds_ago: float | None = 0,
     host_cls: type[_RemoteHost] = _RemoteHost,
 ) -> _RemoteHost:
-    """Create a _RemoteHost (or subclass) with configurable time since last activity."""
+    """Create a _RemoteHost (or subclass) with configurable time since last activity.
+
+    Pass ``last_activity_seconds_ago=None`` to simulate a host with no
+    recorded activity at all (every ActivitySource returns None).
+    """
     pyinfra_host = provider._create_local_pyinfra_host()
     connector = PyinfraConnector(pyinfra_host)
     host_id = HostId.generate()
     now = datetime.now(timezone.utc)
-    last_activity_time = now - timedelta(seconds=last_activity_seconds_ago)
+    last_activity_time = (
+        None if last_activity_seconds_ago is None else now - timedelta(seconds=last_activity_seconds_ago)
+    )
     certified_data = CertifiedHostData(
         host_id=str(host_id),
         host_name="remote-test-host",
@@ -2319,6 +2325,39 @@ def test_gc_machines_skips_host_when_activity_time_unreadable(
     )
     provider = _DestroyableProvider(
         name=ProviderInstanceName("test-cert-error"),
+        host_dir=temp_host_dir,
+        mngr_ctx=temp_mngr_ctx,
+        mock_hosts=[host],
+    )
+
+    result = GcResult()
+    gc_machines(
+        mngr_ctx=temp_mngr_ctx,
+        hosts_by_provider=_hosts_for(provider),
+        dry_run=False,
+        error_behavior=ErrorBehavior.ABORT,
+        result=result,
+    )
+
+    assert len(result.machines_destroyed) == 0
+    assert provider.destroyed_hosts == []
+
+
+def test_gc_machines_skips_host_when_no_activity_recorded(
+    local_provider: LocalProviderInstance,
+    temp_mngr_ctx: MngrContext,
+    temp_host_dir: Path,
+) -> None:
+    """gc_machines skips hosts with no recorded activity (every ActivitySource returns None).
+
+    This exercises the conservative-skip branch in _gc_single_host: if the
+    host-level activity directory is empty, we cannot judge the host's age
+    and must not destroy it.
+    """
+    host = _make_remote_host(local_provider, last_activity_seconds_ago=None)
+
+    provider = _DestroyableProvider(
+        name=ProviderInstanceName("test-no-activity"),
         host_dir=temp_host_dir,
         mngr_ctx=temp_mngr_ctx,
         mock_hosts=[host],
