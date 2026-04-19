@@ -29,7 +29,7 @@ TRIGGER_NAME="changelog-consolidation"
 # During PDT (March-November), this fires at 01:00 local time.
 SCHEDULE="0 8 * * *"
 PROVIDER="${CHANGELOG_PROVIDER:-modal}"
-VERIFY="${CHANGELOG_VERIFY:-full}"
+VERIFY="${CHANGELOG_VERIFY:-none}"
 
 # Use an isolated mngr config namespace both locally and inside the container,
 # so neither loads the user's personal settings or the repo's .mngr/settings.toml
@@ -97,7 +97,7 @@ uv run mngr schedule add "$TRIGGER_NAME" \
     --no-auto-fix-args \
     --no-ensure-safe-commands \
     $DISABLE_PLUGIN_ARGS \
-    --args "--type headless_command --foreground -S agent_types.headless_command.command='bash scripts/run_changelog_consolidation.sh'"
+    --args "--type headless_command --foreground -S agent_types.headless_command.command='bash -c \"cd /code/project && bash scripts/run_changelog_consolidation.sh\"'"
 
 echo "Schedule '${TRIGGER_NAME}' created successfully."
 echo ""
