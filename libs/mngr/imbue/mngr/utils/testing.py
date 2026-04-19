@@ -225,8 +225,14 @@ def isolate_git(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
 
     gitconfig = Path.home() / ".gitconfig"
     if not gitconfig.exists():
+        # safe.directory='*' so release tests running as root against /code/mngr
+        # (owned by root in the offload sandbox) don't trip git's ownership check
+        # — HOME points at a tmp dir set by isolate_home, so the image-time
+        # /root/.gitconfig safe.directory entry isn't visible to the subprocess.
         gitconfig.write_text(
-            "[user]\n\tname = Test User\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n"
+            "[user]\n\tname = Test User\n\temail = test@example.com\n"
+            "[init]\n\tdefaultBranch = main\n"
+            "[safe]\n\tdirectory = *\n"
         )
 
     yield

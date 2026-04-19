@@ -17,7 +17,7 @@ fi
 # but daemon hasn't finished starting yet)
 if [ -f /var/run/docker.pid ] && kill -0 "$(cat /var/run/docker.pid)" 2>/dev/null; then
     echo "Docker daemon process exists (PID $(cat /var/run/docker.pid)), waiting for it..."
-    timeout 30 sh -c 'until /usr/local/bin/docker info >/dev/null 2>&1; do sleep 1; done'
+    timeout 60 sh -c 'until /usr/local/bin/docker info >/dev/null 2>&1; do sleep 1; done'
     echo "Docker daemon is ready."
     exit 0
 fi
@@ -93,5 +93,5 @@ EOF
 dockerd --iptables=false --ip6tables=false --ipv6=false --dns=1.1.1.1 --dns=8.8.8.8 &
 
 # Wait for Docker daemon to be ready
-timeout 30 sh -c 'until /usr/local/bin/docker info >/dev/null 2>&1; do sleep 1; done'
+timeout 60 sh -c 'until /usr/local/bin/docker info >/dev/null 2>&1; do sleep 1; done'
 echo "Docker daemon is ready."
