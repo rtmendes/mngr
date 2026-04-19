@@ -17,6 +17,7 @@ from imbue.mngr.api.find import ResolvedSource
 from imbue.mngr.cli.create import _AutoLabels
 from imbue.mngr.cli.create import _CreateCommand
 from imbue.mngr.cli.create import _RECOVERED_MESSAGE_FILENAME
+from imbue.mngr.cli.create import _apply_host_labels
 from imbue.mngr.cli.create import _check_source_does_not_contain_state_dir
 from imbue.mngr.cli.create import _editor_cleanup_scope
 from imbue.mngr.cli.create import _get_source_remote_url
@@ -946,6 +947,76 @@ def test_create_foreground_without_type_is_rejected(
 
     assert result.exit_code != 0
     assert "--foreground" in result.output
+
+
+# =============================================================================
+# Tests for _apply_host_labels
+# =============================================================================
+#
+# _create_headless calls _apply_host_labels on the resolved online host so
+# that --host-label KEY=VALUE entries are honored on the headless create path
+# (both for existing/local hosts and as a second, idempotent application on
+# newly-created hosts). These tests pin down the helper's behavior so a
+# refactor cannot silently re-introduce the silent-drop bug that the headless
+# path originally had.
+
+
+def test_apply_host_labels_adds_tags_to_local_host(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """KEY=VALUE host labels should be applied as tags on the local host."""
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+
+    _apply_host_labels(local_host, ("env=prod", "team=infra"))
+
+    tags = local_provider.get_host_tags(local_host)
+    assert tags.get("env") == "prod"
+    assert tags.get("team") == "infra"
+
+
+def test_apply_host_labels_empty_tuple_is_noop(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """An empty label tuple should not touch the host's tags."""
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+    before = dict(local_provider.get_host_tags(local_host))
+
+    _apply_host_labels(local_host, ())
+
+    assert local_provider.get_host_tags(local_host) == before
+
+
+def test_apply_host_labels_strips_whitespace(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """Whitespace around KEY and VALUE should be stripped."""
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+
+    _apply_host_labels(local_host, ("  env  =  prod  ",))
+
+    assert local_provider.get_host_tags(local_host).get("env") == "prod"
+
+
+def test_apply_host_labels_ignores_entries_without_equals(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """Labels without '=' are silently dropped (documented current behavior).
+
+    _parse_target_host raises UserInputError for missing '=' on the new-host
+    branch; _apply_host_labels does not. The CLI layer catches invalid input
+    upstream, so here we only document that the helper tolerates malformed
+    entries rather than crashing.
+    """
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+    before_keys = set(local_provider.get_host_tags(local_host).keys())
+
+    _apply_host_labels(local_host, ("no-equals-here", "env=prod"))
+
+    tags = local_provider.get_host_tags(local_host)
+    assert tags.get("env") == "prod"
+    # The malformed entry should not have produced a new key.
+    new_keys = set(tags.keys()) - before_keys
+    assert new_keys == {"env"}
 
 
 # =============================================================================
