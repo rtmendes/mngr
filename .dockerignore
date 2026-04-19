@@ -226,7 +226,7 @@
 **/recordings
 apps/minds_workspace_server/package-lock.json
 
-# Offload 0.7.1: exclude the exported tree's .git (a fresh single-commit
-# checkout built by offload) from the Docker build context -- it would
-# otherwise bloat the image for no benefit.
-.git/
+# NOTE: .git/ is intentionally NOT excluded. Offload 0.7.1 exports a fresh
+# single-commit git repo into the build context, and tests like
+# test_ratchets rely on `git ls-files` inside the sandbox to enumerate
+# tracked files -- dropping .git breaks them.
