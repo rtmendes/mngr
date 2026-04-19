@@ -408,7 +408,7 @@ def gc_snapshots(
             logger.trace("Skipped provider {} (does not support snapshots)", provider.name)
             continue
 
-        min_snapshot_age_seconds = provider.get_max_destroyed_host_persisted_seconds()
+        destroyed_host_persisted_seconds = provider.get_max_destroyed_host_persisted_seconds()
 
         try:
             for host_ref in host_refs:
@@ -425,13 +425,13 @@ def gc_snapshots(
 
                     for snapshot in snapshots:
                         snapshot_age_seconds = (now - snapshot.created_at).total_seconds()
-                        if snapshot_age_seconds < min_snapshot_age_seconds:
+                        if snapshot_age_seconds < destroyed_host_persisted_seconds:
                             logger.trace(
-                                "Skipped snapshot {} on host {} (age {:.0f}s < minimum {:.0f}s)",
+                                "Skipped snapshot {} on host {} (age {:.0f}s < threshold {:.0f}s)",
                                 snapshot.id,
                                 host_ref.host_id,
                                 snapshot_age_seconds,
-                                min_snapshot_age_seconds,
+                                destroyed_host_persisted_seconds,
                             )
                             continue
 
