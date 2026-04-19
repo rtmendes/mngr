@@ -8,6 +8,7 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.agent_creator import AgentCreationStatus
 from imbue.minds.desktop_client.agent_creator import AgentCreator
+from imbue.minds.desktop_client.agent_creator import _RedactingOutputCallback
 from imbue.minds.desktop_client.agent_creator import _build_mngr_create_command
 from imbue.minds.desktop_client.agent_creator import _is_local_path
 from imbue.minds.desktop_client.agent_creator import _make_host_name
@@ -144,6 +145,28 @@ def test_clone_git_repo_redacts_credentials_in_error(tmp_path: Path) -> None:
     with pytest.raises(GitCloneError) as excinfo:
         clone_git_repo(GitUrl(bad_url), dest)
     assert secret_token not in str(excinfo.value)
+
+
+# -- _RedactingOutputCallback tests --
+
+
+def test_redacting_output_callback_redacts_and_forwards_is_stdout_flag() -> None:
+    """The wrapper must scrub credentials and pass the is_stdout flag through."""
+    received: list[tuple[str, bool]] = []
+
+    def inner(line: str, is_stdout: bool) -> None:
+        received.append((line, is_stdout))
+
+    wrapper = _RedactingOutputCallback(inner=inner)
+    # A line with an embedded credentialed URL -- userinfo must be stripped,
+    # and the is_stdout flag must be forwarded verbatim.
+    wrapper("fatal: unable to access 'https://x-access-token:ghp_secret@github.com/u/r.git/'", False)
+    # A line with no URL -- must pass through unchanged, with is_stdout=True preserved.
+    wrapper("Cloning into 'my-repo'...", True)
+    assert received == [
+        ("fatal: unable to access 'https://github.com/u/r.git/'", False),
+        ("Cloning into 'my-repo'...", True),
+    ]
 
 
 # -- _build_mngr_create_command tests --
