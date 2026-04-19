@@ -697,6 +697,13 @@ def _ensure_dockerd_for_release() -> None:
         return
 
     docker_sock = Path("/var/run/docker.sock")
+    if docker_sock.exists():
+        # dockerd already running -- typically started by the Dockerfile.release
+        # CMD at sandbox launch. Skip the startup script entirely. Some Modal
+        # sandboxes have a read-only /etc/resolv.conf, and running the script
+        # when dockerd is already up would otherwise fail there for no reason.
+        return
+
     last_result = None
     for attempt in range(3):
         cg = ConcurrencyGroup(name=f"ensure-dockerd-{attempt}")
