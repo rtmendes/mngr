@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+set -u
+set -o pipefail
 
 # Nightly changelog consolidation script.
 #
@@ -13,46 +14,38 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 STATUS_FILE="${MNGR_AGENT_STATE_DIR:-/tmp}/status.json"
-LOG_FILE="${MNGR_AGENT_STATE_DIR:-/tmp}/consolidation.log"
-
-# Tee all output to a log file in the state dir so we can retrieve it with
-# mngr file get even when stdout streaming isn't visible.
-exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "=== consolidation start $(date -u +%FT%TZ) ==="
 echo "pwd: $(pwd)"
 echo "state_dir: ${MNGR_AGENT_STATE_DIR:-unset}"
-echo "PATH: $PATH"
+which python3 && python3 --version
+which claude || echo "claude NOT FOUND"
+which git && git --version
 
 write_status() {
     local status="$1"
-    local pr_url="$2"
+    local pr_url_expr="$2"
     local notes="$3"
     python3 -c "
 import json
 json.dump({
     'status': '$status',
-    'pr_url': ${pr_url:-None},
+    'pr_url': ${pr_url_expr:-None},
     'notes': '''$notes''',
 }, open('$STATUS_FILE', 'w'))
+print('wrote status:', '$status')
 "
-    echo "wrote status: $status"
 }
 
-# Step 1: deterministic consolidation. Use the python3 already in PATH so we
-# don't depend on uv resolving a fresh venv at runtime.
+# Step 1: deterministic consolidation
 echo "=== step 1: consolidate_changelog.py ==="
-set +e
-CONSOLIDATE_OUTPUT=$(python3 scripts/consolidate_changelog.py 2>&1)
-CONSOLIDATE_EXIT=$?
-set -e
-echo "$CONSOLIDATE_OUTPUT"
-echo "consolidate exit: $CONSOLIDATE_EXIT"
-
-if [ $CONSOLIDATE_EXIT -ne 0 ]; then
-    write_status "failed" "" "consolidate_changelog.py exited with $CONSOLIDATE_EXIT"
+CONSOLIDATE_OUTPUT=$(python3 scripts/consolidate_changelog.py 2>&1) || {
+    EXIT=$?
+    echo "consolidate failed (exit $EXIT): $CONSOLIDATE_OUTPUT"
+    write_status "failed" "" "consolidate_changelog.py failed"
     exit 1
-fi
+}
+echo "$CONSOLIDATE_OUTPUT"
 
 if echo "$CONSOLIDATE_OUTPUT" | grep -q "No changelog entries"; then
     write_status "skipped-no-entries" "" "No changelog entries to consolidate"
@@ -69,26 +62,32 @@ print(match.group(1) if match else '')
 ")
 
 if [ -z "$NEW_SECTION" ]; then
-    write_status "failed" "" "Could not find newly-added section in UNABRIDGED_CHANGELOG.md"
+    echo "no new section found"
+    write_status "failed" "" "Could not find newly-added section"
     exit 1
 fi
 
-echo "new section (first 10 lines):"
-echo "$NEW_SECTION" | head -10
+echo "new section head:"
+echo "$NEW_SECTION" | head -5
 
-echo "invoking claude --print..."
+echo "invoking claude..."
 SUMMARY=$(claude --print --dangerously-skip-permissions -p "Produce a concise, human-friendly summary of these changelog entries. Group related changes, use natural language, and keep it to a few bullet points. Output ONLY the markdown bullets, no preamble:
 
-$NEW_SECTION")
+$NEW_SECTION" 2>&1) || {
+    echo "claude failed: $SUMMARY"
+    write_status "failed" "" "claude invocation failed"
+    exit 1
+}
 
 if [ -z "$SUMMARY" ]; then
+    echo "claude returned empty"
     write_status "failed" "" "claude returned empty summary"
     exit 1
 fi
-echo "summary (first 10 lines):"
-echo "$SUMMARY" | head -10
+echo "summary head:"
+echo "$SUMMARY" | head -5
 
-# Step 3: prepend summary to CHANGELOG.md under same date heading
+# Step 3: update CHANGELOG.md
 echo "=== step 3: update CHANGELOG.md ==="
 DATE_HEADING=$(echo "$NEW_SECTION" | head -1)
 python3 <<PY
@@ -108,6 +107,7 @@ $SUMMARY
 before = '\n'.join(lines[:insert]).rstrip() + '\n\n'
 after = '\n'.join(lines[insert:])
 p.write_text(before + new_section + '\n' + after)
+print('updated CHANGELOG.md')
 PY
 
 # Step 4: commit, push, open PR
@@ -122,4 +122,4 @@ echo "$PR_OUT"
 PR_URL=$(echo "$PR_OUT" | grep -oE 'https://github.com/[^ ]+')
 
 write_status "done" "'$PR_URL'" "Opened PR for $DATE_STR"
-echo "=== consolidation done, PR: $PR_URL ==="
+echo "=== done: $PR_URL ==="
