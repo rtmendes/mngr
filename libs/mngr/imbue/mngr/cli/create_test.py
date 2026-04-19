@@ -29,7 +29,6 @@ from imbue.mngr.cli.create import _parse_project_name
 from imbue.mngr.cli.create import _parse_target_host
 from imbue.mngr.cli.create import _rescue_editor_content
 from imbue.mngr.cli.create import _resolve_agent_type_name
-from imbue.mngr.cli.create import _resolve_early_agent_type
 from imbue.mngr.cli.create import _resolve_source_location
 from imbue.mngr.cli.create import _resolve_target_host
 from imbue.mngr.cli.create import _split_address_and_target_path
@@ -721,52 +720,6 @@ def test_resolve_agent_type_name_positional_fallback() -> None:
 def test_resolve_agent_type_name_all_none() -> None:
     """All None returns None (default to claude)."""
     assert _resolve_agent_type_name(None, None) is None
-
-
-# =============================================================================
-# Tests for _resolve_early_agent_type
-# =============================================================================
-
-
-def test_resolve_early_agent_type_from_type_flag(default_create_cli_opts: CreateCliOptions) -> None:
-    """--type flag should be returned as the agent type."""
-    opts = default_create_cli_opts.model_copy_update(
-        to_update(default_create_cli_opts.field_ref().type, "headless_command"),
-    )
-
-    result = _resolve_early_agent_type(opts)
-
-    assert result == "headless_command"
-
-
-def test_resolve_early_agent_type_from_positional(default_create_cli_opts: CreateCliOptions) -> None:
-    """Positional agent type should be returned when --type is not set."""
-    opts = default_create_cli_opts.model_copy_update(
-        to_update(default_create_cli_opts.field_ref().positional_agent_type, "headless_claude"),
-    )
-
-    result = _resolve_early_agent_type(opts)
-
-    assert result == "headless_claude"
-
-
-def test_resolve_early_agent_type_flag_takes_precedence(default_create_cli_opts: CreateCliOptions) -> None:
-    """--type flag takes precedence over positional agent type."""
-    opts = default_create_cli_opts.model_copy_update(
-        to_update(default_create_cli_opts.field_ref().type, "headless_command"),
-        to_update(default_create_cli_opts.field_ref().positional_agent_type, "headless_claude"),
-    )
-
-    result = _resolve_early_agent_type(opts)
-
-    assert result == "headless_command"
-
-
-def test_resolve_early_agent_type_returns_none_when_unset(default_create_cli_opts: CreateCliOptions) -> None:
-    """Returns None when neither --type nor positional agent type is set."""
-    result = _resolve_early_agent_type(default_create_cli_opts)
-
-    assert result is None
 
 
 # =============================================================================

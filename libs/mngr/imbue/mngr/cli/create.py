@@ -172,15 +172,6 @@ def _resolve_agent_type_name(
     return resolved
 
 
-@pure
-def _resolve_early_agent_type(opts: CreateCliOptions) -> str | None:
-    """Extract the agent type name from CLI options for early headless detection.
-
-    Returns the resolved type name, or None when defaulting to "claude".
-    """
-    return _resolve_agent_type_name(opts.type, opts.positional_agent_type)
-
-
 _HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
     ("source", "--from/--source"),
     ("branch", "--branch"),
@@ -705,7 +696,7 @@ def create(ctx: click.Context, **kwargs) -> None:
         # Detect headless agent types and enforce the --foreground flag.
         # --foreground is required for headless types (makes the behavior explicit)
         # and rejected for non-headless types (it doesn't apply).
-        resolved_agent_type = _resolve_early_agent_type(opts)
+        resolved_agent_type = _resolve_agent_type_name(opts.type, opts.positional_agent_type)
         is_headless = False
         if resolved_agent_type is not None:
             agent_class = get_agent_class(resolved_agent_type)
