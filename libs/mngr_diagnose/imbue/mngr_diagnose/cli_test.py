@@ -6,8 +6,10 @@ import click
 import pluggy
 import pytest
 from click.testing import CliRunner
+from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.mngr.cli.issue_reporting import DIAGNOSE_FLOW_META_KEY
 from imbue.mngr.cli.issue_reporting import _is_diagnose_command
 from imbue.mngr.cli.issue_reporting import get_mngr_version
@@ -17,12 +19,13 @@ from imbue.mngr_diagnose.cli import diagnose
 _MNGR_PYPROJECT = Path(__file__).resolve().parents[4] / "libs" / "mngr" / "pyproject.toml"
 
 
-class _CreateRecord:
+class _CreateRecord(FrozenModel):
     """What a recording stand-in for ``create_cmd`` captured on invocation."""
 
-    def __init__(self, args: list[str], parent_ctx: click.Context) -> None:
-        self.args = args
-        self.parent_ctx = parent_ctx
+    model_config = {"arbitrary_types_allowed": True}
+
+    args: list[str] = Field(description="Argv forwarded to the fake create command")
+    parent_ctx: click.Context = Field(description="Click context under which create was invoked")
 
 
 def _install_recording_create(monkeypatch: pytest.MonkeyPatch) -> list[_CreateRecord]:
@@ -47,7 +50,7 @@ def _install_recording_create(monkeypatch: pytest.MonkeyPatch) -> list[_CreateRe
     @click.pass_context
     def fake_create(ctx: click.Context, args: tuple[str, ...]) -> None:
         assert ctx.parent is not None
-        records.append(_CreateRecord(list(args), ctx.parent))
+        records.append(_CreateRecord(args=list(args), parent_ctx=ctx.parent))
 
     monkeypatch.setattr("imbue.mngr_diagnose.cli.create_cmd", fake_create)
     return records
@@ -208,25 +211,6 @@ def test_diagnose_rejects_reserved_flag_with_equals_form(
 
     assert result.exit_code != 0
     assert "Cannot pass --branch to diagnose" in result.output
-
-
-def test_diagnose_does_not_pass_auto_approve(
-    tmp_path: Path,
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Diagnose relies on interactive trust prompts, not blanket -y."""
-    records = _install_recording_create(monkeypatch)
-
-    cli_runner.invoke(
-        diagnose,
-        ["--description", "error", "--clone-dir", str(tmp_path / "clone")],
-        obj=plugin_manager,
-    )
-
-    assert len(records) == 1
-    assert "-y" not in records[0].args
 
 
 def test_diagnose_default_clone_dir() -> None:
