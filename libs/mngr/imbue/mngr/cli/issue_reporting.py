@@ -406,16 +406,17 @@ def handle_unexpected_error(
         _prompt_and_report_issue(title, body, error_message)
         raise SystemExit(1)
 
-    # Normal command crash: always offer diagnose, never GitHub issue reporting.
-    try:
-        context_path = write_diagnose_context_file(
-            traceback_str=tb_str,
-            mngr_version=get_mngr_version(),
-            error_type=type(error).__name__,
-            error_message=error_message,
-        )
-        _offer_diagnose(context_path, ctx)
-    except Exception as exc:
-        logger.debug("Diagnose step failed: {}", exc)
+    # Normal command crash: offer diagnose. If the diagnose path itself raises
+    # (disk issue writing context, crash in the diagnostic agent's own
+    # invocation, ...), let the exception propagate -- the original error has
+    # already been logged above, and a separate diagnose failure is useful to
+    # surface so the user can report it as its own issue.
+    context_path = write_diagnose_context_file(
+        traceback_str=tb_str,
+        mngr_version=get_mngr_version(),
+        error_type=type(error).__name__,
+        error_message=error_message,
+    )
+    _offer_diagnose(context_path, ctx)
 
     raise SystemExit(1)
