@@ -881,8 +881,9 @@ def test_create_headless_rejects_agent_metadata_flags(
     the non-headless path but not by _create_headless. They must be rejected
     rather than silently dropped.
 
-    --host-label is intentionally *not* in this list: it is honored on
-    new-host creation via _parse_target_host.
+    --host-label is intentionally *not* in this list: _create_headless applies
+    it to the resolved host (both existing and new), matching the non-headless
+    path.
     """
     result = cli_runner.invoke(
         create,
