@@ -130,10 +130,13 @@ def test_prevent_hardcoded_claude_dir() -> None:
     rc.check_hardcoded_claude_dir(_DIR, snapshot(0))
 
 
-# If a test hits the docker resource guard, add @pytest.mark.docker instead of
-# bypassing the PATH wrapper by hardcoding an absolute docker binary path.
-def test_prevent_hardcoded_docker_binary() -> None:
-    rc.check_hardcoded_docker_binary(_DIR, snapshot(0))
+# If a test hits a pytest resource guard (docker, tmux, rsync, unison, modal, lima),
+# add the corresponding @pytest.mark.<binary> instead of bypassing the PATH wrapper
+# by hardcoding an absolute path to the binary. The existing count allows the
+# session-scoped dockerd-startup fixture in conftest.py, which intentionally runs
+# before any test's call phase and so must bypass the PATH wrapper.
+def test_prevent_hardcoded_guarded_binary() -> None:
+    rc.check_hardcoded_guarded_binary(_DIR, snapshot(2))
 
 
 # --- Naming conventions ---
