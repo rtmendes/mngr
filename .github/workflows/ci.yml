@@ -18,7 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # Full history needed for git diff in patch generation
+          # Full history needed for offload's git-notes-backed image-cache
+          # lookup and thin-diff against the checkpoint commit.
           fetch-depth: 0
 
       - name: Set up Python
@@ -137,7 +138,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # Full history needed for git diff in patch generation
+          # Full history needed for offload's git-notes-backed image-cache
+          # lookup and thin-diff against the checkpoint commit.
           fetch-depth: 0
 
       - name: Set up Python
