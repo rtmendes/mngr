@@ -101,7 +101,7 @@ def _make_offline_host(
     provider: MockProviderInstance,
     mngr_ctx: MngrContext,
     *,
-    days_old: int = 31,
+    days_old: int = 14,
     stop_reason: str | None = HostState.STOPPED.value,
     failure_reason: str | None = None,
 ) -> OfflineHost:
@@ -135,7 +135,7 @@ def test_gc_machines_deletes_old_offline_host_with_no_agents(
     gc_mock_provider: MockProviderInstance, temp_mngr_ctx: MngrContext
 ) -> None:
     """Old offline hosts with no agents are deleted to prevent data accumulation."""
-    host = _make_offline_host(gc_mock_provider, temp_mngr_ctx, days_old=31)
+    host = _make_offline_host(gc_mock_provider, temp_mngr_ctx, days_old=14)
     gc_mock_provider.mock_hosts = [host]
 
     result = _run_gc_machines(gc_mock_provider)
@@ -183,7 +183,7 @@ def test_gc_machines_skips_old_stopped_host_with_agents(
     gc_mock_provider: MockProviderInstance, temp_mngr_ctx: MngrContext
 ) -> None:
     """Old offline hosts in STOPPED state with agents are not deleted."""
-    host = _make_offline_host(gc_mock_provider, temp_mngr_ctx, days_old=31)
+    host = _make_offline_host(gc_mock_provider, temp_mngr_ctx, days_old=14)
     _add_mock_agent(gc_mock_provider)
     gc_mock_provider.mock_hosts = [host]
 
@@ -197,7 +197,7 @@ def test_gc_machines_dry_run_does_not_call_delete_host(
     gc_mock_provider: MockProviderInstance, temp_mngr_ctx: MngrContext
 ) -> None:
     """Dry run identifies hosts for deletion but does not actually delete them."""
-    host = _make_offline_host(gc_mock_provider, temp_mngr_ctx, days_old=31)
+    host = _make_offline_host(gc_mock_provider, temp_mngr_ctx, days_old=14)
     gc_mock_provider.mock_hosts = [host]
 
     result = _run_gc_machines(gc_mock_provider, dry_run=True)
@@ -1537,7 +1537,7 @@ def test_gc_machines_handles_mngr_error_with_continue(temp_host_dir: Path, temp_
             mngr_ctx=temp_mngr_ctx,
         ),
         temp_mngr_ctx,
-        days_old=31,
+        days_old=14,
     )
 
     error_provider = _GetHostErrorProvider(
@@ -1569,7 +1569,7 @@ def test_gc_machines_handles_mngr_error_with_abort(temp_host_dir: Path, temp_mng
             mngr_ctx=temp_mngr_ctx,
         ),
         temp_mngr_ctx,
-        days_old=31,
+        days_old=14,
     )
 
     error_provider = _GetHostErrorProvider(
