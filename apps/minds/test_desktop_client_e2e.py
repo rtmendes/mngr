@@ -249,6 +249,8 @@ def _wait_for_web_server(client: httpx.Client, agent_id: str, timeout_seconds: i
 
 
 @pytest.mark.release
+@pytest.mark.docker
+@pytest.mark.docker_sdk
 @pytest.mark.timeout(600)
 def test_create_agent_e2e(tmp_path: Path) -> None:
     """Create an agent and verify its web server is accessible through the desktop client."""
@@ -299,6 +301,8 @@ _DEV_AGENT_NAME = "forever-dev"
 
 
 @pytest.mark.release
+@pytest.mark.docker
+@pytest.mark.docker_sdk
 @pytest.mark.timeout(120)
 def test_create_agent_dev_mode_e2e(tmp_path: Path) -> None:
     """Create a DEV-mode agent (local provider, no Docker) and verify its web server is proxied.
