@@ -172,6 +172,18 @@ def _resolve_agent_type_name(
     return resolved
 
 
+def _resolve_or_generate_agent_name(address: AgentAddress, opts: CreateCliOptions) -> AgentName:
+    """Return the agent name from the address, or auto-generate one from --name-style.
+
+    Shared between the headless and non-headless create paths so both honour
+    an explicit name and fall back to the same auto-generated style. Callers
+    that skip auto-generation should check ``address.agent_name`` directly.
+    """
+    if address.agent_name is not None:
+        return address.agent_name
+    return generate_agent_name(AgentNameStyle(opts.name_style.upper()))
+
+
 _HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
     ("source", "--from/--source"),
     ("branch", "--branch"),
@@ -305,14 +317,11 @@ def _create_headless(
     # they are not silently dropped.
     _apply_host_labels(host, opts.host_label)
 
-    # Mirror _parse_agent_opts: honour an explicit name from the address,
-    # otherwise auto-generate a unique name using --name-style (default
-    # coolname). Using a hardcoded fallback like "create" would cause
-    # collisions across concurrent or tightly-serial headless invocations.
-    if address.agent_name is not None:
-        agent_name = address.agent_name
-    else:
-        agent_name = generate_agent_name(AgentNameStyle(opts.name_style.upper()))
+    # Honour an explicit name from the address, otherwise auto-generate a
+    # unique name via --name-style (default coolname). Using a hardcoded
+    # fallback like "create" would cause collisions across concurrent or
+    # tightly-serial headless invocations. Shared with _parse_agent_opts.
+    agent_name = _resolve_or_generate_agent_name(address, opts)
     label_options = AgentLabelOptions(labels={"internal": "create-headless"})
 
     with headless_agent_output(
@@ -1452,13 +1461,8 @@ def _parse_agent_opts(
     target_path: Path | None = None,
 ) -> tuple[CreateAgentOptions, bool]:
     # Get agent name from address (which incorporates both positional and --name),
-    # otherwise auto-generate
-    parsed_agent_name: AgentName
-    if address.agent_name is not None:
-        parsed_agent_name = address.agent_name
-    else:
-        parsed_name_style = AgentNameStyle(opts.name_style.upper())
-        parsed_agent_name = generate_agent_name(parsed_name_style)
+    # otherwise auto-generate. Shared with _create_headless.
+    parsed_agent_name = _resolve_or_generate_agent_name(address, opts)
 
     # Determine transfer mode
     transfer_mode = _resolve_transfer_mode(opts, address, source_location, mngr_ctx, target_path)
