@@ -216,12 +216,11 @@ _HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
     # _create_headless. Rejecting them surfaces the mismatch instead of
     # silently dropping the user's value.
     #
-    # --host-label is intentionally *not* listed: when the headless address
-    # creates a new host (NAME@.PROVIDER or --new-host), _parse_target_host
-    # reads opts.host_label to populate host tags, so the flag is honored.
-    # This matches the treatment of other host-level flags (--host-env,
-    # --snapshot, --idle-timeout, ...) which are also only meaningful on
-    # new-host creation.
+    # --host-label is intentionally *not* listed: _create_headless applies
+    # opts.host_label to the resolved host explicitly (via _apply_host_labels,
+    # matching the non-headless path), and _parse_target_host also propagates
+    # it onto new-host tags. So the flag is honored for both existing and new
+    # hosts.
     ("id", "--id"),
     ("label", "--label"),
     ("project", "--project"),
@@ -301,6 +300,12 @@ def _create_headless(
     implementing StreamingHeadlessAgentMixin.
     """
     host = _resolve_online_host(opts, address, mngr_ctx)
+
+    # Mirror the non-headless path: apply --host-label values to the resolved
+    # host. _parse_target_host only seeds host tags when creating a new host;
+    # for existing or local hosts, labels must be applied explicitly here so
+    # they are not silently dropped.
+    _apply_host_labels(host, opts.host_label)
 
     # Mirror _parse_agent_opts: honour an explicit name from the address,
     # otherwise auto-generate a unique name using --name-style (default
