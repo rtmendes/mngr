@@ -30,7 +30,8 @@ def ensure_mngr_clone(clone_dir: Path, cg: ConcurrencyGroup) -> None:
     branch = result.stdout.strip()
     if branch != "main":
         raise UserInputError(
-            f"Clone at {clone_dir} is on branch '{branch}', expected 'main'. Delete the directory and try again."
+            f"Clone at {clone_dir} is on branch '{branch}', expected 'main'. "
+            f"Delete the directory or use --clone-dir to point elsewhere."
         )
 
     logger.info("Updating existing clone at {}...", clone_dir)
