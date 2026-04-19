@@ -1039,6 +1039,11 @@ def test_create_headless_with_source_runs_in_place(
     # scans for ``.mngr/``) does not fire against the shared pytest tmp root.
     source_dir = tmp_path / "headless-src"
     source_dir.mkdir()
+    # Canonicalize before asserting: on macOS `/var` is a symlink to
+    # `/private/var`, so pytest's ``tmp_path`` string and the ``pwd`` output
+    # can disagree on the ``/private`` prefix even though they reference the
+    # same directory.
+    resolved_source_dir = source_dir.resolve()
     result = cli_runner.invoke(
         create,
         [
@@ -1053,8 +1058,11 @@ def test_create_headless_with_source_runs_in_place(
     )
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
-    assert str(source_dir) in result.output
-    assert "/tmp/mngr-headless-" not in result.output
+    assert str(resolved_source_dir) in result.output
+    # ``mngr-headless-`` is the fixed prefix used by ``create_work_dir_on_host``
+    # when the headless path falls back to a fresh temp dir; matching on it is
+    # symlink-agnostic (unlike ``/tmp/mngr-headless-`` vs ``/private/tmp/...``).
+    assert "mngr-headless-" not in result.output
 
 
 @pytest.mark.parametrize(
