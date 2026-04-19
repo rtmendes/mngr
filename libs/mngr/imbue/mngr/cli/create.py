@@ -240,9 +240,12 @@ def _reject_incompatible_headless_flags(
 ) -> None:
     """Raise UserInputError if any flags incompatible with the headless path were explicitly set.
 
-    The headless path skips source resolution, git operations, provisioning,
-    environment setup, and connection. Flags for those features are silently
-    ignored, which could confuse users. This function catches that early.
+    The headless path skips git operations, provisioning, environment setup,
+    and connection. Source resolution is partial: ``--source`` is honored
+    (it selects the in-place work directory) but transfer-related flags
+    (``--transfer``, ``--rsync``, ``--branch``) are not. Flags for the
+    skipped features are silently ignored, which could confuse users, so
+    this function catches that early.
 
     ``target_path`` is the resolved value from either the ``--target-path``
     flag or the ``:PATH`` suffix on the positional address. Both feed into
