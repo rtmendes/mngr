@@ -2,6 +2,10 @@
 set -u
 set -o pipefail
 
+# Tell claude it's in a sandbox so --dangerously-skip-permissions is allowed
+# even as root.
+export IS_SANDBOX=1
+
 # Nightly changelog consolidation script.
 #
 # Runs deterministic consolidation, uses claude for an AI-generated summary,
