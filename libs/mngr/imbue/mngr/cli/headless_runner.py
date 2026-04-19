@@ -113,13 +113,11 @@ def headless_agent_output(
     check_streaming_headless_agent_type(str(agent_type))
 
     created_temp_dir = source_location is None
-    if created_temp_dir:
+    if source_location is None:
         work_path = create_work_dir_on_host(host)
     else:
-        assert source_location is not None
-        assert source_location.host.id == host.id, (
-            "source_location.host must equal host; cross-host headless runs are not supported"
-        )
+        if source_location.host.id != host.id:
+            raise MngrError("source_location.host must equal host; cross-host headless runs are not supported")
         work_path = source_location.path
     try:
         if pre_create_setup is not None:
