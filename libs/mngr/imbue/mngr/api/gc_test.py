@@ -2295,6 +2295,8 @@ def test_gc_machines_skips_host_when_activity_time_unreadable(
     """gc_machines skips hosts where get_reported_activity_time fails (cannot determine activity)."""
     host = _make_remote_host(
         local_provider,
+        # mock activity time is unused: _ActivityTimeAuthErrorHost raises unconditionally
+        last_activity_seconds_ago=None,
         host_cls=_ActivityTimeAuthErrorHost,
     )
     provider, result = _run_gc_on_remote_host(
