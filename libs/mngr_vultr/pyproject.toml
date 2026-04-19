@@ -51,8 +51,10 @@ omit = [
 ]
 
 [tool.coverage.report]
-# No CI coverage gate: this plugin requires Vultr infrastructure
-# to test and is not measured in the offload test suite.
+# fail_under is carried forward from pre-refactor (60); recalibrate if CI
+# measures a different baseline now that coverage actually flows from the
+# unit/integration tests via root addopts' `--cov=imbue.mngr_vultr`.
+fail_under = 60
 omit = [
   "*_test.py",
   "test_*.py",
