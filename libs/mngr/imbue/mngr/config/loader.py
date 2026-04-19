@@ -208,13 +208,8 @@ def load_config(
     config_dict["is_allowed_in_pytest"] = config.is_allowed_in_pytest
     config_dict["pre_command_scripts"] = config.pre_command_scripts
     config_dict["work_dir_extra_paths"] = config.work_dir_extra_paths
-    # Only include non-None values so Pydantic's Field(default=...) kicks in
-    # when no TOML layer sets them.  model_validate rejects None for non-Optional
-    # fields, so unconditional insertion would fail when no config file sets these.
-    if config.default_destroyed_host_persisted_seconds is not None:
-        config_dict["default_destroyed_host_persisted_seconds"] = config.default_destroyed_host_persisted_seconds
-    if config.default_min_online_host_age_seconds is not None:
-        config_dict["default_min_online_host_age_seconds"] = config.default_min_online_host_age_seconds
+    config_dict["default_destroyed_host_persisted_seconds"] = config.default_destroyed_host_persisted_seconds
+    config_dict["default_min_online_host_age_seconds"] = config.default_min_online_host_age_seconds
 
     # Allow plugins to modify config_dict before validation
     pm.hook.on_load_config(config_dict=config_dict)
