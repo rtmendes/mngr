@@ -57,6 +57,20 @@ COPY . /code/mngr/
 # GIT_CONFIG_NOSYSTEM=1 still need a per-test-home .gitconfig, which
 # isolate_home and isolate_git both now provide.
 RUN git config --system --add safe.directory '*'
+# Normalize /code/mngr/.git: when the build context originates from a git
+# worktree (e.g. a local `git worktree add` checkout), `.git` is a *file*
+# containing `gitdir: /path/on/host/.git/worktrees/<name>` instead of a
+# directory. That path does not exist inside the sandbox, so any
+# `git rev-parse --show-toplevel` from /code/mngr fails with "not a git
+# repository". Detect the worktree-style file, drop it, and re-init with
+# a single snapshot commit so `git ls-files` and friends still work for
+# ratchet tests and mngr CLI commands that need repo discovery.
+RUN if [ -f /code/mngr/.git ]; then \
+        echo "Normalizing worktree-style /code/mngr/.git -> fresh in-image .git" ; \
+        rm /code/mngr/.git && cd /code/mngr && git init -q . && \
+        git add -A && \
+        git -c user.email=ci@local -c user.name=ci commit -q -m 'sandbox-init' ; \
+    fi
 
 # set working directory to the project root -- this is where `mngr schedule`
 # will copy project deploy files and where scheduled commands will run
