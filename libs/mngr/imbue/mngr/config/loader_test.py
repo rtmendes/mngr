@@ -1231,6 +1231,42 @@ def test_load_config_preserves_default_destroyed_host_persisted_seconds_from_tom
     assert mngr_ctx.config.default_destroyed_host_persisted_seconds == 86400.0
 
 
+def test_load_config_applies_pydantic_defaults_when_no_toml_sets_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cg: ConcurrencyGroup
+) -> None:
+    """load_config should fall back to Pydantic Field defaults when no TOML sets
+    default_destroyed_host_persisted_seconds or default_min_online_host_age_seconds.
+
+    Regression: previously load_config unconditionally passed these fields into
+    model_validate, which rejected None with "Input should be a valid number".
+    """
+    pm = pluggy.PluginManager("mngr")
+    pm.add_hookspecs(hookspecs)
+    load_all_registries(pm)
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("MNGR_PREFIX", raising=False)
+    monkeypatch.delenv("MNGR_HOST_DIR", raising=False)
+    monkeypatch.delenv("MNGR_ROOT_NAME", raising=False)
+
+    mngr_dir = tmp_path / ".mngr"
+    mngr_dir.mkdir(parents=True, exist_ok=True)
+    profile_dir = get_or_create_profile_dir(mngr_dir)
+    settings_path = profile_dir / "settings.toml"
+    # Empty-ish TOML that doesn't set either age field
+    settings_path.write_text('prefix = "regression-"\n')
+
+    mngr_ctx = load_config(
+        pm=pm,
+        concurrency_group=cg,
+        context_dir=tmp_path,
+    )
+
+    # Pydantic defaults apply
+    assert mngr_ctx.config.default_destroyed_host_persisted_seconds == 60.0 * 60.0 * 24.0 * 7.0
+    assert mngr_ctx.config.default_min_online_host_age_seconds == 60.0 * 10.0
+
+
 # =============================================================================
 # Tests for _parse_commands with default_subcommand
 # =============================================================================
