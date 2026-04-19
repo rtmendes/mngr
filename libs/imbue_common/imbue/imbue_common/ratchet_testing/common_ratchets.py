@@ -475,7 +475,7 @@ PREVENT_HARDCODED_GUARDED_BINARY = RegexRatchetRule(
         "@pytest.mark.rsync, @pytest.mark.unison, @pytest.mark.modal, @pytest.mark.lima) "
         "to the test rather than working around the guard with an absolute path."
     ),
-    pattern_string=r"/(?:usr/local/bin|usr/bin|opt/homebrew/bin|opt/local/bin)/(?:docker|tmux|rsync|unison|modal|lima)\b",
+    pattern_string=r"/(?:usr/local/bin|usr/bin|opt/homebrew/bin|opt/local/bin)/(?:docker|tmux|rsync|unison|modal|lima)(?![\w-])",
 )
 
 
