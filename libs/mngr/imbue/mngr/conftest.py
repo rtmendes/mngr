@@ -20,6 +20,7 @@ import imbue.mngr.main
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.agents.agent_registry import load_agents_from_plugins
 from imbue.mngr.agents.agent_registry import reset_agent_registry
+from imbue.mngr.api.providers import reset_provider_instances
 from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
@@ -35,6 +36,8 @@ from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr.providers.registry import load_local_backend_only
 from imbue.mngr.providers.registry import reset_backend_registry
+from imbue.mngr.register_guards_docker import register_docker_cli_guard
+from imbue.mngr.register_guards_docker import register_docker_sdk_guard
 from imbue.mngr.utils.testing import cleanup_tmux_session
 from imbue.mngr.utils.testing import init_git_repo
 from imbue.mngr.utils.testing import isolate_git
@@ -42,6 +45,16 @@ from imbue.mngr.utils.testing import isolate_tmux_server
 from imbue.mngr.utils.testing import make_mngr_ctx
 from imbue.mngr.utils.testing import setup_mngr_test_environment
 from imbue.mngr.utils.testing import worker_test_ids
+from imbue.resource_guards.resource_guards import register_resource_guard
+
+# Register resource guards so that projects inheriting this conftest via
+# pytest_plugins (e.g. mngr_claude) get guards registered at import time.
+register_resource_guard("tmux")
+register_resource_guard("rsync")
+register_resource_guard("unison")
+register_resource_guard("modal")
+register_docker_cli_guard()
+register_docker_sdk_guard()
 
 # The urwid import above triggers creation of deprecated module aliases.
 # These are the deprecated module aliases that urwid 3.x creates for backwards
@@ -151,9 +164,10 @@ def tmp_home_dir(tmp_path: Path) -> Generator[Path, None, None]:
 def setup_git_config(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """Isolate git and provide user config for tests that run git commands.
 
-    Sets GIT_CONFIG_NOSYSTEM, GIT_TERMINAL_PROMPT, and GIT_CONFIG_GLOBAL
-    via the shared isolate_git() helper. Tests that need git should request
-    this fixture (or temp_git_repo, which depends on it).
+    Sets GIT_CONFIG_NOSYSTEM and GIT_TERMINAL_PROMPT, and writes a
+    .gitconfig to the fake HOME via the shared isolate_git() helper.
+    Tests that need git should request this fixture (or temp_git_repo,
+    which depends on it).
     """
     with isolate_git(monkeypatch):
         yield
@@ -255,6 +269,9 @@ def temp_mngr_ctx(
     cg = ConcurrencyGroup(name="test")
     with cg:
         yield make_mngr_ctx(temp_config, plugin_manager, temp_profile_dir, concurrency_group=cg)
+    # Clear the provider instance cache so cached instances don't outlive
+    # the ConcurrencyGroup that was just torn down.
+    reset_provider_instances()
 
 
 @pytest.fixture
@@ -453,6 +470,7 @@ def plugin_manager(
     # Clear the registries to ensure clean state
     reset_backend_registry()
     reset_agent_registry()
+    reset_provider_instances()
 
     # Discover all entry-point plugins and block everything except enabled_plugins
     all_eps = {ep.name for ep in importlib.metadata.entry_points(group="mngr")}
@@ -478,6 +496,7 @@ def plugin_manager(
     imbue.mngr.main.reset_plugin_manager()
     reset_backend_registry()
     reset_agent_registry()
+    reset_provider_instances()
 
 
 # =============================================================================

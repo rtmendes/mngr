@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from io import StringIO
 from pathlib import Path
 from typing import Final
 from typing import IO
@@ -23,21 +24,25 @@ from uuid import uuid4
 
 import pluggy
 import pytest
+import tomlkit
 from click.testing import CliRunner
 from loguru import logger
 from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.imbue_common.model_update import to_update
 from imbue.mngr.cli.create import create as create_command
 from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.config.loader import get_or_create_profile_dir
 from imbue.mngr.errors import MngrError
 from imbue.mngr.hosts.tmux import build_tmux_capture_pane_command
 from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.interfaces.data_types import HostDetails
 from imbue.mngr.interfaces.data_types import SnapshotInfo
+from imbue.mngr.plugins import hookspecs
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentLifecycleState
 from imbue.mngr.primitives import AgentName
@@ -51,6 +56,7 @@ from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SSHInfo
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
+from imbue.mngr.providers.registry import load_local_backend_only
 from imbue.mngr.utils.polling import wait_for
 
 # Prefix used for test environments
@@ -221,7 +227,9 @@ def isolate_git(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
 
     gitconfig = Path.home() / ".gitconfig"
     if not gitconfig.exists():
-        gitconfig.write_text("[user]\n\tname = Test User\n\temail = test@test.com\n[init]\n\tdefaultBranch = main\n")
+        gitconfig.write_text(
+            "[user]\n\tname = Test User\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n"
+        )
 
     yield
 
@@ -247,6 +255,57 @@ def assert_home_is_temp_directory() -> None:
             "Tests may be operating on real home directory! "
             "Ensure setup_test_mngr_env autouse fixture has run before this call."
         )
+
+
+def write_agent_type_to_settings_toml(settings_path: Path, type_name: str, command: str) -> None:
+    """Upsert ``[agent_types.<type_name>] command = <command>`` in a TOML settings file.
+
+    Creates the file if absent. Used by the test-sleep factories below and by
+    the e2e session helper; both need to declare an agent type in a TOML file
+    the CLI (or subprocess mngr) will load.
+    """
+    doc = tomlkit.parse(settings_path.read_text()) if settings_path.exists() else tomlkit.document()
+    agent_types = doc.setdefault("agent_types", tomlkit.table())
+    type_table = tomlkit.table()
+    type_table["command"] = command
+    agent_types[type_name] = type_table
+    settings_path.write_text(tomlkit.dumps(doc))
+
+
+def make_test_sleep_agent_type_at(settings_path: Path, command: str) -> str:
+    """Declare a long-running placeholder agent type in ``settings_path`` and return its name.
+
+    ``command`` is a required pinned shell command (typically ``"sleep <N>"``
+    with a value hand-picked to be distinguishable in ``ps`` output). The
+    pinned value is the traceability identifier: a leaked ``sleep <N>`` in
+    ``ps`` can be grepped back to the test that spawned it.
+
+    Shared by the per-test profile factory (``make_test_sleep_agent_type``)
+    and the e2e session helper (``E2eSession.make_sleep_agent_type``) so that
+    the ``test_sleep_<uuid hex>`` name scheme lives in exactly one place.
+    Callers that write to a pre-bootstrapped settings file (e.g. the e2e
+    ``settings.local.toml``) go through this function directly; callers that
+    just have a host dir should use ``make_test_sleep_agent_type`` instead.
+    """
+    type_name = f"test_sleep_{uuid4().hex}"
+    write_agent_type_to_settings_toml(settings_path, type_name, command)
+    return type_name
+
+
+def make_test_sleep_agent_type(host_dir: Path, command: str) -> str:
+    """Declare a long-running placeholder agent type in ``host_dir``'s profile and return its name.
+
+    Replaces the removed ``--command`` flag. ``command`` is required and should
+    be a pinned shell command (typically ``"sleep <N>"``) -- that pinned value
+    is the traceability identifier back to the specific test.
+
+    The type is written to the profile's ``settings.toml`` in one shot
+    (creating the profile if needed via ``get_or_create_profile_dir``), so
+    callers do not have to bootstrap a profile first. Pass the returned name
+    to the CLI as ``--type <name>``.
+    """
+    profile_dir = get_or_create_profile_dir(host_dir)
+    return make_test_sleep_agent_type_at(profile_dir / "settings.toml", command=command)
 
 
 def setup_mngr_test_environment(
@@ -592,28 +651,33 @@ def tmux_session_exists(session_name: str) -> bool:
 def create_test_agent_via_cli(
     cli_runner: CliRunner,
     temp_work_dir: Path,
+    temp_host_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
     agent_name: str,
-    agent_cmd: str = "sleep 482917",
+    command: str,
 ) -> str:
     """Create a test agent via the CLI and return the session name.
 
-    This encapsulates the common pattern of creating a source agent for
-    integration tests that need an existing agent (e.g., clone, migrate).
+    Mints a fresh ``test_sleep_<uuid>`` agent type whose command is the
+    pinned ``command`` string (typically ``"sleep <N>"`` with a value
+    hand-picked to be distinguishable in ``ps`` output) and creates an
+    agent of that type. Used by integration tests that just need an
+    existing agent to operate on (e.g., clone, migrate, destroy).
 
     The caller should wrap this call inside a tmux_session_cleanup context
     manager to ensure the session is cleaned up even if assertions fail.
     """
     session_name = f"{mngr_test_prefix}{agent_name}"
+    agent_type = make_test_sleep_agent_type(temp_host_dir, command)
 
     create_result = cli_runner.invoke(
         create_command,
         [
             "--name",
             agent_name,
-            "--command",
-            agent_cmd,
+            "--type",
+            agent_type,
             "--source",
             str(temp_work_dir),
             "--transfer=none",
@@ -686,6 +750,29 @@ def make_mngr_ctx(
     )
 
 
+def make_ctx_with_plugins(
+    mngr_ctx: MngrContext,
+    plugins: Sequence[object],
+    *,
+    load_backends: bool = False,
+) -> MngrContext:
+    """Create a MngrContext with a fresh plugin manager and the given plugins registered.
+
+    Use this when a test needs to inject custom hookimpl plugins (e.g., to test
+    hook error paths or modify hook behavior) without affecting the shared
+    plugin_manager fixture.
+
+    If load_backends is True, also loads the local provider backend into the PM.
+    """
+    pm = pluggy.PluginManager("mngr")
+    pm.add_hookspecs(hookspecs)
+    if load_backends:
+        load_local_backend_only(pm)
+    for plugin in plugins:
+        pm.register(plugin)
+    return mngr_ctx.model_copy_update(to_update(mngr_ctx.field_ref().pm, pm))
+
+
 def make_test_agent_details(
     name: str = "test-agent",
     state: AgentLifecycleState = AgentLifecycleState.RUNNING,
@@ -732,6 +819,22 @@ def make_test_agent_details(
 
 def get_short_random_string() -> str:
     return uuid4().hex[:8]
+
+
+@contextmanager
+def capture_loguru(level: str = "WARNING") -> Generator[StringIO, None, None]:
+    """Capture loguru output at the given level into a StringIO buffer.
+
+    Loguru's handlers don't follow CliRunner's sys.stderr replacement, so
+    tests that need to verify logged messages should use this context manager
+    instead of checking result.output.
+    """
+    log_output = StringIO()
+    sink_id = logger.add(log_output, level=level, format="{message}")
+    try:
+        yield log_output
+    finally:
+        logger.remove(sink_id)
 
 
 def run_git_command(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -1202,6 +1305,20 @@ AllowUsers {current_user}
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+
+
+def build_test_known_hosts_file(host_key_path: Path, port: int, output_path: Path) -> Path:
+    """Build a known_hosts file for a local sshd instance.
+
+    Reads the public key from host_key_path.with_suffix(".pub") and writes a
+    known_hosts entry in the format expected by SSH for a localhost host on
+    the given port.
+
+    Returns the output_path for convenience.
+    """
+    host_pub_key = host_key_path.with_suffix(".pub").read_text().strip()
+    output_path.write_text(f"[127.0.0.1]:{port} {host_pub_key}\n")
+    return output_path
 
 
 # =============================================================================

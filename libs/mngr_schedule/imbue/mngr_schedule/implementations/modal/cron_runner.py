@@ -138,8 +138,8 @@ def _run_and_stream(
     """Run a command, streaming output to stdout in real time.
 
     Returns (exit_code, captured_output). The captured output contains
-    the last lines of stdout+stderr, useful for including in error messages
-    when the command fails remotely and only the exception propagates.
+    the full stdout+stderr of the command. On failure, the last 50 lines
+    are included in the RuntimeError for diagnostics.
     """
     process = subprocess.Popen(
         cmd,
@@ -158,8 +158,8 @@ def _run_and_stream(
         captured_lines.append(line)
     process.wait()
     full_output = "".join(captured_lines)
-    tail = "".join(captured_lines[-50:])
     if is_checked and process.returncode != 0:
+        tail = "".join(captured_lines[-50:])
         raise RuntimeError(f"Command failed with exit code {process.returncode}: {cmd}\nLast output:\n{tail}")
     return process.returncode, full_output
 
@@ -168,8 +168,8 @@ def _run_and_stream(
     schedule=modal.Cron(_CRON_SCHEDULE, timezone=_CRON_TIMEZONE),
     timeout=3600,
 )
-def run_scheduled_trigger() -> None:
-    """Run the scheduled mngr command.
+def run_scheduled_trigger() -> str:
+    """Run the scheduled mngr command and return its output.
 
     This function executes on the cron schedule and:
     1. Checks if the trigger is enabled
@@ -184,7 +184,7 @@ def run_scheduled_trigger() -> None:
 
     if not trigger.get("is_enabled", True):
         print("Schedule trigger is disabled, skipping")
-        return
+        return ""
 
     # Load consolidated env vars into the process environment so that the
     # mngr CLI and any subprocesses it spawns have access to them.
@@ -232,9 +232,9 @@ def run_scheduled_trigger() -> None:
     print(f"Currently in {os.getcwd()}")
 
     print(f"Running: {' '.join(cmd)}")
-    exit_code, output_tail = _run_and_stream(cmd, is_checked=False)
+    exit_code, full_output = _run_and_stream(cmd, is_checked=False)
     if exit_code != 0:
-        raise RuntimeError(f"mngr {command} failed with exit code {exit_code}\nLast output:\n{output_tail}")
+        raise RuntimeError(f"mngr {command} failed with exit code {exit_code}\nOutput:\n{full_output}")
 
     # For create commands, extract the agent name from output and wait for
     # it to finish. Without this, the container exits before the agent
@@ -242,7 +242,7 @@ def run_scheduled_trigger() -> None:
     if command == "create":
         import re
 
-        agent_match = re.search(r"Starting agent\s+(\S+)", output_tail)
+        agent_match = re.search(r"Starting agent\s+(\S+)", full_output)
         if agent_match is not None:
             agent_name = agent_match.group(1)
             print(f"Waiting for agent '{agent_name}' to finish...")
@@ -265,3 +265,5 @@ def run_scheduled_trigger() -> None:
                 ["mngr", "capture", agent_name, "--full"],
                 is_checked=False,
             )
+
+    return full_output

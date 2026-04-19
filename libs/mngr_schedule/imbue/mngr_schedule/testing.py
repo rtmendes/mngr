@@ -7,6 +7,7 @@ for end-to-end tests that require real Modal credentials and network access.
 import importlib.metadata
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -68,11 +69,26 @@ def build_subprocess_env() -> dict[str, str]:
     return env
 
 
-def cleanup_modal_app(app_name: str, env: dict[str, str]) -> None:
+def resolve_modal_environment(deploy_output: str) -> str | None:
+    """Extract the Modal environment name from schedule add output.
+
+    Parses the 'env: <name>' from the deploy log line. Returns None
+    if the environment cannot be determined.
+    """
+    match = re.search(r"env:\s*(\S+)\)", deploy_output)
+    if match:
+        return match.group(1)
+    return None
+
+
+def cleanup_modal_app(app_name: str, env: dict[str, str], modal_environment: str | None) -> None:
     """Stop and clean up a Modal app created during testing."""
+    if modal_environment is None:
+        logger.warning("Cannot clean up Modal app '{}': environment unknown", app_name)
+        return
     try:
         list_result = subprocess.run(
-            ["uv", "run", "modal", "app", "list", "--json"],
+            ["uv", "run", "modal", "app", "list", "--json", "--env", modal_environment],
             capture_output=True,
             text=True,
             timeout=30,
@@ -85,7 +101,7 @@ def cleanup_modal_app(app_name: str, env: dict[str, str]) -> None:
                     app_id = app.get("App ID", "")
                     if app_id:
                         subprocess.run(
-                            ["uv", "run", "modal", "app", "stop", app_id],
+                            ["uv", "run", "modal", "app", "stop", app_id, "--env", modal_environment],
                             capture_output=True,
                             timeout=30,
                             env=env,
@@ -130,6 +146,8 @@ def deploy_test_trigger(
     trigger_name: str,
     env: dict[str, str],
     enabled_plugins: frozenset[str],
+    command: str,
+    args: str,
     *,
     provider: str = "modal",
     timeout: int = 600,
@@ -152,9 +170,9 @@ def deploy_test_trigger(
             "add",
             trigger_name,
             "--command",
-            "create",
+            command,
             "--args",
-            "test-schedule-agent sleep --no-connect --no-ensure-clean --context /tmp --provider modal --branch :run-{DATE} -- 60",
+            args,
             "--schedule",
             "0 3 * * *",
             "--provider",

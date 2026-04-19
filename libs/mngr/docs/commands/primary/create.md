@@ -30,9 +30,15 @@ The agent type defaults to 'claude' if not specified. Any command in your
 PATH can also be used as an agent type. Arguments after -- are passed
 directly to the agent command.
 
+Headless agent types (those implementing StreamingHeadlessAgentMixin,
+like headless_command and headless_claude) require the --foreground flag.
+This runs the headless flow: creates a temporary directory, streams the
+agent's output to stdout, and destroys the agent when done. Source,
+provisioning, environment, and connection flags do not apply.
+
 For local agents in git repos, mngr creates a git worktree that shares objects
 with your original repository. For remote agents, the repo is transferred
-via git push --mirror. Use --transfer to override the default.
+by pushing all local branches and tags via git. Use --transfer to override the default.
 
 Alias: c
 
@@ -43,12 +49,14 @@ mngr create [OPTIONS] [POSITIONAL_NAME] [POSITIONAL_AGENT_TYPE] [AGENT_ARGS]...
 ```
 ## Arguments
 
-- `ADDRESS`: Agent address in `[NAME][@[HOST][.PROVIDER]]` format (all parts optional):
+- `ADDRESS`: Agent address in `[NAME][@[HOST][.PROVIDER]][:PATH]` format (all parts optional):
   - `NAME` -- agent name only, creates on local host (default)
   - `NAME@HOST` -- agent on existing host
   - `NAME@HOST.PROVIDER` -- agent on existing host (with provider for disambiguation)
   - `NAME@.PROVIDER` -- agent on a new host (auto-generated host name); implies `--new-host`
   - `NAME@HOST.PROVIDER --new-host` -- agent on a new host with the given name
+  - `NAME:PATH` -- agent with a target path for the working directory
+  - `:PATH` -- auto-named agent with a target path (equivalent to omitting the name)
 - `AGENT_TYPE`: Which type of agent to run (default: `claude`). Can also be specified via `--type`
 - `AGENT_ARGS`: Additional arguments passed to the agent
 
@@ -63,7 +71,6 @@ mngr create [OPTIONS] [POSITIONAL_NAME] [POSITIONAL_AGENT_TYPE] [AGENT_ARGS]...
 | `--id` | text | Explicit agent ID [default: auto-generated] | None |
 | `--name-style` | choice (`coolname` &#x7C; `english` &#x7C; `fantasy` &#x7C; `scifi` &#x7C; `painters` &#x7C; `authors` &#x7C; `artists` &#x7C; `musicians` &#x7C; `animals` &#x7C; `scientists` &#x7C; `demons`) | Auto-generated name style | `coolname` |
 | `--type` | text | Which type of agent to run [default: claude] | None |
-| `--command` | text | Run a literal command using the generic agent type (mutually exclusive with --type) | None |
 | `-w`, `--extra-window` | text | Run extra command in additional window. Use name="command" to set window name. Note: ALL_UPPERCASE names (e.g., FOO="bar") are treated as env var assignments, not window names | None |
 | `--label` | text | Agent label KEY=VALUE [repeatable] [experimental] | None |
 | `--project` | text | Project name for the agent (sets the 'project' label) [default: derived from git remote origin or folder name] | None |
@@ -86,6 +93,7 @@ By default, `mngr create` uses the local host. Use the agent address to specify 
 | `--reuse`, `--no-reuse` | boolean | Reuse existing agent with the same name if it exists (idempotent create) | `False` |
 | `--update`, `--no-update` | boolean | When combined with --reuse, stop and fully re-create the agent (update work_dir, re-provision, restart). Requires --reuse | `False` |
 | `--connect`, `--no-connect` | boolean | Connect to the agent after creation [default: connect] | `True` |
+| `--foreground` | boolean | Run a headless agent in the foreground, streaming output and auto-destroying when done. Required for headless agent types | `False` |
 | `--auto-start`, `--no-auto-start` | boolean | Automatically start offline hosts (source and target) before proceeding | `True` |
 | `--adopt-session` | text | Adopt an existing Claude Code session into this agent. Accepts a session ID or a path to a .jsonl file [repeatable]. | None |
 
@@ -101,8 +109,8 @@ By default, `mngr create` uses the local host. Use the agent address to specify 
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--target-path` | text | Directory to mount source inside agent host. Incompatible with --transfer=none | None |
-| `--transfer` | choice (`none` &#x7C; `rsync` &#x7C; `git-mirror` &#x7C; `git-worktree`) | How to transfer the project into the agent. none: run in-place (no transfer). rsync: copy via rsync (non-git projects). git-mirror: transfer via git push --mirror (git projects). git-worktree: create a git worktree (git projects, local only). [default: git-worktree for local git repos, git-mirror for remote git repos, rsync for non-git] | None |
+| `--target-path` | text | Directory to mount source inside agent host (alternative to :PATH in address). Incompatible with --transfer=none | None |
+| `--transfer` | choice (`none` &#x7C; `rsync` &#x7C; `git-mirror` &#x7C; `git-worktree`) | How to transfer the project into the agent. none: run in-place (no transfer). rsync: copy via rsync (non-git projects). git-mirror: push all local branches and tags via git (git projects). git-worktree: create a git worktree (git projects, local only). [default: git-worktree for local git repos, git-mirror for remote git repos, rsync for non-git] | None |
 
 ## Git Configuration
 
@@ -196,6 +204,19 @@ Provider: docker
   Build args are passed directly to 'docker build'. Run 'docker build --help' for details.
   Start args are passed directly to 'docker run'. Run 'docker run --help' for details.
 
+Provider: lima
+  Supported build arguments for the lima provider:
+    --file PATH           Path to a Lima YAML config file for full VM customization.
+                          When not specified, a default config is generated with the
+                          mngr pre-built image.
+  Start args are passed directly to 'limactl start'. Common options:
+    --cpus=N              Number of CPU cores (default: 4)
+    --memory=NGiB         Memory size (default: 4GiB)
+    --disk=NGiB           Disk size (default: 100GiB)
+    --vm-type=TYPE        VM type: qemu or vz (default: auto-detected)
+    --mount-writable      Make default mounts writable
+  Run 'limactl start --help' for the full list.
+
 Provider: local
   No build arguments are supported for the local provider.
   No start arguments are supported for the local provider.
@@ -241,10 +262,11 @@ Provider: ssh
   No start arguments are supported for the SSH provider.
 
 Provider: vultr
-  VPS-specific args (--vps- prefix, consumed by provider):
+  VPS-specific args (consumed by provider, not passed to docker):
     --vps-region=REGION  Vultr region (default: ewr)
     --vps-plan=PLAN      Vultr plan (default: vc2-1c-1gb)
     --vps-os=OS_ID       Vultr OS ID (default: 2136 = Debian 12 x64)
+    --git-depth=N        Shallow-clone build context to depth N before upload
 
   All other build args are passed to 'docker build' on the VPS.
   Example: -b --vps-plan=vc2-2c-4gb -b --file=Dockerfile -b .
@@ -348,4 +370,10 @@ $ mngr create my-agent -w server="npm run dev"
 
 ```bash
 $ mngr create my-agent --reuse
+```
+
+**Run a headless agent**
+
+```bash
+$ mngr create --type headless_command --foreground -t my-command-template
 ```

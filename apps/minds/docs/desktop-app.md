@@ -7,20 +7,33 @@ Minds ships as a standalone desktop application built with Electron and distribu
 The Electron shell is deliberately thin. It handles four things:
 
 1. **Environment setup**: Runs `uv sync` on launch to install/update the Python environment
-2. **Backend lifecycle**: Spawns and monitors the `mind forward` process
+2. **Backend lifecycle**: Spawns and monitors the `minds forward` process
 3. **Auth handshake**: Parses the login URL from stdout and navigates to it
 4. **Window management**: Displays the backend's web UI in a native window
 
-Everything else -- agent creation, discovery, proxying, authentication, the web UI -- remains in the Python backend, unchanged. See [overview.md](./overview.md) for details on the forwarding server architecture.
+Everything else -- agent creation, discovery, proxying, authentication, the web UI -- remains in the Python backend, unchanged. See [overview.md](./overview.md) for details on the desktop client architecture.
+
+### App shell
+
+The Electron window uses a frameless window (`frame: false` on Linux/Windows, `titleBarStyle: 'hiddenInset'` with `trafficLightPosition` on macOS). A custom title bar is injected into every backend page via `webContents.insertCSS()` and `webContents.executeJavaScript()` on the `dom-ready` event. The title bar uses `-webkit-app-region: drag` so the entire bar acts as a window drag handle, with buttons opted out via `no-drag`. The title bar provides:
+
+- **Navigation**: Back/forward buttons using `history.back()`/`history.forward()`
+- **Page title**: Tracks `document.title` via MutationObserver
+- **Open in browser**: Opens the current URL in the system browser
+- **Window controls**: Minimize/maximize/close buttons (on Linux/Windows; macOS uses native traffic lights)
+
+A separate `shell.html` page handles the loading spinner and error screen during startup.
+
+When accessing an agent URL in a regular browser (not the Electron app), the Python backend wraps the content in a lightweight info bar showing the agent name, host, and application name.
 
 ### Startup sequence
 
-1. Electron creates a window showing a loading screen
+1. Electron creates a frameless window showing a loading screen (`shell.html`)
 2. `uv sync` runs using the bundled `uv` binary and the packaged `pyproject.toml` + lockfile
-3. Electron finds an available port and spawns: `uv run mind --format jsonl --log-file <path> forward --host 127.0.0.1 --port <port> --no-browser`
+3. Electron finds an available port and spawns: `uv run minds --format jsonl --log-file <path> forward --host 127.0.0.1 --port <port> --no-browser`
 4. The backend emits a JSONL event `{"event": "login_url", "login_url": "..."}` on stdout
-5. Electron waits for the port to accept TCP connections, then navigates to the login URL
-6. Auth completes (one-time code consumed, session cookie set), user sees the web UI
+5. Electron waits for the port to accept TCP connections, then navigates directly to the login URL
+6. Auth completes (one-time code consumed, session cookie set), the custom title bar is injected, user sees the web UI
 
 ### Shutdown
 
@@ -29,6 +42,15 @@ When the user closes the window, Electron sends SIGTERM to the backend process a
 ### Crash recovery
 
 If the backend exits unexpectedly, Electron shows an error screen with the last lines from the log file and a "Retry" button that restarts the backend.
+
+### Keyboard shortcuts
+
+- **Open DevTools**: `Ctrl+Shift+C` (Windows/Linux) or `Cmd+Option+I` (macOS)
+
+### Environment variables
+
+- `MINDS_HIDE_MENU=1`: Hides the application menu bar (macOS only; Linux/Windows frameless windows have no menu bar).
+- `MINDS_ROOT_NAME`: Controls the data-dir/prefix scheme described above (default: `minds`). Must match `[a-z0-9_-]+`.
 
 ## Output and logging conventions
 
@@ -49,7 +71,7 @@ Both are placed in the `resources/` directory (outside the asar archive) and add
 
 ## Data directory
 
-All desktop app state lives in `~/.minds/`:
+All desktop app state lives in `~/.<MINDS_ROOT_NAME>/` (default: `~/.minds/`):
 
 ```
 ~/.minds/
@@ -60,8 +82,33 @@ All desktop app state lives in `~/.minds/`:
     minds.log             # Combined stdout/stderr log from the backend
     minds-events.jsonl    # Structured JSONL event log
   auth/                   # Cookie signing key, one-time codes
-  <agent-id>/             # Per-agent directories
+  config.toml             # Optional minds config (cloudflare/supertokens URLs)
+  mngr/                   # mngr host directory (MNGR_HOST_DIR)
+    agents/               # per-agent state managed by mngr
+  <agent-id>/             # Per-agent workspace directories
 ```
+
+`MINDS_ROOT_NAME` is a single env var that isolates an installed minds
+from a dev copy. Exporting `MINDS_ROOT_NAME=devminds` moves the entire
+layout to `~/.devminds/` (separate venv, caches, logs, auth, agents).
+The corresponding `MNGR_HOST_DIR` becomes `~/.devminds/mngr/` and
+`MNGR_PREFIX` becomes `devminds-` so tmux sessions and containers for
+the two copies never collide. Standalone `mngr` invocations ignore
+`MINDS_ROOT_NAME`.
+
+### Configuration file
+
+`~/.<MINDS_ROOT_NAME>/config.toml` is optional. When present, it may set:
+
+```toml
+cloudflare_forwarding_url = "https://..."
+supertokens_connection_uri = "https://..."
+```
+
+Environment variables (`CLOUDFLARE_FORWARDING_URL`,
+`SUPERTOKENS_CONNECTION_URI`) override the file. Both fields have
+built-in defaults that point at the current dev-deployed servers, so
+packaged minds works out of the box with no config file.
 
 ## Development
 
@@ -76,11 +123,10 @@ All desktop app state lives in `~/.minds/`:
 ```bash
 cd apps/minds
 pnpm install        # Install Electron and ToDesktop CLI
-pnpm build          # Download uv/git binaries into resources/
 pnpm start          # Launch the Electron app in dev mode
 ```
 
-In dev mode, `paths.js` resolves resources relative to the project directory instead of `process.resourcesPath`. The standalone `electron/pyproject/pyproject.toml` uses an editable path reference to the local minds package.
+In dev mode, the Electron app skips `uv sync` and uses the monorepo's workspace venv directly (via `uv run --package minds` from the repo root). This means all mngr plugins (claude, modal, etc.) are available without any extra setup, and changes to the Python code are picked up immediately on restart.
 
 ### Building for distribution
 
@@ -113,8 +159,7 @@ apps/minds/
     paths.js                # Platform-aware path resolution
     env-setup.js            # uv sync runner with progress reporting
     backend.js              # Python backend process manager
-    loading.html            # Loading/setup screen
-    error.html              # Error screen with retry
+    shell.html              # Loading and error screens (title bar is injected at runtime)
     assets/
       icon.svg              # App icon (SVG source)
       icon.png              # App icon (PNG for Electron)

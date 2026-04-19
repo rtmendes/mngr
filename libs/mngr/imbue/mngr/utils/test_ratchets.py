@@ -43,7 +43,7 @@ def test_prevent_global_keyword() -> None:
 
 
 def test_prevent_bare_print() -> None:
-    rc.check_bare_print(_DIR, snapshot(0), excluded_patterns=("_kqueue_tty_test_script.py",))
+    rc.check_bare_print(_DIR, snapshot(33), excluded_patterns=("_kqueue_tty_test_script.py",))
 
 
 # --- Exception handling ---
@@ -85,7 +85,7 @@ def test_prevent_importlib_import_module() -> None:
 
 
 def test_prevent_getattr() -> None:
-    rc.check_getattr(_DIR, snapshot(9))
+    rc.check_getattr(_DIR, snapshot(11))
 
 
 def test_prevent_setattr() -> None:

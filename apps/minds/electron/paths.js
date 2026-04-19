@@ -34,8 +34,26 @@ function getGitBinDir() {
   return path.dirname(getGitPath());
 }
 
+function getMindsRootName() {
+  const name = process.env.MINDS_ROOT_NAME || 'minds';
+  if (!/^[a-z0-9_-]+$/.test(name)) {
+    throw new Error(
+      `MINDS_ROOT_NAME must match [a-z0-9_-]+; got ${JSON.stringify(name)}`
+    );
+  }
+  return name;
+}
+
 function getDataDir() {
-  return path.join(os.homedir(), '.minds');
+  return path.join(os.homedir(), '.' + getMindsRootName());
+}
+
+function getMngrHostDir() {
+  return path.join(getDataDir(), 'mngr');
+}
+
+function getMngrPrefix() {
+  return getMindsRootName() + '-';
 }
 
 function getUvCacheDir() {
@@ -61,6 +79,11 @@ function getPyprojectDir() {
   return path.join(getResourcesDir(), 'pyproject');
 }
 
+function getMonorepoRoot() {
+  // apps/minds/electron/ -> apps/minds/ -> apps/ -> repo root
+  return path.resolve(__dirname, '..', '..', '..');
+}
+
 module.exports = {
   isDev,
   getResourcesDir,
@@ -68,10 +91,14 @@ module.exports = {
   getUvBinDir,
   getGitPath,
   getGitBinDir,
+  getMindsRootName,
   getDataDir,
+  getMngrHostDir,
+  getMngrPrefix,
   getUvCacheDir,
   getUvPythonDir,
   getLogDir,
   getVenvDir,
   getPyprojectDir,
+  getMonorepoRoot,
 };
