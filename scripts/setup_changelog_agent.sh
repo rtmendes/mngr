@@ -36,6 +36,10 @@ VERIFY="${CHANGELOG_VERIFY:-full}"
 # (which references providers/plugins that may not exist in the container).
 # Mirrors the pattern used by test_schedule_run.py's build_subprocess_env.
 export MNGR_ROOT_NAME="mngr-changelog-schedule"
+# Unset any ambient MNGR_HOST_DIR (e.g. from a parent mngr agent session) so
+# MNGR_ROOT_NAME actually picks a distinct base dir.
+unset MNGR_HOST_DIR
+unset MNGR_PREFIX
 
 # Validate that required env vars are set so the agent can function.
 for var in GH_TOKEN ANTHROPIC_API_KEY; do
