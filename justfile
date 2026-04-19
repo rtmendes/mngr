@@ -104,7 +104,6 @@ test-unit:
 test-integration:
   uv run pytest {{_parallel}} {{_skip_acceptance_and_release}} --cov-report=html --cov-fail-under=80
 
-# Fast local iteration: forwards args to pytest. No coverage, xdist-parallel.
 # Examples:
 #   just test-quick
 #   just test-quick libs/mngr
@@ -115,6 +114,7 @@ test-integration:
 # and drops inner quoting, which would truncate `-m 'a and b'` to `-m a`.
 # The recipe's default `-m 'not acceptance and not release'` can be
 # overridden by supplying a `-m` inside args (later CLI -m wins).
+# Fast local iteration: forwards args to pytest. No coverage, xdist-parallel.
 test-quick args="":
   uv run pytest {{_parallel}} {{_skip_acceptance_and_release}} --no-cov {{args}}
 
