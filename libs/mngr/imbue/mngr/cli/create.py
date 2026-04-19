@@ -269,8 +269,8 @@ def _reject_incompatible_headless_flags(
         flags_str = ", ".join(explicit_flags)
         raise UserInputError(
             f"Headless agent type '{agent_type_name}' does not support: {flags_str}. "
-            f"The headless flow runs in-place (either in a temporary directory or in "
-            f"the --source path), streams output, and auto-destroys. Git, transfer, "
+            f"The headless flow runs in a fresh temporary directory (default) or "
+            f"in-place at --source, streams output, and auto-destroys. Git, transfer, "
             f"provisioning, environment, and connection options do not apply."
         )
 
