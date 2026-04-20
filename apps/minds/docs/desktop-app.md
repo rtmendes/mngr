@@ -102,13 +102,14 @@ the two copies never collide. Standalone `mngr` invocations ignore
 
 ```toml
 cloudflare_forwarding_url = "https://..."
-supertokens_connection_uri = "https://..."
 ```
 
-Environment variables (`CLOUDFLARE_FORWARDING_URL`,
-`SUPERTOKENS_CONNECTION_URI`) override the file. Both fields have
-built-in defaults that point at the current dev-deployed servers, so
-packaged minds works out of the box with no config file.
+The `CLOUDFLARE_FORWARDING_URL` environment variable overrides the file.
+The field has a built-in default that points at the current dev-deployed
+server, so packaged minds works out of the box with no config file. The
+SuperTokens core URI and API key are configured on the backend server
+(alongside the Cloudflare credentials) and never need to be set on the
+client.
 
 ## Development
 

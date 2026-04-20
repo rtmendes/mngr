@@ -35,7 +35,7 @@ After creation, the agent is accessible at:
 
 ## Environment variables and config
 
-`CLOUDFLARE_FORWARDING_URL` and `SUPERTOKENS_CONNECTION_URI` come from `MindsConfig`: defaults are baked in pointing at the current dev-deployed servers, and you can override either via `~/.<MINDS_ROOT_NAME>/config.toml` (file) or environment variable (env overrides file). So no env-var setup is required for default operation.
+`CLOUDFLARE_FORWARDING_URL` comes from `MindsConfig`: a default is baked in pointing at the current dev-deployed server, and you can override it via `~/.<MINDS_ROOT_NAME>/config.toml` (file) or environment variable (env overrides file). That URL hosts both the Cloudflare tunnel API and the `/auth/*` routes the desktop client uses for sign-in, so no env-var setup is required for default operation. SuperTokens credentials (API key, OAuth client secrets) live on the backend server and never need to be set on the client.
 
 For Cloudflare Basic-auth credentials (overriding the SuperTokens path), set these before starting the desktop client:
 
@@ -45,11 +45,10 @@ export CLOUDFLARE_FORWARDING_SECRET=your-secret
 export OWNER_EMAIL=you@example.com
 ```
 
-To pin either URL explicitly:
+To pin the forwarding URL explicitly:
 
 ```bash
 export CLOUDFLARE_FORWARDING_URL=https://your-modal-endpoint.modal.run
-export SUPERTOKENS_CONNECTION_URI=https://your-supertokens-core.example.com
 ```
 
 To run an isolated dev copy alongside an installed minds:
