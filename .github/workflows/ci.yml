@@ -11,6 +11,15 @@ jobs:
   test-offload:
     if: github.ref != 'refs/heads/release'
     runs-on: ubuntu-latest
+    # `checks: write` is required by the report-flaky-aware-tests composite
+    # action: both its `mikepenz/action-junit-report@v5` invocations and its
+    # `gh api POST /repos/.../check-runs` call need it. `contents: read` is
+    # the minimum needed by actions/checkout. Declaring permissions
+    # explicitly avoids depending on the repo-level default, which may be
+    # restricted (contents: read only).
+    permissions:
+      contents: read
+      checks: write
     env:
       MODAL_TOKEN_ID: ${{ vars.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -129,6 +138,12 @@ jobs:
   test-offload-acceptance:
     if: github.ref != 'refs/heads/release'
     runs-on: ubuntu-latest
+    # See note on `test-offload` above: the report-flaky-aware-tests
+    # composite action needs `checks: write` to post both its junit-report
+    # check-run and (on flaky-recovered runs) its neutral check-run.
+    permissions:
+      contents: read
+      checks: write
     env:
       MODAL_TOKEN_ID: ${{ vars.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
