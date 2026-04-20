@@ -23,9 +23,6 @@ from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
 from imbue.minds.desktop_client.backend_resolver import MngrStreamManager
 from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingClient
 from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingUrl
-from imbue.minds.desktop_client.cloudflare_client import CloudflareSecret
-from imbue.minds.desktop_client.cloudflare_client import CloudflareUsername
-from imbue.minds.desktop_client.cloudflare_client import OwnerEmail
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.request_events import RequestInbox
@@ -219,23 +216,13 @@ def start_desktop_client(
 
 
 def _build_cloudflare_client(forwarding_url: AnyUrl) -> CloudflareForwardingClient:
-    """Build a CloudflareForwardingClient from the config URL + env-var-only auth fields.
+    """Build a shared CloudflareForwardingClient holding only the forwarding URL.
 
-    The forwarding URL comes from ``MindsConfig.cloudflare_forwarding_url``
-    (env > config.toml > built-in default) and always has a value. Basic Auth
-    fields (username, secret, owner_email) stay env-var-only because they are
-    secrets and are only used as a fallback when per-account SuperTokens auth
-    is not available.
+    Per-request auth (SuperTokens token, user-id prefix, email) is attached in
+    ``api_v1.get_cf_client_with_auth`` from the caller's signed-in account.
     """
-    username = os.environ.get("CLOUDFLARE_FORWARDING_USERNAME")
-    secret = os.environ.get("CLOUDFLARE_FORWARDING_SECRET")
-    owner_email = os.environ.get("OWNER_EMAIL")
-
     return CloudflareForwardingClient(
         forwarding_url=CloudflareForwardingUrl(str(forwarding_url)),
-        username=CloudflareUsername(username) if username else None,
-        secret=CloudflareSecret(secret) if secret else None,
-        owner_email=OwnerEmail(owner_email) if owner_email else None,
     )
 
 

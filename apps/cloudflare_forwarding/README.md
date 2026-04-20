@@ -9,39 +9,65 @@ Allows authenticated users to:
 - Add/remove forwarding rules (ingress + DNS) on those tunnels
 - List their tunnels and configured services
 - Delete tunnels (cascading cleanup of DNS and ingress)
+- Sign in / sign up via SuperTokens (proxying the SuperTokens core so clients never need its API key)
 
 After creating a tunnel, users receive a token to run `cloudflared tunnel run --token <TOKEN>` on their host.
 
 ## Deployment
 
-Requires the following Modal Secrets (env vars):
+Deployment is split into two pieces so you can rotate secrets without redeploying code and vice versa.
 
-- `CLOUDFLARE_API_TOKEN`: Cloudflare API token with Tunnel Write and DNS Write permissions
-- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account ID
-- `CLOUDFLARE_ZONE_ID`: Cloudflare zone ID for DNS records
-- `CLOUDFLARE_DOMAIN`: Base domain for service subdomains (e.g. `example.com`)
-- `USER_CREDENTIALS`: JSON object mapping usernames to secrets (e.g. `{"alice": "secret1"}`)
-- `CLOUDFLARE_ALLOWED_IDPS` (optional): Comma-separated list of Cloudflare identity provider UUIDs to allow on Access Applications (e.g. Google OAuth, one-time PIN). When set, created Access Applications will only offer these identity providers to users. When unset, Cloudflare uses the account default.
-- `SUPERTOKENS_CONNECTION_URI` (optional): URL of the SuperTokens core. Required for the `/auth/*` endpoints.
-- `SUPERTOKENS_API_KEY` (optional): API key for the SuperTokens core. Paired with `SUPERTOKENS_CONNECTION_URI`.
-- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (optional): Google OAuth credentials used by the `/auth/oauth/*` endpoints.
-- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` (optional): GitHub OAuth credentials used by the `/auth/oauth/*` endpoints.
-- `AUTH_WEBSITE_DOMAIN` (optional): Public base URL embedded in outbound password-reset and email-verification links. Defaults to `https://cloudflare-forwarding.modal.run`.
+### 1. Environment-scoped Modal secrets
 
-Deploy with:
+Local secrets live at `.minds/<env-name>/<service>.sh` (gitignored). Each file is shell-style:
+
+```sh
+# .minds/production/cloudflare.sh
+export CLOUDFLARE_API_TOKEN=...
+export CLOUDFLARE_ACCOUNT_ID=...
+# ...
+```
+
+Push them to Modal with:
 
 ```bash
-modal deploy apps/cloudflare_forwarding/imbue/cloudflare_forwarding/app.py
+uv run scripts/push_modal_secrets.py production
 ```
+
+This creates/updates Modal secrets named `<service>-<env>`, e.g. `cloudflare-production` and `supertokens-production`.
+
+**cloudflare.sh** holds the Cloudflare API credentials:
+
+- `CLOUDFLARE_API_TOKEN` (required): API token with Tunnel Write and DNS Write permissions.
+- `CLOUDFLARE_ACCOUNT_ID` (required): Cloudflare account ID.
+- `CLOUDFLARE_ZONE_ID` (required): Cloudflare zone ID for DNS records.
+- `CLOUDFLARE_DOMAIN` (required): Base domain for service subdomains (e.g. `example.com`).
+- `CLOUDFLARE_ALLOWED_IDPS` (optional): Comma-separated list of Cloudflare identity provider UUIDs allowed on Access Applications (e.g. Google OAuth, one-time PIN). When unset, Cloudflare uses the account default.
+
+**supertokens.sh** holds the SuperTokens + OAuth credentials:
+
+- `SUPERTOKENS_CONNECTION_URI` (required): URL of the SuperTokens core.
+- `SUPERTOKENS_API_KEY` (required for most deployments): SuperTokens core API key.
+- `AUTH_WEBSITE_DOMAIN` (optional): Public base URL embedded in password-reset and email-verification links. Defaults to `https://cloudflare-forwarding.modal.run`.
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (optional): override Google OAuth client credentials. Leave blank to inherit from the SuperTokens core's dashboard.
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` (optional): override GitHub OAuth client credentials. Leave blank to inherit from the SuperTokens core's dashboard.
+
+### 2. Deploy the Modal app
+
+```bash
+scripts/deploy_cloudflare_forwarding.sh production
+```
+
+The script sets `MNGR_DEPLOY_ENV=production` in the shell that runs `modal deploy`, which is read at module level by `app.py` to pin the secret names (`cloudflare-production`, `supertokens-production`) and also baked into a `Secret.from_dict` so the container can read `MNGR_DEPLOY_ENV` at runtime. Running `modal deploy` directly without the wrapper defaults to `production`.
 
 ## Authentication
 
-Endpoints accept two auth methods, distinguished by the Authorization header:
+All non-`/auth/*` endpoints require a Bearer token:
 
-- **Admin (Basic Auth)**: `Authorization: Basic <base64(username:password)>` -- full access to all endpoints.
-- **Agent (Bearer token)**: `Authorization: Bearer <tunnel_token>` -- scoped to a single tunnel; can add/remove/list services but cannot create/delete tunnels or manage auth policies.
+- **Agent (tunnel token)**: `Authorization: Bearer <tunnel_token>` — scoped to a single tunnel. Can add/remove/list services on that tunnel only; cannot create/delete tunnels or manage auth policies.
+- **User (SuperTokens JWT)**: `Authorization: Bearer <access_token>` — the signed-in user's SuperTokens session. Treated as an "admin" auth whose username is the first 16 hex chars of the user's SuperTokens user ID (used to namespace tunnels per user).
 
-Credentials are validated against a JSON object in the `USER_CREDENTIALS` env var. Agent tokens are the Cloudflare tunnel tokens returned when creating a tunnel.
+The `/auth/*` endpoints are themselves the authentication flow, so they do not require a token.
 
 ## Identity providers for Access Applications
 

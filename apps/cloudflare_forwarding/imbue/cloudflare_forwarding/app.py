@@ -12,7 +12,6 @@ import functools
 import json
 import logging
 import os
-import secrets as secrets_module
 from collections.abc import Callable
 from collections.abc import Iterator
 from typing import Any
@@ -1004,56 +1003,33 @@ class ForwardingCtx:
 def authenticate_request(request: Request, ops: CloudflareOps) -> AuthResult:
     """Authenticate a request. Returns AdminAuth or AgentAuth.
 
-    Supports three auth methods:
-    1. Basic Auth (admin credentials from USER_CREDENTIALS)
-    2. Bearer token (base64-encoded tunnel token for agent auth)
-    3. Bearer token (SuperTokens JWT for user auth -- treated as admin)
+    Supports two Bearer-token auth methods:
+    1. Base64-encoded Cloudflare tunnel token (agent auth, scoped to one tunnel).
+    2. SuperTokens JWT (user auth, treated as admin; user_id_prefix is the username).
     """
     auth_header = request.headers.get("authorization", "")
 
-    if auth_header.lower().startswith("bearer "):
-        token = auth_header[7:]
-        # Try tunnel token first
-        agent_exc: HTTPException | None = None
-        try:
-            return _authenticate_agent(token, ops)
-        except HTTPException as exc:
-            agent_exc = exc
-        # Only try SuperTokens JWT if it is configured; otherwise preserve the
-        # original agent auth error so callers receive a meaningful message.
-        if not os.environ.get("SUPERTOKENS_CONNECTION_URI"):
-            assert agent_exc is not None
-            raise agent_exc
-        # If SuperTokens also fails, raise the SuperTokens error since the
-        # token is clearly a JWT (not a base64 tunnel token).
-        try:
-            return _authenticate_supertokens(token)
-        except HTTPException as st_exc:
-            raise st_exc from None
+    if not auth_header.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer credentials")
 
-    if auth_header.lower().startswith("basic "):
-        return _authenticate_admin(auth_header)
-
-    raise HTTPException(status_code=401, detail="Missing credentials")
-
-
-def _authenticate_admin(auth_header: str) -> AdminAuth:
-    """Validate HTTP Basic Auth credentials. Returns AdminAuth with username."""
+    token = auth_header[7:]
+    # Try tunnel token first.
+    agent_exc: HTTPException | None = None
     try:
-        decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError) as exc:
-        raise HTTPException(status_code=401, detail="Malformed credentials") from exc
-    username, _, password = decoded.partition(":")
-
-    raw = os.environ.get("USER_CREDENTIALS", "")
-    if not raw:
-        raise HTTPException(status_code=500, detail="USER_CREDENTIALS not configured")
-    creds: dict[str, str] = json.loads(raw)
-
-    expected = creds.get(username)
-    if expected is None or not secrets_module.compare_digest(password.encode("utf-8"), expected.encode("utf-8")):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    return AdminAuth(username=username)
+        return _authenticate_agent(token, ops)
+    except HTTPException as exc:
+        agent_exc = exc
+    # Only try SuperTokens JWT if it is configured; otherwise preserve the
+    # original agent auth error so callers receive a meaningful message.
+    if not os.environ.get("SUPERTOKENS_CONNECTION_URI"):
+        assert agent_exc is not None
+        raise agent_exc
+    # If SuperTokens also fails, raise the SuperTokens error since the
+    # token is clearly a JWT (not a base64 tunnel token).
+    try:
+        return _authenticate_supertokens(token)
+    except HTTPException as st_exc:
+        raise st_exc from None
 
 
 def _authenticate_agent(token: str, ops: CloudflareOps) -> AgentAuth:
@@ -1693,10 +1669,20 @@ def auth_get_user(user_id: str) -> UserProviderInfo:
 
 # ---------------------------------------------------------------------------
 # Modal deployment
+#
+# Secrets are environment-scoped so the same code can back a production, staging,
+# or ad-hoc deploy without editing this file. ``MNGR_DEPLOY_ENV`` is resolved at
+# local ``modal deploy`` time (``modal.is_local()``) from the deployer's shell
+# and used to select the correct ``cloudflare-<env>`` / ``supertokens-<env>``
+# Modal secrets. The same value is also baked into a ``Secret.from_dict`` so the
+# running container can read ``os.environ["MNGR_DEPLOY_ENV"]`` at runtime.
 # ---------------------------------------------------------------------------
 
+
+_DEPLOY_ENV = os.environ.get("MNGR_DEPLOY_ENV", "production")
+
 image = modal.Image.debian_slim().pip_install("fastapi[standard]", "httpx", "supertokens-python")
-app = modal.App(name="cloudflare-forwarding", image=image)
+app = modal.App(name=f"cloudflare-forwarding-{_DEPLOY_ENV}", image=image)
 
 
 _DEFAULT_FORWARDING_DOMAIN = "https://cloudflare-forwarding.modal.run"
@@ -1796,8 +1782,9 @@ def _init_supertokens() -> None:
 
 @app.function(
     secrets=[
-        modal.Secret.from_name("cloudflare-forwarding-secrets"),
-        modal.Secret.from_name("supertokens-secrets"),
+        modal.Secret.from_name(f"cloudflare-{_DEPLOY_ENV}"),
+        modal.Secret.from_name(f"supertokens-{_DEPLOY_ENV}"),
+        modal.Secret.from_dict({"MNGR_DEPLOY_ENV": _DEPLOY_ENV}),
     ]
 )
 @modal.asgi_app()
