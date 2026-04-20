@@ -37,9 +37,8 @@ from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
 #
 # All five session-scoped fixtures must be overridden together because
 # pytest forbids a session-scope fixture from depending on a function-scope
-# one ("ScopeMismatch"). Only overriding `browser` while leaving
-# `launch_browser` at session scope produced exactly that error in release
-# run 15.
+# one ("ScopeMismatch"). Overriding `browser` alone would leave
+# `launch_browser` at session scope and trip that check.
 
 
 @pytest.fixture
