@@ -217,11 +217,13 @@ class BaseHeadlessAgent(BaseAgent[AgentConfigT], StreamingHeadlessAgentMixin):
     def _raise_no_output_error(self) -> Never:
         """Raise MngrError collecting all available error detail.
 
-        Checks stderr, then subclass-specific extra sources, then falls
-        back to tmux pane capture as a last resort. The pane capture is
-        always attempted when no other details are found, regardless of
-        whether redirect files exist -- shell redirects create empty files
-        even when the process fails immediately.
+        Gathers stderr, subclass-specific extra sources, the tmux pane
+        content, and the state-dir inventory. All sources are *always*
+        captured -- silent-exit post-mortems (e.g. test_ask_simple_query
+        with 0-char stdout/stderr) need every signal we can get. Shell
+        errors like "cat: .mngr-prompt: No such file" only appear in the
+        tmux pane because the redirect captures the claude process's
+        stdout/stderr, not the shell's own.
         """
         parts: list[str] = []
 
@@ -231,16 +233,12 @@ class BaseHeadlessAgent(BaseAgent[AgentConfigT], StreamingHeadlessAgentMixin):
 
         parts.extend(self._get_extra_error_sources())
 
-        if not parts:
-            pane_error = self._get_pane_error_message()
-            if pane_error:
-                parts.append(f"[tmux pane]\n{pane_error}")
+        pane_error = self._get_pane_error_message()
+        if pane_error:
+            parts.append(f"[tmux pane]\n{pane_error}")
 
-        # Always add the state-dir diagnostic so release-test post-mortems
-        # have the stdout/stderr sizes + tails even when everything else is
-        # empty. See test_ask_simple_query "claude exited without producing
-        # output" debugging notes. The diagnostic string is always non-empty,
-        # so `parts` is guaranteed to have at least one element here.
+        # The state-dir diagnostic string is always non-empty, so `parts`
+        # is guaranteed to have at least one element at the raise below.
         parts.append(f"[state-dir]\n{self._get_state_dir_diagnostic()}")
 
         subject = self._no_output_error_subject
