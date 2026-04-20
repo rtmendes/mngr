@@ -1017,7 +1017,7 @@ def test_create_headless_does_not_reject_source_flag(
 
     assert result.exit_code != 0
     assert "--env" in result.output
-    # --source must not be listed as incompatible (the flag string nor its alias).
+    # --source must not be listed as incompatible (neither the flag string nor its alias).
     assert "--from/--source" not in result.output
 
 
