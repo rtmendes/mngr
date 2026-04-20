@@ -67,24 +67,6 @@ def test_discover_host_state_stopped_after_stop(
     assert state == HostState.STOPPED
 
 
-@pytest.mark.release
-@pytest.mark.docker
-@pytest.mark.docker_sdk
-def test_discover_host_state_running_after_restart(
-    docker_provider: DockerProviderInstance,
-    temp_mngr_ctx: MngrContext,
-) -> None:
-    """After stop then start, discover_hosts should report host_state=RUNNING."""
-    host = docker_provider.create_host(HostName("test-state-restart"))
-    docker_provider.stop_host(host, create_snapshot=False)
-    docker_provider.start_host(host.id)
-
-    hosts = docker_provider.discover_hosts(temp_mngr_ctx.concurrency_group)
-    state = _find_host_state(hosts, host.id)
-
-    assert state == HostState.RUNNING
-
-
 @pytest.mark.acceptance
 @pytest.mark.docker
 @pytest.mark.docker_sdk
@@ -117,6 +99,24 @@ def test_discover_host_state_failed_for_bad_build(
 # =========================================================================
 # Release tests -- run on release branch only
 # =========================================================================
+
+
+@pytest.mark.release
+@pytest.mark.docker
+@pytest.mark.docker_sdk
+def test_discover_host_state_running_after_restart(
+    docker_provider: DockerProviderInstance,
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """After stop then start, discover_hosts should report host_state=RUNNING."""
+    host = docker_provider.create_host(HostName("test-state-restart"))
+    docker_provider.stop_host(host, create_snapshot=False)
+    docker_provider.start_host(host.id)
+
+    hosts = docker_provider.discover_hosts(temp_mngr_ctx.concurrency_group)
+    state = _find_host_state(hosts, host.id)
+
+    assert state == HostState.RUNNING
 
 
 @pytest.mark.release
