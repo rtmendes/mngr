@@ -142,24 +142,6 @@ class AuthBackendClient(FrozenModel):
             timeout=self.timeout_seconds,
         )
 
-    def reset_password(self, token: str, new_password: str) -> tuple[str, str | None]:
-        """Consume a password reset token and set a new password.
-
-        Returns ``(status, message)`` matching the auth backend's contract.
-        """
-        response = httpx.post(
-            self._url("/auth/password/reset"),
-            json={"token": token, "new_password": new_password},
-            timeout=self.timeout_seconds,
-        )
-        if response.status_code >= 500:
-            return "ERROR", f"Server error: {response.status_code}"
-        try:
-            data = response.json()
-        except ValueError:
-            return "ERROR", "Malformed response"
-        return str(data.get("status", "ERROR")), data.get("message")
-
     def oauth_authorize_url(self, provider_id: str, callback_url: str) -> str | None:
         """Return the URL to which the user should be redirected to begin OAuth."""
         response = httpx.post(
