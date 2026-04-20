@@ -17,6 +17,7 @@ from imbue.mngr.api.find import ResolvedSource
 from imbue.mngr.cli.create import _AutoLabels
 from imbue.mngr.cli.create import _CreateCommand
 from imbue.mngr.cli.create import _RECOVERED_MESSAGE_FILENAME
+from imbue.mngr.cli.create import _apply_host_labels
 from imbue.mngr.cli.create import _check_source_does_not_contain_state_dir
 from imbue.mngr.cli.create import _editor_cleanup_scope
 from imbue.mngr.cli.create import _get_source_remote_url
@@ -28,7 +29,6 @@ from imbue.mngr.cli.create import _parse_project_name
 from imbue.mngr.cli.create import _parse_target_host
 from imbue.mngr.cli.create import _rescue_editor_content
 from imbue.mngr.cli.create import _resolve_agent_type_name
-from imbue.mngr.cli.create import _resolve_early_agent_type
 from imbue.mngr.cli.create import _resolve_source_location
 from imbue.mngr.cli.create import _resolve_target_host
 from imbue.mngr.cli.create import _split_address_and_target_path
@@ -723,52 +723,6 @@ def test_resolve_agent_type_name_all_none() -> None:
 
 
 # =============================================================================
-# Tests for _resolve_early_agent_type
-# =============================================================================
-
-
-def test_resolve_early_agent_type_from_type_flag(default_create_cli_opts: CreateCliOptions) -> None:
-    """--type flag should be returned as the agent type."""
-    opts = default_create_cli_opts.model_copy_update(
-        to_update(default_create_cli_opts.field_ref().type, "headless_command"),
-    )
-
-    result = _resolve_early_agent_type(opts)
-
-    assert result == "headless_command"
-
-
-def test_resolve_early_agent_type_from_positional(default_create_cli_opts: CreateCliOptions) -> None:
-    """Positional agent type should be returned when --type is not set."""
-    opts = default_create_cli_opts.model_copy_update(
-        to_update(default_create_cli_opts.field_ref().positional_agent_type, "headless_claude"),
-    )
-
-    result = _resolve_early_agent_type(opts)
-
-    assert result == "headless_claude"
-
-
-def test_resolve_early_agent_type_flag_takes_precedence(default_create_cli_opts: CreateCliOptions) -> None:
-    """--type flag takes precedence over positional agent type."""
-    opts = default_create_cli_opts.model_copy_update(
-        to_update(default_create_cli_opts.field_ref().type, "headless_command"),
-        to_update(default_create_cli_opts.field_ref().positional_agent_type, "headless_claude"),
-    )
-
-    result = _resolve_early_agent_type(opts)
-
-    assert result == "headless_command"
-
-
-def test_resolve_early_agent_type_returns_none_when_unset(default_create_cli_opts: CreateCliOptions) -> None:
-    """Returns None when neither --type nor positional agent type is set."""
-    result = _resolve_early_agent_type(default_create_cli_opts)
-
-    assert result is None
-
-
-# =============================================================================
 # Tests for _create_headless
 # =============================================================================
 
@@ -820,6 +774,43 @@ def test_create_headless_rejects_incompatible_flags(
     assert result.exit_code != 0
     assert "does not support" in result.output
     assert "--env" in result.output
+
+
+def test_create_headless_rejects_explicit_connect(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """--connect contradicts headless semantics and should be rejected."""
+    result = cli_runner.invoke(
+        create,
+        ["--type", "headless_command", "--foreground", "--connect"],
+        obj=plugin_manager,
+    )
+
+    assert result.exit_code != 0
+    assert "--connect" in result.output
+    assert "does not support" in result.output
+
+
+def test_create_headless_allows_no_connect(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """--no-connect is redundant with headless (which never connects) and should be allowed.
+
+    Checks the error message for a different flag (--env) to verify --connect/--no-connect
+    are not listed as incompatible when --no-connect is passed.
+    """
+    result = cli_runner.invoke(
+        create,
+        ["--type", "headless_command", "--foreground", "--no-connect", "--env", "FOO=bar"],
+        obj=plugin_manager,
+    )
+
+    assert result.exit_code != 0
+    assert "--env" in result.output
+    assert "--connect" not in result.output
+    assert "--no-connect" not in result.output
 
 
 def test_create_headless_rejects_multiple_incompatible_flags(
@@ -946,6 +937,76 @@ def test_create_foreground_without_type_is_rejected(
 
     assert result.exit_code != 0
     assert "--foreground" in result.output
+
+
+# =============================================================================
+# Tests for _apply_host_labels
+# =============================================================================
+#
+# _create_headless calls _apply_host_labels on the resolved online host so
+# that --host-label KEY=VALUE entries are honored on the headless create path
+# (both for existing/local hosts and as a second, idempotent application on
+# newly-created hosts). These tests pin down the helper's behavior so a
+# refactor cannot silently re-introduce the silent-drop bug that the headless
+# path originally had.
+
+
+def test_apply_host_labels_adds_tags_to_local_host(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """KEY=VALUE host labels should be applied as tags on the local host."""
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+
+    _apply_host_labels(local_host, ("env=prod", "team=infra"))
+
+    tags = local_provider.get_host_tags(local_host)
+    assert tags.get("env") == "prod"
+    assert tags.get("team") == "infra"
+
+
+def test_apply_host_labels_empty_tuple_is_noop(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """An empty label tuple should not touch the host's tags."""
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+    before = dict(local_provider.get_host_tags(local_host))
+
+    _apply_host_labels(local_host, ())
+
+    assert local_provider.get_host_tags(local_host) == before
+
+
+def test_apply_host_labels_strips_whitespace(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """Whitespace around KEY and VALUE should be stripped."""
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+
+    _apply_host_labels(local_host, ("  env  =  prod  ",))
+
+    assert local_provider.get_host_tags(local_host).get("env") == "prod"
+
+
+def test_apply_host_labels_ignores_entries_without_equals(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """Labels without '=' are silently dropped (documented current behavior).
+
+    _parse_target_host raises UserInputError for missing '=' on the new-host
+    branch; _apply_host_labels does not. The CLI layer catches invalid input
+    upstream, so here we only document that the helper tolerates malformed
+    entries rather than crashing.
+    """
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+    before_keys = set(local_provider.get_host_tags(local_host).keys())
+
+    _apply_host_labels(local_host, ("no-equals-here", "env=prod"))
+
+    tags = local_provider.get_host_tags(local_host)
+    assert tags.get("env") == "prod"
+    # The malformed entry should not have produced a new key.
+    new_keys = set(tags.keys()) - before_keys
+    assert new_keys == {"env"}
 
 
 # =============================================================================

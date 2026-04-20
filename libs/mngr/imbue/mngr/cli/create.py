@@ -172,13 +172,16 @@ def _resolve_agent_type_name(
     return resolved
 
 
-@pure
-def _resolve_early_agent_type(opts: CreateCliOptions) -> str | None:
-    """Extract the agent type name from CLI options for early headless detection.
+def _resolve_or_generate_agent_name(address: AgentAddress, opts: CreateCliOptions) -> AgentName:
+    """Return the agent name from the address, or auto-generate one from --name-style.
 
-    Returns the resolved type name, or None when defaulting to "claude".
+    Shared between the headless and non-headless create paths so both honour
+    an explicit name and fall back to the same auto-generated style. Callers
+    that skip auto-generation should check ``address.agent_name`` directly.
     """
-    return _resolve_agent_type_name(opts.type, opts.positional_agent_type)
+    if address.agent_name is not None:
+        return address.agent_name
+    return generate_agent_name(AgentNameStyle(opts.name_style.upper()))
 
 
 _HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
@@ -203,7 +206,8 @@ _HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
     ("message", "--message"),
     ("message_file", "--message-file"),
     ("edit_message", "--edit-message"),
-    ("connect", "--connect/--no-connect"),
+    # --no-connect is allowed (redundant but consistent — headless never connects);
+    # only explicit --connect=True is rejected. Handled in the function body below.
     ("reconnect", "--reconnect/--no-reconnect"),
     ("attach_command", "--attach-command"),
     ("connect_command", "--connect-command"),
@@ -231,6 +235,7 @@ def _reject_incompatible_headless_flags(
     ctx: click.Context,
     agent_type_name: str,
     target_path: Path | None,
+    opts: CreateCliOptions,
 ) -> None:
     """Raise UserInputError if any flags incompatible with the headless path were explicitly set.
 
@@ -250,6 +255,11 @@ def _reject_incompatible_headless_flags(
 
     if target_path is not None:
         explicit_flags.append("--target-path or :PATH suffix")
+
+    # --connect/--no-connect share a param. --no-connect is redundant (headless
+    # already never connects) so it's allowed; explicit --connect contradicts.
+    if is_param_explicit(ctx, "connect") and opts.connect:
+        explicit_flags.append("--connect")
 
     if explicit_flags:
         flags_str = ", ".join(explicit_flags)
@@ -307,14 +317,11 @@ def _create_headless(
     # they are not silently dropped.
     _apply_host_labels(host, opts.host_label)
 
-    # Mirror _parse_agent_opts: honour an explicit name from the address,
-    # otherwise auto-generate a unique name using --name-style (default
-    # coolname). Using a hardcoded fallback like "create" would cause
-    # collisions across concurrent or tightly-serial headless invocations.
-    if address.agent_name is not None:
-        agent_name = address.agent_name
-    else:
-        agent_name = generate_agent_name(AgentNameStyle(opts.name_style.upper()))
+    # Honour an explicit name from the address, otherwise auto-generate a
+    # unique name via --name-style (default coolname). Using a hardcoded
+    # fallback like "create" would cause collisions across concurrent or
+    # tightly-serial headless invocations. Shared with _parse_agent_opts.
+    agent_name = _resolve_or_generate_agent_name(address, opts)
     label_options = AgentLabelOptions(labels={"internal": "create-headless"})
 
     with headless_agent_output(
@@ -698,7 +705,7 @@ def create(ctx: click.Context, **kwargs) -> None:
         # Detect headless agent types and enforce the --foreground flag.
         # --foreground is required for headless types (makes the behavior explicit)
         # and rejected for non-headless types (it doesn't apply).
-        resolved_agent_type = _resolve_early_agent_type(opts)
+        resolved_agent_type = _resolve_agent_type_name(opts.type, opts.positional_agent_type)
         is_headless = False
         if resolved_agent_type is not None:
             agent_class = get_agent_class(resolved_agent_type)
@@ -717,7 +724,7 @@ def create(ctx: click.Context, **kwargs) -> None:
 
         if is_headless:
             assert resolved_agent_type is not None
-            _reject_incompatible_headless_flags(ctx, resolved_agent_type, target_path)
+            _reject_incompatible_headless_flags(ctx, resolved_agent_type, target_path, opts)
             _create_headless(mngr_ctx, output_opts, opts, address, resolved_agent_type)
             return
 
@@ -1454,13 +1461,8 @@ def _parse_agent_opts(
     target_path: Path | None = None,
 ) -> tuple[CreateAgentOptions, bool]:
     # Get agent name from address (which incorporates both positional and --name),
-    # otherwise auto-generate
-    parsed_agent_name: AgentName
-    if address.agent_name is not None:
-        parsed_agent_name = address.agent_name
-    else:
-        parsed_name_style = AgentNameStyle(opts.name_style.upper())
-        parsed_agent_name = generate_agent_name(parsed_name_style)
+    # otherwise auto-generate. Shared with _create_headless.
+    parsed_agent_name = _resolve_or_generate_agent_name(address, opts)
 
     # Determine transfer mode
     transfer_mode = _resolve_transfer_mode(opts, address, source_location, mngr_ctx, target_path)
