@@ -183,8 +183,6 @@ def deploy_test_trigger(
             "--exclude-project-settings",
             "--pass-env",
             "MNGR_ROOT_NAME",
-            "--no-auto-fix-args",
-            "--no-ensure-safe-commands",
             "--verify",
             "none",
             *disable_args,
