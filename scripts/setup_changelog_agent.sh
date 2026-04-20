@@ -53,7 +53,7 @@ export IS_SANDBOX=1
 # minimum set the scheduled run needs.
 DISABLE_PLUGIN_ARGS=$(uv run python -c "
 import importlib.metadata
-enabled = {'schedule', 'modal', 'claude', 'headless_claude', 'file'}
+enabled = {'schedule', 'modal', 'headless_command', 'file'}
 names = sorted({ep.name for ep in importlib.metadata.entry_points(group='mngr')} - enabled)
 print(' '.join(f'--disable-plugin {n}' for n in names))
 ")
@@ -79,44 +79,9 @@ fi
 
 echo "Creating schedule '${TRIGGER_NAME}' (provider=$PROVIDER, verify=$VERIFY)..."
 
-# The agent's prompt drives the full workflow. It invokes the deterministic
-# consolidation script, writes the AI summary, commits, pushes a fresh branch,
-# opens a PR, and writes a machine-readable status.json to its state dir.
-PROMPT=$(cat <<'EOF'
-You are the nightly changelog consolidation agent. You are already on a fresh
-branch checked out from main -- just commit onto it and push. Steps:
-
-0. Diagnostic: run `pwd` and `git status --porcelain` and print the output so
-   we can see any unexpected dirty files in the tree.
-
-1. Run: uv run python scripts/consolidate_changelog.py
-   - If the output contains "No changelog entries", skip to step 6 and write status="skipped-no-entries" with pr_url=null.
-   - If it fails, skip to step 6 and write status="failed" with pr_url=null and notes describing the error.
-
-2. Read UNABRIDGED_CHANGELOG.md and extract the topmost ## section (the one the script just added).
-
-3. Write a concise, human-friendly summary of that section into CHANGELOG.md: prepend a new section under the same date heading, after the existing header text, before any older ## sections. Group related changes, use natural language, keep it to a few bullets.
-
-4. Configure git and commit:
-   - git config user.email "changelog-bot@imbue.com"
-   - git config user.name "Changelog Bot"
-   - gh auth setup-git
-   - git add -A
-   - git commit -m "Consolidate changelog entries for <today's date>"
-   - git push --set-upstream origin HEAD
-
-5. Open a PR with: gh pr create --base main --title "Changelog consolidation <today's date>" --body "<body>"
-   - The body should start with "Automated nightly consolidation of changelog entries."
-   - If anything looked weird or wrong during the run (malformed entries, conflicts, unexpected consolidation output, errors you worked around, etc.), append a second paragraph with those notes so a human can review. If everything was clean, one sentence is fine.
-   - Capture the PR URL from the output.
-
-6. Write status.json to the agent state directory ($MNGR_AGENT_STATE_DIR/status.json). The file must be valid JSON with keys:
-   - status: one of "done", "skipped-no-entries", "failed"
-   - pr_url: the PR URL string if a PR was opened, else null
-   - notes: a short sentence about what happened
-EOF
-)
-
+# headless_command + bash wrapper. We tried headless_claude (with --message)
+# but claude --print exits silently in the Modal container with no stderr,
+# making it undebuggable. The bash wrapper is more verbose but reliably runs.
 uv run mngr schedule add "$TRIGGER_NAME" \
     --command create \
     --schedule "$SCHEDULE" \
@@ -129,10 +94,9 @@ uv run mngr schedule add "$TRIGGER_NAME" \
     --pass-env GH_TOKEN \
     --pass-env ANTHROPIC_API_KEY \
     --pass-env MNGR_ROOT_NAME \
-    --pass-env IS_SANDBOX \
     --no-auto-fix-args \
     $DISABLE_PLUGIN_ARGS \
-    --args "--type headless_claude --foreground --no-ensure-clean --branch :mngr/changelog-consolidation-{DATE} --host-label SCHEDULE=$TRIGGER_NAME -S 'agent_types.headless_claude.cli_args=[\"--dangerously-skip-permissions\"]' -S 'agent_types.headless_claude.command=env IS_SANDBOX=1 claude' --message $(printf %s "$PROMPT" | uv run python -c 'import shlex, sys; print(shlex.quote(sys.stdin.read()), end="")')"
+    --args "--type headless_command --foreground -S agent_types.headless_command.command='bash -c \"cd /code/project && bash scripts/run_changelog_consolidation.sh\"'"
 
 echo "Schedule '${TRIGGER_NAME}' created successfully."
 echo ""
