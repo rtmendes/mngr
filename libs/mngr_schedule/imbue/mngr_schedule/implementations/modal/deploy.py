@@ -100,7 +100,7 @@ def get_repo_root() -> Path:
     if repo_root is None:
         raise ScheduleDeployError(
             f"Could not find git repository root. Must be run from within a git repository. git stderr: {error}"
-        ) from None
+        )
     return repo_root
 
 
