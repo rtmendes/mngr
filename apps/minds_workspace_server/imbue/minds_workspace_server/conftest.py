@@ -6,27 +6,49 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import Browser
+from playwright.sync_api import Playwright
+from playwright.sync_api import sync_playwright
 
 from imbue.minds_workspace_server.agent_manager import AgentManager
 from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
 
 
 @pytest.fixture
+def playwright() -> Generator[Playwright, None, None]:
+    """Override pytest-playwright's session-scoped playwright to function scope.
+
+    The upstream fixture (pytest_playwright.pytest_playwright.playwright)
+    is session-scoped and torn down at pytest session end; its teardown
+    reaps the playwright-node driver subprocess. That teardown runs AFTER
+    mngr's autouse `session_cleanup` fixture
+    (libs/mngr/imbue/mngr/conftest.py) checks for leaked child processes,
+    so in offload release batches that mix workspace-server e2e tests with
+    other mngr tests, the still-alive node driver trips the cleanup
+    assertion and cascades into teardown errors for every sibling test
+    in the batch (test_install.py, test_help.py, Vultr's test_release_vultr
+    all show up as "PID X: MainThread - .../playwright/driver/node ... run-driver"
+    leaks).
+
+    Making playwright per-test guarantees each test's driver exits inside
+    its own teardown before any session-level check runs. Cost: a few
+    hundred ms per test to re-spawn the node driver -- acceptable for the
+    small e2e suite and avoids a brittle race with external fixture
+    ordering.
+    """
+    pw = sync_playwright().start()
+    yield pw
+    pw.stop()
+
+
+@pytest.fixture
 def browser(launch_browser: Callable[[], Browser]) -> Generator[Browser, None, None]:
     """Override pytest-playwright's session-scoped browser to function scope.
 
-    The upstream `browser` fixture is session-scoped; its teardown runs at
-    pytest session exit, after mngr's autouse `session_cleanup` fixture
-    (libs/mngr/imbue/mngr/conftest.py) has already checked for leaked child
-    processes. In offload release batches that mix workspace-server e2e
-    tests with other mngr tests, the still-alive chrome-headless-shell
-    processes trip `session_cleanup`'s leak assertion and cascade into
-    teardown errors for every sibling test in the batch.
-
-    Making the browser per-test guarantees each test's chromium is closed
-    synchronously in its own teardown, before any session-level check
-    runs. The per-launch cost (~1s) is negligible relative to the total
-    test time, and avoids a brittle race with external fixture ordering.
+    Same rationale as the playwright fixture above: upstream's session
+    scope means chrome-headless-shell outlives the per-test teardown,
+    and mngr's session_cleanup autouse catches it as a leak. Per-test
+    browser closes synchronously, reaping chrome before any session-
+    level check runs.
     """
     browser_instance = launch_browser()
     yield browser_instance
