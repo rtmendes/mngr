@@ -660,9 +660,9 @@ def test_start_observe_spawns_long_lived_subprocess(
 ) -> None:
     """End-to-end: the observe subprocess stays alive after startup.
 
-    This is the regression test for the ``python -m imbue.mngr`` bug; with the
-    old command the subprocess exited immediately (Python package has no
-    ``__main__``) and this assertion would fire.
+    A healthy ``mngr observe`` keeps running until it is explicitly stopped;
+    this test asserts that after ``_start_observe`` returns, the child is
+    still running a short window later rather than having exited on its own.
     """
     if shutil.which("mngr") is None:
         pytest.skip("mngr binary not on PATH")
