@@ -96,10 +96,10 @@ def get_repo_root() -> Path:
 
     Raises ScheduleDeployError if not inside a git repository.
     """
-    repo_root, err = _try_get_repo_root_with_err()
+    repo_root, error = _try_get_repo_root_with_error()
     if repo_root is None:
         raise ScheduleDeployError(
-            f"Could not find git repository root. Must be run from within a git repository. git stderr: {err}"
+            f"Could not find git repository root. Must be run from within a git repository. git stderr: {error}"
         ) from None
     return repo_root
 
@@ -109,10 +109,10 @@ def try_get_repo_root() -> Path | None:
 
     Returns the repo root Path if inside a git repo, or None if not.
     """
-    return _try_get_repo_root_with_err()[0]
+    return _try_get_repo_root_with_error()[0]
 
 
-def _try_get_repo_root_with_err() -> tuple[Path | None, str]:
+def _try_get_repo_root_with_error() -> tuple[Path | None, str]:
     """Internal: like try_get_repo_root but also returns git stderr on failure."""
     with ConcurrencyGroup(name="git-toplevel") as cg:
         result = cg.run_process_to_completion(
