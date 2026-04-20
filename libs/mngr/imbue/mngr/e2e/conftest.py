@@ -22,6 +22,7 @@ from imbue.mngr.config.consts import ROOT_CONFIG_FILENAME
 from imbue.mngr.config.data_types import USER_ID_FILENAME
 from imbue.mngr.utils.polling import poll_until
 from imbue.mngr.utils.testing import init_git_repo
+from imbue.mngr_modal.backend import MODAL_NAME_MAX_LENGTH
 from imbue.mngr_modal.backend import truncate_modal_name
 from imbue.skitwright.runner import run_command
 from imbue.skitwright.session import Session
@@ -406,7 +407,7 @@ def e2e(
     test_user_id = _setup_test_profile(temp_host_dir)
     # Pre-compute the Modal environment name so create (inside the mngr
     # subprocess) and delete (below) agree without either side re-deriving it.
-    test_modal_env_name = truncate_modal_name(f"{test_prefix}{test_user_id}")
+    test_modal_env_name = truncate_modal_name(f"{test_prefix}{test_user_id}", max_length=MODAL_NAME_MAX_LENGTH)
 
     # Add the e2e bin directory to PATH so the connect script is available
     env["PATH"] = f"{_BIN_DIR}:{env.get('PATH', '')}"

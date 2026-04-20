@@ -50,7 +50,7 @@ STATE_VOLUME_SUFFIX: Final[str] = "-state"
 MODAL_NAME_MAX_LENGTH: Final[int] = 64
 
 
-def truncate_modal_name(name: str, max_length: int = MODAL_NAME_MAX_LENGTH) -> str:
+def truncate_modal_name(name: str, max_length: int) -> str:
     """Truncate a name to Modal's length limit, stripping trailing separators.
 
     Shared by the create path (backend) and the test delete path (e2e conftest)
@@ -461,7 +461,7 @@ Supported build arguments for the modal provider:
             logger.warning(
                 "Truncating Modal environment name to {} characters: {}", MODAL_NAME_MAX_LENGTH, environment_name
             )
-        environment_name = truncate_modal_name(environment_name)
+        environment_name = truncate_modal_name(environment_name, max_length=MODAL_NAME_MAX_LENGTH)
 
         app_name = config.app_name if config.app_name is not None else default_app_name
         host_dir = config.host_dir if config.host_dir is not None else Path("/mngr")
