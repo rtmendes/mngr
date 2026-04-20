@@ -76,34 +76,31 @@ echo "Creating schedule '${TRIGGER_NAME}' (provider=$PROVIDER, verify=$VERIFY)..
 # consolidation script, writes the AI summary, commits, pushes a fresh branch,
 # opens a PR, and writes a machine-readable status.json to its state dir.
 PROMPT=$(cat <<'EOF'
-You are the nightly changelog consolidation agent. Follow these steps in order:
+You are the nightly changelog consolidation agent. You are already on a fresh
+branch checked out from main -- just commit onto it and push. Steps:
 
 1. Run: uv run python scripts/consolidate_changelog.py
-   - If the output contains "No changelog entries", skip to step 7 and write status="skipped-no-entries" with pr_url=null.
-   - If it fails, skip to step 7 and write status="failed" with pr_url=null and notes describing the error.
+   - If the output contains "No changelog entries", skip to step 6 and write status="skipped-no-entries" with pr_url=null.
+   - If it fails, skip to step 6 and write status="failed" with pr_url=null and notes describing the error.
 
 2. Read UNABRIDGED_CHANGELOG.md and extract the topmost ## section (the one the script just added).
 
 3. Write a concise, human-friendly summary of that section into CHANGELOG.md: prepend a new section under the same date heading, after the existing header text, before any older ## sections. Group related changes, use natural language, keep it to a few bullets.
 
-4. Configure git and gh auth so you can push:
+4. Configure git and commit:
    - git config user.email "changelog-bot@imbue.com"
    - git config user.name "Changelog Bot"
    - gh auth setup-git
-
-5. Create a fresh branch, commit, and push:
-   - BRANCH="mngr/changelog-consolidation-$(date -u +%Y-%m-%d-%H-%M-%S)"
    - git add -A
    - git commit -m "Consolidate changelog entries for <today's date>"
-   - git checkout -b "$BRANCH"
-   - git push --set-upstream origin "$BRANCH"
+   - git push --set-upstream origin HEAD
 
-6. Open a PR with: gh pr create --base main --title "Changelog consolidation <today's date>" --body "<body>"
+5. Open a PR with: gh pr create --base main --title "Changelog consolidation <today's date>" --body "<body>"
    - The body should start with "Automated nightly consolidation of changelog entries."
    - If anything looked weird or wrong during the run (malformed entries, conflicts, unexpected consolidation output, errors you worked around, etc.), append a second paragraph with those notes so a human can review. If everything was clean, one sentence is fine.
    - Capture the PR URL from the output.
 
-7. Write status.json to the agent state directory ($MNGR_AGENT_STATE_DIR/status.json). The file must be valid JSON with keys:
+6. Write status.json to the agent state directory ($MNGR_AGENT_STATE_DIR/status.json). The file must be valid JSON with keys:
    - status: one of "done", "skipped-no-entries", "failed"
    - pr_url: the PR URL string if a PR was opened, else null
    - notes: a short sentence about what happened
@@ -124,9 +121,8 @@ uv run mngr schedule add "$TRIGGER_NAME" \
     --pass-env MNGR_ROOT_NAME \
     --pass-env IS_SANDBOX \
     --no-auto-fix-args \
-    --no-ensure-safe-commands \
     $DISABLE_PLUGIN_ARGS \
-    --args "--type headless_claude --foreground --message $(printf %s "$PROMPT" | uv run python -c 'import shlex, sys; print(shlex.quote(sys.stdin.read()), end="")')"
+    --args "--type headless_claude --foreground --branch :mngr/changelog-consolidation-{DATE} --host-label SCHEDULE=$TRIGGER_NAME --message $(printf %s "$PROMPT" | uv run python -c 'import shlex, sys; print(shlex.quote(sys.stdin.read()), end="")')"
 
 echo "Schedule '${TRIGGER_NAME}' created successfully."
 echo ""
