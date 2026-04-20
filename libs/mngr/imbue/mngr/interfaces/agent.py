@@ -13,6 +13,7 @@ from typing import Sequence
 from typing import TYPE_CHECKING
 from typing import TypeVar
 
+from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.mutable_model import MutableModel
@@ -491,6 +492,15 @@ class StreamingHeadlessAgentMixin(HeadlessAgentMixin):
         agent's state dir are removed when the agent is destroyed, so no
         explicit cleanup is required.
 
-        Default is a no-op -- agent types that ignore the initial message,
-        or that expose it some other way, do not need to override.
+        The default implementation cannot deliver the message (it has no
+        prompt-file protocol), so it logs a warning naming the agent class
+        rather than silently dropping the user's ``--message`` content.
+        Agent types that ignore the initial message should override this to
+        a true no-op; agent types that expose the message some other way
+        should override to stage it where their command can read it.
         """
+        logger.warning(
+            "Ignoring initial_message for agent type {}: this agent does not implement "
+            "stage_initial_message, so the --message content cannot be delivered.",
+            type(self).__name__,
+        )

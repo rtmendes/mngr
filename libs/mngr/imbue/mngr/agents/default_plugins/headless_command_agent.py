@@ -87,9 +87,11 @@ class HeadlessCommand(BaseHeadlessAgent[HeadlessCommandConfig]):
 
         ``initial_message`` is accepted for interface compatibility but is
         ignored: ``HeadlessCommand`` has no prompt-file protocol, so any
-        user-supplied ``--message`` is silently dropped here (callers that
-        need prompt delivery should use an agent type that overrides
-        ``stage_initial_message``).
+        user-supplied ``--message`` cannot be delivered. The default
+        ``StreamingHeadlessAgentMixin.stage_initial_message`` logs a
+        warning in that case so the drop is audible; callers that need
+        actual prompt delivery should use an agent type that overrides
+        ``stage_initial_message``.
         """
         base_command = super().assemble_command(host, agent_args, command_override, initial_message=initial_message)
         return CommandString(
