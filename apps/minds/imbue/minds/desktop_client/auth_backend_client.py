@@ -152,19 +152,27 @@ class AuthBackendClient(FrozenModel):
         )
 
     def oauth_authorize_url(self, provider_id: str, callback_url: str) -> str | None:
-        """Return the URL to which the user should be redirected to begin OAuth."""
+        """Return the URL to which the user should be redirected to begin OAuth.
+
+        Returns ``None`` only when the backend reports that the provider is
+        unknown (``status`` != ``"OK"`` in a successful 2xx response, which is
+        how the backend signals an unknown provider). All other failure modes
+        raise: ``httpx.HTTPError`` for connection errors, ``AuthBackendError``
+        for any non-2xx status or malformed response.
+        """
         response = httpx.post(
             self._url("/auth/oauth/authorize"),
             json={"provider_id": provider_id, "callback_url": callback_url},
             timeout=self.timeout_seconds,
         )
+        if response.status_code >= 500 or response.status_code == 503:
+            raise AuthBackendError(f"Auth backend returned {response.status_code}: {response.text[:200]}")
         if response.status_code != 200:
-            logger.warning("Auth backend OAuth authorize failed: {}", response.status_code)
-            return None
+            raise AuthBackendError(f"Auth backend returned {response.status_code}: {response.text[:200]}")
         try:
             data = response.json()
-        except ValueError:
-            return None
+        except ValueError as exc:
+            raise AuthBackendError("Auth backend returned non-JSON response") from exc
         if data.get("status") != "OK":
             logger.warning("Auth backend OAuth authorize rejected: {}", data.get("message"))
             return None

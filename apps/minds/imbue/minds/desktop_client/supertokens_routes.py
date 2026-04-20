@@ -237,7 +237,11 @@ def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
     backend = _get_auth_backend(request)
     server_port = _get_server_port(request)
     callback_url = f"http://127.0.0.1:{server_port}/auth/callback/{provider_id}"
-    auth_url = backend.oauth_authorize_url(provider_id=provider_id, callback_url=callback_url)
+    try:
+        auth_url = backend.oauth_authorize_url(provider_id=provider_id, callback_url=callback_url)
+    except (httpx.HTTPError, AuthBackendError) as exc:
+        logger.warning("Auth backend unreachable during oauth_authorize for {}: {}", provider_id, exc)
+        return _json_response({"status": "ERROR", "error": "Authentication service is unavailable"}, 502)
     if auth_url is None:
         return _json_response({"status": "ERROR", "error": f"Unknown provider: {provider_id}"}, 404)
 
