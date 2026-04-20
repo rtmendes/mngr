@@ -216,9 +216,10 @@ _MNGR_PROMPT_FILE: str = ".mngr-prompt"
 # Canonical form of the "read the staged prompt" arg. The prompt file lives
 # in the agent's state dir ($MNGR_AGENT_STATE_DIR) so it is cleaned up
 # automatically when the agent is destroyed and never pollutes an in-place
-# source directory. Callers that build the command themselves (e.g.
-# ``mngr ask``) pass this exact string in agent_args so assemble_command
-# can detect it and avoid double-feeding.
+# source directory. assemble_command appends this string automatically when
+# an initial_message is supplied; any caller that has already injected the
+# same exact string into agent_args gets it de-duplicated rather than
+# double-fed.
 _MNGR_PROMPT_CAT_ARG: str = f'"$(cat "$MNGR_AGENT_STATE_DIR/{_MNGR_PROMPT_FILE}")"'
 
 
