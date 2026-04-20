@@ -86,6 +86,9 @@ PROMPT=$(cat <<'EOF'
 You are the nightly changelog consolidation agent. You are already on a fresh
 branch checked out from main -- just commit onto it and push. Steps:
 
+0. Diagnostic: run `pwd` and `git status --porcelain` and print the output so
+   we can see any unexpected dirty files in the tree.
+
 1. Run: uv run python scripts/consolidate_changelog.py
    - If the output contains "No changelog entries", skip to step 6 and write status="skipped-no-entries" with pr_url=null.
    - If it fails, skip to step 6 and write status="failed" with pr_url=null and notes describing the error.
@@ -129,7 +132,7 @@ uv run mngr schedule add "$TRIGGER_NAME" \
     --pass-env IS_SANDBOX \
     --no-auto-fix-args \
     $DISABLE_PLUGIN_ARGS \
-    --args "--type headless_claude --foreground --branch :mngr/changelog-consolidation-{DATE} --host-label SCHEDULE=$TRIGGER_NAME --message $(printf %s "$PROMPT" | uv run python -c 'import shlex, sys; print(shlex.quote(sys.stdin.read()), end="")')"
+    --args "--type headless_claude --foreground --no-ensure-clean --branch :mngr/changelog-consolidation-{DATE} --host-label SCHEDULE=$TRIGGER_NAME --message $(printf %s "$PROMPT" | uv run python -c 'import shlex, sys; print(shlex.quote(sys.stdin.read()), end="")')"
 
 echo "Schedule '${TRIGGER_NAME}' created successfully."
 echo ""
