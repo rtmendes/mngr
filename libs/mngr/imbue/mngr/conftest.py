@@ -745,12 +745,19 @@ def _ensure_dockerd_for_release() -> None:
             last_result.stderr,
         )
 
+    # Pull stdout/stderr into locals so the !r conversion binds to a plain
+    # name. Written inline as `last_result.stdout if last_result else ''!r`,
+    # the !r only applies to the '' literal, so dockerd's multi-line output
+    # would land verbatim in the error -- defeating the intent of using repr
+    # to keep embedded newlines/control chars visible during triage.
+    last_stdout = last_result.stdout if last_result else ""
+    last_stderr = last_result.stderr if last_result else ""
     raise RuntimeError(
         f"Failed to start dockerd after 3 attempts. "
         f"Last returncode={last_result.returncode if last_result else 'N/A'}, "
         f"socket_exists={docker_sock.exists()}. "
-        f"stdout={last_result.stdout if last_result else ''!r} "
-        f"stderr={last_result.stderr if last_result else ''!r}"
+        f"stdout={last_stdout!r} "
+        f"stderr={last_stderr!r}"
     )
 
 
