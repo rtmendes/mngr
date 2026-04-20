@@ -69,7 +69,7 @@ def remove_work_dir_on_host(host: OnlineHostInterface, work_path: Path) -> None:
 
 
 @contextmanager
-def _destroy_on_exit(host: OnlineHostInterface, agent: AgentInterface) -> Iterator[None]:
+def destroy_agent_on_exit(host: OnlineHostInterface, agent: AgentInterface) -> Iterator[None]:
     """Stop and destroy an agent on exit, suppressing cleanup errors."""
     try:
         yield
@@ -163,7 +163,7 @@ def headless_agent_output(
     )
 
     agent = result.agent
-    with _destroy_on_exit(host, agent):
+    with destroy_agent_on_exit(host, agent):
         if not isinstance(agent, StreamingHeadlessAgentMixin):
             raise MngrError(f"Expected streaming headless agent, got {type(agent).__name__}")
         yield agent
