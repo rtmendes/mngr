@@ -9,6 +9,8 @@ from imbue.mngr_schedule.cli.commands import schedule
 from imbue.mngr_schedule.data_types import ScheduleTriggerDefinition
 from imbue.mngr_schedule.data_types import ScheduledMngrCommand
 from imbue.mngr_schedule.implementations.local.deploy import deploy_local_schedule
+from imbue.mngr_schedule.implementations.local.deploy import get_local_schedule_creation_record
+from imbue.mngr_schedule.implementations.local.deploy import get_local_trigger_run_script
 
 
 def test_schedule_defaults_to_add_subcommand(
@@ -391,6 +393,13 @@ def test_schedule_remove_local_cli_cleans_up_disk_artifacts(
     """
     _deploy_local_trigger(temp_mngr_ctx, "test-remove-trigger")
 
+    # Sanity-check that deploy actually staged the on-disk artifacts we're
+    # about to assert removal of. If this fails, the test setup is broken
+    # and the post-remove assertions below would be vacuous.
+    trigger_dir = get_local_trigger_run_script(temp_mngr_ctx, "test-remove-trigger").parent
+    assert trigger_dir.is_dir(), f"deploy should have created {trigger_dir}"
+    assert get_local_schedule_creation_record(temp_mngr_ctx, "test-remove-trigger") is not None
+
     result = cli_runner.invoke(
         schedule,
         ["remove", "test-remove-trigger", "--provider", "local", "--force"],
@@ -398,6 +407,8 @@ def test_schedule_remove_local_cli_cleans_up_disk_artifacts(
     )
     assert result.exit_code == 0, f"remove failed: {result.output}"
     assert "Removed schedule" in result.output
+    assert not trigger_dir.exists(), f"trigger dir {trigger_dir} should have been removed"
+    assert get_local_schedule_creation_record(temp_mngr_ctx, "test-remove-trigger") is None
 
 
 def test_schedule_remove_local_missing_trigger_with_force(
