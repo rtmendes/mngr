@@ -175,9 +175,11 @@ def _resolve_agent_type_name(
 def _resolve_or_generate_agent_name(address: AgentAddress, opts: CreateCliOptions) -> AgentName:
     """Return the agent name from the address, or auto-generate one from --name-style.
 
-    Shared between the headless and non-headless create paths so both honour
-    an explicit name and fall back to the same auto-generated style. Callers
-    that skip auto-generation should check ``address.agent_name`` directly.
+    Called from ``_parse_agent_opts`` as part of the shared create pipeline
+    (which now handles both interactive and headless agents). Callers that
+    need to treat "no explicit name" differently from "auto-generate" should
+    read ``address.agent_name`` directly rather than going through this
+    helper.
     """
     if address.agent_name is not None:
         return address.agent_name
