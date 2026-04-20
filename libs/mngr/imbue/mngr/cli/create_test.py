@@ -864,13 +864,12 @@ def test_create_headless_with_message_does_not_raise(
 ) -> None:
     """Passing --message on the headless path must not blow up in api_create.
 
-    Regression test: a previous revision plumbed --message onto
-    CreateAgentOptions.initial_message in a way that caused api_create to
-    call wait_for_ready_signal + send_message on headless agents. Both
-    raise on headless, so every headless create that carried a message
-    exited non-zero. The agent command here ignores the prompt file
+    Headless agents cannot receive a message via wait_for_ready_signal +
+    send_message (both raise), so api_create must take the headless branch
+    and deliver the prompt through stage_initial_message instead. The
+    agent command here (a plain ``echo``) ignores the prompt file
     (headless_command has no prompt semantics); the test is purely
-    checking that the flow completes.
+    checking that the flow completes when --message is supplied.
     """
     profile_dir = get_or_create_profile_dir(temp_host_dir)
     write_agent_type_to_settings_toml(profile_dir / "settings.toml", "headless_command", "echo headless-test-output")
