@@ -14,8 +14,11 @@ export SUPERTOKENS_CONNECTION_URI=
 # SuperTokens core API key (required in most deployments).
 export SUPERTOKENS_API_KEY=
 
-# Optional: public base URL embedded in password-reset and email-verification
-# links. Defaults to https://cloudflare-forwarding.modal.run if unset.
+# Public base URL embedded in password-reset and email-verification links.
+# Must match the URL Modal assigns to the deployed function; if unset, the
+# app derives `https://{workspace}--cloudflare-forwarding-<env>-fastapi-app.modal.run`
+# as a fallback, which is only correct for the default Modal workspace.
+# Same value as the minds client's CLOUDFLARE_FORWARDING_URL.
 export AUTH_WEBSITE_DOMAIN=
 
 # Optional: Google OAuth provider overrides. Leave blank to use the

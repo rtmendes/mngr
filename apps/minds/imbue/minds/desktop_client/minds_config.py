@@ -27,7 +27,9 @@ from imbue.minds.errors import MindsConfigError
 
 _CONFIG_FILENAME = "config.toml"
 
-DEFAULT_CLOUDFLARE_FORWARDING_URL: Final[str] = "https://joshalbrecht--cloudflare-forwarding-fastapi-app.modal.run"
+DEFAULT_CLOUDFLARE_FORWARDING_URL: Final[str] = (
+    "https://joshalbrecht--cloudflare-forwarding-production-fastapi-app.modal.run"
+)
 
 _CLOUDFLARE_FORWARDING_URL_ENV: Final[str] = "CLOUDFLARE_FORWARDING_URL"
 
