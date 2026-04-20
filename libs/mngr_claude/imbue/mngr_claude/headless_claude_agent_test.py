@@ -119,6 +119,18 @@ def _write_fake_agent_output(
     (agent_dir / "stderr.log").write_text(stderr)
 
 
+def _set_agent_initial_message(host: Host, agent: HeadlessClaude, initial_message: str) -> None:
+    """Seed the agent's data.json so get_initial_message() returns the given message.
+
+    Mirrors the pattern in base_agent_test.py::test_get_initial_message_returns_message_when_set:
+    drives the real data.json -> _read_data -> get_initial_message path rather
+    than monkeypatching the method.
+    """
+    agent_dir = host.host_dir / "agents" / str(agent.id)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    (agent_dir / "data.json").write_text(json.dumps({"initial_message": initial_message}))
+
+
 class _AlwaysFinishedHeadlessClaude(HeadlessClaude):
     """HeadlessClaude subclass with fast timeouts that always reports as finished.
 
@@ -267,13 +279,12 @@ def test_prepare_headless_work_dir_no_message_is_noop(
 def test_assemble_command_appends_prompt_ref_when_initial_message_set(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When initial_message is set and agent_args do not already reference the prompt file,
     assemble_command appends a cat of .mngr-prompt so claude actually receives the user's message.
     """
     agent, host = _make_headless_agent(local_provider, tmp_path)
-    monkeypatch.setattr(type(agent), "get_initial_message", lambda self: "hi there")
+    _set_agent_initial_message(host, agent, "hi there")
 
     cmd = agent.assemble_command(host, agent_args=(), command_override=None)
 
@@ -285,13 +296,12 @@ def test_assemble_command_appends_prompt_ref_when_initial_message_set(
 def test_assemble_command_does_not_duplicate_prompt_ref(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """If the caller already included a .mngr-prompt reference in agent_args,
     assemble_command must not append a second one (would double-feed the prompt).
     """
     agent, host = _make_headless_agent(local_provider, tmp_path)
-    monkeypatch.setattr(type(agent), "get_initial_message", lambda self: "hi there")
+    _set_agent_initial_message(host, agent, "hi there")
 
     explicit_prompt_arg = '"$(cat "$MNGR_AGENT_WORK_DIR/.mngr-prompt")"'
     cmd = agent.assemble_command(host, agent_args=(explicit_prompt_arg,), command_override=None)
