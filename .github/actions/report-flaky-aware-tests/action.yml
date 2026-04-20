@@ -85,7 +85,7 @@ runs:
         jq -n \
           --arg name "$CHECK_NAME" \
           --arg head_sha "$HEAD_SHA" \
-          --arg summary "One or more tests failed on first attempt but passed on retry. See job logs and the \"$CHECK_NAME\" annotations for details." \
+          --arg summary "One or more tests failed on first attempt but passed on retry. See the workflow run summary and job logs for the failed-attempt annotations and details." \
           '{
             name: $name,
             head_sha: $head_sha,
