@@ -185,10 +185,17 @@ def _resolve_early_agent_type(opts: CreateCliOptions) -> str | None:
 # related to source resolution, transfer, git, environment, provisioning,
 # and agent identity now flows through the shared _setup_create /
 # _create_agent pipeline and so works for headless too. The flags below
-# are specific to the post-create "connect + attach" phase (or to agent
-# lifecycles that headless does not participate in), which the headless
-# path skips entirely -- accepting them silently would confuse users.
+# are rejected for one of three reasons:
+#   1. They drive the post-create "connect + attach" phase that headless
+#      skips entirely (--reconnect, --attach-command, --connect-command).
+#   2. They require delivering text via agent.send_message after startup,
+#      which headless agents do not support (--edit-message).
+#   3. They only make sense for long-lived agents, not one-shot streaming
+#      agents (--reuse, --update, --start-on-boot).
+# Accepting any of these silently would confuse users, so we reject early.
 _HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
+    # --edit-message opens an editor and delivers the result via send_message
+    # after the agent boots. Headless agents have no send_message path.
     ("edit_message", "--edit-message"),
     ("reconnect", "--reconnect/--no-reconnect"),
     ("attach_command", "--attach-command"),
@@ -216,10 +223,12 @@ def _reject_incompatible_headless_flags(
 
     Headless agents stream and auto-destroy after one pass, so the
     interactive post-create flow (connect, attach, reconnect-on-drop) does
-    not apply. Everything else -- source resolution, transfer, git, env,
-    provisioning, agent identity -- is shared with the non-headless path
-    and works normally. This function catches the small set of genuinely
-    incompatible flags early so they are not silently ignored.
+    not apply, neither does the send_message path used by --edit-message,
+    nor do long-lived-agent flags like --reuse/--update/--start-on-boot.
+    Everything else -- source resolution, transfer, git, env, provisioning,
+    agent identity -- is shared with the non-headless path and works
+    normally. This function catches the small set of genuinely incompatible
+    flags early so they are not silently ignored.
     """
     explicit_flags: list[str] = [
         display_name for param_name, display_name in _HEADLESS_INCOMPATIBLE_FLAGS if is_param_explicit(ctx, param_name)
