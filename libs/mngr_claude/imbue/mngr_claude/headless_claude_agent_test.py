@@ -293,17 +293,22 @@ def test_stream_output_raises_when_empty_file(
 ) -> None:
     """stream_output should raise MngrError when stdout file exists but is empty.
 
-    Creates both stdout.jsonl (empty) and stderr.log (empty). The error
-    fallback chain reaches pane capture (which returns None -- no tmux
-    session for the test agent), then falls through to "no details available".
+    Creates both stdout.jsonl (empty) and stderr.log (empty). Stderr and the
+    (absent) tmux pane produce no content, so the raised error carries only
+    the always-appended [state-dir] diagnostic (and HeadlessClaude's
+    [work-dir] diagnostic) under the stable 'exited without producing output'
+    template.
     """
     _patch_agent_as_stopped(monkeypatch)
     agent, host = _make_headless_agent(local_provider, tmp_path)
 
     _write_fake_agent_output(host, agent)
 
-    with pytest.raises(MngrError, match="no details available"):
+    with pytest.raises(MngrError, match="exited without producing output") as exc_info:
         list(agent.stream_output())
+    # The state-dir diagnostic is unconditionally appended; its presence
+    # confirms _raise_no_output_error was reached via the expected path.
+    assert "[state-dir]" in str(exc_info.value)
 
 
 def test_stream_output_handles_file_without_trailing_newline(
