@@ -124,8 +124,8 @@ def cleanup_modal_app(
                             env=env,
                             cwd=cwd,
                         )
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
-        logger.warning("Failed to clean up Modal app '{}'", app_name)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError) as exc:
+        logger.warning("Failed to clean up Modal app '{}': {}", app_name, exc)
 
 
 def remove_test_trigger(
