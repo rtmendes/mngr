@@ -85,15 +85,16 @@ def test_gc_discover_hosts_returns_empty_hosts_for_offline_provider(temp_mngr_ct
 
 @pytest.mark.acceptance
 @pytest.mark.docker_sdk
-def test_gc_multi_provider_continues_when_one_offline(
+def test_discover_hosts_for_gc_includes_both_providers_when_one_offline(
     temp_mngr_ctx: MngrContext,
     local_provider: LocalProviderInstance,
 ) -> None:
-    """GC should process available providers even when one provider is offline.
+    """_discover_hosts_for_gc should include both providers when one is offline.
 
     Docker's discover_hosts() catches ProviderUnavailableError internally and
     returns [], so both providers appear in the result. The offline Docker
-    provider has empty hosts, and the local provider has its hosts.
+    provider has empty hosts, and the local provider has its hosts. This lets
+    downstream GC resource functions still process the available provider.
     """
     offline_docker = make_offline_docker_provider(temp_mngr_ctx)
 
