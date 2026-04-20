@@ -477,11 +477,10 @@ class AgentManager:
             _loguru_logger.exception("Agent refresh failed")
 
     def _resolve_observe_events_dir(self) -> Path:
-        """Resolve (but do not create) the events directory for mngr observe.
+        """Return the path to the mngr observe events directory.
 
-        Kept separate from ``_build_observe_command`` so the command builder
-        stays pure; the directory is created only on the production start
-        path inside ``_start_observe``.
+        Does not create the directory; ``_start_observe`` is responsible for
+        creating it on the production start path.
         """
         agent_state_dir = os.environ.get("MNGR_AGENT_STATE_DIR", "")
         if agent_state_dir:
@@ -491,9 +490,7 @@ class AgentManager:
     def _build_observe_command(self) -> list[str]:
         """Build the argv for the mngr observe discovery-only subprocess.
 
-        Pure: this method has no side effects, so tests can assert on the
-        command shape (specifically that the first element is a real mngr
-        binary) without touching the filesystem or spawning the subprocess.
+        Pure: no side effects (does not create the events directory).
         """
         events_dir = self._resolve_observe_events_dir()
         return [
