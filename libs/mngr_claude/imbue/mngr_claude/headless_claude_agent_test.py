@@ -540,6 +540,53 @@ def test_file_during_grace_period_returns_true_immediately(
 
 
 # =============================================================================
+# Tests for _get_work_dir_diagnostic
+# =============================================================================
+
+
+def test_work_dir_diagnostic_reports_missing_files(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """When neither .mngr-prompt nor .mngr-system-prompt exists, the diagnostic says so.
+
+    Guards the silent-exit branch of the work-dir diagnostic -- post-mortems need
+    to distinguish "claude never ran because its prompt inputs are missing" from
+    "claude ran and produced no output." The header must include the work_dir path
+    so triage can locate the directory; each file line must report "does not exist".
+    """
+    agent, _host = _make_headless_agent(local_provider, tmp_path)
+    diagnostic = agent._get_work_dir_diagnostic()
+    assert f"work_dir: {agent.work_dir}" in diagnostic
+    assert ".mngr-prompt:" in diagnostic
+    assert ".mngr-system-prompt:" in diagnostic
+    assert diagnostic.count("does not exist") == 2
+
+
+def test_work_dir_diagnostic_reports_char_counts(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+) -> None:
+    """When the prompt files are present, the diagnostic reports each file's char count.
+
+    The work-dir call site passes no tail_chars (only char counts, no trailing
+    content) -- this asserts the wiring stays aligned with that choice so a
+    regression adding tail_chars here would be caught.
+    """
+    agent, _host = _make_headless_agent(local_provider, tmp_path)
+    prompt = "prompt-body"
+    system_prompt = "system-body"
+    (agent.work_dir / ".mngr-prompt").write_text(prompt)
+    (agent.work_dir / ".mngr-system-prompt").write_text(system_prompt)
+    diagnostic = agent._get_work_dir_diagnostic()
+    assert f"{len(prompt)} chars" in diagnostic
+    assert f"{len(system_prompt)} chars" in diagnostic
+    # With no tail_chars, the file contents themselves must NOT be echoed back.
+    assert prompt not in diagnostic
+    assert system_prompt not in diagnostic
+
+
+# =============================================================================
 # Tests for registration
 # =============================================================================
 
