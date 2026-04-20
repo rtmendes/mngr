@@ -740,10 +740,8 @@ def _ensure_dockerd_for_release() -> None:
     # `last_result` is guaranteed non-None: range(_DOCKERD_STARTUP_ATTEMPTS)
     # is non-empty (the constant is >= 1) and each iteration assigns it
     # unconditionally before the early-return check. Assert to document the
-    # invariant and narrow the type for Pyright, so the error template can
-    # format `last_result.X!r` directly instead of hiding the attribute
-    # access behind a None-guarded ternary (which would bind !r to the
-    # fallback literal, not the real value).
+    # invariant and narrow the type for Pyright so the error template can
+    # reference `last_result.X!r` directly.
     assert last_result is not None
     raise _DockerdStartupError(
         f"Failed to start dockerd after {_DOCKERD_STARTUP_ATTEMPTS} attempts. "
