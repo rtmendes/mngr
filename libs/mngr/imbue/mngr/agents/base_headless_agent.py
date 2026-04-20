@@ -128,6 +128,40 @@ class BaseHeadlessAgent(BaseAgent[AgentConfigT], StreamingHeadlessAgentMixin):
         """
         return []
 
+    def _get_state_dir_diagnostic(self) -> str | None:
+        """Return a short inventory of the stdout/stderr files' existence and size.
+
+        Useful when stderr is empty and the tmux pane only shows the original
+        command (e.g. claude exited silently). Confirms whether the redirect
+        files were ever created, how big they are, and includes the tail of
+        each so release-test post-mortems aren't stuck at "exited without
+        producing output". Best-effort -- returns None on any I/O failure.
+        """
+        try:
+            stdout_path = self._get_stdout_path()
+            stderr_path = self._get_stderr_path()
+        except Exception:
+            return None
+
+        lines: list[str] = []
+        for label, path in (("stdout", stdout_path), ("stderr", stderr_path)):
+            try:
+                mtime = self.host.get_file_mtime(path)
+            except Exception:
+                mtime = None
+            if mtime is None:
+                lines.append(f"{label}: {path} -- does not exist")
+                continue
+            try:
+                content = self.host.read_text_file(path)
+            except Exception as e:
+                lines.append(f"{label}: {path} -- exists, read failed: {e}")
+                continue
+            size = len(content)
+            tail = content[-1024:] if size > 1024 else content
+            lines.append(f"{label}: {path} -- {size} bytes, tail:\n{tail}".rstrip())
+        return "\n".join(lines) if lines else None
+
     def _raise_no_output_error(self) -> Never:
         """Raise MngrError collecting all available error detail.
 
@@ -149,6 +183,14 @@ class BaseHeadlessAgent(BaseAgent[AgentConfigT], StreamingHeadlessAgentMixin):
             pane_error = self._get_pane_error_message()
             if pane_error:
                 parts.append(f"[tmux pane]\n{pane_error}")
+
+        # Always add the state-dir diagnostic so release-test post-mortems
+        # have the stdout/stderr sizes + tails even when everything else is
+        # empty. See test_ask_simple_query "claude exited without producing
+        # output" debugging notes.
+        state_dir_diag = self._get_state_dir_diagnostic()
+        if state_dir_diag:
+            parts.append(f"[state-dir]\n{state_dir_diag}")
 
         subject = self._no_output_error_subject
         if parts:
