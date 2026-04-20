@@ -343,7 +343,11 @@ def _handle_settings_page(request: Request) -> HTMLResponse:
             headers={"Location": "/auth/login"},
         )
 
-    provider = backend.get_user_provider(str(user_info.user_id))
+    try:
+        provider = backend.get_user_provider(str(user_info.user_id))
+    except httpx.HTTPError as exc:
+        logger.warning("Auth backend unreachable during settings page load: {}", exc)
+        provider = "email"
 
     return HTMLResponse(
         render_settings_page(
