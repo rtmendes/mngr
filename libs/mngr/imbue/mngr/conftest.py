@@ -5,6 +5,7 @@ import sys
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import Final
 from typing import Generator
 from uuid import uuid4
 
@@ -682,6 +683,12 @@ class _DockerdStartupError(BaseMngrError):
     """Raised when the release-test session fixture cannot bring dockerd up."""
 
 
+# Number of times _ensure_dockerd_for_release will invoke start-dockerd.sh
+# before giving up. Kept as a named constant so the loop bound and the
+# message in the raised _DockerdStartupError stay in lockstep.
+_DOCKERD_STARTUP_ATTEMPTS: Final[int] = 3
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_dockerd_for_release() -> None:
     """Start the Docker daemon if running inside a release test sandbox.
@@ -692,10 +699,11 @@ def _ensure_dockerd_for_release() -> None:
 
     start-dockerd.sh is idempotent and polls `docker info` internally until
     the daemon is ready. On gVisor the first attempt can flake (iptables
-    setup, IPv6 disable, dockerd bind race), so we retry up to 3 times and
-    verify /var/run/docker.sock exists before returning. If we still cannot
-    bring dockerd up, we raise -- otherwise every docker/docker_sdk test in
-    the session would fail with an opaque FileNotFoundError on the socket.
+    setup, IPv6 disable, dockerd bind race), so we retry up to
+    _DOCKERD_STARTUP_ATTEMPTS times and verify /var/run/docker.sock exists
+    before returning. If we still cannot bring dockerd up, we raise --
+    otherwise every docker/docker_sdk test in the session would fail with
+    an opaque FileNotFoundError on the socket.
     """
     start_script = Path("/start-dockerd.sh")
     if not start_script.exists():
@@ -710,7 +718,7 @@ def _ensure_dockerd_for_release() -> None:
         return
 
     last_result = None
-    for attempt in range(3):
+    for attempt in range(_DOCKERD_STARTUP_ATTEMPTS):
         cg = ConcurrencyGroup(name=f"ensure-dockerd-{attempt}")
         with cg:
             last_result = cg.run_process_to_completion(
@@ -729,15 +737,16 @@ def _ensure_dockerd_for_release() -> None:
             last_result.stderr,
         )
 
-    # `last_result` is guaranteed non-None: range(3) is non-empty and each
-    # iteration assigns it unconditionally before the early-return check.
-    # Assert to document the invariant and narrow the type for Pyright, so
-    # the error template can format `last_result.X!r` directly instead of
-    # hiding the attribute access behind a None-guarded ternary (which
-    # would bind !r to the fallback literal, not the real value).
+    # `last_result` is guaranteed non-None: range(_DOCKERD_STARTUP_ATTEMPTS)
+    # is non-empty (the constant is >= 1) and each iteration assigns it
+    # unconditionally before the early-return check. Assert to document the
+    # invariant and narrow the type for Pyright, so the error template can
+    # format `last_result.X!r` directly instead of hiding the attribute
+    # access behind a None-guarded ternary (which would bind !r to the
+    # fallback literal, not the real value).
     assert last_result is not None
     raise _DockerdStartupError(
-        f"Failed to start dockerd after 3 attempts. "
+        f"Failed to start dockerd after {_DOCKERD_STARTUP_ATTEMPTS} attempts. "
         f"Last returncode={last_result.returncode}, "
         f"socket_exists={docker_sock.exists()}. "
         f"stdout={last_result.stdout!r} "
