@@ -25,15 +25,19 @@ def test_signin_raises_on_connection_error() -> None:
         client.signin(email="a@b.com", password="password123")
 
 
-def test_refresh_session_returns_none_on_connection_error() -> None:
-    """refresh_session() returns None when the backend cannot be reached."""
+def test_refresh_session_raises_on_connection_error() -> None:
+    """refresh_session() surfaces httpx connection errors to the caller.
+
+    ``MultiAccountSessionStore._try_refresh`` wraps this call in its own
+    ``try/except httpx.HTTPError`` so the error is handled one layer up.
+    """
     client = _make_client()
     with pytest.raises(httpx.HTTPError):
         client.refresh_session(refresh_token="r")
 
 
-def test_is_email_verified_returns_false_on_connection_error() -> None:
-    """is_email_verified() raises on connection error (caller decides fallback)."""
+def test_is_email_verified_raises_on_connection_error() -> None:
+    """is_email_verified() surfaces httpx connection errors to the caller."""
     client = _make_client()
     with pytest.raises(httpx.HTTPError):
         client.is_email_verified(user_id="u", email="e@f.com")
