@@ -21,18 +21,18 @@ from imbue.mngr.errors import ConfigStructureError
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import UserId
 from imbue.mngr.utils.testing import ModalSubprocessTestEnv
+from imbue.mngr.utils.testing import TEST_ENV_PATTERN
 from imbue.mngr.utils.testing import TEST_ENV_PREFIX
-from imbue.mngr.utils.testing import assert_home_is_temp_directory
 from imbue.mngr.utils.testing import delete_modal_apps_in_environment
 from imbue.mngr.utils.testing import delete_modal_environment
 from imbue.mngr.utils.testing import delete_modal_volumes_in_environment
 from imbue.mngr.utils.testing import generate_test_environment_name
 from imbue.mngr.utils.testing import get_subprocess_test_env
-from imbue.mngr.utils.testing import isolate_home
 from imbue.mngr.utils.testing import make_mngr_ctx
 from imbue.mngr.utils.testing import register_modal_test_app
 from imbue.mngr.utils.testing import register_modal_test_environment
 from imbue.mngr.utils.testing import register_modal_test_volume
+from imbue.mngr.utils.testing import setup_mngr_test_environment
 from imbue.mngr.utils.testing import worker_modal_app_names
 from imbue.mngr.utils.testing import worker_modal_environment_names
 from imbue.mngr.utils.testing import worker_modal_volume_names
@@ -58,13 +58,20 @@ def make_modal_provider_real(
     an initial snapshot. Tests that specifically need to test initial snapshot
     behavior should pass is_snapshotted_after_create=True.
     """
+    prefix = mngr_ctx.config.prefix
+    if not TEST_ENV_PATTERN.match(prefix):
+        raise ConfigStructureError(
+            f"Modal test prefix '{prefix}' does not match the required pattern "
+            f"'mngr_test-YYYY-MM-DD-HH-MM-SS-*'. Use the modal_mngr_ctx fixture "
+            f"(not temp_mngr_ctx) when creating real Modal providers, so that "
+            f"test environments can be identified and cleaned up by CI."
+        )
     config = ModalProviderConfig(
         app_name=app_name,
         host_dir=Path("/mngr"),
         default_sandbox_timeout=300,
-        # FIXME: we really should bump CPU up to 1.0 and memory up to at least 4gb for more stable tests
-        default_cpu=0.5,
-        default_memory=0.5,
+        default_cpu=1.0,
+        default_memory=2.0,
         is_persistent=is_persistent,
         is_snapshotted_after_create=is_snapshotted_after_create,
     )
@@ -236,16 +243,7 @@ def setup_test_mngr_env(
                 monkeypatch.setenv("MODAL_TOKEN_SECRET", value.get("token_secret", ""))
                 break
 
-    isolate_home(tmp_home_dir, monkeypatch)
-    monkeypatch.setenv("MNGR_HOST_DIR", str(temp_host_dir))
-    monkeypatch.setenv("MNGR_PREFIX", mngr_test_prefix)
-    monkeypatch.setenv("MNGR_ROOT_NAME", mngr_test_root_name)
-
-    unison_dir = tmp_home_dir / ".unison"
-    unison_dir.mkdir(exist_ok=True)
-    monkeypatch.setenv("UNISON", str(unison_dir))
-
-    assert_home_is_temp_directory()
+    setup_mngr_test_environment(tmp_home_dir, temp_host_dir, mngr_test_prefix, mngr_test_root_name, monkeypatch)
 
     yield
 

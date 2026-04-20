@@ -333,8 +333,12 @@ def test_get_resume_message_returns_message_when_set(
 
 def test_get_ready_timeout_seconds_returns_default_when_not_set(
     test_agent: BaseAgent,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that get_ready_timeout_seconds returns default when not set in data.json."""
+    # get_ready_timeout_seconds falls back to get_agent_ready_timeout(), which
+    # honors MNGR_AGENT_READY_TIMEOUT. Remove it to guarantee the default path.
+    monkeypatch.delenv("MNGR_AGENT_READY_TIMEOUT", raising=False)
     assert test_agent.get_ready_timeout_seconds() == DEFAULT_AGENT_READY_TIMEOUT_SECONDS
 
 
@@ -441,7 +445,7 @@ def test_send_enter_and_wait_for_signal_returns_true_when_signal_received(
         assert result is True
     finally:
         test_agent.host.execute_idempotent_command(
-            f"tmux kill-session -t '{session_name}' 2>/dev/null",
+            f"tmux kill-session -t '={session_name}' 2>/dev/null",
             timeout_seconds=5.0,
         )
 
@@ -470,7 +474,7 @@ def test_send_enter_and_wait_for_signal_returns_false_on_timeout(
         assert result is False
     finally:
         test_agent.host.execute_idempotent_command(
-            f"tmux kill-session -t '{session_name}' 2>/dev/null",
+            f"tmux kill-session -t '={session_name}' 2>/dev/null",
             timeout_seconds=5.0,
         )
 

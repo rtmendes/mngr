@@ -4,7 +4,7 @@
 
 Minds is currently distributed as a Python CLI tool installed via a shell script. Users must have Python, git, and uv available on their system, then run `mind forward` to start a local web server, which they access via a browser tab. This works, but introduces friction:
 
-- **Installation prerequisites**: Users need Python >= 3.11, git, and uv installed and working. This is a nontrivial ask for non-developers.
+- **Installation prerequisites**: Users need Python >= 3.12, git, and uv installed and working. This is a nontrivial ask for non-developers.
 - **No native app experience**: The app lives in a browser tab. There is no dock icon, no window management, no native notifications.
 - **No auto-updates**: Users must manually update via the install script.
 - **No code signing**: On macOS, unsigned CLI tools trigger Gatekeeper warnings. The install script must instruct users to bypass security dialogs.
@@ -34,7 +34,7 @@ The goal of this project is to package Minds as a standalone desktop app that a 
 |               --port <random>                    |
 |               --log-format jsonl                 |
 |                                                  |
-|  FastAPI forwarding server                       |
+|  FastAPI desktop client                          |
 |  Auth (one-time code, signed cookies)            |
 |  Agent discovery (mngr list, mngr events)          |
 |  HTTP/WebSocket proxying to agents               |
@@ -264,7 +264,7 @@ When `jsonl` is selected, `setup_logging()` is called with a format parameter th
 
 The JSONL events use the same envelope structure as mngr's file logs: `timestamp`, `type`, `level`, `message`, plus any `extra` context. This allows Electron to parse specific event types from the stream.
 
-### forwarding_server/runner.py -- Electron Mode
+### desktop_client/runner.py -- Electron Mode
 
 When the environment variable `MINDS_ELECTRON=1` is set:
 
@@ -415,7 +415,7 @@ The file at `electron/pyproject.toml` is separate from the monorepo's `apps/mind
 [project]
 name = "minds-desktop"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "imbue-minds>=0.1.0",
 ]

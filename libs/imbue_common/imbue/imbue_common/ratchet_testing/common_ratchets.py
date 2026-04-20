@@ -91,11 +91,12 @@ PREVENT_GLOBAL_KEYWORD = RegexRatchetRule(
 PREVENT_BARE_PRINT = RegexRatchetRule(
     rule_name="bare print statements",
     rule_description=(
-        "Do not use bare print statements. Consider what kind of output you are producing: "
+        "Do not use bare print statements or direct sys.stdout/sys.stderr writes. "
+        "Consider what kind of output you are producing: "
         "for user-facing command output (results, tables, status messages), use write_human_line(); "
         "for diagnostic/debug messages, use logger.info(), logger.debug(), logger.warning(), etc."
     ),
-    pattern_string=r"^\s*print\s*\(",
+    pattern_string=r"^\s*print\s*\(|^\s*sys\.std(?:out|err)\.write\s*\(",
     is_multiline=True,
 )
 
@@ -202,6 +203,12 @@ PREVENT_FUNCTOOLS_PARTIAL = RegexRatchetRule(
     pattern_string=r"\bfrom\s+functools\s+import\s+.*\bpartial\b|\bfunctools\.partial\b",
 )
 
+PREVENT_EXIT_STACK = RegexRatchetRule(
+    rule_name="contextlib.ExitStack usage",
+    rule_description="contextlib.ExitStack is banned. Use a conditional expression with nullcontext() for conditional context managers, or restructure the code to avoid dynamic context manager entry",
+    pattern_string=r"\bimport\s+ExitStack\b|\bExitStack\s*\(",
+)
+
 
 # --- Naming conventions ---
 
@@ -217,7 +224,7 @@ PREVENT_NUM_PREFIX = RegexRatchetRule(
 PREVENT_TRAILING_COMMENTS = RegexRatchetRule(
     rule_name="trailing comments",
     rule_description="Comments should be on their own line, not trailing after code. Trailing comments make code harder to read",
-    pattern_string=r"[^\s#].*[ \t]#(?!\s*ty:\s*ignore\[)",
+    pattern_string=r"[^\s#].*[ \t]#(?![0-9a-fA-F]{3,6}[;\s])(?!\s*ty:\s*ignore\[)",
 )
 
 PREVENT_INIT_DOCSTRINGS = RegexRatchetRule(
@@ -353,7 +360,11 @@ PREVENT_PYTEST_MARK_INTEGRATION = RegexRatchetRule(
 
 PREVENT_IF_ELIF_WITHOUT_ELSE = RatchetRuleInfo(
     rule_name="if/elif without else",
-    rule_description="All if/elif chains must have an else clause to ensure all cases are handled explicitly",
+    rule_description=(
+        "All if/elif chains must have an else clause. You must consider what the "
+        "logically correct behavior is when none of the conditions match. Do not "
+        "add 'else: pass' without thinking about whether the else case is a bug."
+    ),
 )
 
 PREVENT_INIT_IN_NON_EXCEPTION_CLASSES = RatchetRuleInfo(
@@ -436,4 +447,33 @@ PREVENT_IMPORTLIB_IMPORT_MODULE = RegexRatchetRule(
     rule_name="importlib.import_module usage",
     rule_description="Always use normal top-level imports instead of importlib.import_module",
     pattern_string=r"\bimport_module\b",
+)
+
+
+PREVENT_HARDCODED_CLAUDE_DIR = RegexRatchetRule(
+    rule_name="hardcoded Path.home() / '.claude' path references",
+    rule_description=(
+        "Use the accessor functions from claude_config.py instead of hardcoding "
+        "Path.home() / '.claude' or Path.home() / '.claude.json'. "
+        "For the config directory: get_claude_config_dir() / get_user_claude_config_dir(). "
+        "For the user config file: find_user_claude_config(). "
+        "This allows paths to be overridden via CLAUDE_CONFIG_DIR "
+        "and ORIGINAL_CLAUDE_CONFIG_DIR environment variables."
+    ),
+    pattern_string=r"""Path\.home\(\)\s*/\s*["']\.claude(\.json(\.bak)?)?["']""",
+)
+
+
+# --- Terminal management ---
+
+PREVENT_BARE_URWID_TTY_SIGNAL_KEYS = RegexRatchetRule(
+    rule_name="bare urwid tty_signal_keys call",
+    rule_description=(
+        "Do not call tty_signal_keys() directly. "
+        "Use create_urwid_screen_preserving_terminal() from imbue.mngr.cli.urwid_utils instead. "
+        "Calling tty_signal_keys(intr='undefined') disables Ctrl-C at the terminal level, "
+        "and urwid does not reliably restore it on exit. The context manager saves and restores "
+        "terminal settings in a finally block."
+    ),
+    pattern_string=r"\.tty_signal_keys\(",
 )

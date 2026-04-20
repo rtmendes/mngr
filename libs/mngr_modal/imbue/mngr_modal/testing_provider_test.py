@@ -6,6 +6,7 @@ Modal credentials or SSH connections.
 """
 
 import contextlib
+from collections.abc import Mapping
 from datetime import datetime
 from datetime import timezone
 from io import StringIO
@@ -31,6 +32,10 @@ from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SnapshotId
 from imbue.mngr.primitives import SnapshotName
 from imbue.mngr.primitives import VolumeId
+from imbue.mngr.providers.listing_utils import build_listing_collection_script
+from imbue.mngr.providers.listing_utils import parse_optional_float
+from imbue.mngr.providers.listing_utils import parse_optional_int
+from imbue.mngr_modal.backend import MODAL_NAME_MAX_LENGTH
 from imbue.mngr_modal.backend import ModalAppContextHandle
 from imbue.mngr_modal.backend import ModalProviderBackend
 from imbue.mngr_modal.backend import _create_environment
@@ -40,6 +45,7 @@ from imbue.mngr_modal.backend import _lookup_persistent_app_with_env_retry
 from imbue.mngr_modal.backend import register_provider_backend
 from imbue.mngr_modal.config import ModalMode
 from imbue.mngr_modal.config import ModalProviderConfig
+from imbue.mngr_modal.errors import ModalMngrError
 from imbue.mngr_modal.errors import NoSnapshotsModalMngrError
 from imbue.mngr_modal.instance import HOST_VOLUME_INFIX
 from imbue.mngr_modal.instance import HostRecord
@@ -50,11 +56,8 @@ from imbue.mngr_modal.instance import TAG_HOST_ID
 from imbue.mngr_modal.instance import TAG_HOST_NAME
 from imbue.mngr_modal.instance import TAG_USER_PREFIX
 from imbue.mngr_modal.instance import _build_image_from_dockerfile_contents
-from imbue.mngr_modal.instance import _build_listing_collection_script
 from imbue.mngr_modal.instance import _build_modal_secrets_from_env
 from imbue.mngr_modal.instance import _build_modal_volumes
-from imbue.mngr_modal.instance import _parse_optional_float
-from imbue.mngr_modal.instance import _parse_optional_int
 from imbue.mngr_modal.instance import _parse_volume_spec
 from imbue.mngr_modal.instance import _substitute_dockerfile_build_args
 from imbue.mngr_modal.routes.deployment import deploy_function
@@ -64,10 +67,40 @@ from imbue.mngr_modal.testing import make_snapshot
 from imbue.mngr_modal.testing import make_testing_modal_interface
 from imbue.mngr_modal.testing import make_testing_provider
 from imbue.mngr_modal.testing import setup_host_with_sandbox
+from imbue.mngr_modal.volume import ModalVolume
 from imbue.mngr_modal.volume import _proxy_file_entry_type_to_volume_file_type
+from imbue.modal_proxy.data_types import FileEntry
 from imbue.modal_proxy.data_types import FileEntryType as ProxyFileEntryType
 from imbue.modal_proxy.errors import ModalProxyError
+from imbue.modal_proxy.errors import ModalProxyRateLimitError
+from imbue.modal_proxy.interface import VolumeInterface
 from imbue.modal_proxy.testing import TestingModalInterface
+
+
+class _RateLimitingVolumeStub(VolumeInterface):
+    """Stub that raises ModalProxyRateLimitError on every operation."""
+
+    def get_name(self) -> str | None:
+        return None
+
+    def listdir(self, path: str) -> list[FileEntry]:
+        raise ModalProxyRateLimitError("rate limit exceeded")
+
+    def read_file(self, path: str) -> bytes:
+        raise ModalProxyRateLimitError("rate limit exceeded")
+
+    def remove_file(self, path: str, *, recursive: bool = False) -> None:
+        raise ModalProxyRateLimitError("rate limit exceeded")
+
+    def write_files(self, file_contents_by_path: Mapping[str, bytes]) -> None:
+        raise ModalProxyRateLimitError("rate limit exceeded")
+
+    def reload(self) -> None:
+        pass
+
+    def commit(self) -> None:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Host Record CRUD Tests
@@ -947,6 +980,38 @@ def test_build_provider_instance_testing_mode(
     ModalProviderBackend.close_app("build-test")
 
 
+def test_build_provider_instance_environment_name_derived_from_prefix(
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """Verify that the Modal environment name is prefix + user_id.
+
+    This test is trivial but necessary for the validity of the prefix check in
+    make_modal_provider_real (conftest.py): we validate the prefix against
+    TEST_ENV_PATTERN as a proxy for the Modal environment name. That proxy is
+    only valid if environment_name == f"{prefix}{user_id}" remains the formula
+    in build_provider_instance. If this test breaks, the prefix check no longer
+    guarantees correct environment naming.
+    """
+    config = ModalProviderConfig(
+        mode=ModalMode.TESTING,
+        app_name="env-name-test",
+        host_dir=temp_mngr_ctx.config.default_host_dir,
+    )
+    instance = ModalProviderBackend.build_provider_instance(
+        name=ProviderInstanceName("test"),
+        config=config,
+        mngr_ctx=temp_mngr_ctx,
+    )
+    assert isinstance(instance, ModalProviderInstance)
+
+    expected_env_name = f"{temp_mngr_ctx.config.prefix}{temp_mngr_ctx.get_profile_user_id()}"
+    if len(expected_env_name) > MODAL_NAME_MAX_LENGTH:
+        expected_env_name = expected_env_name[:MODAL_NAME_MAX_LENGTH]
+    assert instance.environment_name == expected_env_name
+
+    ModalProviderBackend.close_app("env-name-test")
+
+
 def test_build_provider_instance_truncates_long_names(
     temp_mngr_ctx: MngrContext,
 ) -> None:
@@ -1216,6 +1281,13 @@ def test_modal_volume_wrapper(testing_provider: ModalProviderInstance) -> None:
     # Remove directory
     vol.write_files({"/rmdir/file.txt": b"x"})
     vol.remove_directory("/rmdir")
+
+
+def test_modal_volume_translates_rate_limit_error_to_mngr_error() -> None:
+    """ModalProxyRateLimitError from the proxy layer is translated to ModalMngrError."""
+    vol = ModalVolume.model_construct(modal_volume=_RateLimitingVolumeStub())
+    with pytest.raises(ModalMngrError, match="rate limit exceeded"):
+        vol.listdir("/any")
 
 
 # ---------------------------------------------------------------------------
@@ -1714,16 +1786,16 @@ def test_proxy_file_entry_type_directory_maps_to_volume_directory() -> None:
     ("value", "expected"),
     [("42", 42), ("  123  ", 123), ("0", 0), ("", None), ("   ", None), ("not_a_number", None), ("12.5", None)],
 )
-def test_parse_optional_int(value: str, expected: int | None) -> None:
-    assert _parse_optional_int(value) == expected
+def testparse_optional_int(value: str, expected: int | None) -> None:
+    assert parse_optional_int(value) == expected
 
 
 @pytest.mark.parametrize(
     ("value", "expected"),
     [("3.14", 3.14), ("  42.0  ", 42.0), ("0", 0.0), ("100", 100.0), ("", None), ("   ", None), ("abc", None)],
 )
-def test_parse_optional_float(value: str, expected: float | None) -> None:
-    assert _parse_optional_float(value) == expected
+def testparse_optional_float(value: str, expected: float | None) -> None:
+    assert parse_optional_float(value) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -2486,6 +2558,6 @@ def test_discover_hosts_empty_volume_and_no_sandboxes(
 
 
 def test_build_listing_script_uses_host_dir() -> None:
-    script = _build_listing_collection_script("/custom/host/dir", "test-prefix-")
+    script = build_listing_collection_script("/custom/host/dir", "test-prefix-")
     assert "/custom/host/dir" in script
     assert "test-prefix-" in script

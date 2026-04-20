@@ -137,7 +137,7 @@ class TransferMode(UpperCaseStrEnum):
 
     NONE: Run in-place, no transfer.
     RSYNC: Transfer files via rsync (non-git projects only).
-    GIT_MIRROR: Transfer via git push --mirror (git projects, works locally and remotely).
+    GIT_MIRROR: Push all local branches and tags via git (git projects, works locally and remotely).
     GIT_WORKTREE: Create a git worktree (git projects, local agents only).
     """
 
@@ -182,6 +182,18 @@ class ConflictMode(UpperCaseStrEnum):
     SOURCE = auto()
     TARGET = auto()
     ASK = auto()
+
+
+class PluginTier(UpperCaseStrEnum):
+    """Whether a plugin works standalone or depends on another plugin.
+
+    INDEPENDENT: works out of the box (may have a signal for binary detection).
+    DEPENDENT: requires another plugin's signal to be relevant (e.g.,
+               fixme_fairy depends on claude).
+    """
+
+    INDEPENDENT = auto()
+    DEPENDENT = auto()
 
 
 # === ID Types ===
@@ -369,6 +381,9 @@ class DiscoveredHost(FrozenModel):
     host_id: HostId = Field(description="Unique identifier for the host")
     host_name: HostName = Field(description="Human-readable name of the host")
     provider_name: ProviderInstanceName = Field(description="Name of the provider instance that owns the host")
+    host_state: "HostState | None" = Field(
+        default=None, description="Host lifecycle state, if known at discovery time"
+    )
 
 
 class DiscoveredAgent(FrozenModel):

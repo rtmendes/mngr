@@ -1,9 +1,9 @@
 import os
+import shlex
 import shutil
 import signal
 import stat
 import subprocess
-import sys
 import tempfile
 import textwrap
 from collections.abc import Generator
@@ -13,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+import tomlkit
 from loguru import logger
 
 from imbue.imbue_common.frozen_model import FrozenModel
@@ -20,7 +21,7 @@ from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.consts import ROOT_CONFIG_FILENAME
 from imbue.mngr.config.data_types import USER_ID_FILENAME
 from imbue.mngr.utils.polling import poll_until
-from imbue.mngr.utils.testing import init_git_repo_with_config
+from imbue.mngr.utils.testing import init_git_repo
 from imbue.skitwright.runner import run_command
 from imbue.skitwright.session import Session
 
@@ -39,6 +40,45 @@ class E2eSession(Session):
         session = cls(env=env, cwd=cwd)
         session.output_dir = output_dir
         return session
+
+    def collect_remote_diagnostics(self, agent_name: str) -> str:
+        """Collect diagnostic info from a remote agent for debugging failures.
+
+        Captures tmux sessions, Claude Code pane content, session_started file
+        status, and running processes. Returns a formatted string suitable for
+        inclusion in assertion messages.
+        """
+        diag_parts = [f"Diagnostics from remote agent '{agent_name}':"]
+        for diag_cmd, label in [
+            (f"mngr exec {agent_name} 'tmux list-sessions 2>&1'", "tmux sessions"),
+            (
+                f'mngr exec {agent_name} \'SESSION=$(tmux list-sessions -F "#{{session_name}}" 2>/dev/null | head -1);'
+                f' tmux capture-pane -p -t "$SESSION" 2>&1 || echo no-pane\'',
+                "claude pane",
+            ),
+            (
+                # Agent state lives at $MNGR_HOST_DIR/agents/$MNGR_AGENT_ID/ per
+                # libs/mngr/docs/conventions.md, and MNGR_HOST_DIR defaults to
+                # ~/.mngr (i.e. /root/.mngr on remote hosts where HOME=/root).
+                f'mngr exec {agent_name} \'ls -la "$HOME/.mngr/agents"/*/session_started 2>/dev/null'
+                " || echo session_started-not-found'",
+                "session_started",
+            ),
+            (
+                f"mngr exec {agent_name} 'ps aux | grep -E \"claude|node\" | grep -v grep || echo no-claude-process'",
+                "processes",
+            ),
+        ]:
+            # Best-effort: never let a diagnostic subprocess failure mask the
+            # primary test assertion that triggered this call. Narrowed to
+            # OSError (covers Popen spawn failures like FileNotFoundError /
+            # PermissionError) so unrelated programmer errors still propagate.
+            try:
+                diag = self.run(diag_cmd, comment=f"diagnostic: {label}", timeout=15.0)
+                diag_parts.append(f"\n[{label}] stdout: {diag.stdout}\n[{label}] stderr: {diag.stderr}")
+            except OSError as exc:
+                diag_parts.append(f"\n[{label}] error: {exc!r}")
+        return "\n".join(diag_parts)
 
     def write_tutorial_block(self, block: str) -> None:
         """Write the original tutorial script block to the test output directory.
@@ -185,9 +225,11 @@ def _stop_asciinema_processes(test_output_dir: Path) -> None:
 
     if not all_exited:
         still_alive = [pid for pid in pids if _is_pid_alive(pid)]
-        sys.stderr.write(
-            f"\n  WARNING: {len(still_alive)} asciinema process(es) did not terminate "
-            f"within {_ASCIINEMA_SHUTDOWN_TIMEOUT_SECONDS}s: {still_alive}\n"
+        logger.warning(
+            "{} asciinema process(es) did not terminate within {}s: {}",
+            len(still_alive),
+            _ASCIINEMA_SHUTDOWN_TIMEOUT_SECONDS,
+            still_alive,
         )
 
     # Clean up pid files -- they are only useful while asciinema is running
@@ -236,28 +278,22 @@ def _setup_test_profile(host_dir: Path) -> str:
     return user_id
 
 
-_MODAL_NAME_MAX_LENGTH = 64
-
-
-def _delete_modal_environment(prefix: str, user_id: str) -> None:
+def _delete_modal_environment(prefix: str, user_id: str, env: dict[str, str], cwd: Path) -> None:
     """Delete the Modal environment for this test."""
     environment_name = f"{prefix}{user_id}"
-    # Apply the same truncation that the Modal backend uses when creating
-    # environments, so that we delete the right one.
-    environment_name = environment_name[:_MODAL_NAME_MAX_LENGTH]
     logger.info("Deleting Modal environment: {}", environment_name)
     try:
-        result = subprocess.run(
-            ["uv", "run", "modal", "environment", "delete", environment_name, "--yes"],
-            capture_output=True,
-            text=True,
-            timeout=30,
+        result = run_command(
+            f"uv run modal environment delete {shlex.quote(environment_name)} --yes",
+            env=env,
+            cwd=cwd,
+            timeout=30.0,
         )
-        if result.returncode != 0:
+        if result.exit_code != 0:
             logger.warning("Failed to delete Modal environment {}: {}", environment_name, result.stderr.strip())
         else:
             logger.info("Deleted Modal environment: {}", environment_name)
-    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as exc:
+    except (FileNotFoundError, OSError) as exc:
         logger.warning("Error deleting Modal environment {}: {}", environment_name, exc)
 
 
@@ -289,6 +325,28 @@ def _write_destroy_script(
         'echo "Environment destroyed."\n'
     )
     script_path.chmod(script_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+# Resolve the real home directory at import time, before any test fixture
+# monkeypatches HOME to an isolated temp directory.
+_REAL_HOME = Path.home()
+
+
+def _load_modal_credentials(env: dict[str, str]) -> None:
+    """Load Modal credentials from ~/.modal.toml into the env dict.
+
+    Mirrors the logic in mngr_modal's conftest, which uses monkeypatch for
+    in-process tests. E2e subprocesses need the vars set explicitly since
+    monkeypatch doesn't propagate to child processes.
+    """
+    modal_toml_path = _REAL_HOME / ".modal.toml"
+    if not modal_toml_path.exists():
+        return
+    for value in tomlkit.loads(modal_toml_path.read_text()).values():
+        if isinstance(value, dict) and value.get("active", ""):
+            env["MODAL_TOKEN_ID"] = value.get("token_id", "")
+            env["MODAL_TOKEN_SECRET"] = value.get("token_secret", "")
+            break
 
 
 @pytest.fixture
@@ -327,6 +385,13 @@ def e2e(
     # are already set by the parent autouse fixture and inherited via
     # os.environ.copy().
     env = os.environ.copy()
+
+    # Load Modal credentials from ~/.modal.toml if present and not already in
+    # env vars. The Modal conftest does this via monkeypatch for in-process
+    # tests, but e2e subprocesses need the vars set explicitly.
+    if "MODAL_TOKEN_ID" not in env:
+        _load_modal_credentials(env)
+
     env["MNGR_HOST_DIR"] = str(temp_host_dir)
     env["TMUX_TMPDIR"] = str(tmux_tmpdir)
     env["MNGR_TEST_ASCIINEMA_DIR"] = str(test_output_dir)
@@ -349,8 +414,10 @@ def e2e(
     # Add the e2e bin directory to PATH so the connect script is available
     env["PATH"] = f"{_BIN_DIR}:{env.get('PATH', '')}"
 
-    # Configure connect_command for create/start
-    # Remote providers (Modal, Docker) are left enabled so that e2e tests exercise them
+    # Configure connect_command for create/start.
+    # Remote providers (Modal, Docker) are left enabled so that e2e tests
+    # exercise the full discovery path. Tests that trigger Modal (via
+    # mngr list, mngr destroy --gc, etc.) need @pytest.mark.modal.
     settings_path = project_config_dir / "settings.local.toml"
     settings_path.write_text(
         "[commands.create]\n"
@@ -387,15 +454,15 @@ def e2e(
         shutil.rmtree(test_output_dir, ignore_errors=True)
 
     if test_failed:
-        sys.stderr.write(f"\n  Test output: {test_output_dir}\n")
-        sys.stderr.write(f"  Debugging tips: {_DEBUGGING_DOC} (relative to git root)\n")
+        logger.warning("Test output: {}", test_output_dir)
+        logger.warning("Debugging tips: {} (relative to git root)", _DEBUGGING_DOC)
 
     if keep_env:
         _write_destroy_script(test_output_dir, env, temp_git_repo, tmux_tmpdir)
-        sys.stderr.write(f"\n  Environment kept alive. To clean up: {test_output_dir}/destroy-env\n")
-        sys.stderr.write(f"  MNGR_HOST_DIR={temp_host_dir}\n")
-        sys.stderr.write(f"  TMUX_TMPDIR={tmux_tmpdir}\n")
-        sys.stderr.write(f"  CWD={temp_git_repo}\n")
+        logger.info("Environment kept alive. To clean up: {}/destroy-env", test_output_dir)
+        logger.info("MNGR_HOST_DIR={}", temp_host_dir)
+        logger.info("TMUX_TMPDIR={}", tmux_tmpdir)
+        logger.info("CWD={}", temp_git_repo)
         return
 
     # Interrupt asciinema recording processes so they flush and exit
@@ -410,7 +477,7 @@ def e2e(
     )
 
     # Delete the Modal environment (if one was created)
-    _delete_modal_environment("mngr_test-", test_user_id)
+    _delete_modal_environment("mngr_test-", test_user_id, env=env, cwd=temp_git_repo)
 
     # Kill the isolated tmux server
     tmux_tmpdir_str = str(tmux_tmpdir)
@@ -497,6 +564,6 @@ def minimal_install_env(
     }
 
     repo_dir = tmp_path / "repo"
-    init_git_repo_with_config(repo_dir)
+    init_git_repo(repo_dir)
 
     return MinimalInstallEnv(venv_dir=isolated_mngr_venv, env=env, repo_dir=repo_dir)

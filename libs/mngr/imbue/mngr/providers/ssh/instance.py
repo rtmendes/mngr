@@ -10,6 +10,7 @@ from pydantic import Field
 from pyinfra.api import Host as PyinfraHost
 from pyinfra.api import State as PyinfraState
 from pyinfra.api.inventory import Inventory
+from pyinfra.connectors.sshuserclient.client import get_host_keys
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.errors import HostNotFoundError
@@ -25,6 +26,7 @@ from imbue.mngr.interfaces.host import HostInterface
 from imbue.mngr.primitives import DiscoveredHost
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
+from imbue.mngr.primitives import HostState
 from imbue.mngr.primitives import ImageReference
 from imbue.mngr.primitives import SnapshotId
 from imbue.mngr.primitives import SnapshotName
@@ -85,6 +87,10 @@ class SSHProviderInstance(BaseProviderInstance):
         }
         if host_config.key_file is not None:
             host_data["ssh_key"] = str(host_config.key_file)
+        if host_config.known_hosts_file is not None:
+            get_host_keys.cache.clear()
+            host_data["ssh_known_hosts_file"] = str(host_config.known_hosts_file)
+            host_data["ssh_strict_host_key_checking"] = "yes"
 
         names_data = ([(host_config.address, host_data)], {})
         inventory = Inventory(names_data)
@@ -190,6 +196,7 @@ class SSHProviderInstance(BaseProviderInstance):
                     host_id=self._host_id_for_name(host_name),
                     host_name=HostName(host_name),
                     provider_name=self.name,
+                    host_state=HostState.RUNNING,
                 )
             )
         return host_refs

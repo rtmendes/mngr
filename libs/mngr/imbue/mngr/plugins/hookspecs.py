@@ -76,7 +76,7 @@ def on_host_created(host: HostInterface, mngr_ctx: MngrContext) -> None:
 
 
 @hookspec
-def on_before_host_destroy(host: HostInterface) -> None:
+def on_before_host_destroy(host: HostInterface, mngr_ctx: MngrContext) -> None:
     """[experimental] Called before a host is destroyed.
 
     This hook fires before provider.destroy_host() is called. The host is still
@@ -87,7 +87,7 @@ def on_before_host_destroy(host: HostInterface) -> None:
 
 
 @hookspec
-def on_host_destroyed(host: HostInterface) -> None:
+def on_host_destroyed(host: HostInterface, mngr_ctx: MngrContext) -> None:
     """[experimental] Called after a host has been destroyed.
 
     This hook fires after provider.destroy_host() completes. The host's
@@ -518,3 +518,15 @@ def on_error(command_name: str, command_params: dict[str, Any], error: BaseExcep
 @hookspec
 def on_shutdown() -> None:
     """[experimental] Called when mngr is shutting down, after the command has completed."""
+
+
+@hookspec
+def register_hookspecs() -> Any | None:
+    """Register additional hookspec modules with the plugin manager.
+
+    Plugins that define their own hooks should implement this to return
+    a module containing @hookspec-decorated functions. The module will be
+    passed to pm.add_hookspecs() after all plugins are loaded.
+
+    Return a module object, or None if not contributing any hookspecs.
+    """

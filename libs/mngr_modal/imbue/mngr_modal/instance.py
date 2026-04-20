@@ -47,6 +47,7 @@ from imbue.mngr.hosts.common import resolve_expected_process_name
 from imbue.mngr.hosts.common import timestamp_to_datetime
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.hosts.offline_host import OfflineHost
+from imbue.mngr.hosts.offline_host import derive_offline_host_state
 from imbue.mngr.hosts.offline_host import validate_and_create_discovered_agent
 from imbue.mngr.interfaces.agent import AgentInterface
 from imbue.mngr.interfaces.data_types import AgentDetails
@@ -79,6 +80,8 @@ from imbue.mngr.primitives import SnapshotId
 from imbue.mngr.primitives import SnapshotName
 from imbue.mngr.primitives import VolumeId
 from imbue.mngr.providers.base_provider import BaseProviderInstance
+from imbue.mngr.providers.listing_utils import build_listing_collection_script
+from imbue.mngr.providers.listing_utils import parse_listing_collection_output
 from imbue.mngr.providers.ssh_host_setup import REQUIRED_HOST_PACKAGES
 from imbue.mngr.providers.ssh_host_setup import build_add_authorized_keys_command
 from imbue.mngr.providers.ssh_host_setup import build_add_known_hosts_command
@@ -242,191 +245,6 @@ def handle_modal_auth_error(func: Callable[P, T]) -> Callable[P, T]:
     return wrapper
 
 
-# =========================================================================
-# Listing Data Collection Helpers
-# =========================================================================
-
-# Unique delimiters for parsing the single-command output
-_SEP_DATA_JSON_START: Final[str] = "---MNGR_DATA_JSON_START---"
-_SEP_DATA_JSON_END: Final[str] = "---MNGR_DATA_JSON_END---"
-_SEP_AGENT_START: Final[str] = "---MNGR_AGENT_START:"
-_SEP_AGENT_END: Final[str] = "---MNGR_AGENT_END---"
-_SEP_AGENT_DATA_START: Final[str] = "---MNGR_AGENT_DATA_START---"
-_SEP_AGENT_DATA_END: Final[str] = "---MNGR_AGENT_DATA_END---"
-_SEP_PS_START: Final[str] = "---MNGR_PS_START---"
-_SEP_PS_END: Final[str] = "---MNGR_PS_END---"
-
-
-@pure
-def _build_listing_collection_script(host_dir: str, prefix: str) -> str:
-    """Build a shell script that collects all listing data in one command."""
-    return f"""
-# Uptime
-echo "UPTIME=$(cat /proc/uptime 2>/dev/null | awk '{{print $1}}')"
-
-# Boot time
-echo "BTIME=$(grep '^btime ' /proc/stat 2>/dev/null | awk '{{print $2}}')"
-
-# Lock file mtime
-echo "LOCK_MTIME=$(stat -c %Y '{host_dir}/host_lock' 2>/dev/null)"
-
-# SSH activity mtime
-echo "SSH_ACTIVITY_MTIME=$(stat -c %Y '{host_dir}/activity/ssh' 2>/dev/null)"
-
-# Host data.json
-echo '{_SEP_DATA_JSON_START}'
-cat '{host_dir}/data.json' 2>/dev/null || echo '{{}}'
-echo ''
-echo '{_SEP_DATA_JSON_END}'
-
-# ps output (shared by all agents for lifecycle detection)
-echo '{_SEP_PS_START}'
-ps -e -o pid=,ppid=,comm= 2>/dev/null
-echo '{_SEP_PS_END}'
-
-# Agents
-if [ -d '{host_dir}/agents' ]; then
-    for agent_dir in '{host_dir}/agents'/*/; do
-        [ -d "$agent_dir" ] || continue
-        data_file="${{agent_dir}}data.json"
-        [ -f "$data_file" ] || continue
-        agent_id=$(basename "$agent_dir")
-        echo '{_SEP_AGENT_START}'"$agent_id"'---'
-        echo '{_SEP_AGENT_DATA_START}'
-        cat "$data_file"
-        echo ''
-        echo '{_SEP_AGENT_DATA_END}'
-        echo "USER_MTIME=$(stat -c %Y "${{agent_dir}}activity/user" 2>/dev/null)"
-        echo "AGENT_MTIME=$(stat -c %Y "${{agent_dir}}activity/agent" 2>/dev/null)"
-        echo "START_MTIME=$(stat -c %Y "${{agent_dir}}activity/start" 2>/dev/null)"
-        agent_name=$(jq -r '.name // empty' "$data_file" 2>/dev/null)
-        session_name='{prefix}'"$agent_name"
-        tmux_info=$(tmux list-panes -t "${{session_name}}:0" -F '#{{pane_dead}}|#{{pane_current_command}}|#{{pane_pid}}' 2>/dev/null | head -n 1)
-        echo "TMUX_INFO=$tmux_info"
-        if [ -f "${{agent_dir}}active" ]; then
-            echo "ACTIVE=true"
-        else
-            echo "ACTIVE=false"
-        fi
-        url=$(cat "${{agent_dir}}status/url" 2>/dev/null | tr -d '\\n')
-        echo "URL=$url"
-        echo '{_SEP_AGENT_END}'
-    done
-fi
-"""
-
-
-@pure
-def _parse_optional_int(value: str) -> int | None:
-    """Parse an optional integer from a key=value line's value portion."""
-    stripped = value.strip()
-    if not stripped:
-        return None
-    try:
-        return int(stripped)
-    except ValueError:
-        return None
-
-
-@pure
-def _parse_optional_float(value: str) -> float | None:
-    """Parse an optional float from a key=value line's value portion."""
-    stripped = value.strip()
-    if not stripped:
-        return None
-    try:
-        return float(stripped)
-    except ValueError:
-        return None
-
-
-def _extract_delimited_block(lines: list[str], idx: int, end_marker: str) -> tuple[str, int]:
-    """Extract lines between the current position and end_marker, returning the content and new index."""
-    collected: list[str] = []
-    while idx < len(lines) and lines[idx].strip() != end_marker:
-        collected.append(lines[idx])
-        idx += 1
-    return "\n".join(collected).strip(), idx
-
-
-def _parse_agent_section(lines: list[str], idx: int) -> tuple[dict[str, Any], int]:
-    """Parse a single agent section, returning the agent dict and new index."""
-    agent_raw: dict[str, Any] = {}
-
-    while idx < len(lines) and lines[idx].strip() != _SEP_AGENT_END:
-        aline = lines[idx]
-        if aline.strip() == _SEP_AGENT_DATA_START:
-            idx += 1
-            agent_json_str, idx = _extract_delimited_block(lines, idx, _SEP_AGENT_DATA_END)
-            if agent_json_str:
-                try:
-                    agent_raw["data"] = json.loads(agent_json_str)
-                except json.JSONDecodeError as e:
-                    logger.warning("Failed to parse agent data.json in listing output: {}", e)
-        elif aline.startswith("USER_MTIME="):
-            agent_raw["user_activity_mtime"] = _parse_optional_int(aline[len("USER_MTIME=") :])
-        elif aline.startswith("AGENT_MTIME="):
-            agent_raw["agent_activity_mtime"] = _parse_optional_int(aline[len("AGENT_MTIME=") :])
-        elif aline.startswith("START_MTIME="):
-            agent_raw["start_activity_mtime"] = _parse_optional_int(aline[len("START_MTIME=") :])
-        elif aline.startswith("TMUX_INFO="):
-            val = aline[len("TMUX_INFO=") :].strip()
-            agent_raw["tmux_info"] = val if val else None
-        elif aline.startswith("ACTIVE="):
-            agent_raw["is_active"] = aline[len("ACTIVE=") :].strip() == "true"
-        elif aline.startswith("URL="):
-            val = aline[len("URL=") :].strip()
-            agent_raw["url"] = val if val else None
-        else:
-            pass
-        idx += 1
-
-    return agent_raw, idx
-
-
-def _parse_listing_collection_output(stdout: str) -> dict[str, Any]:
-    """Parse the structured output of the listing collection script."""
-    result: dict[str, Any] = {}
-    agents: list[dict[str, Any]] = []
-    lines = stdout.split("\n")
-    idx = 0
-
-    while idx < len(lines):
-        line = lines[idx]
-
-        if line.startswith("UPTIME=") and "uptime_seconds" not in result:
-            result["uptime_seconds"] = _parse_optional_float(line[len("UPTIME=") :])
-        elif line.startswith("BTIME=") and "btime" not in result:
-            result["btime"] = _parse_optional_int(line[len("BTIME=") :])
-        elif line.startswith("LOCK_MTIME=") and "lock_mtime" not in result:
-            result["lock_mtime"] = _parse_optional_int(line[len("LOCK_MTIME=") :])
-        elif line.startswith("SSH_ACTIVITY_MTIME=") and "ssh_activity_mtime" not in result:
-            result["ssh_activity_mtime"] = _parse_optional_int(line[len("SSH_ACTIVITY_MTIME=") :])
-        elif line.strip() == _SEP_DATA_JSON_START:
-            idx += 1
-            json_str, idx = _extract_delimited_block(lines, idx, _SEP_DATA_JSON_END)
-            if json_str:
-                try:
-                    result["certified_data"] = json.loads(json_str)
-                except json.JSONDecodeError as e:
-                    logger.warning("Failed to parse host data.json in listing output: {}", e)
-        elif line.strip() == _SEP_PS_START:
-            idx += 1
-            ps_content, idx = _extract_delimited_block(lines, idx, _SEP_PS_END)
-            result["ps_output"] = ps_content
-        elif line.strip().startswith(_SEP_AGENT_START):
-            idx += 1
-            agent_raw, idx = _parse_agent_section(lines, idx)
-            if "data" in agent_raw:
-                agents.append(agent_raw)
-        else:
-            pass
-        idx += 1
-
-    result["agents"] = agents
-    return result
-
-
 class SandboxConfig(HostConfig):
     """Configuration parsed from build arguments."""
 
@@ -574,7 +392,6 @@ class ModalProviderInstance(BaseProviderInstance):
     # Modal's eventually consistent tag API for recently created sandboxes.
     _sandbox_cache_by_id: dict[HostId, SandboxInterface] = PrivateAttr(default_factory=dict)
     _sandbox_cache_by_name: dict[HostName, SandboxInterface] = PrivateAttr(default_factory=dict)
-    _host_by_id_cache: dict[HostId, HostInterface] = PrivateAttr(default_factory=dict)
     # Cache for host records read from the volume to avoid repeated reads
     _host_record_cache_by_id: dict[HostId, HostRecord] = PrivateAttr(default_factory=dict)
     # a reference to the ssh process, just in case we ever need it (and to prevent it from being garbage collected)
@@ -808,7 +625,7 @@ class ModalProviderInstance(BaseProviderInstance):
         logger.trace("Deleted agent records from state volume dir: {}", host_dir)
 
         # Clear cache entries for this host
-        self._host_by_id_cache.pop(host_id, None)
+        self._evict_cached_host(host_id)
         self._host_record_cache_by_id.pop(host_id, None)
 
     def _delete_host_record(self, host_id: HostId) -> None:
@@ -824,7 +641,7 @@ class ModalProviderInstance(BaseProviderInstance):
         logger.trace("Deleted host record from volume: {}", path)
 
         # Clear cache entries for this host
-        self._host_by_id_cache.pop(host_id, None)
+        self._evict_cached_host(host_id)
         self._host_record_cache_by_id.pop(host_id, None)
 
     def _clear_snapshots_from_host_record(self, host_id: HostId) -> None:
@@ -1012,7 +829,7 @@ class ModalProviderInstance(BaseProviderInstance):
         Each instruction is applied separately, so if a build fails at step N,
         steps 1 through N-1 are cached and don't need to be re-run.
 
-        Elif base_image is provided (e.g., "python:3.11-slim"), uses that as the
+        Elif base_image is provided (e.g., "python:3.12-slim"), uses that as the
         base. Otherwise uses debian:bookworm-slim.
 
         The context_dir specifies the directory for Dockerfile COPY/ADD instructions.
@@ -1645,7 +1462,7 @@ log "=== Shutdown script completed ==="
         This should be called when a host transitions state (e.g., from online to offline
         or vice versa) to ensure the next lookup returns the correct host type.
         """
-        self._host_by_id_cache.pop(host_id, None)
+        self._evict_cached_host(host_id)
 
     def reset_caches(self) -> None:
         """Reset all caches on this instance.
@@ -1655,7 +1472,8 @@ log "=== Shutdown script completed ==="
         """
         self._sandbox_cache_by_id.clear()
         self._sandbox_cache_by_name.clear()
-        self._host_by_id_cache.clear()
+        for host_id in list(self._host_by_id_cache):
+            self._evict_cached_host(host_id)
         self._host_record_cache_by_id.clear()
         self._full_sandbox_list_cache = None
 
@@ -1759,6 +1577,14 @@ log "=== Shutdown script completed ==="
                     "Skipped sandbox {}: host record missing SSH info (likely failed host)", sandbox.get_object_id()
                 )
                 return None
+
+            # Reuse the cached Host if SSH details have not changed
+            cached = self._host_by_id_cache.get(host_id)
+            if isinstance(cached, Host):
+                cached_name = cached.connector.name
+                cached_port = cached.connector.host.data.get("ssh_port")
+                if cached_name == host_record.ssh_host and cached_port == host_record.ssh_port:
+                    return cached
 
             # Add the sandbox's host key to known_hosts so SSH connections will work
             with trace_span("Adding to known hosts {}", host_id, _is_trace_span_enabled=False):
@@ -2021,28 +1847,20 @@ log "=== Shutdown script completed ==="
         host_id = host.id if isinstance(host, HostInterface) else host
         logger.info("Stopping (terminating) Modal sandbox: {}", host_id)
 
-        # Disconnect the SSH connection before terminating the sandbox.
-        # This prevents stale socket state that can cause "Socket is closed" errors.
-        # We check the cache first, then fall back to the passed host object.
-        cached_host = self._host_by_id_cache.get(host_id)
-        if cached_host is not None and isinstance(cached_host, Host):
-            cached_host.disconnect()
-        elif isinstance(host, Host):
-            host.disconnect()
-        else:
-            # No Host instance available (e.g., only have a host_id string or HostInterface stub)
-            pass
-
         sandbox = self._find_sandbox_by_host_id(host_id)
-        if sandbox:
-            # Create a snapshot before termination if requested
-            if create_snapshot:
-                try:
-                    with log_span("Creating snapshot before termination", host_id=str(host_id)):
-                        self.create_snapshot(host_id, SnapshotName("stop"))
-                except (MngrError, ModalProxyError) as e:
-                    logger.warning("Failed to create snapshot before termination: {}", e)
+        if sandbox and create_snapshot:
+            try:
+                with log_span("Creating snapshot before termination", host_id=str(host_id)):
+                    self.create_snapshot(host_id, SnapshotName("stop"))
+            except (MngrError, ModalProxyError) as e:
+                logger.warning("Failed to create snapshot before termination: {}", e)
 
+        # Disconnect SSH after snapshot but before termination
+        if isinstance(host, Host):
+            host.disconnect()
+        self._evict_cached_host(host_id)
+
+        if sandbox:
             try:
                 sandbox.terminate()
             except ModalProxyError as e:
@@ -2217,7 +2035,7 @@ log "=== Shutdown script completed ==="
         )
 
         # Cache the new online host
-        self._host_by_id_cache[host_id] = restored_host
+        self._evict_cached_host(host_id, replacement=restored_host)
 
         return restored_host
 
@@ -2257,7 +2075,7 @@ log "=== Shutdown script completed ==="
             host_name = HostName(host_record.certified_host_data.host_name)
             self._sandbox_cache_by_name.pop(host_name, None)
         self._sandbox_cache_by_id.pop(host_id, None)
-        self._host_by_id_cache.pop(host_id, None)
+        self._evict_cached_host(host_id)
         self._host_record_cache_by_id.pop(host_id, None)
 
     # =========================================================================
@@ -2321,7 +2139,7 @@ log "=== Shutdown script completed ==="
 
         # finally save to the cache and return
         if host_obj is not None:
-            self._host_by_id_cache[host_obj.id] = host_obj
+            self._evict_cached_host(host_obj.id, replacement=host_obj)
             return host_obj
         # or raise:
         else:
@@ -2345,6 +2163,9 @@ log "=== Shutdown script completed ==="
         """
 
         hosts: list[HostInterface] = []
+        # Track the host state determined during discovery so we don't need to
+        # call h.get_state() (which would SSH into the host) at the end.
+        discovery_state: dict[HostId, HostState] = {}
         processed_host_ids: set[HostId] = set()
 
         # Fetch sandboxes and host records in parallel since they are independent.
@@ -2372,7 +2193,7 @@ log "=== Shutdown script completed ==="
                 logger.warning("Skipped sandbox with invalid tags: {}", e)
                 continue
 
-        host_futures_with_records: list[Future[HostInterface | None]] = []
+        host_futures_with_records: list[Future[tuple[HostInterface | None, HostState | None]]] = []
         with ConcurrencyGroupExecutor(
             parent_cg=cg, name=f"modal_discover_hosts_{self.name}_missing_records", max_workers=2
         ) as executor:
@@ -2391,9 +2212,11 @@ log "=== Shutdown script completed ==="
                 )
 
         for future in host_futures_with_records:
-            host_obj = future.result()
+            host_obj, state = future.result()
             if host_obj is not None:
                 hosts.append(host_obj)
+                if state is not None:
+                    discovery_state[host_obj.id] = state
 
         # Second, include any running sandboxes that don't have host records yet
         # (handles eventual consistency of volume or legacy sandboxes)
@@ -2411,6 +2234,7 @@ log "=== Shutdown script completed ==="
                 host_obj = future.result()
                 if host_obj is not None:
                     hosts.append(host_obj)
+                    discovery_state[host_obj.id] = HostState.RUNNING
             except (KeyError, ValueError, HostConnectionError) as e:
                 if isinstance(e, HostConnectionError):
                     self.on_connection_error(future_host_id)
@@ -2419,9 +2243,17 @@ log "=== Shutdown script completed ==="
 
         # add these hosts to a cache so we don't need to look them up by name or id again
         for host in hosts:
-            self._host_by_id_cache[host.id] = host
+            self._evict_cached_host(host.id, replacement=host)
 
-        return [DiscoveredHost(host_id=h.id, host_name=h.get_name(), provider_name=self.name) for h in hosts]
+        return [
+            DiscoveredHost(
+                host_id=h.id,
+                host_name=h.get_name(),
+                provider_name=self.name,
+                host_state=discovery_state.get(h.id),
+            )
+            for h in hosts
+        ]
 
     def _construct_host_from_record_for_discovery(
         self,
@@ -2429,7 +2261,13 @@ log "=== Shutdown script completed ==="
         host_record: HostRecord,
         running_sandbox_by_host_id: dict[HostId, SandboxInterface],
         include_destroyed: bool,
-    ) -> HostInterface | None:
+    ) -> tuple[HostInterface | None, HostState | None]:
+        """Build a host from a record, returning (host, discovery_state).
+
+        The discovery_state is the host's lifecycle state as determined from
+        the discovery information (sandbox presence, snapshots, failure_reason)
+        without needing to connect to the host.
+        """
         host_obj: HostInterface | None = None
         if host_id in running_sandbox_by_host_id:
             # Host has a running sandbox - create from sandbox
@@ -2437,43 +2275,31 @@ log "=== Shutdown script completed ==="
             try:
                 host_obj = self._create_host_from_sandbox(sandbox, host_record=host_record)
                 if host_obj is not None:
-                    return host_obj
+                    return host_obj, HostState.RUNNING
             except (KeyError, ValueError, HostConnectionError) as e:
                 if isinstance(e, HostConnectionError):
                     # must call on_connection_error when there is a connection error (to properly clear the cache)
                     self.on_connection_error(host_id)
                 logger.warning("Failed to create host from sandbox {}: {}", host_id, e)
-                return None
+                return None, None
         if host_id not in running_sandbox_by_host_id or host_obj is None:
-            # Host has no running sandbox - it's stopped, failed, destroyed, or we couldn't connect
-            has_snapshots = len(host_record.certified_host_data.snapshots) > 0
-            is_failed = host_record.certified_host_data.failure_reason is not None
+            # Host has no running sandbox - derive state from certified data
+            state = derive_offline_host_state(
+                certified_data=host_record.certified_host_data,
+                supports_shutdown_hosts=self.supports_shutdown_hosts,
+                supports_snapshots=self.supports_snapshots,
+                has_snapshots=len(host_record.certified_host_data.snapshots) > 0,
+            )
 
-            if is_failed:
-                # Failed host - always include so users can warning() build failures
-                try:
-                    return self._create_host_from_host_record(host_record)
-                except (OSError, IOError, ValueError, KeyError) as e:
-                    logger.warning("Failed to create host from host record {}: {}", host_id, e)
-                    return None
-            elif has_snapshots:
-                # Stopped host (can be restarted)
-                try:
-                    return self._create_host_from_host_record(host_record)
-                except (OSError, IOError, ValueError, KeyError) as e:
-                    logger.warning("Failed to create host from host record {}: {}", host_id, e)
-                    return None
-            elif include_destroyed:
-                # Destroyed host (no snapshots, can't be restarted)
-                try:
-                    return self._create_host_from_host_record(host_record)
-                except (OSError, IOError, ValueError, KeyError) as e:
-                    logger.warning("Failed to create host from host record {}: {}", host_id, e)
-                    return None
-            else:
-                # Skip destroyed hosts when include_destroyed=False
-                return None
-        return None
+            if state == HostState.DESTROYED and not include_destroyed:
+                return None, None
+
+            try:
+                return self._create_host_from_host_record(host_record), state
+            except (OSError, IOError, ValueError, KeyError) as e:
+                logger.warning("Failed to create host from host record {}: {}", host_id, e)
+                return None, None
+        return None, None
 
     def _list_running_host_ids(self, cg: ConcurrencyGroup) -> set[HostId]:
         """List host IDs of all running sandboxes, fetching tags in parallel.
@@ -2565,10 +2391,21 @@ log "=== Shutdown script completed ==="
             if not is_running and not is_failed and not has_snapshots and not include_destroyed:
                 continue
 
+            if is_running:
+                host_state: HostState = HostState.RUNNING
+            else:
+                host_state = derive_offline_host_state(
+                    certified_data=host_record.certified_host_data,
+                    supports_shutdown_hosts=self.supports_shutdown_hosts,
+                    supports_snapshots=self.supports_snapshots,
+                    has_snapshots=has_snapshots,
+                )
+
             host_ref = DiscoveredHost(
                 host_id=host_id,
                 host_name=host_name,
                 provider_name=self.name,
+                host_state=host_state,
             )
 
             agent_refs: list[DiscoveredAgent] = []
@@ -2667,7 +2504,7 @@ log "=== Shutdown script completed ==="
         prefix = self.mngr_ctx.config.prefix
 
         # Build a shell script that collects everything we need
-        script = _build_listing_collection_script(host_dir, prefix)
+        script = build_listing_collection_script(host_dir, prefix)
 
         with log_span("Collecting listing data via single SSH command", host_id=str(host.id)):
             result = host.execute_idempotent_command(script, timeout_seconds=30.0)
@@ -2697,7 +2534,7 @@ log "=== Shutdown script completed ==="
                         f"Failed to collect listing data from host {host.id}: {result.stdout}\n{result.stderr}"
                     )
 
-        return _parse_listing_collection_output(result.stdout)
+        return parse_listing_collection_output(result.stdout)
 
     def _build_host_details_from_raw(
         self,

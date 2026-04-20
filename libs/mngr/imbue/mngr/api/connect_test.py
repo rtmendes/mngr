@@ -42,35 +42,35 @@ from imbue.mngr.providers.local.instance import LocalProviderInstance
 
 def test_build_ssh_activity_wrapper_script_creates_activity_directory() -> None:
     """Test that the wrapper script creates the activity directory."""
-    script = _build_ssh_activity_wrapper_script("mngr-test-session", Path("/home/user/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-test-session", Path("/home/user/.mngr"))
 
     assert "mkdir -p '/home/user/.mngr/activity'" in script
 
 
 def test_build_ssh_activity_wrapper_script_writes_to_activity_file() -> None:
     """Test that the wrapper script writes to the activity/ssh file."""
-    script = _build_ssh_activity_wrapper_script("mngr-test-session", Path("/home/user/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-test-session", Path("/home/user/.mngr"))
 
     assert "'/home/user/.mngr/activity/ssh'" in script
 
 
 def test_build_ssh_activity_wrapper_script_attaches_to_tmux_session() -> None:
     """Test that the wrapper script attaches to the correct tmux session."""
-    script = _build_ssh_activity_wrapper_script("mngr-my-agent", Path("/home/user/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-my-agent", Path("/home/user/.mngr"))
 
-    assert "tmux attach -t 'mngr-my-agent'" in script
+    assert "tmux attach -t '=mngr-my-agent'" in script
 
 
 def test_build_ssh_activity_wrapper_script_kills_activity_tracker_on_exit() -> None:
     """Test that the wrapper script kills the activity tracker when tmux exits."""
-    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/tmp/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/tmp/.mngr"))
 
     assert "kill $MNGR_ACTIVITY_PID" in script
 
 
 def test_build_ssh_activity_wrapper_script_writes_json_with_time_and_pid() -> None:
     """Test that the activity file contains JSON with time and ssh_pid."""
-    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/tmp/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/tmp/.mngr"))
 
     # The script should write JSON with time and ssh_pid fields
     assert "time" in script
@@ -80,7 +80,7 @@ def test_build_ssh_activity_wrapper_script_writes_json_with_time_and_pid() -> No
 
 def test_build_ssh_activity_wrapper_script_handles_paths_with_spaces() -> None:
     """Test that the wrapper script handles paths with spaces correctly."""
-    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/home/user/my dir/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/home/user/my dir/.mngr"))
 
     # Paths should be quoted to handle spaces
     assert "'/home/user/my dir/.mngr/activity'" in script
@@ -89,7 +89,7 @@ def test_build_ssh_activity_wrapper_script_handles_paths_with_spaces() -> None:
 
 def test_build_ssh_activity_wrapper_script_checks_for_signal_file() -> None:
     """Test that the wrapper script checks for the session-specific signal file."""
-    script = _build_ssh_activity_wrapper_script("mngr-my-agent", Path("/home/user/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-my-agent", Path("/home/user/.mngr"))
 
     assert "'/home/user/.mngr/signals/mngr-my-agent'" in script
     assert "SIGNAL_FILE=" in script
@@ -97,7 +97,7 @@ def test_build_ssh_activity_wrapper_script_checks_for_signal_file() -> None:
 
 def test_build_ssh_activity_wrapper_script_exits_with_destroy_code_on_destroy_signal() -> None:
     """Test that the wrapper script exits with SIGNAL_EXIT_CODE_DESTROY when signal is 'destroy'."""
-    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/tmp/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/tmp/.mngr"))
 
     assert f"exit {SIGNAL_EXIT_CODE_DESTROY}" in script
     assert '"destroy"' in script
@@ -105,7 +105,7 @@ def test_build_ssh_activity_wrapper_script_exits_with_destroy_code_on_destroy_si
 
 def test_build_ssh_activity_wrapper_script_exits_with_stop_code_on_stop_signal() -> None:
     """Test that the wrapper script exits with SIGNAL_EXIT_CODE_STOP when signal is 'stop'."""
-    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/tmp/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/tmp/.mngr"))
 
     assert f"exit {SIGNAL_EXIT_CODE_STOP}" in script
     assert '"stop"' in script
@@ -113,14 +113,14 @@ def test_build_ssh_activity_wrapper_script_exits_with_stop_code_on_stop_signal()
 
 def test_build_ssh_activity_wrapper_script_removes_signal_file_after_reading() -> None:
     """Test that the wrapper script removes the signal file after reading it."""
-    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/tmp/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/tmp/.mngr"))
 
     assert 'rm -f "$SIGNAL_FILE"' in script
 
 
 def test_build_ssh_activity_wrapper_script_signal_file_uses_session_name() -> None:
     """Test that the signal file path includes the session name for per-session signals."""
-    script = _build_ssh_activity_wrapper_script("mngr-unique-session", Path("/data/.mngr"), "claude")
+    script = _build_ssh_activity_wrapper_script("mngr-unique-session", Path("/data/.mngr"))
 
     assert "'/data/.mngr/signals/mngr-unique-session'" in script
 
@@ -366,23 +366,32 @@ class _ConnectTestResult:
         self.subprocess_call_args: list[list[str]] = []
 
 
-def _run_connect_to_agent(
+def _run_connect_with_retries(
     local_provider: LocalProviderInstance,
     mngr_ctx: MngrContext,
     monkeypatch: pytest.MonkeyPatch,
-    ssh_exit_code: int,
+    ssh_exit_codes: list[int],
+    retry_count: int = 2,
     agent_name: str = "test-agent",
 ) -> _ConnectTestResult:
-    """Set up and run connect_to_agent with intercepted system calls."""
+    """Set up and run connect_to_agent with a sequence of SSH exit codes.
+
+    Each successive call to run_interactive_subprocess returns the next exit code
+    from the list. When the list is exhausted, the last exit code is repeated.
+    """
     host = _make_ssh_host(local_provider, mngr_ctx, ssh_known_hosts_file="/tmp/known_hosts")
     agent = _make_remote_agent(host, mngr_ctx, agent_name=agent_name)
-    opts = ConnectionOptions(is_unknown_host_allowed=False)
+    opts = ConnectionOptions(is_unknown_host_allowed=False, retry_count=retry_count, retry_delay="1s")
 
     result = _ConnectTestResult()
+    call_index = 0
 
-    def fake_run_interactive(args, **kwargs):
+    def fake_run_interactive(args: Any, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        nonlocal call_index
+        exit_code = ssh_exit_codes[min(call_index, len(ssh_exit_codes) - 1)]
+        call_index += 1
         result.subprocess_call_args.append(list(args))
-        return subprocess.CompletedProcess(args=args, returncode=ssh_exit_code)
+        return subprocess.CompletedProcess(args=args, returncode=exit_code)
 
     monkeypatch.setattr(
         "imbue.mngr.api.connect.run_interactive_subprocess",
@@ -396,6 +405,24 @@ def _run_connect_to_agent(
     connect_to_agent(agent, host, mngr_ctx, opts)
 
     return result
+
+
+def _run_connect_to_agent(
+    local_provider: LocalProviderInstance,
+    mngr_ctx: MngrContext,
+    monkeypatch: pytest.MonkeyPatch,
+    ssh_exit_code: int,
+    agent_name: str = "test-agent",
+) -> _ConnectTestResult:
+    """Set up and run connect_to_agent with intercepted system calls (no retries)."""
+    return _run_connect_with_retries(
+        local_provider,
+        mngr_ctx,
+        monkeypatch,
+        ssh_exit_codes=[ssh_exit_code],
+        retry_count=0,
+        agent_name=agent_name,
+    )
 
 
 def test_connect_to_agent_remote_destroy_signal(
@@ -446,6 +473,85 @@ def test_connect_to_agent_remote_unknown_exit_code_no_action(
     assert len(result.execvp_calls) == 0
 
 
+# =========================================================================
+# Tests for connect_to_agent retry behavior
+# =========================================================================
+
+
+def test_connect_to_agent_retries_on_ssh_failure(
+    local_provider: LocalProviderInstance,
+    temp_mngr_ctx: MngrContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """connect_to_agent should retry up to retry_count times when SSH fails with a non-signal exit code."""
+    result = _run_connect_with_retries(
+        local_provider,
+        temp_mngr_ctx,
+        monkeypatch,
+        ssh_exit_codes=[255, 255, 255],
+        retry_count=2,
+    )
+
+    # 1 initial attempt + 2 retries = 3 total calls
+    assert len(result.subprocess_call_args) == 3
+    assert len(result.execvp_calls) == 0
+
+
+def test_connect_to_agent_no_retry_on_normal_exit(
+    local_provider: LocalProviderInstance,
+    temp_mngr_ctx: MngrContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """connect_to_agent should not retry when SSH exits normally (code 0)."""
+    result = _run_connect_with_retries(
+        local_provider,
+        temp_mngr_ctx,
+        monkeypatch,
+        ssh_exit_codes=[0],
+        retry_count=2,
+    )
+
+    assert len(result.subprocess_call_args) == 1
+    assert len(result.execvp_calls) == 0
+
+
+def test_connect_to_agent_no_retry_on_signal_exit(
+    local_provider: LocalProviderInstance,
+    temp_mngr_ctx: MngrContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """connect_to_agent should not retry on a post-disconnect signal exit code (destroy/stop)."""
+    result = _run_connect_with_retries(
+        local_provider,
+        temp_mngr_ctx,
+        monkeypatch,
+        ssh_exit_codes=[SIGNAL_EXIT_CODE_DESTROY],
+        retry_count=2,
+    )
+
+    assert len(result.subprocess_call_args) == 1
+    assert len(result.execvp_calls) == 1
+
+
+def test_connect_to_agent_retries_then_succeeds(
+    local_provider: LocalProviderInstance,
+    temp_mngr_ctx: MngrContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """connect_to_agent should stop retrying once SSH succeeds."""
+    result = _run_connect_with_retries(
+        local_provider,
+        temp_mngr_ctx,
+        monkeypatch,
+        ssh_exit_codes=[255, 0],
+        retry_count=2,
+    )
+
+    # First attempt fails, second succeeds -- no third attempt
+    assert len(result.subprocess_call_args) == 2
+    assert len(result.execvp_calls) == 0
+
+
 def test_connect_to_agent_remote_uses_correct_session_name(
     local_provider: LocalProviderInstance,
     temp_host_dir: Path,
@@ -475,33 +581,13 @@ def test_ssh_wrapper_script_is_correctly_quoted_for_bash_c() -> None:
     bash -c only receives the first word (e.g. 'mkdir'), causing errors like
     'mkdir: missing operand'.
     """
-    wrapper_script = _build_ssh_activity_wrapper_script("mngr-test", Path("/mngr"), "claude")
+    wrapper_script = _build_ssh_activity_wrapper_script("mngr-test", Path("/mngr"))
     remote_command = "bash -c " + shlex.quote(wrapper_script)
 
     # When the remote shell parses this command, bash should receive
     # the full wrapper script as a single -c argument
     parsed = shlex.split(remote_command)
     assert parsed == ["bash", "-c", wrapper_script]
-
-
-def test_build_ssh_activity_wrapper_script_quotes_agent_command_with_metacharacters() -> None:
-    """Test that agent_command is shell-quoted to prevent syntax errors.
-
-    When agent_command contains shell metacharacters (e.g. '(' from a command
-    like '( script.sh ... ) &'), it must be quoted so that pkill -f receives
-    it as a literal pattern rather than as shell syntax.
-    """
-    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/mngr"), "(")
-
-    # The '(' should be quoted (e.g. as '(') so bash doesn't interpret it as subshell syntax
-    assert "pkill -SIGWINCH -f '('" in script
-
-
-def test_build_ssh_activity_wrapper_script_quotes_normal_agent_command() -> None:
-    """Test that even normal agent_command values are properly quoted."""
-    script = _build_ssh_activity_wrapper_script("mngr-test", Path("/mngr"), "claude")
-
-    assert "pkill -SIGWINCH -f claude" in script
 
 
 # =========================================================================

@@ -1,7 +1,9 @@
 """Shared test fixtures for API tests."""
 
 import shlex
+import shutil
 import subprocess
+import types
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -32,6 +34,18 @@ class FakeHost(MutableModel):
         default=None,
         description="SSH connection info (user, hostname, port, key_path) for remote hosts",
     )
+    ssh_known_hosts_file: str | None = Field(
+        default=None,
+        description="Path to known_hosts file for SSH host key verification",
+    )
+
+    @property
+    def connector(self) -> types.SimpleNamespace:
+        """Provide a connector-like attribute with host data for SSH configuration."""
+        data: dict[str, str] = {}
+        if self.ssh_known_hosts_file is not None:
+            data["ssh_known_hosts_file"] = self.ssh_known_hosts_file
+        return types.SimpleNamespace(host=types.SimpleNamespace(data=data))
 
     def _execute_command(
         self,
@@ -93,6 +107,22 @@ class FakeHost(MutableModel):
         """Write a binary file to the local filesystem."""
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
+
+    def copy_directory(
+        self,
+        source_host: object,
+        source_path: Path,
+        target_path: Path,
+        extra_args: str | None = None,
+        exclude_git: bool = False,
+    ) -> None:
+        """Copy a directory using local filesystem operations.
+
+        FakeHost always operates on the local filesystem, so this uses
+        shutil.copytree regardless of the is_local flag.
+        """
+        target_path.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source_path, target_path, dirs_exist_ok=True)
 
     def get_ssh_connection_info(self) -> tuple[str, str, int, Path] | None:
         """Return configured SSH connection info, or None for local hosts."""

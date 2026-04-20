@@ -34,10 +34,13 @@ from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 
 
 class ParsedSourceLocation(FrozenModel):
-    """Parsed components of a source location string."""
+    """Parsed components of a source location string.
+
+    Produced by parse_source_string(); consumed by resolve_source_location().
+    """
 
     agent: str | None = Field(description="Agent ID or name")
-    host: str | None = Field(description="Host ID or name")
+    host: str | None = Field(description="Host ID or name (may include .PROVIDER suffix)")
     path: str | None = Field(description="File path")
 
 
@@ -59,56 +62,54 @@ def _parse_address_part(address_str: str) -> tuple[str | None, str | None]:
 
 
 @pure
-def parse_source_string(
-    source: str | None,
-    source_agent: str | None = None,
-    source_host: str | None = None,
-    source_path: str | None = None,
-) -> ParsedSourceLocation:
-    """Parse source location string into components.
+def parse_source_string(source: str) -> ParsedSourceLocation:
+    """Parse a --from/--source string into its components.
 
-    source format: [AGENT[@[HOST][.PROVIDER]]][:PATH] | PATH
+    The DSL encodes four variants:
 
-    Uses the standard agent address format (NAME@HOST.PROVIDER) for specifying
-    agent and host components. Everything after the first ':' is treated as the path.
+      1. AGENT_ADDR             agent's host + agent's work_dir
+      2. AGENT_ADDR:PATH        agent's host + explicit PATH
+      3. @HOST[.PROVIDER]:PATH  explicit host + PATH (@ without agent name)
+      4. :PATH                  local path
+
+    where AGENT_ADDR is NAME[@HOST[.PROVIDER]].
+
+    Paths starting with /, ./, ~/, or ../ are also recognized directly
+    (i.e. --from /abs/path works without requiring the : prefix).
+
+    Note: a bare name like "foo" refers to agent "foo", not a directory.
+    Use ":foo" to specify a relative directory named foo.
 
     Examples:
-      - "my-agent" -> agent="my-agent"
-      - "my-agent@my-host" -> agent="my-agent", host="my-host"
-      - "my-agent@my-host.modal" -> agent="my-agent", host="my-host.modal"
-      - "my-agent@my-host:/path" -> agent="my-agent", host="my-host", path="/path"
-      - "@my-host:/path" -> host="my-host", path="/path"
-      - "/path/to/dir" -> path="/path/to/dir"
-
-    Raises UserInputError if both source and individual parameters are specified.
+      - "my-agent"                  -> agent="my-agent"
+      - "my-agent@my-host"          -> agent="my-agent", host="my-host"
+      - "my-agent@my-host.modal"    -> agent="my-agent", host="my-host.modal"
+      - "my-agent:path"             -> agent="my-agent", path="path"
+      - "my-agent@my-host:/path"    -> agent="my-agent", host="my-host", path="/path"
+      - "@my-host:/path"            -> host="my-host", path="/path"
+      - ":/path/to/dir"             -> path="/path/to/dir"
+      - "/path/to/dir"              -> path="/path/to/dir"
     """
-    if source is not None:
-        if source_agent is not None or source_path is not None or source_host is not None:
-            raise UserInputError("Specify either --source or the individual source parameters, not both.")
+    # Recognize unambiguous path prefixes as a convenience
+    if source.startswith(("/", "./", "~/", "../")):
+        return ParsedSourceLocation(agent=None, host=None, path=source)
 
-        parsed_agent: str | None = None
-        parsed_host: str | None = None
-        parsed_path: str | None = None
+    # Split on first : to separate address from path
+    if ":" in source:
+        address_part, path_part = source.split(":", 1)
+        path = path_part or None
+    else:
+        address_part = source
+        path = None
 
-        if source.startswith(("/", "./", "~/", "../")):
-            parsed_path = source
-        elif ":" in source:
-            prefix, path_part = source.split(":", 1)
-            parsed_path = path_part
-            if prefix:
-                parsed_agent, parsed_host = _parse_address_part(prefix)
-        else:
-            parsed_agent, parsed_host = _parse_address_part(source)
+    # Empty address means local path (variant 4: ":path")
+    if not address_part:
+        return ParsedSourceLocation(agent=None, host=None, path=path)
 
-        source_agent = parsed_agent
-        source_host = parsed_host
-        source_path = parsed_path
+    # Parse the address part (variants 1-3)
+    agent, host = _parse_address_part(address_part)
 
-    return ParsedSourceLocation(
-        agent=source_agent,
-        host=source_host,
-        path=source_path,
-    )
+    return ParsedSourceLocation(agent=agent, host=host, path=path)
 
 
 @pure
@@ -239,32 +240,21 @@ class ResolvedSource(FrozenModel):
 
 @log_call
 def resolve_source_location(
-    source: str | None,
-    source_agent: str | None,
-    source_host: str | None,
-    source_path: str | None,
+    parsed: ParsedSourceLocation,
     agents_by_host: Mapping[DiscoveredHost, Sequence[DiscoveredAgent]],
     mngr_ctx: MngrContext,
     *,
     is_start_desired: bool = True,
 ) -> ResolvedSource:
-    """Parse and resolve source location to a concrete host, path, and optional agent ID.
+    """Resolve a previously-parsed source location to a concrete host, path, and optional agent.
 
-    source format: [AGENT[@[HOST][.PROVIDER]]][:PATH] | PATH
-
-    Uses the standard agent address format (NAME@HOST.PROVIDER) for specifying
-    agent and host components. Everything after the first ':' is treated as the path.
+    Takes a ParsedSourceLocation (produced by parse_source_string) and resolves
+    agent/host references against the discovered hosts and agents.
 
     If the resolved host is offline, it will be started if is_start_desired is True (the default).
     If is_start_desired is False and the host is offline, raises UserInputError.
-
-    This is useful because it allows the user to specify the source agent / location in a maximally flexible way.
-    This is important for making the CLI easy to use in a variety of scenarios.
     """
-    # Parse the source string into components
-    with log_span("Parsing source location"):
-        parsed = parse_source_string(source, source_agent, source_host, source_path)
-        logger.trace("Parsed source: agent={} host={} path={}", parsed.agent, parsed.host, parsed.path)
+    logger.trace("Resolving source: agent={} host={} path={}", parsed.agent, parsed.host, parsed.path)
 
     # Resolve host and agent references from the parsed components
     all_hosts = list(agents_by_host.keys())
@@ -440,6 +430,11 @@ def find_and_maybe_start_agent_by_name_or_id(
     # Try matching by name
     agent_name = AgentName(agent_str)
     matching: list[tuple[AgentInterface, OnlineHostInterface]] = []
+    # Track display info for error messages: (agent_id, host_name, provider_name)
+    match_display_info: list[tuple[AgentId, HostName, ProviderInstanceName]] = []
+
+    # Track agents found during discovery but missing from get_agents()
+    missing_from_host: list[tuple[AgentId, HostName, ProviderInstanceName]] = []
 
     for host_ref, agent_refs in agents_by_host.items():
         for agent_ref in agent_refs:
@@ -450,23 +445,56 @@ def find_and_maybe_start_agent_by_name_or_id(
                     host, is_start_desired=is_start_desired, provider=provider
                 )
                 # Find the specific agent by ID (not name, to avoid duplicates)
+                found_on_host = False
                 for agent in online_host.get_agents():
                     if agent.id == agent_ref.agent_id:
                         matching.append((agent, online_host))
+                        match_display_info.append((agent_ref.agent_id, host_ref.host_name, host_ref.provider_name))
+                        found_on_host = True
                         break
+                if not found_on_host:
+                    missing_from_host.append((agent_ref.agent_id, host_ref.host_name, host_ref.provider_name))
+
+    if missing_from_host:
+        missing_details = ", ".join(
+            f"{agent_id}@{host_name}.{provider_name}" for agent_id, host_name, provider_name in missing_from_host
+        )
+        if not matching:
+            # This is an internal consistency error: discovery found agents but
+            # they weren't on their hosts. We don't want to hard-fail if we still
+            # have a unique agent to connect to, but since we'd fail just below
+            # anyway (no matching agents), take the opportunity to raise as
+            # RuntimeError instead of UserInputError so the unexpected-error
+            # handler suggests reporting to GitHub.
+            raise RuntimeError(
+                f"Agent '{agent_str}' was found during discovery but not on host(s). "
+                f"Missing: {missing_details}. "
+                f"This indicates a stale discovery cache or host state inconsistency."
+            )
+        # Some agents disappeared but others were found. Log a warning and proceed.
+        logger.warning(
+            "Some agents named '{}' were discovered but not found on their host(s): {}",
+            agent_str,
+            missing_details,
+        )
 
     if not matching:
         raise UserInputError(f"No agent found with name or ID: {agent_str}")
 
     if len(matching) > 1:
-        # Build helpful error message showing the matching agents
-        agent_list = "\n".join([f"  - {agent.id} (on {host.get_name()})" for agent, host in matching])
+        # Build helpful error message showing the matching agents with address syntax
+        agent_list = "\n".join(
+            [
+                f"  - {agent_str}@{host_name}.{provider_name} (ID: {agent_id})"
+                for agent_id, host_name, provider_name in match_display_info
+            ]
+        )
         raise UserInputError(
             f"Multiple agents found with name '{agent_str}':\n{agent_list}\n\n"
-            f"Please use the agent ID instead:\n"
-            f"  mngr {command_name} <agent-id>\n\n"
-            f"To see all agent IDs, run:\n"
-            f"  mngr list --fields id,name,host"
+            f"Disambiguate using the address format:\n"
+            f"  mngr {command_name} {agent_str}@<host>.<provider>\n\n"
+            f"Or use the agent ID directly:\n"
+            f"  mngr {command_name} <agent-id>"
         )
 
     # make sure the agent is started

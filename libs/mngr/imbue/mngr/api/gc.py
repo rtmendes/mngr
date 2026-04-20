@@ -25,6 +25,7 @@ from imbue.mngr.errors import HostAuthenticationError
 from imbue.mngr.errors import HostConnectionError
 from imbue.mngr.errors import HostOfflineError
 from imbue.mngr.errors import MngrError
+from imbue.mngr.errors import ProviderUnavailableError
 from imbue.mngr.interfaces.data_types import BuildCacheInfo
 from imbue.mngr.interfaces.data_types import LogFileInfo
 from imbue.mngr.interfaces.data_types import SizeBytes
@@ -64,13 +65,18 @@ def gc(
     result = GcResult()
     logger.trace("Configured GC: dry_run={} error_behavior={}", dry_run, error_behavior)
 
+    # Discover hosts once per provider and reuse across all GC functions.
+    # This avoids repeated discover_hosts() calls that each retry failing
+    # backends and emit duplicate warnings (e.g. when Docker is offline).
+    all_hosts_by_provider = _discover_hosts_for_gc(providers, mngr_ctx)
+
     if resource_types.is_work_dirs:
         if on_resource_type_start:
             on_resource_type_start("work_dirs")
         with log_span("Garbage collecting orphaned work directories"):
             gc_work_dirs(
                 mngr_ctx=mngr_ctx,
-                providers=providers,
+                hosts_by_provider=all_hosts_by_provider,
                 dry_run=dry_run,
                 error_behavior=error_behavior,
                 result=result,
@@ -82,7 +88,7 @@ def gc(
         with log_span("Garbage collecting idle machines"):
             gc_machines(
                 mngr_ctx=mngr_ctx,
-                providers=providers,
+                hosts_by_provider=all_hosts_by_provider,
                 dry_run=dry_run,
                 error_behavior=error_behavior,
                 result=result,
@@ -93,7 +99,7 @@ def gc(
             on_resource_type_start("snapshots")
         with log_span("Garbage collecting orphaned snapshots"):
             gc_snapshots(
-                providers=providers,
+                hosts_by_provider=all_hosts_by_provider,
                 dry_run=dry_run,
                 error_behavior=error_behavior,
                 result=result,
@@ -104,7 +110,7 @@ def gc(
             on_resource_type_start("volumes")
         with log_span("Garbage collecting orphaned volumes"):
             gc_volumes(
-                providers=providers,
+                hosts_by_provider=all_hosts_by_provider,
                 dry_run=dry_run,
                 error_behavior=error_behavior,
                 result=result,
@@ -137,9 +143,43 @@ def gc(
     return result
 
 
+ProviderHosts = list[tuple[ProviderInstanceInterface, list[DiscoveredHost]]]
+"""A list of (provider, discovered_hosts) pairs for passing pre-computed discovery results."""
+
+
+def _discover_hosts_for_gc(
+    providers: Sequence[ProviderInstanceInterface],
+    mngr_ctx: MngrContext,
+) -> ProviderHosts:
+    """Discover hosts from all providers, returning (provider, hosts) pairs.
+
+    Uses include_destroyed=True so every GC function gets the complete picture.
+    Functions that need only non-destroyed hosts can filter by host_state.
+
+    Provider-level errors are caught and logged so that a single unavailable
+    provider does not prevent GC from running on other providers.
+    """
+    result: ProviderHosts = []
+    for provider in providers:
+        try:
+            hosts = provider.discover_hosts(
+                include_destroyed=True,
+                cg=mngr_ctx.concurrency_group,
+            )
+        except MngrError as e:
+            logger.warning("Failed to discover hosts for provider {}: {}", provider.name, e)
+            # Skip the provider entirely when discovery fails.  This is
+            # critical for gc_volumes: if we recorded (provider, []) instead,
+            # gc_volumes would call list_volumes() and treat *every* volume as
+            # orphaned (no known hosts -> no active volumes -> delete all).
+            continue
+        result.append((provider, hosts))
+    return result
+
+
 def gc_work_dirs(
     mngr_ctx: MngrContext,
-    providers: Sequence[ProviderInstanceInterface],
+    hosts_by_provider: ProviderHosts,
     dry_run: bool,
     error_behavior: ErrorBehavior,
     result: GcResult,
@@ -149,8 +189,10 @@ def gc_work_dirs(
     with ConcurrencyGroupExecutor(
         parent_cg=mngr_ctx.concurrency_group, name="gc_machines", max_workers=32
     ) as executor:
-        for provider_instance in providers:
-            for host_ref in provider_instance.discover_hosts(cg=mngr_ctx.concurrency_group):
+        for provider_instance, host_refs in hosts_by_provider:
+            for host_ref in host_refs:
+                if host_ref.host_state == HostState.DESTROYED:
+                    continue
                 futures.append(
                     executor.submit(
                         _gc_single_host_work_dir, host_ref, provider_instance, error_behavior, dry_run, result
@@ -194,7 +236,7 @@ def _gc_single_host_work_dir(
 
 def gc_machines(
     mngr_ctx: MngrContext,
-    providers: Sequence[ProviderInstanceInterface],
+    hosts_by_provider: ProviderHosts,
     dry_run: bool,
     error_behavior: ErrorBehavior,
     result: GcResult,
@@ -202,38 +244,29 @@ def gc_machines(
     """Garbage collect idle machines and delete old offline host records."""
     results_lock = Lock()
 
-    for provider in providers:
-        try:
-            host_refs = provider.discover_hosts(include_destroyed=True, cg=provider.mngr_ctx.concurrency_group)
-
-            # Process hosts in parallel to avoid sequential SSH timeouts for offline hosts
-            futures: list[Future[None]] = []
-            with ConcurrencyGroupExecutor(
-                parent_cg=mngr_ctx.concurrency_group, name="gc_machines", max_workers=32
-            ) as executor:
-                for host_ref in host_refs:
-                    futures.append(
-                        executor.submit(
-                            _gc_single_host,
-                            host_ref,
-                            provider,
-                            mngr_ctx,
-                            dry_run,
-                            error_behavior,
-                            result,
-                            results_lock,
-                        )
+    for provider, host_refs in hosts_by_provider:
+        # Process hosts in parallel to avoid sequential SSH timeouts for offline hosts
+        futures: list[Future[None]] = []
+        with ConcurrencyGroupExecutor(
+            parent_cg=mngr_ctx.concurrency_group, name="gc_machines", max_workers=32
+        ) as executor:
+            for host_ref in host_refs:
+                futures.append(
+                    executor.submit(
+                        _gc_single_host,
+                        host_ref,
+                        provider,
+                        mngr_ctx,
+                        dry_run,
+                        error_behavior,
+                        result,
+                        results_lock,
                     )
+                )
 
-            # Re-raise any thread exceptions
-            for future in futures:
-                future.result()
-
-        except MngrError as e:
-            error_msg = f"Failed to discover hosts for provider {provider.name}: {e}"
-            with results_lock:
-                result.errors.append(error_msg)
-            _handle_error(error_msg, error_behavior, exc=e)
+        # Re-raise any thread exceptions
+        for future in futures:
+            future.result()
 
 
 def _gc_single_host(
@@ -306,9 +339,9 @@ def _gc_single_host(
             return
 
         if not dry_run:
-            mngr_ctx.pm.hook.on_before_host_destroy(host=host_to_destroy)
+            mngr_ctx.pm.hook.on_before_host_destroy(host=host_to_destroy, mngr_ctx=mngr_ctx)
             provider.destroy_host(host_to_destroy)
-            mngr_ctx.pm.hook.on_host_destroyed(host=host_to_destroy)
+            mngr_ctx.pm.hook.on_host_destroyed(host=host_to_destroy, mngr_ctx=mngr_ctx)
             emit_host_destroyed(mngr_ctx.config, host_ref.host_id, [])
 
         with results_lock:
@@ -322,38 +355,38 @@ def _gc_single_host(
 
 
 def gc_snapshots(
-    providers: Sequence[ProviderInstanceInterface],
+    hosts_by_provider: ProviderHosts,
     dry_run: bool,
     error_behavior: ErrorBehavior,
     result: GcResult,
 ) -> None:
     """Garbage collect snapshots from destroyed hosts.
 
-    Only deletes snapshots from hosts that are in DESTROYED state -- these
-    snapshots serve no purpose because the host can never be resumed.
+    Only deletes snapshots from hosts that were in DESTROYED state at
+    discovery time -- these snapshots serve no purpose because the host
+    can never be resumed.
+
+    Uses the host_state from the pre-computed discovery results rather than
+    calling get_host(), because gc_machines may have already destroyed the
+    host (and its record) earlier in the same GC run.
 
     Snapshots on RUNNING, PAUSED, and STOPPED hosts are never deleted:
     - PAUSED/STOPPED hosts need their snapshots for resumption
     - RUNNING hosts may have snapshots for backup/restore purposes
     """
-    for provider in providers:
+    for provider, host_refs in hosts_by_provider:
         if not provider.supports_snapshots:
             logger.trace("Skipped provider {} (does not support snapshots)", provider.name)
             continue
 
         try:
-            # Only look at destroyed hosts -- their snapshots are orphaned
-            host_refs = provider.discover_hosts(include_destroyed=True, cg=provider.mngr_ctx.concurrency_group)
-
             for host_ref in host_refs:
                 try:
-                    host = provider.get_host(host_ref.host_id)
-                    host_state = host.get_state()
-                    if host_state != HostState.DESTROYED:
+                    if host_ref.host_state != HostState.DESTROYED:
                         logger.trace(
                             "Skipped snapshot GC for host {} (state: {})",
                             host_ref.host_id,
-                            host_state,
+                            host_ref.host_state,
                         )
                         continue
 
@@ -377,13 +410,13 @@ def gc_snapshots(
 
 
 def gc_volumes(
-    providers: Sequence[ProviderInstanceInterface],
+    hosts_by_provider: ProviderHosts,
     dry_run: bool,
     error_behavior: ErrorBehavior,
     result: GcResult,
 ) -> None:
     """Garbage collect orphaned volumes."""
-    for provider in providers:
+    for provider, host_refs in hosts_by_provider:
         if not provider.supports_volumes:
             logger.trace("Skipped provider {} (does not support volumes)", provider.name)
             continue
@@ -392,9 +425,12 @@ def gc_volumes(
             # Get all volumes
             all_volumes = provider.list_volumes()
 
-            # Get volumes that are currently attached to hosts
+            # Get volumes that are currently attached to non-destroyed hosts.
+            # Destroyed hosts' volumes are considered orphaned and should be cleaned up.
             active_volume_ids = set()
-            for host_ref in provider.discover_hosts(include_destroyed=False, cg=provider.mngr_ctx.concurrency_group):
+            for host_ref in host_refs:
+                if host_ref.host_state == HostState.DESTROYED:
+                    continue
                 for volume in all_volumes:
                     if volume.host_id == host_ref.host_id:
                         active_volume_ids.add(volume.volume_id)
@@ -414,6 +450,10 @@ def gc_volumes(
                     result.errors.append(error_msg)
                     _handle_error(error_msg, error_behavior, exc=e)
 
+        except ProviderUnavailableError as e:
+            # Provider is offline -- discover_hosts already warned the user.
+            logger.debug("Skipped volume GC for provider {} (unavailable): {}", provider.name, e)
+            continue
         except MngrError as e:
             error_msg = f"Failed to process volumes for provider {provider.name}: {e}"
             result.errors.append(error_msg)
@@ -664,11 +704,20 @@ def _remove_work_dir_from_certified_data(host: OnlineHostInterface, work_dir_pat
 
 
 def _remove_directory(host: OnlineHostInterface, path: Path) -> None:
-    """Remove a directory and all its contents."""
+    """Remove a directory and all its contents.
+
+    Tries without sudo first, then retries with sudo if the initial
+    attempt fails (e.g. on Lima VMs where the SSH user is not root but
+    has passwordless sudo).
+    """
     result = host.execute_idempotent_command(f"test -e {shlex.quote(str(path))}")
     if result.success:
-        cmd = f"rm -rf {shlex.quote(str(path))}"
-        result = host.execute_idempotent_command(cmd)
+        quoted = shlex.quote(str(path))
+        result = host.execute_idempotent_command(f"rm -rf {quoted}")
+
+        if not result.success:
+            logger.debug("rm -rf failed for {}, retrying with sudo: {}", path, result.stderr)
+            result = host.execute_idempotent_command(f"sudo rm -rf {quoted}")
 
         if not result.success:
             raise MngrError(f"Failed to remove directory {path}: {result.stderr}")

@@ -11,11 +11,12 @@ from imbue.skitwright.expect import expect
 
 @pytest.mark.release
 @pytest.mark.tmux
+@pytest.mark.modal
 @pytest.mark.rsync
 def test_create_with_source_path(e2e: E2eSession, tmp_path: Path) -> None:
     e2e.write_tutorial_block("""
     # by default, the agent uses the data from its current git repo (if any) or folder, but you can specify a different source:
-    mngr create my-task --source-path /path/to/some/other/project
+    mngr create my-task --from /path/to/some/other/project
     """)
     source_dir = tmp_path / "other_project"
     source_dir.mkdir()
@@ -23,7 +24,7 @@ def test_create_with_source_path(e2e: E2eSession, tmp_path: Path) -> None:
 
     expect(
         e2e.run(
-            f"mngr create my-task --source-path {source_dir} --command 'sleep 99999' --no-ensure-clean",
+            f"mngr create my-task --from {source_dir} --command 'sleep 99999' --no-ensure-clean",
             comment="the agent uses the data from its current git repo (if any) or folder, but you can specify a different source",
         )
     ).to_succeed()
@@ -43,6 +44,7 @@ def test_create_with_source_path(e2e: E2eSession, tmp_path: Path) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
+@pytest.mark.modal
 def test_create_with_project_label(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # similarly, by default the agent is tagged with a "project" label that matches the name of the current git repo (or folder), but you can specify a different project:
@@ -66,13 +68,14 @@ def test_create_with_project_label(e2e: E2eSession) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
+@pytest.mark.modal
 @pytest.mark.rsync
 def test_create_with_source_path_no_git(e2e: E2eSession, tmp_path: Path) -> None:
     e2e.write_tutorial_block("""
     # mngr doesn't require git at all--if there's no git repo, it will just use the files from the folder as the source data
     mkdir -p /tmp/my_random_folder
     echo "print('hello world')" > /tmp/my_random_folder/script.py
-    mngr create my-task --source-path /tmp/my_random_folder --command python -- script.py
+    mngr create my-task --from /tmp/my_random_folder --command python -- script.py
     """)
     source_dir = tmp_path / "my_random_folder"
     source_dir.mkdir()
@@ -80,7 +83,7 @@ def test_create_with_source_path_no_git(e2e: E2eSession, tmp_path: Path) -> None
 
     expect(
         e2e.run(
-            f"mngr create my-task --source-path {source_dir} --command 'sleep 99999' --no-ensure-clean",
+            f"mngr create my-task --from {source_dir} --command 'sleep 99999' --no-ensure-clean",
             comment="mngr doesn't require git at all--if there's no git repo, it will just use the files from the folder",
         )
     ).to_succeed()
@@ -244,6 +247,7 @@ def test_create_with_explicit_branch_name(e2e: E2eSession) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
+@pytest.mark.modal
 @pytest.mark.rsync
 def test_create_with_transfer_git_mirror(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -273,6 +277,7 @@ def test_create_with_transfer_git_mirror(e2e: E2eSession) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
+@pytest.mark.modal
 @pytest.mark.rsync
 def test_create_git_mirror_with_existing_branch(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -309,6 +314,7 @@ def test_create_git_mirror_with_existing_branch(e2e: E2eSession) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
+@pytest.mark.modal
 @pytest.mark.timeout(60)
 def test_create_with_transfer_none(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
@@ -345,39 +351,12 @@ def test_create_with_transfer_none(e2e: E2eSession) -> None:
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_with_shallow_depth(e2e: E2eSession) -> None:
-    e2e.write_tutorial_block("""
-    # you can make a shallow clone for faster setup:
-    mngr create my-task --depth 1
-    # (--shallow-since clones since a specific date instead)
-    """)
-    expect(
-        e2e.run(
-            "mngr create my-task --depth 1 --command 'sleep 99999' --no-ensure-clean --exclude-unclean",
-            comment="you can make a shallow clone for faster setup",
-        )
-    ).to_succeed()
-
-    list_result = e2e.run("mngr list", comment="Verify agent appears in list")
-    expect(list_result).to_succeed()
-    expect(list_result.stdout).to_contain("my-task")
-
-    # Verify the clone is actually shallow
-    shallow_check = e2e.run(
-        "mngr exec my-task 'git rev-parse --is-shallow-repository'",
-        comment="Verify the clone is shallow",
-    )
-    expect(shallow_check).to_succeed()
-    expect(shallow_check.stdout).to_contain("true")
-
-
-@pytest.mark.release
-@pytest.mark.tmux
+@pytest.mark.modal
 def test_create_from_another_agent(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # you can clone from an existing agent's work directory:
     mngr create my-task --from other-agent
-    # (--source, --source-agent, and --source-host are alternative forms for more specific control)
+    # (--source is an alias for --from; the format supports agent@host.provider:path)
     """)
     expect(
         e2e.run(

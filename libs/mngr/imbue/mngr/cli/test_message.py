@@ -12,7 +12,6 @@ Run with:
     pytest -m release libs/mngr/imbue/mngr/cli/test_message.py --timeout=300
 """
 
-import shutil
 import subprocess
 from collections.abc import Generator
 from pathlib import Path
@@ -20,18 +19,13 @@ from pathlib import Path
 import pytest
 
 from imbue.mngr.utils.testing import get_short_random_string
+from imbue.mngr.utils.testing import is_claude_installed
 from imbue.mngr.utils.testing import mngr_agent_cleanup
 from imbue.mngr.utils.testing import run_mngr_subprocess
 from imbue.mngr.utils.testing import setup_claude_trust_config_for_subprocess
 
-
-def _is_claude_installed() -> bool:
-    """Check if Claude Code CLI is installed and available."""
-    return shutil.which("claude") is not None
-
-
 # Skip all tests in this module if Claude is not installed
-pytestmark = pytest.mark.skipif(not _is_claude_installed(), reason="Claude Code CLI is not installed")
+pytestmark = pytest.mark.skipif(not is_claude_installed(), reason="Claude Code CLI is not installed")
 
 
 @pytest.fixture
@@ -113,8 +107,9 @@ def claude_agent(claude_test_env: dict[str, str], temp_git_repo: Path) -> Genera
         yield agent_name
 
 
-@pytest.mark.acceptance
+@pytest.mark.release
 @pytest.mark.tmux
+@pytest.mark.rsync
 @pytest.mark.timeout(300)
 def test_mngr_create_with_message_succeeds(claude_test_env: dict[str, str], temp_git_repo: Path) -> None:
     """Test that `mngr create --message` successfully sends a message to Claude.
@@ -133,8 +128,9 @@ def test_mngr_create_with_message_succeeds(claude_test_env: dict[str, str], temp
         )
 
 
-@pytest.mark.acceptance
+@pytest.mark.release
 @pytest.mark.tmux
+@pytest.mark.rsync
 @pytest.mark.timeout(300)
 def test_mngr_create_with_message_multiple_times(claude_test_env: dict[str, str], temp_git_repo: Path) -> None:
     """Test that `mngr create --message` works reliably across multiple trials.

@@ -9,7 +9,6 @@ import json
 import os
 import stat
 import subprocess
-import sys
 import threading
 from collections.abc import Callable
 from collections.abc import Generator
@@ -19,10 +18,13 @@ from pathlib import Path
 
 import pluggy
 import pytest
+from loguru import logger
 from pyinfra.api.command import StringCommand
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.imbue_common.model_update import to_update
+from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import EnvVar
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
@@ -39,7 +41,6 @@ from imbue.mngr.interfaces.host import AgentEnvironmentOptions
 from imbue.mngr.interfaces.host import AgentGitOptions
 from imbue.mngr.interfaces.host import AgentProvisioningOptions
 from imbue.mngr.interfaces.host import CreateAgentOptions
-from imbue.mngr.interfaces.host import FileModificationSpec
 from imbue.mngr.interfaces.host import NamedCommand
 from imbue.mngr.interfaces.host import UploadFileSpec
 from imbue.mngr.primitives import ActivitySource
@@ -57,9 +58,11 @@ from imbue.mngr.providers.ssh.instance import SSHHostConfig
 from imbue.mngr.providers.ssh.instance import SSHProviderInstance
 from imbue.mngr.utils.polling import poll_until
 from imbue.mngr.utils.polling import wait_for
+from imbue.mngr.utils.testing import build_test_known_hosts_file
 from imbue.mngr.utils.testing import capture_tmux_pane_contents
 from imbue.mngr.utils.testing import generate_ssh_keypair
 from imbue.mngr.utils.testing import local_sshd
+from imbue.mngr.utils.testing import tmux_session_cleanup
 
 
 @pytest.fixture
@@ -85,13 +88,16 @@ def ssh_host_factory(
     private_key, public_key = generate_ssh_keypair(tmp_path)
     public_key_content = public_key.read_text()
 
-    with local_sshd(public_key_content, tmp_path) as (port, _host_key):
+    with local_sshd(public_key_content, tmp_path) as (port, host_key_path):
+        known_hosts_path = build_test_known_hosts_file(host_key_path, port, tmp_path / "known_hosts")
+
         current_user = os.environ.get("USER", "root")
         ssh_config = SSHHostConfig(
             address="127.0.0.1",
             port=port,
             user=current_user,
             key_file=private_key,
+            known_hosts_file=known_hosts_path,
         )
 
         def create_ssh_host(name: str) -> Host:
@@ -752,7 +758,7 @@ def test_unset_vars_applied_during_agent_start(
 
     # Wait for the tmux session to exist
     def session_ready() -> bool:
-        result = host.execute_idempotent_command(f"tmux has-session -t '{session_name}'")
+        result = host.execute_idempotent_command(f"tmux has-session -t '={session_name}'")
         if not result.success:
             return False
         pane_content = capture_tmux_pane_content(host, session_name)
@@ -814,17 +820,14 @@ def test_procps_ps_command_available() -> None:
     """
     result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
     if result.returncode != 0:
-        sys.stderr.write(f"PROCPS TEST FAILED: 'ps aux' returned {result.returncode}\n")
-        sys.stderr.write(f"stderr: {result.stderr}\n")
-        sys.stderr.write("The procps package is likely not installed. Install with: apt-get install procps\n")
-        sys.stderr.flush()
+        logger.warning("PROCPS TEST FAILED: 'ps aux' returned {}", result.returncode)
+        logger.warning("stderr: {}", result.stderr)
+        logger.warning("The procps package is likely not installed. Install with: apt-get install procps")
         raise AssertionError(f"ps aux failed: {result.stderr}")
 
     # Verify we get reasonable output (should include at least our own process)
     if "PID" not in result.stdout and len(result.stdout.strip().split("\n")) <= 1:
-        sys.stderr.write("PROCPS TEST FAILED: 'ps aux' output looks wrong\n")
-        sys.stderr.write(f"stdout: {result.stdout}\n")
-        sys.stderr.flush()
+        logger.warning("PROCPS TEST FAILED: 'ps aux' output looks wrong, stdout: {}", result.stdout)
         raise AssertionError("ps aux output invalid")
 
 
@@ -887,6 +890,86 @@ def test_stop_agent_kills_single_pane_processes(
 
 
 @pytest.mark.tmux
+def test_stop_agent_does_not_kill_prefix_matched_session(
+    temp_host_dir: Path,
+    per_host_dir: Path,
+    tmp_path: Path,
+    temp_profile_dir: Path,
+    plugin_manager: pluggy.PluginManager,
+    mngr_test_prefix: str,
+    active_concurrency_group: ConcurrencyGroup,
+) -> None:
+    """Test that stopping agent 'foo' does not kill agent 'foo-bar'.
+
+    tmux's -t flag does prefix matching when no exact match is found.
+    Without the = prefix for exact matching, killing session 'mngr_foo'
+    after it has already exited would prefix-match to 'mngr_foo-bar' and
+    kill the wrong agent.
+    """
+    config = MngrConfig(default_host_dir=temp_host_dir, prefix=mngr_test_prefix)
+    mngr_ctx = MngrContext(
+        config=config, pm=plugin_manager, profile_dir=temp_profile_dir, concurrency_group=active_concurrency_group
+    )
+    provider = LocalProviderInstance(
+        name=ProviderInstanceName("local"),
+        host_dir=per_host_dir,
+        mngr_ctx=mngr_ctx,
+    )
+    host = provider.create_host(HostName(LOCAL_HOST_NAME))
+    assert isinstance(host, Host)
+
+    work_dir_short = tmp_path / "work_short"
+    work_dir_short.mkdir()
+    work_dir_long = tmp_path / "work_long"
+    work_dir_long.mkdir()
+
+    # Create two agents where one name is a prefix of the other
+    agent_short = host.create_agent_state(
+        work_dir_path=work_dir_short,
+        options=CreateAgentOptions(
+            name=AgentName("pfx"),
+            agent_type=AgentTypeName("generic"),
+            command=CommandString("sleep 1000"),
+        ),
+    )
+    agent_long = host.create_agent_state(
+        work_dir_path=work_dir_long,
+        options=CreateAgentOptions(
+            name=AgentName("pfx-bar"),
+            agent_type=AgentTypeName("generic"),
+            command=CommandString("sleep 1000"),
+        ),
+    )
+
+    host.start_agents([agent_short.id])
+    host.start_agents([agent_long.id])
+
+    session_short = f"{mngr_test_prefix}{agent_short.name}"
+    session_long = f"{mngr_test_prefix}{agent_long.name}"
+
+    with tmux_session_cleanup(session_short), tmux_session_cleanup(session_long):
+        # Verify both sessions exist
+        success, output = host._run_shell_command(StringCommand("tmux list-sessions -F '#{session_name}' 2>/dev/null"))
+        assert success
+        assert session_short in output.stdout
+        assert session_long in output.stdout
+
+        # Kill the short-named session directly (simulating it being cleaned up
+        # before stop_agents runs, which is the exact race condition in the bug)
+        host._run_shell_command(StringCommand(f"tmux kill-session -t '={session_short}' 2>/dev/null"))
+
+        # Now stop the short agent -- it should NOT kill the long agent's session
+        host.stop_agents([agent_short.id], timeout_seconds=3.0)
+
+        # The long-named session must still be alive
+        success, _ = host._run_shell_command(StringCommand(f"tmux has-session -t '={session_long}' 2>/dev/null"))
+        assert success, (
+            f"Session '{session_long}' was killed by stop_agents targeting '{session_short}' -- "
+            f"tmux prefix matching is not being prevented"
+        )
+
+
+@pytest.mark.tmux
 def test_stop_agent_kills_multi_pane_processes(
     temp_host_dir: Path,
     per_host_dir: Path,
@@ -925,7 +1008,7 @@ def test_stop_agent_kills_multi_pane_processes(
     host._run_shell_command(StringCommand(f"tmux split-window -t '{session_name}' 'sleep 3000'"))
 
     success, output = host._run_shell_command(
-        StringCommand(f"tmux list-panes -t '{session_name}' 2>/dev/null | wc -l")
+        StringCommand(f"tmux list-panes -t '={session_name}' 2>/dev/null | wc -l")
     )
     assert success
     pane_count = int(output.stdout.strip())
@@ -989,7 +1072,7 @@ def test_start_agent_creates_process_group(
 
     try:
         success, output = host._run_shell_command(
-            StringCommand(f"tmux list-panes -t '{session_name}' -F '#{{pane_pid}}' 2>/dev/null")
+            StringCommand(f"tmux list-panes -t '={session_name}' -F '#{{pane_pid}}' 2>/dev/null")
         )
         assert success
         pane_pid = output.stdout.strip()
@@ -1165,7 +1248,7 @@ def test_start_agent_creates_additional_tmux_windows(
 
         # Verify we have 3 windows (main + 2 additional)
         success, output = host._run_shell_command(
-            StringCommand(f"tmux list-windows -t '{session_name}' -F '#{{window_name}}' 2>/dev/null")
+            StringCommand(f"tmux list-windows -t '={session_name}' -F '#{{window_name}}' 2>/dev/null")
         )
         assert success
         windows = output.stdout.strip().split("\n")
@@ -1290,98 +1373,6 @@ def test_provision_agent_upload_files(host_with_temp_dir: tuple[Host, Path], tmp
     assert remote_path.read_text() == "uploaded content"
 
 
-def test_provision_agent_append_to_existing_file(host_with_temp_dir: tuple[Host, Path]) -> None:
-    """Test that provision_agent appends text to existing files."""
-    host, temp_dir = host_with_temp_dir
-    agent = _create_minimal_agent(host, temp_dir)
-
-    target_file = temp_dir / "provision_test" / "append.txt"
-    target_file.parent.mkdir(parents=True)
-    target_file.write_text("existing content\n")
-
-    options = CreateAgentOptions(
-        name=AgentName("prov-append"),
-        agent_type=AgentTypeName("generic"),
-        command=CommandString("sleep 1"),
-        provisioning=AgentProvisioningOptions(
-            append_to_files=(FileModificationSpec(remote_path=target_file, text="appended text"),),
-        ),
-    )
-
-    host.provision_agent(agent, options, host.mngr_ctx)
-
-    assert target_file.read_text() == "existing content\nappended text"
-
-
-def test_provision_agent_append_to_new_file(host_with_temp_dir: tuple[Host, Path]) -> None:
-    """Test that provision_agent creates file when appending to non-existent file."""
-    host, temp_dir = host_with_temp_dir
-    agent = _create_minimal_agent(host, temp_dir)
-
-    target_file = temp_dir / "provision_test" / "new_append.txt"
-
-    options = CreateAgentOptions(
-        name=AgentName("prov-append-new"),
-        agent_type=AgentTypeName("generic"),
-        command=CommandString("sleep 1"),
-        provisioning=AgentProvisioningOptions(
-            create_directories=(target_file.parent,),
-            append_to_files=(FileModificationSpec(remote_path=target_file, text="new content"),),
-        ),
-    )
-
-    host.provision_agent(agent, options, host.mngr_ctx)
-
-    assert target_file.exists()
-    assert target_file.read_text() == "new content"
-
-
-def test_provision_agent_prepend_to_existing_file(host_with_temp_dir: tuple[Host, Path]) -> None:
-    """Test that provision_agent prepends text to existing files."""
-    host, temp_dir = host_with_temp_dir
-    agent = _create_minimal_agent(host, temp_dir)
-
-    target_file = temp_dir / "provision_test" / "prepend.txt"
-    target_file.parent.mkdir(parents=True)
-    target_file.write_text("existing content")
-
-    options = CreateAgentOptions(
-        name=AgentName("prov-prepend"),
-        agent_type=AgentTypeName("generic"),
-        command=CommandString("sleep 1"),
-        provisioning=AgentProvisioningOptions(
-            prepend_to_files=(FileModificationSpec(remote_path=target_file, text="prepended: "),),
-        ),
-    )
-
-    host.provision_agent(agent, options, host.mngr_ctx)
-
-    assert target_file.read_text() == "prepended: existing content"
-
-
-def test_provision_agent_prepend_to_new_file(host_with_temp_dir: tuple[Host, Path]) -> None:
-    """Test that provision_agent creates file when prepending to non-existent file."""
-    host, temp_dir = host_with_temp_dir
-    agent = _create_minimal_agent(host, temp_dir)
-
-    target_file = temp_dir / "provision_test" / "new_prepend.txt"
-
-    options = CreateAgentOptions(
-        name=AgentName("prov-prepend-new"),
-        agent_type=AgentTypeName("generic"),
-        command=CommandString("sleep 1"),
-        provisioning=AgentProvisioningOptions(
-            create_directories=(target_file.parent,),
-            prepend_to_files=(FileModificationSpec(remote_path=target_file, text="new content"),),
-        ),
-    )
-
-    host.provision_agent(agent, options, host.mngr_ctx)
-
-    assert target_file.exists()
-    assert target_file.read_text() == "new content"
-
-
 def test_provision_agent_extra_provision_commands(host_with_temp_dir: tuple[Host, Path]) -> None:
     """Test that provision_agent runs extra provision commands."""
     host, temp_dir = host_with_temp_dir
@@ -1496,7 +1487,6 @@ def test_provision_agent_combined_options(host_with_temp_dir: tuple[Host, Path],
 
     provision_dir = temp_dir / "provision_combined"
     remote_upload = provision_dir / "uploaded.txt"
-    append_file = provision_dir / "appended.txt"
     marker_file = provision_dir / "marker.txt"
 
     options = CreateAgentOptions(
@@ -1506,7 +1496,6 @@ def test_provision_agent_combined_options(host_with_temp_dir: tuple[Host, Path],
         provisioning=AgentProvisioningOptions(
             create_directories=(provision_dir,),
             upload_files=(UploadFileSpec(local_path=local_file, remote_path=remote_upload),),
-            append_to_files=(FileModificationSpec(remote_path=append_file, text="appended content"),),
             extra_provision_commands=(f"echo 'marker' > {marker_file}",),
         ),
     )
@@ -1516,7 +1505,6 @@ def test_provision_agent_combined_options(host_with_temp_dir: tuple[Host, Path],
     # Verify all operations completed
     assert provision_dir.exists()
     assert remote_upload.read_text() == "uploaded"
-    assert append_file.read_text() == "appended content"
     assert marker_file.read_text().strip() == "marker"
 
 
@@ -1555,9 +1543,7 @@ def test_provision_agent_order_of_operations(host_with_temp_dir: tuple[Host, Pat
     The order should be:
     1. Create directories
     2. Upload files
-    3. Append to files
-    4. Prepend to files
-    5. Extra provision commands
+    3. Extra provision commands
     """
     host, temp_dir = host_with_temp_dir
     agent = _create_minimal_agent(host, temp_dir)
@@ -1579,23 +1565,16 @@ def test_provision_agent_order_of_operations(host_with_temp_dir: tuple[Host, Pat
             create_directories=(provision_dir,),
             # 2. Upload files - puts base content in place
             upload_files=(UploadFileSpec(local_path=local_file, remote_path=target_file),),
-            # 3. Append - adds to end of uploaded content
-            append_to_files=(FileModificationSpec(remote_path=target_file, text="appended\n"),),
-            # 4. Prepend - adds to beginning
-            prepend_to_files=(FileModificationSpec(remote_path=target_file, text="prepended\n"),),
-            # 5. Extra provision commands - run last, can verify final state
+            # 3. Extra provision commands - run last, can verify final state
             extra_provision_commands=(f"cat {target_file} > {log_file}",),
         ),
     )
 
     host.provision_agent(agent, options, host.mngr_ctx)
 
-    # Verify the final order in the file
-    content = target_file.read_text()
-    assert content == "prepended\nuploaded\nappended\n"
-
-    # Log file should have captured the same content
-    assert log_file.read_text() == content
+    # Verify upload happened and extra command could read the file
+    assert target_file.read_text() == "uploaded\n"
+    assert log_file.read_text() == "uploaded\n"
 
 
 # =============================================================================
@@ -1631,17 +1610,24 @@ def _create_minimal_agent(host: Host, temp_dir: Path, work_dir: Path | None = No
 
 
 def _init_git_repo(path: Path, commit_message: str = "Initial commit") -> None:
-    """Helper to initialize a git repo.
+    """Helper to initialize a git repo from pre-existing files.
 
-    Requires the setup_git_config fixture to have created .gitconfig in the fake HOME.
+    Expects git user config to be available (provided by the
+    setup_git_config fixture). Adds all files in the directory and
+    commits them.
     """
-    subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True)
-    subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True)
+    # Inline GIT_CONFIG_NOSYSTEM to prevent reading /etc/gitconfig under
+    # parallel execution. This helper commits pre-existing files (unlike
+    # init_git_repo which creates a fresh repo), so we keep it local.
+    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"}
+    subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True, env=env)
+    subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True, env=env)
     subprocess.run(
         ["git", "commit", "-m", commit_message],
         cwd=path,
         capture_output=True,
         check=True,
+        env=env,
     )
 
 
@@ -1798,7 +1784,7 @@ def test_create_work_dir_copy_excludes_git_when_disabled(host_with_temp_dir: tup
         command=CommandString("sleep 1"),
         target_path=target_path,
         transfer_mode=TransferMode.RSYNC,
-        git=AgentGitOptions(is_git_synced=False),
+        git=AgentGitOptions(),
     )
 
     work_dir = host.create_agent_work_dir(host, source_path, options).path
@@ -2499,7 +2485,7 @@ def test_transfer_extra_files_with_many_files(
         command=CommandString("sleep 1"),
         target_path=target_path,
         transfer_mode=TransferMode.GIT_MIRROR,
-        git=AgentGitOptions(is_git_synced=True, is_include_unclean=True),
+        git=AgentGitOptions(is_include_unclean=True),
     )
 
     work_dir = host.create_agent_work_dir(host, source_path, options).path
@@ -2788,3 +2774,165 @@ def test_create_work_dir_cross_host_generates_unique_paths(
     assert str(work_dir_2).startswith(str(target_host.host_dir / "projects"))
     assert work_dir_1 != work_dir_2
     assert (work_dir_2 / "file.txt").read_text() == "content"
+
+
+# =============================================================================
+# Agent Type Provisioning Integration Tests
+# =============================================================================
+
+
+def test_provision_agent_applies_agent_type_provisioning_fields(
+    host_with_temp_dir: tuple[Host, Path],
+) -> None:
+    """Agent type provisioning fields should be applied during provision_agent.
+
+    Verifies that extra_provision_command, env, and create_directory fields
+    from an agent type config are merged into CreateAgentOptions and executed
+    during provisioning.
+    """
+    host, temp_dir = host_with_temp_dir
+
+    agent_type_name = AgentTypeName("my-custom-type")
+    marker_file = temp_dir / "agent_type_provision" / "marker.txt"
+    env_output_file = temp_dir / "agent_type_provision" / "env_output.txt"
+
+    # Configure the agent type with provisioning fields
+    agent_type_config = AgentTypeConfig(
+        extra_provision_command=(
+            f"echo 'agent_type_ran' > {marker_file}",
+            f"echo $CUSTOM_ENV_VAR > {env_output_file}",
+        ),
+        env=("CUSTOM_ENV_VAR=from_agent_type",),
+        create_directory=(str(marker_file.parent),),
+    )
+
+    # Create a new mngr_ctx with the agent type configured
+    updated_agent_types = {**host.mngr_ctx.config.agent_types, agent_type_name: agent_type_config}
+    updated_config = host.mngr_ctx.config.model_copy_update(
+        to_update(host.mngr_ctx.config.field_ref().agent_types, updated_agent_types),
+    )
+    updated_ctx = host.mngr_ctx.model_copy_update(
+        to_update(host.mngr_ctx.field_ref().config, updated_config),
+    )
+
+    agent = _create_minimal_agent(host, temp_dir)
+
+    options = CreateAgentOptions(
+        name=AgentName("prov-agent-type"),
+        agent_type=agent_type_name,
+        command=CommandString("sleep 1"),
+    )
+
+    host.provision_agent(agent, options, updated_ctx)
+
+    # Verify agent type provisioning was applied
+    assert marker_file.exists()
+    assert "agent_type_ran" in marker_file.read_text()
+    assert env_output_file.exists()
+    assert "from_agent_type" in env_output_file.read_text()
+
+
+def test_provision_agent_type_provisioning_stacks_with_cli(
+    host_with_temp_dir: tuple[Host, Path],
+) -> None:
+    """CLI provisioning options should stack on top of agent type provisioning.
+
+    Agent type commands run first (prepended), then CLI commands.
+    CLI env vars come after agent type env vars so they can override.
+    """
+    host, temp_dir = host_with_temp_dir
+
+    agent_type_name = AgentTypeName("stacking-type")
+    output_file = temp_dir / "stacking_test" / "order.txt"
+
+    agent_type_config = AgentTypeConfig(
+        extra_provision_command=(f"echo 'agent_type_first' > {output_file}",),
+        env=("STACKING_VAR=from_type",),
+        create_directory=(str(output_file.parent),),
+    )
+
+    updated_agent_types = {**host.mngr_ctx.config.agent_types, agent_type_name: agent_type_config}
+    updated_config = host.mngr_ctx.config.model_copy_update(
+        to_update(host.mngr_ctx.config.field_ref().agent_types, updated_agent_types),
+    )
+    updated_ctx = host.mngr_ctx.model_copy_update(
+        to_update(host.mngr_ctx.field_ref().config, updated_config),
+    )
+
+    agent = _create_minimal_agent(host, temp_dir)
+
+    options = CreateAgentOptions(
+        name=AgentName("prov-stack"),
+        agent_type=agent_type_name,
+        command=CommandString("sleep 1"),
+        environment=AgentEnvironmentOptions(
+            env_vars=(EnvVar(key="STACKING_VAR", value="from_cli"),),
+        ),
+        provisioning=AgentProvisioningOptions(
+            extra_provision_commands=(f"echo 'cli_second' >> {output_file}",),
+        ),
+    )
+
+    host.provision_agent(agent, options, updated_ctx)
+
+    assert output_file.exists()
+    lines = output_file.read_text().strip().split("\n")
+    assert lines[0] == "agent_type_first"
+    assert lines[1] == "cli_second"
+
+    # CLI env var should override agent type env var (since it comes later in the tuple,
+    # and _collect_agent_env_vars iterates env_vars in order with later values winning)
+    env_path = host.get_agent_env_path(agent)
+    env_content = env_path.read_text()
+    assert "STACKING_VAR=from_cli" in env_content
+
+
+def test_provision_agent_inherits_parent_type_provisioning(
+    host_with_temp_dir: tuple[Host, Path],
+) -> None:
+    """Child agent types should inherit provisioning fields from their parent type.
+
+    When [agent_types.generic] has extra_provision_command, a child type
+    with parent_type = "generic" should inherit those commands even if
+    the child doesn't define its own provisioning fields.
+    """
+    host, temp_dir = host_with_temp_dir
+
+    parent_type = AgentTypeName("generic")
+    child_type = AgentTypeName("child-of-generic")
+    marker_file = temp_dir / "parent_inherit_test" / "marker.txt"
+
+    parent_config = AgentTypeConfig(
+        extra_provision_command=(f"echo 'from_parent' > {marker_file}",),
+        create_directory=(str(marker_file.parent),),
+    )
+    child_config = AgentTypeConfig(
+        parent_type=parent_type,
+        cli_args=("--some-flag",),
+    )
+
+    updated_agent_types = {
+        **host.mngr_ctx.config.agent_types,
+        parent_type: parent_config,
+        child_type: child_config,
+    }
+    updated_config = host.mngr_ctx.config.model_copy_update(
+        to_update(host.mngr_ctx.config.field_ref().agent_types, updated_agent_types),
+    )
+    updated_ctx = host.mngr_ctx.model_copy_update(
+        to_update(host.mngr_ctx.field_ref().config, updated_config),
+    )
+
+    agent = _create_minimal_agent(host, temp_dir)
+
+    options = CreateAgentOptions(
+        name=AgentName("prov-inherit"),
+        agent_type=child_type,
+        command=CommandString("sleep 1"),
+    )
+
+    host.provision_agent(agent, options, updated_ctx)
+
+    # Parent's provisioning commands should have been executed
+    assert marker_file.exists()
+    assert "from_parent" in marker_file.read_text()
