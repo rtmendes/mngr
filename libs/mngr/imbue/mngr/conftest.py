@@ -25,6 +25,7 @@ from imbue.mngr.api.providers import reset_provider_instances
 from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.errors import BaseMngrError
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.plugin_catalog import get_independent_entry_point_names
 from imbue.mngr.plugins import hookspecs
@@ -677,6 +678,10 @@ def _remove_docker_containers(containers: list[tuple[str, str]]) -> None:
         client.close()
 
 
+class _DockerdStartupError(BaseMngrError):
+    """Raised when the release-test session fixture cannot bring dockerd up."""
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_dockerd_for_release() -> None:
     """Start the Docker daemon if running inside a release test sandbox.
@@ -731,7 +736,7 @@ def _ensure_dockerd_for_release() -> None:
     # to keep embedded newlines/control chars visible during triage.
     last_stdout = last_result.stdout if last_result else ""
     last_stderr = last_result.stderr if last_result else ""
-    raise RuntimeError(
+    raise _DockerdStartupError(
         f"Failed to start dockerd after 3 attempts. "
         f"Last returncode={last_result.returncode if last_result else 'N/A'}, "
         f"socket_exists={docker_sock.exists()}. "
