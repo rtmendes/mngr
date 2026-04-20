@@ -23,6 +23,7 @@ from imbue.mngr.utils.testing import get_short_random_string
 from imbue.mngr_schedule.testing import REPO_ROOT
 from imbue.mngr_schedule.testing import build_disable_plugin_args
 from imbue.mngr_schedule.testing import build_subprocess_env
+from imbue.mngr_schedule.testing import remove_test_trigger
 
 _ENABLED_PLUGINS = frozenset({"schedule"})
 
@@ -130,21 +131,4 @@ def test_schedule_local_add_and_remove_lifecycle() -> None:
         # Best-effort cleanup: if any assert above fired between add and remove,
         # the marker is still in the user's crontab. Call the CLI again so we
         # don't strand state on the host running the release suite.
-        subprocess.run(
-            [
-                "uv",
-                "run",
-                "mngr",
-                "schedule",
-                "remove",
-                trigger_name,
-                "--provider",
-                "local",
-                "--force",
-                *disable_args,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=env,
-        )
+        remove_test_trigger(trigger_name, env, _ENABLED_PLUGINS, provider="local")
