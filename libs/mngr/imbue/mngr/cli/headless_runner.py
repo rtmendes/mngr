@@ -28,8 +28,8 @@ from imbue.mngr.primitives import OutputFormat
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 
 
-def check_streaming_headless_agent_type(agent_type: str) -> type[StreamingHeadlessAgentMixin]:
-    """Verify the given agent type implements StreamingHeadlessAgentMixin and return its class.
+def check_streaming_headless_agent_type(agent_type: str) -> None:
+    """Verify the given agent type implements StreamingHeadlessAgentMixin.
 
     Raises MngrError if the agent type is not registered or does not
     support streaming headless output.
@@ -40,7 +40,6 @@ def check_streaming_headless_agent_type(agent_type: str) -> type[StreamingHeadle
             f"The '{agent_type}' agent type does not support streaming headless output. "
             f"Only agent types implementing StreamingHeadlessAgentMixin can be used."
         )
-    return agent_class
 
 
 def get_local_host(mngr_ctx: MngrContext) -> OnlineHostInterface:
