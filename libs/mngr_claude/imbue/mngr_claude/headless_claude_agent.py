@@ -290,12 +290,12 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
         diagnostic for silent exits.
 
         When claude exits with empty stdout/stderr (the test_ask_simple_query
-        failure mode), the stream-json error check above returns nothing
-        because there's no result event. In that case, a work-dir diagnostic --
-        listing the .mngr-prompt / .mngr-system-prompt files that the command
-        substitution reads -- helps distinguish "claude never ran because its
-        prompt inputs were empty/missing" from "claude ran but produced no
-        output."
+        failure mode), the stream-json error check in this function returns
+        nothing because there's no result event. In that case, a work-dir
+        diagnostic -- listing the .mngr-prompt / .mngr-system-prompt files
+        that the command substitution reads -- helps distinguish "claude
+        never ran because its prompt inputs were empty/missing" from
+        "claude ran but produced no output."
         """
         sources: list[str] = []
         stdout_error = self._get_stdout_stream_json_error()
