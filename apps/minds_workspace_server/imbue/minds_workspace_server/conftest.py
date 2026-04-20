@@ -28,9 +28,9 @@ def browser(launch_browser: Callable[[], Browser]) -> Generator[Browser, None, N
     runs. The per-launch cost (~1s) is negligible relative to the total
     test time, and avoids a brittle race with external fixture ordering.
     """
-    b = launch_browser()
-    yield b
-    b.close()
+    browser_instance = launch_browser()
+    yield browser_instance
+    browser_instance.close()
 
 
 @pytest.fixture
