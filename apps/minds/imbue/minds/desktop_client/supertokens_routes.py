@@ -11,6 +11,7 @@ import html
 import json
 import webbrowser
 
+import httpx
 from fastapi import APIRouter
 from fastapi import Request
 from fastapi.responses import HTMLResponse
@@ -287,13 +288,21 @@ def _handle_forgot_password_page(request: Request) -> HTMLResponse:
 
 
 async def _handle_forgot_password_api(request: Request) -> Response:
-    """Send a password reset email."""
+    """Send a password reset email.
+
+    This endpoint always returns a generic success response regardless of
+    whether the email exists or whether the backend call succeeds. Leaking
+    backend errors would enable email enumeration.
+    """
     backend = _get_auth_backend(request)
     body = await request.json()
     email = body.get("email", "").strip()
     if not email:
         return _json_response({"status": "FIELD_ERROR", "message": "Email is required"}, 400)
-    backend.forgot_password(email)
+    try:
+        backend.forgot_password(email)
+    except (httpx.HTTPError, AuthBackendError) as exc:
+        logger.warning("Auth backend unavailable during forgot-password; returning generic success: {}", exc)
     return _json_response({"status": "OK", "message": "If an account exists, a reset email has been sent"})
 
 
