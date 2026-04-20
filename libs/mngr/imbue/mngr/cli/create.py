@@ -302,7 +302,7 @@ def _create_headless(
     --provider) is therefore rejected -- pin it via --source @HOST:PATH
     instead.
     """
-    if address.host_name is not None or address.provider_name is not None or opts.provider is not None:
+    if address.has_host_component or opts.provider is not None:
         raise UserInputError(
             "On the headless path, the target host is derived from --source "
             "(the agent runs in-place with no transfer). Drop the target "
