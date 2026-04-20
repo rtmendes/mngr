@@ -55,6 +55,11 @@ def browser_type(playwright: Playwright) -> BrowserType:
 
 @pytest.fixture
 def browser_type_launch_args(pytestconfig: pytest.Config) -> dict[str, Any]:
+    # Mirrors pytest-playwright's upstream browser_type_launch_args body
+    # (see .venv/.../pytest_playwright/pytest_playwright.py `browser_type_launch_args`).
+    # Do not add `device` here -- that's a context-level option consumed by
+    # browser_context_args in upstream, not a valid kwarg for
+    # browser_type.launch(), which would raise TypeError.
     launch_options: dict[str, Any] = {}
     headed = pytestconfig.getoption("--headed", default=False)
     if headed:
@@ -65,9 +70,6 @@ def browser_type_launch_args(pytestconfig: pytest.Config) -> dict[str, Any]:
     slowmo = pytestconfig.getoption("--slowmo", default=0)
     if slowmo:
         launch_options["slow_mo"] = slowmo
-    device = pytestconfig.getoption("--device", default=None)
-    if device:
-        launch_options["device"] = device
     return launch_options
 
 
