@@ -96,10 +96,10 @@ def headless_agent_output(
 ) -> Iterator[StreamingHeadlessAgentMixin]:
     """Create a headless agent, yield it for streaming, and destroy it on exit.
 
-    When ``source_location`` is None (the default), a temporary directory is
-    created on the host as the work path (blank-directory mode, used by
-    ``mngr ask``). When provided, the agent runs in-place at that location; the
-    caller owns the directory and it is not removed on exit.
+    When ``source_location`` is None (the default), a fresh temporary
+    directory is created on the host as the work path and removed on exit.
+    When provided, the agent runs in-place at that location; the caller
+    owns the directory and it is not removed on exit.
     ``source_location.host`` must be the same host as ``host`` -- callers
     resolve the source before reaching this contextmanager.
 
