@@ -7,6 +7,7 @@ via `AuthBackendClient`; the desktop client never sees the SuperTokens API
 key, OAuth client secrets, or any other server-only credential.
 """
 
+import html
 import json
 import webbrowser
 
@@ -252,15 +253,17 @@ def _handle_oauth_callback(provider_id: str, request: Request) -> HTMLResponse:
         )
     except AuthBackendError as exc:
         logger.error("OAuth callback failed for {}: {}", provider_id, exc)
+        safe_exc = html.escape(str(exc), quote=True)
         return HTMLResponse(
-            f"<html><body><h1>Authentication failed</h1><p>{exc}</p></body></html>",
+            f"<html><body><h1>Authentication failed</h1><p>{safe_exc}</p></body></html>",
             status_code=502,
         )
 
     if result.status != "OK" or result.user is None or result.tokens is None:
         message = result.message or "Sign-in failed"
+        safe_message = html.escape(message, quote=True)
         return HTMLResponse(
-            f"<html><body><h1>Authentication failed</h1><p>{message}</p></body></html>",
+            f"<html><body><h1>Authentication failed</h1><p>{safe_message}</p></body></html>",
             status_code=400,
         )
 
