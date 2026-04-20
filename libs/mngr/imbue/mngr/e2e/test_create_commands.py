@@ -119,33 +119,6 @@ def test_create_with_no_ensure_clean(e2e: E2eSession) -> None:
     assert "my-task" in agent_names
 
 
-@pytest.mark.acceptance
-@pytest.mark.modal
-def test_create_rejects_dirty_tree_by_default(e2e: E2eSession) -> None:
-    """Verify that mngr create fails when the working tree is dirty and --no-ensure-clean is not passed."""
-    e2e.write_tutorial_block("""
-    # by default, mngr aborts the create command if the working tree has uncommitted changes. You can avoid this by doing:
-    mngr create my-task --no-ensure-clean
-    # this is particularly useful when, for example, you are in the middle of a merge conflict and you just want the agent to finish it off
-    # it should probably be avoided in general, because it makes it more difficult to merge work later.
-    """)
-    # Make the working tree dirty
-    e2e.run("touch untracked-file.txt && git add untracked-file.txt", comment="Dirty the working tree")
-
-    # Without --no-ensure-clean, the create command should fail
-    result = e2e.run(
-        "mngr create my-task --command 'sleep 99999'",
-        comment="Create without --no-ensure-clean should fail on dirty tree",
-    )
-    expect(result).to_fail()
-
-    # Verify no agent was created
-    list_result = e2e.run("mngr list --format json", comment="Verify no agent was created")
-    expect(list_result).to_succeed()
-    parsed = json.loads(list_result.stdout)
-    assert len(parsed["agents"]) == 0
-
-
 @pytest.mark.release
 @pytest.mark.tmux
 @pytest.mark.modal

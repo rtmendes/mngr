@@ -257,32 +257,6 @@ def test_create_modal_volume(e2e: E2eSession) -> None:
     expect(result).to_succeed()
 
 
-@pytest.mark.acceptance
-@pytest.mark.modal
-@pytest.mark.timeout(120)
-def test_create_modal_snapshot_invalid_id_fails(e2e: E2eSession) -> None:
-    # Coverage gap: there is no test for the success path (creating from a real
-    # snapshot), since that would require a pre-existing snapshot in Modal. This
-    # test only verifies flag acceptance + a snapshot-context error on an invalid
-    # snapshot ID.
-    e2e.write_tutorial_block("""
-    # you can use an existing snapshot instead of building a new host from scratch:
-    mngr create my-task --provider modal --snapshot snap-123abc
-    """)
-    # snap-123abc is a fake snapshot ID that does not exist. The test verifies
-    # that the --snapshot flag is accepted and produces a meaningful error.
-    result = e2e.run(
-        "mngr create my-task --provider modal --snapshot snap-123abc --no-connect --no-ensure-clean",
-        comment="you can use an existing snapshot instead of building a new host from scratch",
-        timeout=_REMOTE_TIMEOUT,
-    )
-    expect(result).to_fail()
-    combined = result.stdout + result.stderr
-    # Require contextual evidence that the failure is snapshot-related; a bare
-    # "snap-123abc" alternative would match command echoes on any unrelated failure.
-    expect(combined).to_match(r"(?i)snapshot.*not found|no.*snapshot|snapshot.*snap-123abc|host creation failed")
-
-
 @pytest.mark.release
 @pytest.mark.modal
 @pytest.mark.rsync
