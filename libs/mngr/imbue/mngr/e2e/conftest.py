@@ -22,6 +22,7 @@ from imbue.mngr.config.consts import ROOT_CONFIG_FILENAME
 from imbue.mngr.config.data_types import USER_ID_FILENAME
 from imbue.mngr.utils.polling import poll_until
 from imbue.mngr.utils.testing import init_git_repo
+from imbue.mngr_modal.backend import truncate_modal_name
 from imbue.skitwright.runner import run_command
 from imbue.skitwright.session import Session
 
@@ -260,13 +261,6 @@ def _setup_test_profile(host_dir: Path) -> str:
     # cleanup_old_modal_test_environments).
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")
     identifier = os.environ.get("MNGR_AGENT_NAME") or uuid4().hex[:8]
-    # The Modal environment name is "{prefix}{timestamp}-{identifier}" where prefix
-    # is "mngr_test-" (10 chars). Modal caps names at 64 characters, so cap the
-    # identifier to avoid truncation that breaks deployments.
-    modal_env_overhead = len("mngr_test-") + len(timestamp) + 1  # +1 for the hyphen
-    max_identifier_length = 64 - modal_env_overhead
-    if len(identifier) > max_identifier_length:
-        identifier = identifier[:max_identifier_length].rstrip("-")
     user_id = f"{timestamp}-{identifier}"
     # Write without trailing newline (matching the format used by get_or_create_user_id)
     user_id_path = profile_dir / USER_ID_FILENAME
@@ -280,7 +274,7 @@ def _setup_test_profile(host_dir: Path) -> str:
 
 def _delete_modal_environment(prefix: str, user_id: str, env: dict[str, str], cwd: Path) -> None:
     """Delete the Modal environment for this test."""
-    environment_name = f"{prefix}{user_id}"
+    environment_name = truncate_modal_name(f"{prefix}{user_id}")
     logger.info("Deleting Modal environment: {}", environment_name)
     try:
         result = run_command(
