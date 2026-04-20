@@ -29,10 +29,13 @@ inputs:
 runs:
   using: composite
   steps:
-    # Detect flaky-recovered case: the test step succeeded (offload exit 0 or
-    # 2) but junit still records failing attempts. Exit 2 means offload
-    # retried flaky tests and they ultimately passed; we want a neutral
-    # (yellow) check rather than a red one in that case.
+    # Detect flaky-recovered case. The just recipes map offload's exit 2
+    # (flaky tests failed then passed on retry) to exit 0, so GitHub Actions
+    # records the test step as "success" for both offload exit 0 (no
+    # failures at all) and offload exit 2 (flaky recovery). We distinguish
+    # the two by scanning junit.xml for <failure>/<error> elements: their
+    # presence alongside a successful step outcome means flaky recovery,
+    # and we want a neutral (yellow) check rather than a red one.
     - name: Detect flaky-recovered tests
       id: flaky
       if: always()
