@@ -131,7 +131,7 @@ class BaseHeadlessAgent(BaseAgent[AgentConfigT], StreamingHeadlessAgentMixin):
         """
         return []
 
-    def _get_state_dir_diagnostic(self) -> str | None:
+    def _get_state_dir_diagnostic(self) -> str:
         """Return a short inventory of the stdout/stderr files' existence and size.
 
         Useful when stderr is empty and the tmux pane only shows the original
@@ -141,6 +141,9 @@ class BaseHeadlessAgent(BaseAgent[AgentConfigT], StreamingHeadlessAgentMixin):
         producing output". Best-effort: filesystem / remote-host errors are
         trace-logged and folded into the rendered line so they neither mask
         the caller's primary error nor disappear silently.
+
+        Always returns a non-empty string -- the iterated (stdout, stderr)
+        tuple is hard-coded, so at least one rendered line is guaranteed.
         """
         stdout_path = self._get_stdout_path()
         stderr_path = self._get_stderr_path()
@@ -172,7 +175,10 @@ class BaseHeadlessAgent(BaseAgent[AgentConfigT], StreamingHeadlessAgentMixin):
             char_count = len(content)
             tail = content[-1024:] if char_count > 1024 else content
             lines.append(f"{label}: {path} -- {char_count} chars, tail:\n{tail}".rstrip())
-        return "\n".join(lines) if lines else None
+        # `lines` is guaranteed non-empty: the loop iterates over a
+        # hard-coded 2-tuple and every branch unconditionally appends.
+        assert lines
+        return "\n".join(lines)
 
     def _raise_no_output_error(self) -> Never:
         """Raise MngrError collecting all available error detail.
@@ -199,13 +205,10 @@ class BaseHeadlessAgent(BaseAgent[AgentConfigT], StreamingHeadlessAgentMixin):
         # Always add the state-dir diagnostic so release-test post-mortems
         # have the stdout/stderr sizes + tails even when everything else is
         # empty. See test_ask_simple_query "claude exited without producing
-        # output" debugging notes.
-        state_dir_diag = self._get_state_dir_diagnostic()
-        if state_dir_diag:
-            parts.append(f"[state-dir]\n{state_dir_diag}")
+        # output" debugging notes. The diagnostic string is always non-empty,
+        # so `parts` is guaranteed to have at least one element here.
+        parts.append(f"[state-dir]\n{self._get_state_dir_diagnostic()}")
 
         subject = self._no_output_error_subject
-        if parts:
-            detail = "\n".join(parts)
-            raise MngrError(f"{subject} exited without producing output:\n{detail}")
-        raise MngrError(f"{subject} exited without producing output (no details available)")
+        detail = "\n".join(parts)
+        raise MngrError(f"{subject} exited without producing output:\n{detail}")
