@@ -262,3 +262,75 @@ def test_raise_no_output_error_surfaces_pane_content_when_files_exist_but_empty(
     (agent_dir / "stderr.log").write_text("")
     with pytest.raises(MngrError, match="startup-crash-output"):
         agent._raise_no_output_error()
+
+
+def test_raise_no_output_error_state_dir_reports_missing_files(
+    local_host: Host,
+    temp_mngr_ctx: MngrContext,
+    tmp_path: Path,
+) -> None:
+    """When stdout/stderr files do not exist, the [state-dir] section says so.
+
+    This guards the diagnostic branch used by release-test post-mortems when
+    the subprocess exited before any redirect file was even created.
+    """
+    agent = _make_agent(local_host, temp_mngr_ctx, tmp_path, pane_content="pane")
+    with pytest.raises(MngrError) as excinfo:
+        agent._raise_no_output_error()
+    message = str(excinfo.value)
+    assert "[state-dir]" in message
+    assert "stdout:" in message
+    assert "stderr:" in message
+    assert "does not exist" in message
+
+
+def test_raise_no_output_error_state_dir_reports_char_counts_and_tails(
+    local_host: Host,
+    temp_mngr_ctx: MngrContext,
+    tmp_path: Path,
+) -> None:
+    """When files are present with small content, char counts and tails are reported."""
+    agent = _make_agent(local_host, temp_mngr_ctx, tmp_path, pane_content="pane")
+    agent_dir = agent._get_agent_dir()
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    stdout_content = "hello-stdout"
+    stderr_content = "hello-stderr"
+    (agent_dir / "stdout.log").write_text(stdout_content)
+    (agent_dir / "stderr.log").write_text(stderr_content)
+    with pytest.raises(MngrError) as excinfo:
+        agent._raise_no_output_error()
+    message = str(excinfo.value)
+    assert "[state-dir]" in message
+    assert f"{len(stdout_content)} chars" in message
+    assert f"{len(stderr_content)} chars" in message
+    assert stdout_content in message
+    assert stderr_content in message
+
+
+def test_raise_no_output_error_state_dir_truncates_long_content_to_tail(
+    local_host: Host,
+    temp_mngr_ctx: MngrContext,
+    tmp_path: Path,
+) -> None:
+    """Content longer than 1024 chars should be truncated to the last 1024 chars.
+
+    Uses a distinct prefix and suffix so we can verify that the tail (not the
+    head) was kept, and that the reported char count matches the full length.
+    """
+    agent = _make_agent(local_host, temp_mngr_ctx, tmp_path, pane_content="pane")
+    agent_dir = agent._get_agent_dir()
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    head_marker = "HEAD-SHOULD-BE-TRUNCATED"
+    # 2000 chars of filler keeps the head well outside the 1024-char tail
+    # window; tail_marker sits at the very end so it must appear in output.
+    filler = "x" * 2000
+    tail_marker = "TAIL-MUST-SURVIVE"
+    long_content = head_marker + filler + tail_marker
+    (agent_dir / "stdout.log").write_text(long_content)
+    (agent_dir / "stderr.log").write_text("")
+    with pytest.raises(MngrError) as excinfo:
+        agent._raise_no_output_error()
+    message = str(excinfo.value)
+    assert f"{len(long_content)} chars" in message
+    assert tail_marker in message
+    assert head_marker not in message
