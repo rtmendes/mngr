@@ -132,7 +132,7 @@ uv run mngr schedule add "$TRIGGER_NAME" \
     --pass-env IS_SANDBOX \
     --no-auto-fix-args \
     $DISABLE_PLUGIN_ARGS \
-    --args "--type headless_claude --foreground --no-ensure-clean --branch :mngr/changelog-consolidation-{DATE} --host-label SCHEDULE=$TRIGGER_NAME -S 'agent_types.headless_claude.cli_args=[\"--dangerously-skip-permissions\"]' --message $(printf %s "$PROMPT" | uv run python -c 'import shlex, sys; print(shlex.quote(sys.stdin.read()), end="")')"
+    --args "--type headless_claude --foreground --no-ensure-clean --branch :mngr/changelog-consolidation-{DATE} --host-label SCHEDULE=$TRIGGER_NAME -S 'agent_types.headless_claude.cli_args=[\"--dangerously-skip-permissions\"]' -S 'agent_types.headless_claude.command=env IS_SANDBOX=1 claude' --message $(printf %s "$PROMPT" | uv run python -c 'import shlex, sys; print(shlex.quote(sys.stdin.read()), end="")')"
 
 echo "Schedule '${TRIGGER_NAME}' created successfully."
 echo ""
