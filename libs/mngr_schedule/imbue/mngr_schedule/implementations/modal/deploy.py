@@ -631,14 +631,7 @@ def remove_modal_schedule(
         )
 
     if list_result.returncode == 0:
-        try:
-            apps = json.loads(list_result.stdout)
-        except json.JSONDecodeError as exc:
-            # Best-effort cleanup: a malformed Modal CLI response should not
-            # block the subsequent state-volume cleanup. Skip the stop step
-            # and continue to step 2.
-            logger.warning("Failed to parse Modal app list output: {}", exc)
-            apps = []
+        apps = json.loads(list_result.stdout)
         app_id: str | None = None
         for app in apps:
             if app.get("Description", "") == app_name:
@@ -656,10 +649,7 @@ def remove_modal_schedule(
                 logger.info("Stopped Modal app '{}' (id: {})", app_name, app_id)
             else:
                 logger.warning("Failed to stop Modal app '{}': {}", app_name, stop_result.stderr)
-        elif apps:
-            # We got a parseable list but didn't find a match; only warn in
-            # this case to avoid a misleading "not found" log when the list
-            # itself was unusable (already warned about above).
+        else:
             logger.warning("Modal app '{}' not found in environment '{}'", app_name, environment_name)
     else:
         logger.warning("Failed to list Modal apps: {}", list_result.stderr)
