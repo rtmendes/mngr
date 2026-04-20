@@ -813,7 +813,7 @@ def test_resolve_early_agent_type_returns_none_when_unset(default_create_cli_opt
 
 
 # =============================================================================
-# Tests for _create_headless
+# Tests for the headless CLI flow (create --foreground)
 # =============================================================================
 
 
