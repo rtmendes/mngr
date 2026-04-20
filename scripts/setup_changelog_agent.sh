@@ -84,7 +84,7 @@ You are the nightly changelog consolidation agent. Follow these steps in order:
 
 2. Read UNABRIDGED_CHANGELOG.md and extract the topmost ## section (the one the script just added).
 
-3. Write a concise, human-friendly summary of that section into CHANGELOG.md: prepend a new section under the same date heading, after the existing header text, before any older ## sections. Group related changes, use natural language, keep it to a few bullets. Do NOT call claude -- you ARE claude, just write the summary yourself.
+3. Write a concise, human-friendly summary of that section into CHANGELOG.md: prepend a new section under the same date heading, after the existing header text, before any older ## sections. Group related changes, use natural language, keep it to a few bullets.
 
 4. Configure git and gh auth so you can push:
    - git config user.email "changelog-bot@imbue.com"
