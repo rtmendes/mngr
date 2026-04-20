@@ -697,12 +697,33 @@ def _ensure_dockerd_for_release() -> None:
         return
 
     docker_sock = Path("/var/run/docker.sock")
-    if docker_sock.exists():
+    docker_bin = Path("/usr/local/bin/docker")
+    if docker_sock.exists() and docker_bin.exists():
         # dockerd already running -- typically started by the Dockerfile.release
         # CMD at sandbox launch. Skip the startup script entirely. Some Modal
-        # sandboxes have a read-only /etc/resolv.conf, and running the script
-        # when dockerd is already up would otherwise fail there for no reason.
-        return
+        # sandboxes have a read-only /etc/resolv.conf, and re-running the script
+        # would otherwise fail there for no reason.
+        #
+        # Probe with `docker info` rather than trusting the socket file alone:
+        # a stale docker.sock without a live daemon would otherwise short-circuit
+        # here and every downstream docker/docker_sdk test would fail with an
+        # opaque FileNotFoundError. Use /usr/local/bin/docker directly to bypass
+        # the resource-guard PATH wrapper (fixture code runs at session scope,
+        # outside any @pytest.mark.docker context).
+        probe_cg = ConcurrencyGroup(name="ensure-dockerd-probe")
+        with probe_cg:
+            probe_result = probe_cg.run_process_to_completion(
+                [str(docker_bin), "info"],
+                is_checked_after=False,
+            )
+        if probe_result.returncode == 0:
+            logger.info("[_ensure_dockerd_for_release] dockerd already live, skipping startup")
+            return
+        logger.warning(
+            "[_ensure_dockerd_for_release] /var/run/docker.sock exists but "
+            "`docker info` failed (returncode={}); will run start-dockerd.sh.",
+            probe_result.returncode,
+        )
 
     last_result = None
     for attempt in range(3):
