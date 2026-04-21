@@ -275,7 +275,23 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
             parts.extend(all_extra_args)
 
         cmd_str = " ".join(parts)
-        return CommandString(f'{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"')
+        # DIAGNOSTIC (revert before merging): dump env to stderr.log before
+        # invoking claude. Redacts ANTHROPIC_API_KEY to a length-only marker
+        # via sed. Purpose: verify whether the ClaudeAgent.modify_env_vars
+        # propagation fix actually landed the key in the tmux pane env. If
+        # the env line for ANTHROPIC_API_KEY shows up here, the fix works and
+        # the silent exit has a different cause.
+        diagnostic = (
+            "{ "
+            'echo "=== pre-claude env probe ==="; '
+            'env | grep -E "^(ANTHROPIC|CLAUDE|MNGR_|PATH|HOME|SHELL|TERM)=" | '
+            'sed "s/^\\(ANTHROPIC_API_KEY=\\).*/\\1<len=$(printf %s \\"$ANTHROPIC_API_KEY\\" | wc -c)>/"; '
+            'echo "=== pre-claude env probe end ==="; '
+            '} > "$MNGR_AGENT_STATE_DIR/stderr.log" 2>&1'
+        )
+        return CommandString(
+            f'{diagnostic} && {cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2>> "$MNGR_AGENT_STATE_DIR/stderr.log"'
+        )
 
     def _get_stdout_path(self) -> Path:
         """Return the path to the stdout.jsonl file for this agent."""
