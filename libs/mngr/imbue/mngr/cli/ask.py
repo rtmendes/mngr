@@ -392,7 +392,15 @@ def _build_ask_context() -> str:
     registry plus the mega tutorial (which contains the most up-to-date
     usage examples), so no pre-generated files are needed.
     """
-    parts: list[str] = [
+    # DIAGNOSTIC HACK (revert before merging): hardcode to a tiny system
+    # prompt so we can isolate whether the silent-exit failure is driven
+    # by prompt size. Run 22 saw 110KB system prompt failing; run 23 saw
+    # 50KB (no mega tutorial) failing. If 50-char also fails, size is
+    # ruled out and the issue is structural (claude CLI / sandbox env).
+    return "You are a helpful CLI assistant. Answer the user's question concisely."
+
+    # Original below (unreachable until revert):
+    parts: list[str] = [  # ty: ignore[unreachable]
         "# mngr CLI Documentation",
         "",
         "mngr is a tool for managing AI coding agents across different hosts.",
