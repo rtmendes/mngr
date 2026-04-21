@@ -119,6 +119,31 @@ class AuthBackendClient(FrozenModel):
             return None
         return SessionTokens.model_validate(tokens_raw)
 
+    def revoke_all_sessions(self, user_id: str) -> bool:
+        """Revoke every SuperTokens session for a user on the backend.
+
+        Returns True if the backend accepted the request. Callers pair this
+        with their own local session deletion so that sign-out actually ends
+        the session (not just forgets the tokens locally).
+        """
+        try:
+            response = httpx.post(
+                self._url("/auth/session/revoke"),
+                json={"user_id": user_id},
+                timeout=self.timeout_seconds,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("Auth backend session revoke failed: {}", exc)
+            return False
+        if response.status_code != 200:
+            logger.warning(
+                "Auth backend session revoke returned {}: {}",
+                response.status_code,
+                response.text[:200],
+            )
+            return False
+        return True
+
     def send_verification_email(self, user_id: str, email: str) -> bool:
         """(Re)send the verification email for a given user."""
         response = httpx.post(

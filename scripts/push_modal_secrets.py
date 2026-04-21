@@ -42,27 +42,33 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     environment as a null-delimited list, so quoting, escapes, ``export``
     prefixes, and variable interpolation all behave exactly as they do in a
     real shell. Empty values are kept (they signal "declared but unset").
+
+    Runs both the source step and the baseline comparison inside ``env -i``
+    so the deployer's own shell env cannot either shadow keys set by the
+    file (baseline-value-equals-file-value => silently dropped) or leak
+    into interpolated values (``SUPERTOKENS_API_KEY=${OTHER}`` pulling
+    from the deployer's env).
     """
     if not path.is_file():
         raise FileNotFoundError(f"env file not found: {path}")
     script = f"set -a; . {shlex.quote(str(path))}; env -0"
     result = subprocess.run(
-        ["bash", "-c", script],
+        ["env", "-i", "bash", "-c", script],
         capture_output=True,
         text=True,
         check=True,
     )
     baseline = subprocess.run(
-        ["bash", "-c", "env -0"],
+        ["env", "-i", "bash", "-c", "env -0"],
         capture_output=True,
         text=True,
         check=True,
     )
     before = _parse_env_dump(baseline.stdout)
     after = _parse_env_dump(result.stdout)
-    # Keep every key whose value changed vs. the baseline shell environment.
-    # That covers both "newly declared" (not in baseline) and "overwritten to
-    # a different value" (in baseline but different). Empty-string values are
+    # Keep every key whose value changed vs. the clean-shell baseline. That
+    # covers both "newly declared" (not in baseline) and "overwritten to a
+    # different value" (in baseline but different). Empty-string values are
     # retained -- they signal "declared but intentionally unset".
     return {k: v for k, v in after.items() if before.get(k) != v}
 

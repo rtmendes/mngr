@@ -9,8 +9,12 @@ key, OAuth client secrets, or any other server-only credential.
 
 import html
 import json
+import threading
+import time
 import webbrowser
+from urllib.parse import parse_qs
 from urllib.parse import urlencode
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter
@@ -161,8 +165,16 @@ async def _handle_signout_api(request: Request) -> Response:
 
     Expects a JSON body with a ``user_id`` field identifying which account to
     sign out. If no user_id is provided, returns an error.
+
+    Revokes every SuperTokens session for the user on the backend before
+    deleting the local record -- otherwise the access/refresh tokens stored
+    on disk remain valid until their natural expiry even after the user
+    clicks "Sign out". A backend revoke failure is logged but does not block
+    the local deletion: the user's intent to sign out is honored locally
+    regardless.
     """
     session_store = _get_session_store(request)
+    backend = _get_auth_backend(request)
     try:
         body = await request.json()
         user_id = body.get("user_id")
@@ -172,6 +184,7 @@ async def _handle_signout_api(request: Request) -> Response:
     if not user_id:
         return _json_response({"status": "ERROR", "message": "user_id is required"}, 400)
 
+    backend.revoke_all_sessions(str(user_id))
     session_store.remove_session(str(user_id))
     return _json_response({"status": "OK"})
 
@@ -233,6 +246,50 @@ def _handle_check_email_page(request: Request) -> HTMLResponse:
     return HTMLResponse(render_check_email_page(email=email))
 
 
+# In-memory map of ``provider_id -> (state, expiry_timestamp)`` protecting the
+# local OAuth callback against forged requests from other processes on the
+# same loopback interface. The state value is whatever the upstream provider
+# (via the SuperTokens SDK) embedded in the authorize URL -- we record it at
+# redirect time and require it to echo back unchanged on the callback. An
+# attacker process hitting ``http://127.0.0.1:{port}/auth/callback/{provider}``
+# with its own stolen authorization code would not know this state, so the
+# callback is rejected before we forward anything to the backend.
+_OAUTH_STATE_TTL_SECONDS = 10 * 60
+_oauth_pending_states: dict[str, tuple[str, float]] = {}
+_oauth_pending_states_lock = threading.Lock()
+
+
+def _extract_state_from_auth_url(auth_url: str) -> str | None:
+    """Return the ``state`` query parameter from an OAuth authorize URL, if any."""
+    parsed = urlparse(auth_url)
+    states = parse_qs(parsed.query).get("state")
+    if states:
+        return states[0]
+    return None
+
+
+def _remember_oauth_state(provider_id: str, state: str) -> None:
+    """Persist the expected OAuth state for a provider with a short expiry."""
+    with _oauth_pending_states_lock:
+        _prune_expired_oauth_states_locked()
+        _oauth_pending_states[provider_id] = (state, time.monotonic() + _OAUTH_STATE_TTL_SECONDS)
+
+
+def _consume_oauth_state(provider_id: str) -> str | None:
+    """Pop and return the stored OAuth state for a provider, or None if none/expired."""
+    with _oauth_pending_states_lock:
+        _prune_expired_oauth_states_locked()
+        entry = _oauth_pending_states.pop(provider_id, None)
+    return entry[0] if entry is not None else None
+
+
+def _prune_expired_oauth_states_locked() -> None:
+    now = time.monotonic()
+    expired = [p for p, (_, exp) in _oauth_pending_states.items() if exp <= now]
+    for p in expired:
+        _oauth_pending_states.pop(p, None)
+
+
 def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
     """Initiate OAuth by opening the system browser at the provider-specific URL."""
     backend = _get_auth_backend(request)
@@ -246,6 +303,15 @@ def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
     if auth_url is None:
         return _json_response({"status": "ERROR", "error": f"Unknown provider: {provider_id}"}, 404)
 
+    # Extract the SDK's state so we can verify it on callback. If the SDK didn't
+    # include one (older versions, or custom providers), we still open the URL
+    # but skip the state check -- nothing to compare against.
+    state = _extract_state_from_auth_url(auth_url)
+    if state is not None:
+        _remember_oauth_state(provider_id, state)
+    else:
+        logger.warning("OAuth authorize URL for {} has no state param; skipping CSRF state check", provider_id)
+
     webbrowser.open(auth_url)
     return _json_response({"status": "OK", "message": f"Opened {provider_id} sign-in in your browser"})
 
@@ -258,6 +324,21 @@ def _handle_oauth_callback(provider_id: str, request: Request) -> HTMLResponse:
     server_port = _get_server_port(request)
     callback_url = f"http://127.0.0.1:{server_port}/auth/callback/{provider_id}"
     query_params = dict(request.query_params)
+
+    # CSRF: only accept callbacks whose ``state`` matches the one recorded at
+    # ``_handle_oauth_redirect``. Rejecting stale/missing/mismatched state is
+    # what prevents a local attacker process from forging callbacks with a
+    # stolen authorization code for a different account.
+    expected_state = _consume_oauth_state(provider_id)
+    actual_state = query_params.get("state")
+    if expected_state is not None and (actual_state is None or actual_state != expected_state):
+        logger.warning("OAuth callback rejected for {}: state mismatch", provider_id)
+        return HTMLResponse(
+            "<html><body><h1>Authentication failed</h1>"
+            "<p>The OAuth callback did not originate from a sign-in you started. "
+            "Please try again from the app.</p></body></html>",
+            status_code=400,
+        )
 
     try:
         result = backend.oauth_callback(

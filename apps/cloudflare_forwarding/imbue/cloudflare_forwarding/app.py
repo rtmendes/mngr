@@ -54,6 +54,7 @@ from supertokens_python.recipe.emailverification.asyncio import verify_email_usi
 from supertokens_python.recipe.emailverification.interfaces import VerifyEmailUsingTokenOkResult
 from supertokens_python.recipe.session.asyncio import create_new_session_without_request_response
 from supertokens_python.recipe.session.asyncio import refresh_session_without_request_response
+from supertokens_python.recipe.session.asyncio import revoke_all_sessions_for_user
 from supertokens_python.recipe.session.exceptions import SuperTokensSessionError
 from supertokens_python.recipe.session.syncio import get_session_without_request_response
 from supertokens_python.recipe.thirdparty.asyncio import get_provider
@@ -1335,6 +1336,10 @@ class RefreshSessionResponse(BaseModel):
     message: str | None = Field(default=None, description="Error detail if status is not OK")
 
 
+class RevokeSessionsRequest(BaseModel):
+    user_id: str = Field(description="SuperTokens user ID whose sessions should be revoked")
+
+
 class SendVerificationEmailRequest(BaseModel):
     user_id: str = Field(description="SuperTokens user ID")
     email: str = Field(description="Email address to send verification to")
@@ -1479,6 +1484,19 @@ async def auth_refresh_session(body: RefreshSessionRequest) -> RefreshSessionRes
             refresh_token=raw["refreshToken"] or None,
         ),
     )
+
+
+@web_app.post("/auth/session/revoke")
+async def auth_revoke_sessions(body: RevokeSessionsRequest) -> dict[str, object]:
+    """Revoke every SuperTokens session for the given user ID.
+
+    Called by the minds client on sign-out so the access/refresh tokens stored
+    on the user's machine become useless even if copied off-box. Idempotent --
+    no-op when the user has no active sessions.
+    """
+    _require_supertokens_configured()
+    revoked = await revoke_all_sessions_for_user(user_id=body.user_id)
+    return {"status": "OK", "revoked_count": len(revoked)}
 
 
 @web_app.post("/auth/email/send-verification")
