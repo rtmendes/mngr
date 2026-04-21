@@ -21,6 +21,7 @@ from supertokens_python.recipe.thirdparty.types import RawUserInfoFromProvider
 from supertokens_python.recipe.thirdparty.types import ThirdPartyInfo
 from supertokens_python.recipe.thirdparty.types import UserInfo
 from supertokens_python.recipe.thirdparty.types import UserInfoEmail
+from supertokens_python.recipe.webauthn.types.base import WebauthnInfo
 from supertokens_python.types import LoginMethod
 from supertokens_python.types import RecipeUserId
 from supertokens_python.types import User
@@ -273,7 +274,7 @@ def _build_st_user(account: FakeAccount) -> User:
         emails=[account.email],
         phone_numbers=[],
         third_party=[],
-        webauthn=None,
+        webauthn=WebauthnInfo(credential_ids=[]),
         login_methods=[login_method],
         time_joined=0,
     )
