@@ -83,7 +83,7 @@ def _store_session_from_auth_result(
     )
 
 
-def _auth_error_response(exc: AuthBackendError) -> Response:
+def _auth_error_response(exc: AuthBackendError | httpx.HTTPError) -> Response:
     logger.warning("Auth backend unavailable: {}", exc)
     return _json_response(
         {"status": "ERROR", "message": "Authentication service is unavailable"},
@@ -117,7 +117,7 @@ async def _handle_signup_api(request: Request) -> Response:
 
     try:
         result = backend.signup(email=email, password=password)
-    except AuthBackendError as exc:
+    except (httpx.HTTPError, AuthBackendError) as exc:
         return _auth_error_response(exc)
 
     if result.status != "OK":
@@ -143,7 +143,7 @@ async def _handle_signin_api(request: Request) -> Response:
 
     try:
         result = backend.signin(email=email, password=password)
-    except AuthBackendError as exc:
+    except (httpx.HTTPError, AuthBackendError) as exc:
         return _auth_error_response(exc)
 
     if result.status != "OK":
@@ -355,7 +355,7 @@ def _handle_oauth_callback(provider_id: str, request: Request) -> HTMLResponse:
             callback_url=callback_url,
             query_params=query_params,
         )
-    except AuthBackendError as exc:
+    except (httpx.HTTPError, AuthBackendError) as exc:
         logger.error("OAuth callback failed for {}: {}", provider_id, exc)
         safe_exc = html.escape(str(exc), quote=True)
         return HTMLResponse(
