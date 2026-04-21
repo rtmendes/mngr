@@ -882,7 +882,7 @@ def test_auth_verify_email_success(monkeypatch: pytest.MonkeyPatch) -> None:
     token = next(iter(backend.verification_tokens.keys()))
     resp = client.get("/auth/verify-email", params={"token": token})
     assert resp.status_code == 200
-    assert "successfully verified" in resp.text.lower() or "verified" in resp.text.lower()
+    assert "Email verified" in resp.text
     user_id = backend.accounts_by_email["ve@e.com"].user_id
     assert backend.accounts_by_id[user_id].is_verified is True
 
