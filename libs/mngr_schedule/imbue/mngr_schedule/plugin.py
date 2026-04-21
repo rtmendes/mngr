@@ -1,3 +1,4 @@
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -35,10 +36,20 @@ def get_files_for_deploy(
     if include_user_settings:
         user_home = Path.home()
 
-        # ~/.mngr/config.toml (top-level mngr config with profile ID)
-        mngr_config = user_home / ".mngr" / "config.toml"
-        if mngr_config.exists():
-            files[Path("~/.mngr/config.toml")] = mngr_config
+        # Top-level mngr config (contains the active profile_id). Read from the
+        # deployer's actual host_dir, not the hardcoded ~/.mngr -- a deployer with
+        # MNGR_ROOT_NAME=minds or similar has their config at ~/.minds/config.toml,
+        # and staging from the wrong path silently drops it, which forces the cron
+        # container to mint a fresh profile at fire time.
+        deployer_host_dir = Path(mngr_ctx.config.default_host_dir).expanduser()
+        mngr_config = deployer_host_dir / "config.toml"
+        if mngr_config.is_file():
+            try:
+                relative = mngr_config.relative_to(user_home)
+            except ValueError:
+                pass  # host_dir outside home; can't stage via "~/" path
+            else:
+                files[Path(f"~/{relative}")] = mngr_config
 
         # Top-level profile files (settings.toml, user_id) but not provider
         # subdirectories -- those are handled by provider plugins themselves.
@@ -65,19 +76,28 @@ def modify_env_vars_for_deploy(
     mngr_ctx: MngrContext,
     env_vars: dict[str, str],
 ) -> None:
-    """Anchor the scheduled container to the deployer's Modal environment.
+    """Propagate the deployer's MNGR_ROOT_NAME into the scheduled container.
 
-    Scheduled triggers fire inside an ephemeral Modal container that has no
-    persistent profile. Without these vars, the nested `mngr` invocation in
-    cron_runner would mint a fresh uuid4 user_id via get_or_create_user_id
-    and the modal backend would create an orphan `mngr-<uuid>` env on every
-    fire (these orphans match no cleanup pattern and accumulate forever).
+    The cron_runner image bakes the deployer's config.toml, profile settings,
+    and user_id under `~/.<deployer_root_name>/...` (via get_files_for_deploy).
+    If the container's mngr runs with no MNGR_ROOT_NAME, it defaults to "mngr"
+    and looks at ~/.mngr/config.toml -- missing the baked files when the
+    deployer's root_name is non-default (minds, mngr-changelog-schedule, etc).
+    The miss forces get_or_create_profile_dir + get_or_create_user_id down the
+    "fresh install" branch: mint a uuid4 profile + uuid4 user_id, which causes
+    the Modal backend to create a new orphan `mngr-<uuid>` environment on every
+    cron fire.
 
-    Setting both here (rather than relying solely on the baked profile files
-    from get_files_for_deploy) keeps the anchor intact even when the deploy
-    is run with --exclude-user-settings. An explicit --pass-env or
-    --env-file value wins via setdefault so the caller can still redirect
-    a scheduled trigger to a non-default Modal env if they really mean to.
+    Propagating MNGR_ROOT_NAME keeps the container's lookup path aligned with
+    where files were actually staged, so the deployer's full config (profile
+    settings.toml, user_id, everything else) is used and the nested mngr calls
+    land in the deployer's actual Modal env (derived prefix = `{root_name}-`)
+    rather than a default `mngr-` env.
+
+    setdefault so an explicit --pass-env / --env-file value still wins -- a
+    caller can still redirect a scheduled trigger to a different root_name if
+    they really mean to.
     """
-    env_vars.setdefault("MNGR_PREFIX", mngr_ctx.config.prefix)
-    env_vars.setdefault("MNGR_USER_ID", mngr_ctx.get_profile_user_id())
+    root_name = os.environ.get("MNGR_ROOT_NAME")
+    if root_name is not None:
+        env_vars.setdefault("MNGR_ROOT_NAME", root_name)

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from typing import cast
 
 import click
+import pytest
 
-from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr_schedule.plugin import get_files_for_deploy
 from imbue.mngr_schedule.plugin import modify_env_vars_for_deploy
@@ -30,9 +30,12 @@ def test_register_cli_commands_returns_schedule_command() -> None:
 # =============================================================================
 
 
-def _make_mngr_ctx_with_profile(profile_dir: Path) -> MngrContext:
-    """Create a lightweight MngrContext stand-in with a profile_dir attribute."""
-    return cast(MngrContext, SimpleNamespace(profile_dir=profile_dir))
+def _make_mngr_ctx_with_profile(profile_dir: Path, default_host_dir: Path | None = None) -> MngrContext:
+    """Create a lightweight MngrContext stand-in with profile_dir + config.default_host_dir attrs."""
+    if default_host_dir is None:
+        default_host_dir = Path.home() / ".mngr"
+    config = SimpleNamespace(default_host_dir=default_host_dir)
+    return cast(MngrContext, SimpleNamespace(profile_dir=profile_dir, config=config))
 
 
 def test_get_files_for_deploy_returns_empty_dict_when_no_mngr_files(tmp_path: Path) -> None:
@@ -64,6 +67,27 @@ def test_get_files_for_deploy_includes_mngr_config(tmp_path: Path) -> None:
 
     assert Path("~/.mngr/config.toml") in result
     assert result[Path("~/.mngr/config.toml")] == config_file
+
+
+def test_get_files_for_deploy_reads_config_from_deployer_host_dir(tmp_path: Path) -> None:
+    """When the deployer has a non-default MNGR_ROOT_NAME (e.g. minds, mngr-changelog-schedule),
+    the config.toml lives at `~/.{root_name}/config.toml`, NOT `~/.mngr/config.toml`.
+    get_files_for_deploy must read from mngr_ctx.config.default_host_dir, not hardcoded `~/.mngr`."""
+    custom_host_dir = Path.home() / ".mngr-changelog-schedule"
+    custom_host_dir.mkdir(parents=True, exist_ok=True)
+    config_file = custom_host_dir / "config.toml"
+    config_file.write_text('profile = "abc123"\n')
+    mngr_ctx = _make_mngr_ctx_with_profile(tmp_path / "nonexistent-profile", default_host_dir=custom_host_dir)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    result = get_files_for_deploy(
+        mngr_ctx=mngr_ctx, include_user_settings=True, include_project_settings=True, repo_root=repo_root
+    )
+
+    # Staged at the deployer's actual path, not the hardcoded ~/.mngr/
+    assert Path("~/.mngr-changelog-schedule/config.toml") in result
+    assert result[Path("~/.mngr-changelog-schedule/config.toml")] == config_file
 
 
 def test_get_files_for_deploy_includes_top_level_profile_files(tmp_path: Path) -> None:
@@ -169,42 +193,54 @@ def test_get_files_for_deploy_excludes_project_settings_when_flag_false(tmp_path
 # =============================================================================
 
 
-def _make_mngr_ctx_with_config(profile_dir: Path, prefix: str = "mngr-") -> MngrContext:
-    """Stand-in MngrContext with minimal fields exercised by modify_env_vars_for_deploy."""
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    config = MngrConfig(default_host_dir=profile_dir.parent, prefix=prefix)
-    return cast(
-        MngrContext,
-        SimpleNamespace(profile_dir=profile_dir, config=config, get_profile_user_id=lambda: "deployer-uid"),
-    )
-
-
-def test_modify_env_vars_for_deploy_sets_mngr_prefix_and_user_id(tmp_path: Path) -> None:
-    """Hook injects MNGR_PREFIX and MNGR_USER_ID so the scheduled container anchors to deployer's env."""
-    mngr_ctx = _make_mngr_ctx_with_config(tmp_path / "profile", prefix="mngr-ev-")
+def test_modify_env_vars_for_deploy_propagates_non_default_root_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the deployer has a non-default MNGR_ROOT_NAME, the hook propagates it
+    so the scheduled container looks at the right `~/.<root_name>/` path and finds
+    the files baked there by get_files_for_deploy."""
+    monkeypatch.setenv("MNGR_ROOT_NAME", "mngr-changelog-schedule")
+    mngr_ctx = cast(MngrContext, SimpleNamespace())
     env_vars: dict[str, str] = {}
 
     modify_env_vars_for_deploy(mngr_ctx=mngr_ctx, env_vars=env_vars)
 
-    assert env_vars["MNGR_PREFIX"] == "mngr-ev-"
-    assert env_vars["MNGR_USER_ID"] == "deployer-uid"
+    assert env_vars["MNGR_ROOT_NAME"] == "mngr-changelog-schedule"
 
 
-def test_modify_env_vars_for_deploy_respects_pre_existing_values(tmp_path: Path) -> None:
-    """Hook leaves pre-existing MNGR_PREFIX / MNGR_USER_ID alone so an explicit
-    --pass-env or --env-file can redirect the scheduled trigger to a non-default env."""
-    mngr_ctx = _make_mngr_ctx_with_config(tmp_path / "profile", prefix="mngr-")
-    env_vars: dict[str, str] = {"MNGR_PREFIX": "override-", "MNGR_USER_ID": "override-uid"}
+def test_modify_env_vars_for_deploy_noop_for_default_root_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the deployer uses the default root name (no MNGR_ROOT_NAME set), the
+    container's default also resolves to "mngr" and baked files already land at
+    ~/.mngr/, so no propagation is needed."""
+    monkeypatch.delenv("MNGR_ROOT_NAME", raising=False)
+    mngr_ctx = cast(MngrContext, SimpleNamespace())
+    env_vars: dict[str, str] = {}
 
     modify_env_vars_for_deploy(mngr_ctx=mngr_ctx, env_vars=env_vars)
 
-    assert env_vars["MNGR_PREFIX"] == "override-"
-    assert env_vars["MNGR_USER_ID"] == "override-uid"
+    assert "MNGR_ROOT_NAME" not in env_vars
 
 
-def test_modify_env_vars_for_deploy_preserves_unrelated_keys(tmp_path: Path) -> None:
-    """Hook must not touch env vars unrelated to the mngr env anchor."""
-    mngr_ctx = _make_mngr_ctx_with_config(tmp_path / "profile")
+def test_modify_env_vars_for_deploy_respects_pre_existing_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit --pass-env / --env-file MNGR_ROOT_NAME wins so a caller can
+    redirect a scheduled trigger to a different root_name if they really mean to."""
+    monkeypatch.setenv("MNGR_ROOT_NAME", "deployer-root")
+    mngr_ctx = cast(MngrContext, SimpleNamespace())
+    env_vars: dict[str, str] = {"MNGR_ROOT_NAME": "override-root"}
+
+    modify_env_vars_for_deploy(mngr_ctx=mngr_ctx, env_vars=env_vars)
+
+    assert env_vars["MNGR_ROOT_NAME"] == "override-root"
+
+
+def test_modify_env_vars_for_deploy_preserves_unrelated_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hook must not touch env vars unrelated to the mngr root_name anchor."""
+    monkeypatch.setenv("MNGR_ROOT_NAME", "mngr")
+    mngr_ctx = cast(MngrContext, SimpleNamespace())
     env_vars: dict[str, str] = {"GH_TOKEN": "ghp_xxx", "CUSTOM_VAR": "value"}
 
     modify_env_vars_for_deploy(mngr_ctx=mngr_ctx, env_vars=env_vars)
