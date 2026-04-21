@@ -33,6 +33,7 @@ from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import ServerName
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.utils.polling import poll_until
+from imbue.mngr.utils.polling import wait_for
 
 
 def _create_multi_backend_http_client(
@@ -1663,11 +1664,6 @@ def test_auto_open_toggle(tmp_path: Path) -> None:
     assert config.get_auto_open_requests_panel() is False
 
 
-def _wait_for_refresh_post(received: list[httpx.Request], timeout_s: float = 2.0) -> None:
-    """Poll until the refresh broadcast POST arrives (or the timeout elapses)."""
-    poll_until(lambda: len(received) > 0, timeout=timeout_s, poll_interval=0.02)
-
-
 def test_refresh_event_posts_to_system_interface_broadcast(tmp_path: Path) -> None:
     """A refresh event on the mngr events stream triggers a POST to the agent's
     workspace server broadcast endpoint with the correct server_name."""
@@ -1706,7 +1702,12 @@ def test_refresh_event_posts_to_system_interface_broadcast(tmp_path: Path) -> No
             {"source": "refresh", "type": "refresh_service", "server_name": server_name}
         )
         resolver._fire_on_refresh(str(agent_id), raw_line)
-        _wait_for_refresh_post(received)
+        wait_for(
+            lambda: len(received) > 0,
+            timeout=2.0,
+            poll_interval=0.02,
+            error_message="refresh broadcast POST never arrived",
+        )
 
     assert len(received) == 1, f"expected one POST, got {len(received)}: {[str(r.url) for r in received]}"
     request = received[0]
