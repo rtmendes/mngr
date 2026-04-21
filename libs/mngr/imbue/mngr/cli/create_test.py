@@ -1240,7 +1240,7 @@ def test_parse_agent_opts_agent_id_none_by_default(
     assert result.agent_id is None
 
 
-def test_parse_agent_opts_conflicting_type_and_positional_raises(
+def test_create_rejects_conflicting_type_and_positional(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
 ) -> None:
