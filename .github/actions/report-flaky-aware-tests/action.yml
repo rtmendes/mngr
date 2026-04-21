@@ -16,9 +16,10 @@ inputs:
     default: test-results/junit.xml
   tests-outcome:
     description: >-
-      Outcome of the test-running step. Pass `${{ steps.<id>.outcome }}`
-      where `<id>` is the id of the step that ran the tests. The flaky-
-      recovered path only triggers when this is "success".
+      Outcome of the test-running step (the value of its `outcome` field --
+      callers typically pass the outcome expression of the step with the id
+      that ran tests). The flaky-recovered path only triggers when this is
+      "success".
     required: true
   github-token:
     description: >-
