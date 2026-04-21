@@ -414,12 +414,15 @@ def test_mngr_create_with_default_dockerfile_on_modal(
 
     This test is marked as release since it takes longer due to the image build.
     """
-    # The agent command runs `which uv && which claude && sleep <N>`. Note
-    # that mngr create returns as soon as the agent is launched in its
-    # detached tmux session; the assertion below on `result.returncode == 0`
-    # only checks that `mngr create` itself succeeded, not that the agent's
-    # shell command succeeded. The trailing sleep just keeps the agent
-    # alive long enough for the create to finish reporting success.
+    # The agent command runs `which uv && which claude && sleep <N>`. The
+    # whole chain is passed as a single quoted arg after `--` so that `&&`
+    # survives the command agent's plain-space join and is interpreted by
+    # the agent's outer shell. Note that mngr create returns as soon as
+    # the agent is launched in its detached tmux session; the assertion
+    # below on `result.returncode == 0` only checks that `mngr create`
+    # itself succeeded, not that the agent's shell command succeeded. The
+    # trailing sleep just keeps the agent alive long enough for the
+    # create to finish reporting success.
     agent_name = f"test-modal-default-df-{get_short_random_string()}"
 
     dockerfile_path = _get_mngr_default_dockerfile_path()
@@ -463,8 +466,6 @@ def test_mngr_create_with_default_dockerfile_on_modal(
             "-b",
             f"context-dir={temp_dir_with_tar}",
             "--",
-            "sh",
-            "-c",
             "which uv && which claude && sleep 100312",
         ],
         capture_output=True,
