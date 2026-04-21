@@ -1844,7 +1844,8 @@ async def _dispatch_refresh_broadcast(app: FastAPI, agent_id: AgentId, server_na
     http_client = tunnel_client or app.state.http_client
     url = f"{base_url.rstrip('/')}/api/refresh-service/{server_name}/broadcast"
     try:
-        await http_client.post(url)
+        response = await http_client.post(url)
+        response.raise_for_status()
     except httpx.HTTPError as e:
         logger.warning("Refresh broadcast POST to {} failed: {}", url, e)
     finally:
