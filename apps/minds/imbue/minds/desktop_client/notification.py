@@ -305,9 +305,10 @@ class NotificationDispatcher(FrozenModel):
         Priority: Electron > macOS native > tkinter toast.
         """
         channel = _select_dispatch_channel(is_electron=self.is_electron, is_macos=self.is_macos)
-        if channel == DispatchChannel.ELECTRON:
-            _dispatch_electron_notification(request, agent_display_name)
-        elif channel == DispatchChannel.MACOS:
-            _dispatch_macos_notification(request, agent_display_name)
-        else:
-            _show_tkinter_toast(request, agent_display_name, tk=self._tk)
+        match channel:
+            case DispatchChannel.ELECTRON:
+                _dispatch_electron_notification(request, agent_display_name)
+            case DispatchChannel.MACOS:
+                _dispatch_macos_notification(request, agent_display_name)
+            case DispatchChannel.TKINTER:
+                _show_tkinter_toast(request, agent_display_name, tk=self._tk)
