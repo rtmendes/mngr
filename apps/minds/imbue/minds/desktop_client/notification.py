@@ -6,6 +6,7 @@ notifications, or a tkinter toast popup depending on the runtime context.
 
 import platform
 import threading
+from collections.abc import Callable
 from enum import auto
 from types import ModuleType
 from typing import Any
@@ -199,15 +200,44 @@ def _show_tkinter_toast(
     thread.start()
 
 
-def _run_macos_notification_subprocess(script: str) -> None:
-    """Run an AppleScript notification command via osascript on a background thread."""
+# OsascriptCommandRunner executes an osascript command vector. The default
+# implementation shells out via ConcurrencyGroup; tests can inject a fake that
+# records commands and/or raises OSError to exercise the error-handling branch
+# of _run_macos_notification_subprocess without invoking the real subprocess.
+OsascriptCommandRunner = Callable[[list[str]], None]
+
+# MacOSNotificationRunner takes a built AppleScript string and runs it,
+# swallowing subprocess errors. The default implementation is
+# _run_macos_notification_subprocess; tests (and NotificationDispatcher.create)
+# can inject a fake so dispatch() never fires a real Notification Center banner.
+MacOSNotificationRunner = Callable[[str], None]
+
+
+def _run_osascript_command(command: list[str]) -> None:
+    """Execute an osascript command via ConcurrencyGroup.
+
+    Raises on failure; the caller (_run_macos_notification_subprocess) is
+    responsible for catching OSError/ExceptionGroup.
+    """
     cg = ConcurrencyGroup(name="macos-notification")
+    with cg:
+        cg.run_process_to_completion(
+            command=command,
+            is_checked_after=False,
+        )
+
+
+def _run_macos_notification_subprocess(
+    script: str,
+    command_runner: OsascriptCommandRunner = _run_osascript_command,
+) -> None:
+    """Run an AppleScript notification command, logging and swallowing errors.
+
+    The command_runner parameter exists so tests can inject a runner that
+    raises OSError and verify the real error-handling branch below catches it.
+    """
     try:
-        with cg:
-            cg.run_process_to_completion(
-                command=["osascript", "-e", script],
-                is_checked_after=False,
-            )
+        command_runner(["osascript", "-e", script])
     except (OSError, ExceptionGroup) as e:
         logger.warning("Failed to show macOS notification: {}", e)
 
@@ -215,8 +245,12 @@ def _run_macos_notification_subprocess(script: str) -> None:
 def _dispatch_macos_notification(
     request: NotificationRequest,
     agent_display_name: str,
-) -> None:
-    """Display a native macOS notification via osascript on a background thread."""
+    runner: MacOSNotificationRunner = _run_macos_notification_subprocess,
+) -> threading.Thread:
+    """Display a native macOS notification via osascript on a background thread.
+
+    Returns the spawned daemon thread so callers (notably tests) can join it.
+    """
     display_title = request.title or f"Notification from {agent_display_name}"
     # Escape double quotes for AppleScript string literals
     escaped_title = display_title.replace('"', '\\"')
@@ -224,12 +258,13 @@ def _dispatch_macos_notification(
     escaped_subtitle = f"From: {agent_display_name}".replace('"', '\\"')
     script = f'display notification "{escaped_message}" with title "{escaped_title}" subtitle "{escaped_subtitle}"'
     thread = threading.Thread(
-        target=_run_macos_notification_subprocess,
+        target=runner,
         args=(script,),
         daemon=True,
         name="macos-notification",
     )
     thread.start()
+    return thread
 
 
 class NotificationDispatcher(FrozenModel):
@@ -241,10 +276,15 @@ class NotificationDispatcher(FrozenModel):
     # module-level _TKINTER value, or injected via NotificationDispatcher.create()
     # to allow testing without tkinter side effects.
     _tk: ModuleType | None = PrivateAttr(default=None)
+    # _macos_runner is the callable used to execute osascript. Defaults to the
+    # real subprocess runner; tests inject a fake via NotificationDispatcher.create()
+    # so dispatch() does not fire real Notification Center banners.
+    _macos_runner: MacOSNotificationRunner | None = PrivateAttr(default=None)
 
     def model_post_init(self, __context: object) -> None:
-        """Resolve the tkinter module from the module-level auto-detection."""
+        """Resolve module-level defaults after construction."""
         self._tk = _TKINTER
+        self._macos_runner = _run_macos_notification_subprocess
 
     @classmethod
     def create(
@@ -252,14 +292,18 @@ class NotificationDispatcher(FrozenModel):
         is_electron: bool,
         tkinter_module: ModuleType | None = _TKINTER,
         is_macos: bool = _IS_MACOS,
+        macos_runner: MacOSNotificationRunner = _run_macos_notification_subprocess,
     ) -> "NotificationDispatcher":
         """Create a NotificationDispatcher with explicit platform overrides.
 
         Pass tkinter_module=None to disable tkinter toasts (e.g. in tests or on
-        headless servers where tkinter is unavailable).
+        headless servers where tkinter is unavailable). Pass macos_runner to
+        replace the osascript subprocess runner (used by tests to avoid firing
+        real macOS Notification Center banners).
         """
         dispatcher = cls(is_electron=is_electron, is_macos=is_macos)
         dispatcher._tk = tkinter_module
+        dispatcher._macos_runner = macos_runner
         return dispatcher
 
     def dispatch(
@@ -274,6 +318,7 @@ class NotificationDispatcher(FrozenModel):
         if self.is_electron:
             _dispatch_electron_notification(request, agent_display_name)
         elif self.is_macos:
-            _dispatch_macos_notification(request, agent_display_name)
+            runner = self._macos_runner or _run_macos_notification_subprocess
+            _dispatch_macos_notification(request, agent_display_name, runner=runner)
         else:
             _show_tkinter_toast(request, agent_display_name, tk=self._tk)

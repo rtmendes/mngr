@@ -1,4 +1,5 @@
 import json
+import threading
 import types
 from types import SimpleNamespace
 from typing import Any
@@ -12,8 +13,37 @@ from imbue.minds.desktop_client.notification import _build_toast_widgets
 from imbue.minds.desktop_client.notification import _dispatch_electron_notification
 from imbue.minds.desktop_client.notification import _dispatch_macos_notification
 from imbue.minds.desktop_client.notification import _position_toast_window
+from imbue.minds.desktop_client.notification import _run_macos_notification_subprocess
 from imbue.minds.desktop_client.notification import _run_tkinter_toast
 from imbue.minds.desktop_client.notification import _show_tkinter_toast
+
+# Short timeout used when joining the background daemon thread spawned by
+# _dispatch_macos_notification. The fake runners used below are synchronous
+# and return almost immediately, so a few seconds is plenty of slack for CI.
+_MACOS_DISPATCH_JOIN_TIMEOUT_SECONDS: float = 5.0
+
+
+class _RecordingMacOSRunner:
+    """Fake MacOSNotificationRunner that records the scripts it is called with.
+
+    A threading.Event is set once the runner has been invoked, so tests can wait
+    for the background daemon thread spawned by _dispatch_macos_notification to
+    reach the call site without polling. If side_effect is provided, the runner
+    raises it after recording the script (used to simulate osascript missing).
+    """
+
+    def __init__(self, side_effect: Exception | None = None) -> None:
+        self.scripts: list[str] = []
+        self.call_done = threading.Event()
+        self._side_effect = side_effect
+
+    def __call__(self, script: str) -> None:
+        try:
+            self.scripts.append(script)
+            if self._side_effect is not None:
+                raise self._side_effect
+        finally:
+            self.call_done.set()
 
 
 def _make_fake_tk() -> Any:
@@ -203,8 +233,13 @@ def test_show_tkinter_toast_with_no_tkinter_does_not_raise() -> None:
 
 
 def test_dispatch_non_electron_does_not_raise() -> None:
-    """The non-Electron dispatch path starts a background toast and does not raise."""
-    dispatcher = NotificationDispatcher.create(is_electron=False, tkinter_module=None)
+    """The non-Electron/non-macOS dispatch path starts a background toast and does not raise.
+
+    is_macos is forced to False so the test exercises the tkinter branch regardless
+    of the host platform (and does not fire a real macOS Notification Center banner
+    when the suite runs on a developer's Mac).
+    """
+    dispatcher = NotificationDispatcher.create(is_electron=False, is_macos=False, tkinter_module=None)
     request = NotificationRequest(message="background toast")
     dispatcher.dispatch(request, "agent-y")
 
@@ -240,35 +275,96 @@ def test_dispatcher_default_constructor_resolves_tkinter() -> None:
 # -- macOS notification tests --
 
 
-def test_dispatch_macos_notification_does_not_raise() -> None:
-    """On non-macOS, osascript won't exist, but the function should not raise."""
+def test_dispatch_macos_notification_swallows_osascript_oserror() -> None:
+    """When osascript is missing (OSError from the command runner), the real
+    _run_macos_notification_subprocess must catch it and the dispatch daemon
+    thread must terminate cleanly without propagating the error.
+
+    This exercises the real "except (OSError, ExceptionGroup)" branch inside
+    _run_macos_notification_subprocess by injecting at the command-runner level
+    (not replacing _run_macos_notification_subprocess wholesale), so the error
+    is caught inside the function under test rather than by the daemon thread's
+    default exception hook.
+    """
+    captured_commands: list[list[str]] = []
+    command_done = threading.Event()
+
+    def raising_command_runner(command: list[str]) -> None:
+        captured_commands.append(command)
+        try:
+            raise OSError("osascript not found")
+        finally:
+            command_done.set()
+
+    # Wrap the real _run_macos_notification_subprocess with the raising command
+    # runner bound in, so the real try/except executes inside the daemon thread.
+    def runner(script: str) -> None:
+        _run_macos_notification_subprocess(script, command_runner=raising_command_runner)
+
     request = NotificationRequest(
         message="test macOS notification",
         title="Test Title",
         urgency=NotificationUrgency.CRITICAL,
     )
-    # Should not raise even if osascript is not available (caught internally)
-    _dispatch_macos_notification(request, "agent-mac")
+    thread = _dispatch_macos_notification(request, "agent-mac", runner=runner)
+    thread.join(timeout=_MACOS_DISPATCH_JOIN_TIMEOUT_SECONDS)
+
+    # The command runner was invoked (proving the thread actually reached it),
+    # and the thread terminated cleanly -- the real function caught the OSError.
+    assert command_done.is_set()
+    assert len(captured_commands) == 1
+    assert captured_commands[0][0] == "osascript"
+    assert captured_commands[0][1] == "-e"
+    assert not thread.is_alive()
 
 
-def test_dispatch_macos_notification_handles_quotes() -> None:
-    """Verify double quotes in title/message are escaped for AppleScript."""
+def test_dispatch_macos_notification_escapes_double_quotes_in_script() -> None:
+    """Double quotes in title, message, and subtitle must be escaped to \\" so the
+    AppleScript string literals are syntactically valid.
+    """
+    runner = _RecordingMacOSRunner()
+
     request = NotificationRequest(
         message='He said "hello"',
         title='Title with "quotes"',
         urgency=NotificationUrgency.NORMAL,
     )
-    # Should not raise
-    _dispatch_macos_notification(request, "agent-quotes")
+    thread = _dispatch_macos_notification(request, "agent-quotes", runner=runner)
+    thread.join(timeout=_MACOS_DISPATCH_JOIN_TIMEOUT_SECONDS)
+
+    assert runner.call_done.is_set()
+    assert len(runner.scripts) == 1
+    script = runner.scripts[0]
+    # Escaped quotes (\") must be present for message and title contents.
+    assert 'He said \\"hello\\"' in script
+    assert 'Title with \\"quotes\\"' in script
+    # The raw unescaped quoted phrases must not appear as bare substrings
+    # between AppleScript string delimiters (i.e. the payload must be escaped,
+    # not just textually present from the surrounding AppleScript syntax).
+    assert '"He said "hello""' not in script
+    assert '"Title with "quotes""' not in script
 
 
 def test_dispatcher_routes_to_macos_when_is_macos() -> None:
-    """Verify dispatch routes to macOS native notifications when is_macos=True."""
-    dispatcher = NotificationDispatcher.create(is_electron=False, is_macos=True, tkinter_module=None)
+    """dispatch() with is_macos=True and is_electron=False must invoke the
+    macOS runner exactly once, not the tkinter path."""
+    runner = _RecordingMacOSRunner()
+    dispatcher = NotificationDispatcher.create(
+        is_electron=False,
+        is_macos=True,
+        tkinter_module=None,
+        macos_runner=runner,
+    )
     assert dispatcher.is_macos is True
+
     request = NotificationRequest(message="macos dispatch test")
-    # Should not raise -- osascript may fail on Linux but error is caught
     dispatcher.dispatch(request, "agent-mac-dispatch")
+
+    assert runner.call_done.wait(timeout=_MACOS_DISPATCH_JOIN_TIMEOUT_SECONDS), (
+        "macOS runner was never called; dispatch did not route to the macOS path"
+    )
+    # Exactly one dispatch means exactly one runner invocation.
+    assert len(runner.scripts) == 1
 
 
 def test_dispatcher_prefers_electron_over_macos(capsys: pytest.CaptureFixture[str]) -> None:
