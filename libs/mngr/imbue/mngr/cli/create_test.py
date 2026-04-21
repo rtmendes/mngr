@@ -1081,9 +1081,9 @@ def test_create_headless_with_source_and_transfer_none_runs_in_place(
 # _create_agent calls _apply_host_labels on resolved online hosts so that
 # --host-label KEY=VALUE entries are honored for both headless and
 # interactive create (both for existing/local hosts and as a second,
-# idempotent application on newly-created hosts). These tests pin down the
-# helper's behavior so a refactor cannot silently re-introduce the
-# silent-drop bug that the headless path originally had.
+# idempotent application on newly-created hosts). These tests pin down
+# that behavior so a refactor cannot silently skip the host-label
+# application on any of those paths.
 
 
 def test_apply_host_labels_adds_tags_to_local_host(
