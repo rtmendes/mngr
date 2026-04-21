@@ -1708,9 +1708,7 @@ def test_refresh_event_posts_to_system_interface_broadcast(tmp_path: Path) -> No
     app, received = _build_refresh_test_app(tmp_path, resolver)
 
     with TestClient(app):
-        raw_line = json.dumps(
-            {"source": "refresh", "type": "refresh_service", "server_name": server_name}
-        )
+        raw_line = json.dumps({"source": "refresh", "type": "refresh_service", "server_name": server_name})
         resolver._fire_on_refresh(str(agent_id), raw_line)
         wait_for(
             lambda: len(received) > 0,

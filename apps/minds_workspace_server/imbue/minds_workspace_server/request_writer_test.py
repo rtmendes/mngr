@@ -9,9 +9,7 @@ from imbue.minds_workspace_server.request_writer import write_refresh_request
 from imbue.minds_workspace_server.request_writer import write_sharing_request
 
 
-def test_write_refresh_request_writes_jsonl_to_correct_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_refresh_request_writes_jsonl_to_correct_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
 
     write_refresh_request("web")

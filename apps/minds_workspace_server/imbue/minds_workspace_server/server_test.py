@@ -342,9 +342,7 @@ def test_refresh_service_request_writes_event(
     assert event["server_name"] == "web"
 
 
-def test_refresh_service_request_without_agent_state_dir(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_refresh_service_request_without_agent_state_dir(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """The request endpoint surfaces the config error when MNGR_AGENT_STATE_DIR is unset."""
     monkeypatch.delenv("MNGR_AGENT_STATE_DIR", raising=False)
     response = client.post("/api/refresh-service/web")

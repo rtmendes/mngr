@@ -598,9 +598,7 @@ def test_stream_manager_on_events_stream_output_dispatches_refresh_source() -> N
     received: list[tuple[str, str]] = []
     manager.resolver.add_on_refresh_callback(lambda aid, raw: received.append((aid, raw)))
 
-    refresh_line = json.dumps(
-        {"source": "refresh", "type": "refresh_service", "server_name": "web"}
-    )
+    refresh_line = json.dumps({"source": "refresh", "type": "refresh_service", "server_name": "web"})
     manager._on_events_stream_output(refresh_line, is_stdout=True, agent_id=_AGENT_A)
 
     assert len(received) == 1
