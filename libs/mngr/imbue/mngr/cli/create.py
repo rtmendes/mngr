@@ -45,13 +45,13 @@ from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.cli.env_utils import resolve_env_vars
 from imbue.mngr.cli.env_utils import resolve_labels
 from imbue.mngr.cli.headless_runner import headless_agent_output
+from imbue.mngr.cli.headless_runner import is_streaming_headless_agent_type
 from imbue.mngr.cli.headless_runner import stream_or_accumulate_response
 from imbue.mngr.cli.help_formatter import CommandHelpMetadata
 from imbue.mngr.cli.help_formatter import add_pager_help_option
 from imbue.mngr.cli.output_helpers import emit_event
 from imbue.mngr.cli.output_helpers import emit_final_json
 from imbue.mngr.cli.output_helpers import write_human_line
-from imbue.mngr.config.agent_class_registry import get_agent_class
 from imbue.mngr.config.data_types import CreateCliOptions
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import OutputOptions
@@ -60,7 +60,6 @@ from imbue.mngr.errors import UserInputError
 from imbue.mngr.hosts.host import HostLocation
 from imbue.mngr.hosts.host import get_agent_state_dir_path
 from imbue.mngr.interfaces.agent import AgentInterface
-from imbue.mngr.interfaces.agent import StreamingHeadlessAgentMixin
 from imbue.mngr.interfaces.data_types import HostLifecycleOptions
 from imbue.mngr.interfaces.host import AgentDataOptions
 from imbue.mngr.interfaces.host import AgentEnvironmentOptions
@@ -706,10 +705,7 @@ def create(ctx: click.Context, **kwargs) -> None:
         # --foreground is required for headless types (makes the behavior explicit)
         # and rejected for non-headless types (it doesn't apply).
         resolved_agent_type = _resolve_agent_type_name(opts.type, opts.positional_agent_type)
-        is_headless = False
-        if resolved_agent_type is not None:
-            agent_class = get_agent_class(resolved_agent_type)
-            is_headless = issubclass(agent_class, StreamingHeadlessAgentMixin)
+        is_headless = resolved_agent_type is not None and is_streaming_headless_agent_type(resolved_agent_type)
 
         if is_headless and not opts.foreground:
             raise UserInputError(

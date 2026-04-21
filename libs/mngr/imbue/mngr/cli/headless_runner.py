@@ -28,14 +28,23 @@ from imbue.mngr.primitives import OutputFormat
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 
 
+def is_streaming_headless_agent_type(agent_type: str) -> bool:
+    """Return True if the given agent type implements StreamingHeadlessAgentMixin.
+
+    Looks up the agent class in the registry and checks its MRO. Used by
+    both the CLI entry point (to branch to the headless flow) and the
+    raising check below.
+    """
+    return issubclass(get_agent_class(agent_type), StreamingHeadlessAgentMixin)
+
+
 def check_streaming_headless_agent_type(agent_type: str) -> None:
     """Verify the given agent type implements StreamingHeadlessAgentMixin.
 
     Raises MngrError if the agent type is not registered or does not
     support streaming headless output.
     """
-    agent_class = get_agent_class(agent_type)
-    if not issubclass(agent_class, StreamingHeadlessAgentMixin):
+    if not is_streaming_headless_agent_type(agent_type):
         raise MngrError(
             f"The '{agent_type}' agent type does not support streaming headless output. "
             f"Only agent types implementing StreamingHeadlessAgentMixin can be used."
