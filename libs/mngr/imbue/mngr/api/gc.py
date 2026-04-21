@@ -369,7 +369,11 @@ def _gc_single_host(
                     min_age_seconds,
                 )
                 return
-            state = host.get_state()
+            try:
+                state = host.get_state()
+            except (HostAuthenticationError, HostConnectionError) as e:
+                logger.warning("Cannot determine state of host {} during GC, skipping: {}", host.id, e)
+                return
             if state not in (HostState.CRASHED, HostState.FAILED):
                 logger.trace(
                     "Skipped GC for host {} (no activity, past grace period, but state {} is not terminal)",
