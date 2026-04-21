@@ -153,17 +153,22 @@ git push --set-upstream origin "$BRANCH"
 
 # =============================================================================
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# TODO(FOLLOW-UP PR, after this PR lands on main):
-#   1. Re-enable real PR creation: replace the dry-run echo below with
-#      `gh pr create --base main --title ... --body ...` capturing stdout-only
-#      for PR_URL (stderr has progress lines that corrupt status.json).
-#   2. Switch the consolidation base to origin/main before committing, so
-#      consolidation PRs contain ONLY changelog changes rather than every diff
-#      on the dev branch the container was deployed from. Concretely, before
-#      `git add -A`: `git fetch origin main && git checkout -B "$BRANCH"
-#      origin/main -- && apply staged changelog changes`. Can't land together
-#      with this PR because that branch-from-main path needs these scripts to
-#      already exist on main (chicken-and-egg).
+# TODO(BEFORE MERGE):
+#   1. Switch the consolidation base to origin/main before committing so the
+#      PR contains ONLY changelog changes, not every diff on whichever dev
+#      branch the container was deployed from. Sketch: run Step 1
+#      (consolidate_changelog.py) first as today, stash the resulting
+#      CHANGELOG.md / UNABRIDGED_CHANGELOG.md / deletions, `git fetch origin
+#      main && git checkout -B "$BRANCH" origin/main`, re-apply the staged
+#      changes, then commit + push.
+#   2. Re-enable real PR creation: replace the dry-run echo below with
+#      `gh pr create --base main --title ... --body ...` capturing
+#      stdout-only for PR_URL (stderr has progress lines that would corrupt
+#      status.json if folded in via `2>&1`).
+# Both are disabled right now because we can't test them end-to-end until
+# these scripts are on main -- (1) would branch off a main that doesn't
+# contain consolidate_changelog.py yet, and (2) would spam real PRs on every
+# deploy-trigger cycle.
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # =============================================================================
 echo "!!! PR creation is disabled (testing). Would have run: gh pr create --base main --title \"Changelog consolidation $DATE_STR\""
