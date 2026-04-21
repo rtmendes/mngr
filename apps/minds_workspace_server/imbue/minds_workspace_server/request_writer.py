@@ -31,7 +31,7 @@ def _agent_state_dir() -> Path:
     return Path(agent_state_dir)
 
 
-def _get_events_file() -> Path:
+def _get_request_events_file() -> Path:
     """Return the path to the request events file for this agent."""
     return _agent_state_dir() / "events" / "requests" / "events.jsonl"
 
@@ -72,7 +72,7 @@ def write_sharing_request(
     if suggested_emails:
         event["suggested_emails"] = suggested_emails
 
-    _append_event_line(_get_events_file(), event)
+    _append_event_line(_get_request_events_file(), event)
     logger.info("Wrote sharing request event for agent {} server {}", agent_id, server_name)
 
 
