@@ -54,7 +54,7 @@ This creates/updates Modal secrets named `<service>-<env>`, e.g. `cloudflare-pro
 
 - `SUPERTOKENS_CONNECTION_URI` (required): URL of the SuperTokens core.
 - `SUPERTOKENS_API_KEY` (required for most deployments): SuperTokens core API key.
-- `AUTH_WEBSITE_DOMAIN` (optional): Public base URL embedded in password-reset and email-verification links. Defaults to `https://cloudflare-forwarding.modal.run`.
+- `AUTH_WEBSITE_DOMAIN` (optional): Public base URL embedded in password-reset and email-verification links. Must match the URL Modal assigns to the deployed function. If unset, the app derives `https://{workspace}--cloudflare-forwarding-<env>-fastapi-app.modal.run` (using the hardcoded default workspace in `app.py`), which is only correct for that specific Modal workspace -- set this explicitly for every deploy.
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (optional): override Google OAuth client credentials. Leave blank to inherit from the SuperTokens core's dashboard.
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` (optional): override GitHub OAuth client credentials. Leave blank to inherit from the SuperTokens core's dashboard.
 
