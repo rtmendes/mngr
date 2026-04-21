@@ -36,6 +36,7 @@ class CommandAgent(BaseAgent[CommandAgentConfig]):
         host: OnlineHostInterface,
         agent_args: tuple[str, ...],
         command_override: CommandString | None,
+        initial_message: str | None = None,
     ) -> CommandString:
         if command_override is not None:
             return command_override
