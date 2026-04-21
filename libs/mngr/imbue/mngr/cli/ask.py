@@ -1,5 +1,3 @@
-import importlib.resources
-import os
 import shlex
 import subprocess
 import sys
@@ -17,7 +15,6 @@ from click_option_group import optgroup
 from loguru import logger
 
 from imbue.imbue_common.mutable_model import MutableModel
-from imbue.mngr import resources as mngr_resources
 from imbue.mngr.api.create import create as api_create
 from imbue.mngr.api.providers import get_provider_instance
 from imbue.mngr.cli.common_opts import add_common_options
@@ -380,14 +377,12 @@ def _accumulate_chunks(chunks: Iterator[str]) -> str:
 def _load_mega_tutorial() -> str:
     """Load the mega_tutorial.sh resource file.
 
-    DIAGNOSTIC HACK (revert before merging): MNGR_ASK_SKIP_MEGA_TUTORIAL=1
-    short-circuits to an empty string so we can A/B whether the 110KB tutorial
-    is what's making test_ask_simple_query exit silently in offload sandboxes
-    while passing locally.
+    DIAGNOSTIC HACK (revert before merging): unconditionally returns an
+    empty string so we can A/B whether the 110KB tutorial is what makes
+    test_ask_simple_query exit silently in offload sandboxes. Bypasses
+    the env-var version to rule out env-propagation issues entirely.
     """
-    if os.environ.get("MNGR_ASK_SKIP_MEGA_TUTORIAL") == "1":
-        return ""
-    return importlib.resources.files(mngr_resources).joinpath("mega_tutorial.sh").read_text()
+    return ""
 
 
 def _build_ask_context() -> str:
