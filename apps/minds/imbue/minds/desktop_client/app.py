@@ -1840,9 +1840,18 @@ async def _dispatch_refresh_broadcast(app: FastAPI, agent_id: AgentId, server_na
         return
 
     base_url, _stored_query = _split_backend_url(backend_url)
-    tunnel_client = _get_tunnel_http_client(app, agent_id, backend_url, backend_resolver)
-    http_client = tunnel_client or app.state.http_client
     url = f"{base_url.rstrip('/')}/api/refresh-service/{server_name}/broadcast"
+    # Tunnel setup performs a blocking SSH handshake for remote agents, so
+    # run it in a thread pool to avoid stalling the desktop client's event
+    # loop (mirrors the approach used by the HTTP proxy path).
+    try:
+        tunnel_client = await asyncio.get_running_loop().run_in_executor(
+            None, _get_tunnel_http_client, app, agent_id, backend_url, backend_resolver
+        )
+    except (SSHTunnelError, paramiko.SSHException, OSError) as e:
+        logger.warning("Refresh broadcast tunnel setup for {} failed: {}", url, e)
+        return
+    http_client = tunnel_client or app.state.http_client
     try:
         response = await http_client.post(url)
         response.raise_for_status()
