@@ -30,10 +30,11 @@ npm run dev
 
 An agent running inside the workspace container can tell the user's Minds UI
 to reload any open tab for one of its web services. The agent POSTs to the
-workspace server on localhost:
+workspace server on localhost (default port 8000, matching
+`Config.minds_workspace_server_port`):
 
 ```bash
-curl -X POST "http://127.0.0.1:${WORKSPACE_SERVER_PORT}/api/refresh-service/web"
+curl -X POST "http://127.0.0.1:8000/api/refresh-service/web"
 ```
 
 This appends a `refresh_service` event to the agent's
