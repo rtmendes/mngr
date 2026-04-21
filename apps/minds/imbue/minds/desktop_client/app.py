@@ -229,6 +229,10 @@ async def _managed_lifespan(
     try:
         yield
     finally:
+        # Clear the captured loop reference first so background callbacks that
+        # race with shutdown see None and drop their events instead of trying
+        # to schedule on a loop that is about to close.
+        inner_app.state.event_loop = None
         for client in inner_app.state.ssh_http_clients.values():
             await client.aclose()
         inner_app.state.ssh_http_clients.clear()
@@ -1886,11 +1890,15 @@ def _handle_refresh_event_callback(agent_id_str: str, raw_line: str) -> None:
         # (which feeds this callback) runs before uvicorn.run(app) starts the
         # lifespan, so there is a brief window during which refresh events
         # can arrive before the loop is captured. Drop such events rather
-        # than crashing the reader thread with AttributeError.
+        # than crashing the reader thread with AttributeError. The same guard
+        # also covers loops that have already been closed (e.g. the app was
+        # torn down but its entry in _refresh_event_apps has not yet been
+        # removed) -- scheduling on a closed loop would raise RuntimeError
+        # and leak an unawaited coroutine.
         loop: asyncio.AbstractEventLoop | None = app.state.event_loop
-        if loop is None:
+        if loop is None or loop.is_closed():
             logger.debug(
-                "Dropping refresh for agent {} server {}: app event loop not yet started",
+                "Dropping refresh for agent {} server {}: app event loop unavailable",
                 agent_id_str,
                 server_name,
             )
