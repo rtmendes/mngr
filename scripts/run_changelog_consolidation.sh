@@ -153,9 +153,17 @@ git push --set-upstream origin "$BRANCH"
 
 # =============================================================================
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# TODO(BEFORE MERGE): re-enable real PR creation. Currently disabled while
-# iterating on the deploy + trigger flow so we don't spam the repo with test
-# consolidation PRs. Restore the original `gh pr create ...` block below.
+# TODO(FOLLOW-UP PR, after this PR lands on main):
+#   1. Re-enable real PR creation: replace the dry-run echo below with
+#      `gh pr create --base main --title ... --body ...` capturing stdout-only
+#      for PR_URL (stderr has progress lines that corrupt status.json).
+#   2. Switch the consolidation base to origin/main before committing, so
+#      consolidation PRs contain ONLY changelog changes rather than every diff
+#      on the dev branch the container was deployed from. Concretely, before
+#      `git add -A`: `git fetch origin main && git checkout -B "$BRANCH"
+#      origin/main -- && apply staged changelog changes`. Can't land together
+#      with this PR because that branch-from-main path needs these scripts to
+#      already exist on main (chicken-and-egg).
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # =============================================================================
 echo "!!! PR creation is disabled (testing). Would have run: gh pr create --base main --title \"Changelog consolidation $DATE_STR\""
