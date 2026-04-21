@@ -135,10 +135,13 @@ def test_redact_url_credentials_in_text_leaves_bare_scp_url_untouched() -> None:
     )
 
 
+@pytest.mark.timeout(30)
 def test_clone_git_repo_redacts_credentials_in_error(tmp_path: Path) -> None:
     """GitCloneError must not leak embedded credentials from git's stderr."""
     # Point at a clearly-bogus credentialed URL; git will fail and echo the
     # URL in its stderr. The raised error must have the token stripped.
+    # Bound the run time: git's default connect behaviour is unspecified and
+    # a restrictive-firewall configuration could otherwise let this hang.
     dest = tmp_path / "dest"
     secret_token = "ghp_thisshouldneverappear"
     bad_url = f"https://x-access-token:{secret_token}@127.0.0.1:1/does-not-exist.git"
