@@ -40,9 +40,9 @@ This appends a `refresh_service` event to the agent's
 `events/refresh/events.jsonl` file. The minds desktop client tails the event
 via `mngr events --follow`, then POSTs back to the workspace server which
 broadcasts a WebSocket message telling the frontend to reload every open
-iframe tab whose title matches the given server name. Replace `web` with
-whichever service name (as listed in `services.toml` / the tab dropdown) you
-want to refresh.
+iframe tab tied to the given service (matched by the iframe's
+`data-server-name` attribute). Replace `web` with whichever service name
+(as listed in `services.toml` / the tab dropdown) you want to refresh.
 
 ## Building
 
