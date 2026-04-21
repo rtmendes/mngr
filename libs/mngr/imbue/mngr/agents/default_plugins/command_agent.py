@@ -3,6 +3,7 @@ from __future__ import annotations
 from imbue.mngr import hookimpl
 from imbue.mngr.agents.base_agent import BaseAgent
 from imbue.mngr.config.data_types import AgentTypeConfig
+from imbue.mngr.errors import UserInputError
 from imbue.mngr.interfaces.agent import AgentInterface
 from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import CommandString
@@ -32,7 +33,7 @@ class CommandAgent(BaseAgent[CommandAgentConfig]):
         if command_override is not None:
             return command_override
         if not agent_args:
-            raise ValueError(
+            raise UserInputError(
                 "--type command requires a command after `--`, e.g. `mngr create foo --type command -- sleep 99999`"
             )
         return CommandString(" ".join(agent_args))
