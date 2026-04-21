@@ -22,7 +22,7 @@ build_inputs = [
 type = "pytest"
 paths = ["."]
 command = "uv run pytest"
-run_args = "--cov --cov-fail-under=0 -p no:xdist -o addopts="
+run_args = "--cov-fail-under=0 -p no:xdist"
 
 [groups.all]
 retry_count = 0
