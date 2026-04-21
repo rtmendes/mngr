@@ -18,10 +18,17 @@ class CommandAgent(BaseAgent[CommandAgentConfig]):
 
     Used when the caller wants to run an arbitrary shell command without
     registering a dedicated agent type. Everything after ``--`` is joined
-    with spaces and executed as the agent's main command, e.g.::
+    with plain spaces (no shell-quoting) and executed as the agent's main
+    command, e.g.::
 
         mngr create my-task --type command -- sleep 99999
-        mngr create my-task --type command -- sh -c 'echo hi && sleep 60'
+        mngr create my-task --type command -- 'echo hi && sleep 60'
+
+    Because args are joined with plain spaces, shell metacharacters like
+    ``&&``, ``|``, or ``;`` must be inside a single quoted argument so
+    that they survive intact to the agent's shell. The stored command
+    string is executed by the agent's outer shell, so there is no need
+    to wrap it in ``sh -c`` yourself.
     """
 
     def assemble_command(
