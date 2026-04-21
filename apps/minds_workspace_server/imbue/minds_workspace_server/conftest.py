@@ -44,8 +44,15 @@ from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
 @pytest.fixture
 def playwright() -> Generator[Playwright, None, None]:
     pw = sync_playwright().start()
-    yield pw
-    pw.stop()
+    try:
+        yield pw
+    finally:
+        # try/finally guards the node-driver subprocess against teardown-path
+        # errors. The whole point of overriding this fixture to function scope
+        # is to keep the driver out of session_cleanup's leaked-child check;
+        # a mid-teardown error reaching the yield line without try/finally
+        # would re-introduce that leak.
+        pw.stop()
 
 
 @pytest.fixture
@@ -133,8 +140,14 @@ def launch_browser(
 @pytest.fixture
 def browser(launch_browser: Callable[..., Browser]) -> Generator[Browser, None, None]:
     browser_instance = launch_browser()
-    yield browser_instance
-    browser_instance.close()
+    try:
+        yield browser_instance
+    finally:
+        # try/finally guards chrome-headless-shell against teardown-path
+        # errors. Matches the rationale on the `playwright` fixture above:
+        # without it a mid-teardown error can leak the browser subprocess
+        # into session_cleanup's leaked-child check.
+        browser_instance.close()
 
 
 @pytest.fixture
