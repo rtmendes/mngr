@@ -38,7 +38,6 @@ from imbue.mngr.cli.create import _try_reuse_existing_agent
 from imbue.mngr.cli.create import create
 from imbue.mngr.config.data_types import CreateCliOptions
 from imbue.mngr.config.data_types import MngrContext
-from imbue.mngr.config.loader import get_or_create_profile_dir
 from imbue.mngr.errors import UserInputError
 from imbue.mngr.hosts.host import HostLocation
 from imbue.mngr.interfaces.data_types import HostLifecycleOptions
@@ -60,7 +59,6 @@ from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr.utils.editor import EditorSession
 from imbue.mngr.utils.logging import LoggingSuppressor
-from imbue.mngr.utils.testing import write_agent_type_to_settings_toml
 
 # =============================================================================
 # Tests for _CreateCommand.parse_args (-- passthrough arg handling)
@@ -779,14 +777,12 @@ def test_create_headless_streams_output(
 ) -> None:
     """Creating a headless_command agent with --foreground should stream output.
 
-    Registers a custom headless_command-based agent type with a specific command
-    via settings.toml (since --command is not a CLI flag). Uses an explicit
+    Overrides the built-in ``headless_command`` agent type's command via ``-S``
+    so the test does not need to write a settings.toml file. Uses an explicit
     --source + --transfer=none to avoid depending on being inside a git repo
     and to skip transfer (the shared path would otherwise try to rsync the
     source dir, which is slow and unnecessary for a one-line ``echo`` agent).
     """
-    profile_dir = get_or_create_profile_dir(temp_host_dir)
-    write_agent_type_to_settings_toml(profile_dir / "settings.toml", "headless_command", "echo headless-test-output")
     source_dir = tmp_path / "headless-src"
     source_dir.mkdir()
     result = cli_runner.invoke(
@@ -799,6 +795,8 @@ def test_create_headless_streams_output(
             str(source_dir),
             "--transfer",
             "none",
+            "-S",
+            "agent_types.headless_command.command=echo headless-test-output",
         ],
         obj=plugin_manager,
         catch_exceptions=False,
@@ -824,8 +822,6 @@ def test_create_headless_with_message_does_not_raise(
     (headless_command has no prompt semantics); the test is purely
     checking that the flow completes when --message is supplied.
     """
-    profile_dir = get_or_create_profile_dir(temp_host_dir)
-    write_agent_type_to_settings_toml(profile_dir / "settings.toml", "headless_command", "echo headless-test-output")
     source_dir = tmp_path / "headless-src"
     source_dir.mkdir()
     result = cli_runner.invoke(
@@ -840,6 +836,8 @@ def test_create_headless_with_message_does_not_raise(
             "none",
             "--message",
             "user message body",
+            "-S",
+            "agent_types.headless_command.command=echo headless-test-output",
         ],
         obj=plugin_manager,
         catch_exceptions=False,
@@ -1023,8 +1021,6 @@ def test_create_headless_with_source_and_transfer_none_runs_in_place(
     in-place. Uses a ``pwd`` command so the streamed output contains the
     work directory path.
     """
-    profile_dir = get_or_create_profile_dir(temp_host_dir)
-    write_agent_type_to_settings_toml(profile_dir / "settings.toml", "headless_command", "pwd")
     # Use a nested dir so the source-must-not-contain-state-dir check (which
     # scans for ``.mngr/``) does not fire against the shared pytest tmp root.
     source_dir = tmp_path / "headless-src"
@@ -1044,6 +1040,8 @@ def test_create_headless_with_source_and_transfer_none_runs_in_place(
             str(source_dir),
             "--transfer",
             "none",
+            "-S",
+            "agent_types.headless_command.command=pwd",
         ],
         obj=plugin_manager,
         catch_exceptions=False,
@@ -1243,27 +1241,24 @@ def test_parse_agent_opts_agent_id_none_by_default(
 
 
 def test_parse_agent_opts_conflicting_type_and_positional_raises(
-    default_create_cli_opts: CreateCliOptions,
-    local_provider: LocalProviderInstance,
-    temp_mngr_ctx: MngrContext,
-    temp_work_dir: Path,
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
 ) -> None:
-    """Specifying both --type and positional agent type with different values should raise."""
-    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
-    source_location = HostLocation(host=local_host, path=temp_work_dir)
-    opts = default_create_cli_opts.model_copy_update(
-        to_update(default_create_cli_opts.field_ref().type, "claude"),
-        to_update(default_create_cli_opts.field_ref().positional_agent_type, "codex"),
+    """Specifying both --type and positional agent type with different values should abort.
+
+    The check lives in the ``create`` CLI callback (before the headless
+    branch returns) rather than in ``_parse_agent_opts`` -- the latter
+    uses the shared ``_resolve_agent_type_name`` helper which assumes
+    no conflict.
+    """
+    result = cli_runner.invoke(
+        create,
+        ["my-agent", "codex", "--type", "claude", "--no-connect"],
+        obj=plugin_manager,
     )
 
-    with pytest.raises(UserInputError, match="Conflicting agent types"):
-        _parse_agent_opts(
-            opts=opts,
-            address=AgentAddress(),
-            initial_message=None,
-            source_location=source_location,
-            mngr_ctx=temp_mngr_ctx,
-        )
+    assert result.exit_code != 0
+    assert "Conflicting agent types" in result.output
 
 
 def test_parse_agent_opts_matching_type_and_positional_ok(
@@ -1585,7 +1580,7 @@ def test_create_rejects_update_without_reuse(
     """--update without --reuse should fail with a clear error."""
     result = cli_runner.invoke(
         create,
-        ["my-agent", "--update", "--command", "true", "--no-connect"],
+        ["my-agent", "--update", "--type", "command", "--no-connect"],
         obj=plugin_manager,
     )
 
@@ -1605,7 +1600,7 @@ def test_create_rejects_positional_and_name_together(
     """Providing both a positional address and --name should fail."""
     result = cli_runner.invoke(
         create,
-        ["my-agent", "--name", "other-agent", "--command", "true", "--no-connect"],
+        ["my-agent", "--name", "other-agent", "--type", "command", "--no-connect"],
         obj=plugin_manager,
     )
 
@@ -1625,7 +1620,7 @@ def test_create_edit_message_error_not_swallowed(
     """
     result = cli_runner.invoke(
         create,
-        ["my-agent", "--name", "other-agent", "--command", "true", "--no-connect", "--edit-message"],
+        ["my-agent", "--name", "other-agent", "--type", "command", "--no-connect", "--edit-message"],
         obj=plugin_manager,
     )
 
@@ -1646,8 +1641,8 @@ def test_create_accepts_name_flag_alone(
         [
             "--name",
             "@.local",
-            "--command",
-            "true",
+            "--type",
+            "command",
             "--no-connect",
             "--transfer=none",
             "--from",
@@ -1677,8 +1672,8 @@ def test_create_provider_flag_sets_provider(
             "my-agent",
             "--provider",
             "local",
-            "--command",
-            "true",
+            "--type",
+            "command",
             "--no-connect",
             "--transfer=none",
             "--from",
@@ -1697,7 +1692,7 @@ def test_create_provider_flag_conflicts_with_address_provider(
     """--provider that conflicts with the address provider should abort."""
     result = cli_runner.invoke(
         create,
-        ["my-agent@.modal", "--provider", "docker", "--command", "true", "--no-connect"],
+        ["my-agent@.modal", "--provider", "docker", "--type", "command", "--no-connect"],
         obj=plugin_manager,
     )
 
@@ -1718,8 +1713,8 @@ def test_create_provider_flag_redundant_with_address_is_ok(
             "my-agent@.local",
             "--provider",
             "local",
-            "--command",
-            "true",
+            "--type",
+            "command",
             "--no-connect",
             "--transfer=none",
             "--from",
