@@ -1847,6 +1847,28 @@ async def _dispatch_refresh_broadcast(app: FastAPI, agent_id: AgentId, server_na
             await tunnel_client.aclose()
 
 
+def _log_refresh_dispatch_result(
+    future: "asyncio.Future[None]", agent_id_str: str, server_name: str
+) -> None:
+    """Surface any exception stashed on a scheduled refresh-dispatch future.
+
+    ``run_coroutine_threadsafe`` stores exceptions on the returned Future; if
+    nothing calls ``.exception()`` they are never logged. This callback runs
+    when the coroutine finishes and logs anything other than cancellation.
+    """
+    try:
+        exc = future.exception()
+    except asyncio.CancelledError:
+        logger.debug(
+            "Refresh dispatch cancelled for agent {} server {}", agent_id_str, server_name
+        )
+        return
+    if exc is not None:
+        logger.warning(
+            "Refresh dispatch failed for agent {} server {}: {}", agent_id_str, server_name, exc
+        )
+
+
 def _handle_refresh_event_callback(agent_id_str: str, raw_line: str) -> None:
     """Fan a refresh event out to every registered app's workspace server.
 
@@ -1873,8 +1895,11 @@ def _handle_refresh_event_callback(agent_id_str: str, raw_line: str) -> None:
                 server_name,
             )
             continue
-        asyncio.run_coroutine_threadsafe(
+        future = asyncio.run_coroutine_threadsafe(
             _dispatch_refresh_broadcast(app, agent_id, server_name), loop
+        )
+        future.add_done_callback(
+            lambda f, aid=agent_id_str, sn=server_name: _log_refresh_dispatch_result(f, aid, sn)
         )
         logger.info("Scheduled refresh broadcast for agent {} server {}", agent_id_str, server_name)
 
