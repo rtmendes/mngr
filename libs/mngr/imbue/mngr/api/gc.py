@@ -369,11 +369,12 @@ def _gc_single_host(
                     min_age_seconds,
                 )
                 return
-            if host.get_state() not in (HostState.CRASHED, HostState.FAILED):
+            state = host.get_state()
+            if state not in (HostState.CRASHED, HostState.FAILED):
                 logger.trace(
                     "Skipped GC for host {} (no activity, past grace period, but state {} is not terminal)",
                     host.id,
-                    host.get_state(),
+                    state,
                 )
                 return
             # Past grace period, no activity, in terminal state -- destroy
