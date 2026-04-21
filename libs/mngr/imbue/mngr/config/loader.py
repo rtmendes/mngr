@@ -1,4 +1,5 @@
 import os
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -217,8 +218,8 @@ def load_config(
     final_config = MngrConfig.model_validate(config_dict)
 
     # check whether we're in pytest
-    if not final_config.is_allowed_in_pytest:
-        if "PYTEST_CURRENT_TEST" in os.environ and os.environ.get("MNGR_ALLOW_PYTEST") != "1":
+    if not final_config.is_allowed_in_pytest and "PYTEST_CURRENT_TEST" in os.environ:
+        if os.environ.get("MNGR_ALLOW_PYTEST") != "1":
             raise ConfigParseError(
                 "Running mngr within pytest is not allowed by the current configuration. "
                 "This can happen when tests are poorly written, and load the .mngr/settings.toml "
@@ -227,6 +228,24 @@ def load_config(
                 "subprocess env AND set MNGR_HOST_DIR / MNGR_PREFIX to test-scoped values so the "
                 "test cannot mutate real mngr state."
             )
+        # MNGR_ALLOW_PYTEST=1 is the explicit opt-in, but it's only safe if the test
+        # has also isolated MNGR_HOST_DIR to a temp directory. Otherwise the opt-in
+        # just re-opens the hole the guard was supposed to close -- the subprocess
+        # would mutate the developer's real ~/.mngr state. MNGR_PREFIX isolation is
+        # separately enforced by the Modal backend guard (libs/mngr_modal/...:backend.py)
+        # which rejects env names that don't start with mngr_test-.
+        host_dir = final_config.default_host_dir
+        tmp_root = Path(tempfile.gettempdir()).resolve()
+        try:
+            resolved_host_dir = Path(host_dir).expanduser().resolve()
+            resolved_host_dir.relative_to(tmp_root)
+        except ValueError:
+            raise ConfigParseError(
+                f"MNGR_ALLOW_PYTEST=1 requires MNGR_HOST_DIR to be under the system temp "
+                f"directory ({tmp_root}) so the test cannot mutate the developer's real mngr "
+                f"state, but default_host_dir resolves to {host_dir!r}. Point MNGR_HOST_DIR "
+                f"at a tmp_path-scoped directory in the test fixture."
+            ) from None
 
     # Resolve project root for use as cwd in pre-command scripts.
     # Note: MNGR_PROJECT_DIR is NOT used here because it points to the config

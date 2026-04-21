@@ -44,12 +44,11 @@ def get_files_for_deploy(
         deployer_host_dir = Path(mngr_ctx.config.default_host_dir).expanduser()
         mngr_config = deployer_host_dir / "config.toml"
         if mngr_config.is_file():
-            try:
-                relative = mngr_config.relative_to(user_home)
-            except ValueError:
-                pass  # host_dir outside home; can't stage via "~/" path
-            else:
-                files[Path(f"~/{relative}")] = mngr_config
+            # relative_to raises ValueError if host_dir is outside $HOME; that's a
+            # misconfiguration worth surfacing since the profile files branch below
+            # assumes the same (any path not under $HOME would also fail there).
+            relative = mngr_config.relative_to(user_home)
+            files[Path(f"~/{relative}")] = mngr_config
 
         # Top-level profile files (settings.toml, user_id) but not provider
         # subdirectories -- those are handled by provider plugins themselves.
