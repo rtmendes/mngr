@@ -6,7 +6,6 @@ notifications, or a tkinter toast popup depending on the runtime context.
 
 import platform
 import threading
-from collections.abc import Callable
 from enum import auto
 from types import ModuleType
 from typing import Any
@@ -225,29 +224,15 @@ def _show_tkinter_toast(
     thread.start()
 
 
-OsascriptCommandRunner = Callable[[list[str]], None]
-
-
-def _run_osascript_command(command: list[str]) -> None:
-    """Execute an osascript command via ConcurrencyGroup.
-
-    Raises on subprocess failure; the caller swallows OSError/ExceptionGroup.
-    """
+def _run_macos_notification_subprocess(script: str) -> None:
+    """Run an AppleScript notification command via osascript on a background thread."""
     cg = ConcurrencyGroup(name="macos-notification")
-    with cg:
-        cg.run_process_to_completion(
-            command=command,
-            is_checked_after=False,
-        )
-
-
-def _run_macos_notification_subprocess(
-    script: str,
-    command_runner: OsascriptCommandRunner = _run_osascript_command,
-) -> None:
-    """Run an AppleScript notification command, logging and swallowing errors."""
     try:
-        command_runner(["osascript", "-e", script])
+        with cg:
+            cg.run_process_to_completion(
+                command=["osascript", "-e", script],
+                is_checked_after=False,
+            )
     except (OSError, ExceptionGroup) as e:
         logger.warning("Failed to show macOS notification: {}", e)
 

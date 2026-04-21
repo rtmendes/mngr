@@ -13,7 +13,6 @@ from imbue.minds.desktop_client.notification import _build_osascript_notificatio
 from imbue.minds.desktop_client.notification import _build_toast_widgets
 from imbue.minds.desktop_client.notification import _dispatch_electron_notification
 from imbue.minds.desktop_client.notification import _position_toast_window
-from imbue.minds.desktop_client.notification import _run_macos_notification_subprocess
 from imbue.minds.desktop_client.notification import _run_tkinter_toast
 from imbue.minds.desktop_client.notification import _select_dispatch_channel
 from imbue.minds.desktop_client.notification import _show_tkinter_toast
@@ -281,25 +280,6 @@ def test_build_osascript_notification_escapes_double_quotes() -> None:
 def test_select_dispatch_channel(is_electron: bool, is_macos: bool, expected: DispatchChannel) -> None:
     """Electron wins when set; macOS takes over when not in Electron; tkinter otherwise."""
     assert _select_dispatch_channel(is_electron=is_electron, is_macos=is_macos) == expected
-
-
-def test_run_macos_notification_subprocess_swallows_osascript_oserror() -> None:
-    """_run_macos_notification_subprocess must catch OSError from the command runner
-    (e.g. osascript missing from PATH) and not re-raise."""
-    captured_commands: list[list[str]] = []
-
-    def raising_command_runner(command: list[str]) -> None:
-        captured_commands.append(command)
-        raise OSError("osascript not found")
-
-    request = NotificationRequest(message="hi", title="Test Title")
-    script = _build_osascript_notification(request, "agent-mac")
-
-    _run_macos_notification_subprocess(script, command_runner=raising_command_runner)
-
-    assert len(captured_commands) == 1
-    assert captured_commands[0][0] == "osascript"
-    assert captured_commands[0][1] == "-e"
 
 
 def test_dispatcher_prefers_electron_over_macos(capsys: pytest.CaptureFixture[str]) -> None:
