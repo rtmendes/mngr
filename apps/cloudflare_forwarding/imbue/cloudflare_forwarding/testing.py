@@ -196,11 +196,11 @@ def make_fake_tunnel_token(tunnel_id: str) -> str:
 # slow (Docker) and unreliable in CI, so the tests install the fakes below as
 # drop-in replacements for every SDK function the handlers call. The backend
 # state (accounts, sessions, reset tokens) lives on a single
-# ``FakeSuperTokensBackend`` instance; ``install_supertokens_fakes`` swaps the
-# SDK references on ``cloudflare_forwarding.app`` over to methods on that
-# instance. Swapping the ``app`` module's bound references (rather than the
-# SDK's source module) means handlers see fakes without needing to initialize
-# the real SuperTokens SDK, which would fail without a live core.
+# ``FakeSuperTokensBackend`` instance; ``FakeSuperTokensBackend.install_on_app_module``
+# swaps the SDK references on ``cloudflare_forwarding.app`` over to methods on
+# that instance. Swapping the ``app`` module's bound references (rather than
+# the SDK's source module) means handlers see fakes without needing to
+# initialize the real SuperTokens SDK, which would fail without a live core.
 # ---------------------------------------------------------------------------
 
 
