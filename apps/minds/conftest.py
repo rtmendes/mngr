@@ -34,9 +34,19 @@ register_plugin_test_fixtures(globals())
 def mngr_test_prefix() -> str:
     """Override the shared mngr_test_prefix to use `mngr_test-YYYY-MM-DD-HH-MM-SS-`.
 
-    The shared fixture defaults to `mngr_<hex>-` which the Modal backend guard
-    rejects. Minds tests spawn real mngr subprocesses that can create Modal envs,
-    so the prefix needs to match the format the guard AND the cleanup script
-    recognize.
+    The shared fixture defaults to `mngr_<hex>-`, which the Modal backend guards
+    reject when used to create a Modal env under pytest. Minds tests spawn real
+    mngr subprocesses that can create Modal envs, so the prefix needs to match
+    the timestamped format the guards AND the CI cleanup script recognize.
+
+    Why an autouse (via the shared setup_test_mngr_env) instead of a per-call
+    subprocess env=... override like other plugins use: the desktop client spawns
+    mngr via `ConcurrencyGroup.run_process_to_completion()` with no env= argument,
+    so the subprocess inherits os.environ. The only seam for injecting the right
+    prefix into that subprocess is os.environ, which the autouse fixture
+    (setup_test_mngr_env -> monkeypatch.setenv("MNGR_PREFIX", ...)) already owns.
+    Overriding mngr_test_prefix here makes the autouse put the correct value in
+    os.environ for the whole test, covering both the desktop client's in-process
+    spawn AND clean_env()-based subprocess calls uniformly.
     """
     return f"{generate_test_environment_name()}-"
