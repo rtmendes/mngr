@@ -1,7 +1,7 @@
-"""Acceptance test for mngr schedule add with Modal deployment.
+"""Release test for mngr schedule add with Modal deployment.
 
 This test requires Modal credentials and network access. It is marked
-with @pytest.mark.acceptance and @pytest.mark.timeout(600).
+with @pytest.mark.release and @pytest.mark.timeout(600).
 """
 
 import json
@@ -12,6 +12,8 @@ import pytest
 
 from imbue.mngr_schedule.implementations.modal.deploy import get_modal_app_name
 from imbue.mngr_schedule.testing import build_subprocess_env
+from imbue.mngr_schedule.testing import cleanup_modal_app
+from imbue.mngr_schedule.testing import resolve_modal_environment
 
 
 @pytest.mark.release
@@ -29,6 +31,7 @@ def test_schedule_add_deploys_to_modal(monorepo_root: Path) -> None:
     app_name = get_modal_app_name(trigger_name)
     env = build_subprocess_env()
 
+    result: subprocess.CompletedProcess[str] | None = None
     try:
         result = subprocess.run(
             [
@@ -65,7 +68,12 @@ def test_schedule_add_deploys_to_modal(monorepo_root: Path) -> None:
             f"Expected app name '{app_name}' in output\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
     finally:
-        _cleanup_modal_app(app_name, env, monorepo_root)
+        cleanup_modal_app(
+            app_name,
+            env,
+            resolve_modal_environment(result.stderr if result is not None else ""),
+            cwd=monorepo_root,
+        )
 
 
 @pytest.mark.release
@@ -84,6 +92,7 @@ def test_schedule_add_with_verification(monorepo_root: Path) -> None:
     app_name = get_modal_app_name(trigger_name)
     env = build_subprocess_env()
 
+    result: subprocess.CompletedProcess[str] | None = None
     try:
         result = subprocess.run(
             [
@@ -120,7 +129,12 @@ def test_schedule_add_with_verification(monorepo_root: Path) -> None:
             f"Expected app name '{app_name}' in output\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
     finally:
-        _cleanup_modal_app(app_name, env, monorepo_root)
+        cleanup_modal_app(
+            app_name,
+            env,
+            resolve_modal_environment(result.stderr if result is not None else ""),
+            cwd=monorepo_root,
+        )
 
 
 @pytest.mark.release
@@ -137,6 +151,7 @@ def test_schedule_list_shows_deployed_schedule(monorepo_root: Path) -> None:
     app_name = get_modal_app_name(trigger_name)
     env = build_subprocess_env()
 
+    add_result: subprocess.CompletedProcess[str] | None = None
     try:
         # Deploy a schedule
         add_result = subprocess.run(
@@ -204,32 +219,9 @@ def test_schedule_list_shows_deployed_schedule(monorepo_root: Path) -> None:
         assert record["working_directory"] != ""
         assert record["full_commandline"] != ""
     finally:
-        _cleanup_modal_app(app_name, env, monorepo_root)
-
-
-def _cleanup_modal_app(app_name: str, env: dict[str, str], monorepo_root: Path) -> None:
-    """Stop and clean up a Modal app created during testing."""
-    try:
-        list_result = subprocess.run(
-            ["uv", "run", "modal", "app", "list", "--json"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env,
+        cleanup_modal_app(
+            app_name,
+            env,
+            resolve_modal_environment(add_result.stderr if add_result is not None else ""),
             cwd=monorepo_root,
         )
-        if list_result.returncode == 0:
-            apps = json.loads(list_result.stdout)
-            for app in apps:
-                if app.get("Description", "") == app_name:
-                    app_id = app.get("App ID", "")
-                    if app_id:
-                        subprocess.run(
-                            ["uv", "run", "modal", "app", "stop", app_id],
-                            capture_output=True,
-                            timeout=30,
-                            env=env,
-                            cwd=monorepo_root,
-                        )
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
-        pass
