@@ -680,7 +680,7 @@ async def _refresh_service_broadcast_endpoint(server_name: str, request: Request
         return JSONResponse(content=error.model_dump(), status_code=403)
 
     broadcaster: WebSocketBroadcaster = request.app.state.broadcaster
-    broadcaster.broadcast({"type": "refresh_service", "server_name": server_name})
+    broadcaster.broadcast_refresh_service(server_name)
     return JSONResponse(content={"ok": True})
 
 
