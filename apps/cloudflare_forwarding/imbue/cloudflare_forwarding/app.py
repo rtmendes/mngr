@@ -1586,22 +1586,33 @@ def auth_reset_password_page(token: str = "") -> HTMLResponse:
 
 @web_app.post("/auth/password/forgot")
 async def auth_forgot_password(body: ForgotPasswordRequest) -> dict[str, str]:
-    """Send a password reset email for the given address (always succeeds)."""
+    """Send a password reset email for the given address (always succeeds).
+
+    Swallows any backend error (SuperTokens core unreachable, schema mismatch,
+    etc.) so that this endpoint's response is byte-identical whether or not an
+    account exists for the given address -- a non-200 response for "unknown
+    email" vs a 200 for "known email" would leak enumeration signal, and a
+    500 on intermittent SuperTokens outages would violate the docstring's
+    "always succeeds" contract.
+    """
     _require_supertokens_configured()
     email = body.email.strip()
     success = {"status": "OK", "message": "If an account exists, a reset email has been sent"}
     if not email:
         return success
-    users = await list_users_by_account_info(
-        tenant_id=_AUTH_TENANT_ID,
-        account_info=AccountInfoInput(email=email),
-    )
-    if not users:
-        return success
-    user_id = users[0].id
-    result = await send_reset_password_email(tenant_id=_AUTH_TENANT_ID, user_id=user_id, email=email)
-    if result == "UNKNOWN_USER_ID_ERROR":
-        logger.warning("Failed to send password reset email for user %s", user_id)
+    try:
+        users = await list_users_by_account_info(
+            tenant_id=_AUTH_TENANT_ID,
+            account_info=AccountInfoInput(email=email),
+        )
+        if not users:
+            return success
+        user_id = users[0].id
+        result = await send_reset_password_email(tenant_id=_AUTH_TENANT_ID, user_id=user_id, email=email)
+        if result == "UNKNOWN_USER_ID_ERROR":
+            logger.warning("Failed to send password reset email for user %s", user_id)
+    except (SuperTokensSessionError, SuperTokensGeneralError) as exc:
+        logger.warning("Auth backend error during forgot-password; returning generic success: %s", exc)
     return success
 
 
