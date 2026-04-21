@@ -96,7 +96,7 @@ uv run mngr schedule add "$TRIGGER_NAME" \
     --pass-env MNGR_ROOT_NAME \
     --no-auto-fix-args \
     $DISABLE_PLUGIN_ARGS \
-    --args "--type headless_command --foreground -S agent_types.headless_command.command='bash -c \"cd /code/project && bash scripts/run_changelog_consolidation.sh\"'"
+    --args "--type headless_command --foreground --no-ensure-clean -S agent_types.headless_command.command='bash -c \"cd /code/project && bash scripts/run_changelog_consolidation.sh\"'"
 
 echo "Schedule '${TRIGGER_NAME}' created successfully."
 echo ""
