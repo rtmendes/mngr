@@ -586,8 +586,14 @@ def test_work_dir_diagnostic_reports_char_counts(
     regression adding tail_chars here would be caught.
     """
     agent, _host = _make_headless_agent(local_provider, tmp_path)
+    # Use distinct lengths so the per-file char-count assertions are
+    # independent: "11 chars" vs "24 chars" each match only their own line.
+    # Without this, both f"{len(...)} chars" expressions could collide on the
+    # same substring and a regression that dropped one rendered line would
+    # still pass.
     prompt = "prompt-body"
-    system_prompt = "system-body"
+    system_prompt = "system-prompt-body-extra"
+    assert len(prompt) != len(system_prompt), "test data must have distinct lengths"
     (agent.work_dir / ".mngr-prompt").write_text(prompt)
     (agent.work_dir / ".mngr-system-prompt").write_text(system_prompt)
     diagnostic = agent._get_work_dir_diagnostic()
