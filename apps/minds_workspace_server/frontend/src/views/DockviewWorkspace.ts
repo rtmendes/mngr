@@ -119,6 +119,12 @@ interface PanelParams {
   url?: string;
   title?: string;
   subagentSessionId?: string;
+  // Workspace service name this iframe is tied to (e.g. "web", "api").
+  // Set only for iframe tabs that proxy an actual workspace service; left
+  // undefined for ad-hoc URL tabs, terminals, and agent-owned iframes.
+  // Drives both the WS-driven `refresh_service` broadcast match and the
+  // presence of the per-tab Refresh button.
+  serverName?: string;
 }
 
 // Modal state
@@ -234,17 +240,25 @@ function createCustomTab(options: { id: string; name: string }): {
       const pp = panelParams.get(options.id);
       const panelType = pp?.panelType ?? "chat";
 
-      // Share and Refresh buttons -- only on iframe/application tabs
+      // Share and Refresh buttons -- only on iframe/application tabs.
+      // The Refresh button matches open iframes by their data-server-name
+      // attribute, which is populated only when the tab is tied to a real
+      // workspace service. For tabs without an explicit serverName
+      // (terminals, custom URLs, agent-owned iframes), suppress the Refresh
+      // button since there is nothing to match against.
       if (panelType === "iframe") {
-        const serverName = pp?.title ?? "web";
-        actions.appendChild(
-          createTabActionButton("Refresh", SVG_REFRESH, () => {
-            reloadIframesForServer(serverName);
-          }),
-        );
+        const shareName = pp?.serverName ?? pp?.title ?? "web";
+        if (pp?.serverName) {
+          const serverName = pp.serverName;
+          actions.appendChild(
+            createTabActionButton("Refresh", SVG_REFRESH, () => {
+              reloadIframesForServer(serverName);
+            }),
+          );
+        }
         actions.appendChild(
           createTabActionButton("Share", SVG_SHARE, () => {
-            shareServerName = serverName;
+            shareServerName = shareName;
             showShareModal = true;
             m.redraw();
           }),
@@ -344,7 +358,7 @@ function buildDropdownItems(): Array<{ label: string; action: () => void; divide
       const proxyUrl = getApplicationUrl(app.name, app.url);
       items.push({
         label: app.name,
-        action: () => openIframeTab(proxyUrl, app.name),
+        action: () => openIframeTab(proxyUrl, app.name, "iframe", app.name),
       });
     }
   }
@@ -503,11 +517,11 @@ function addChatPanel(chatAgentId: string, chatAgentName: string): void {
   });
 }
 
-function openIframeTab(url: string, title: string, panelType: PanelType = "iframe"): void {
+function openIframeTab(url: string, title: string, panelType: PanelType = "iframe", serverName?: string): void {
   if (!dockview) return;
   const primaryId = getPrimaryAgentId();
   const panelId = `${panelType}-${primaryId}-${Date.now()}`;
-  const params: PanelParams = { panelType, agentId: primaryId, url, title };
+  const params: PanelParams = { panelType, agentId: primaryId, url, title, serverName };
   panelParams.set(panelId, params);
   dockview.addPanel({
     id: panelId,
@@ -686,7 +700,7 @@ function initializeDockview(parentElement: HTMLElement): void {
           return createMithrilRenderer(IframePanel, {
             url: params?.url ?? "",
             title: params?.title ?? "Tab",
-            serverName: params?.title,
+            serverName: params?.serverName,
           });
 
         case "subagent":
