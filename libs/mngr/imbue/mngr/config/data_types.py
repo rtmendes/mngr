@@ -534,7 +534,12 @@ class MngrConfig(FrozenModel):
     )
     is_allowed_in_pytest: bool = Field(
         default=True,
-        description="Set this to False to prevent loading this config in pytest runs",
+        description=(
+            "Set this to False to prevent loading this config in pytest runs. "
+            "Tests that intentionally need to load a config with this set to False "
+            "(e.g. end-to-end tests of real mngr subprocesses) must set "
+            "MNGR_ALLOW_PYTEST=1 in the subprocess env as an explicit opt-in."
+        ),
     )
     default_destroyed_host_persisted_seconds: float = Field(
         default=_DEFAULT_DESTROYED_HOST_PERSISTED_SECONDS,
