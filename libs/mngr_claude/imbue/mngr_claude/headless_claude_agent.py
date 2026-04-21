@@ -275,37 +275,7 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
             parts.extend(all_extra_args)
 
         cmd_str = " ".join(parts)
-        # DIAGNOSTIC (revert before merging): dump env to stderr.log before
-        # invoking claude. Redacts ANTHROPIC_API_KEY to a length-only marker
-        # via sed. Purpose: verify whether the ClaudeAgent.modify_env_vars
-        # propagation fix actually landed the key in the tmux pane env. If
-        # the env line for ANTHROPIC_API_KEY shows up here, the fix works and
-        # the silent exit has a different cause.
-        diagnostic = (
-            "{ "
-            'echo "=== pre-claude env probe ==="; '
-            'echo "--- direct var reads ---"; '
-            'echo "ANTHROPIC_API_KEY_set=${ANTHROPIC_API_KEY:+yes_len=${#ANTHROPIC_API_KEY}}"; '
-            'echo "MNGR_AGENT_ID=$MNGR_AGENT_ID"; '
-            'echo "MNGR_AGENT_STATE_DIR=$MNGR_AGENT_STATE_DIR"; '
-            'echo "MNGR_AGENT_WORK_DIR=$MNGR_AGENT_WORK_DIR"; '
-            'echo "MNGR_HOST_DIR=$MNGR_HOST_DIR"; '
-            'echo "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"; '
-            'echo "--- exported env (count) ---"; '
-            "env | wc -l; "
-            'echo "--- agent env file (ls -la) ---"; '
-            'AGENT_ENV="$MNGR_HOST_DIR/agents/$MNGR_AGENT_ID/env"; '
-            'ls -la "$AGENT_ENV" 2>&1; '
-            'echo "--- agent env file keys (top 30) ---"; '
-            'cut -d= -f1 "$AGENT_ENV" 2>&1 | head -30; '
-            'echo "--- host env file (ls -la) ---"; '
-            'ls -la "$MNGR_HOST_DIR/env" 2>&1; '
-            'echo "=== pre-claude env probe end ==="; '
-            '} > "$MNGR_AGENT_STATE_DIR/stderr.log" 2>&1'
-        )
-        return CommandString(
-            f'{diagnostic} && {cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2>> "$MNGR_AGENT_STATE_DIR/stderr.log"'
-        )
+        return CommandString(f'{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"')
 
     def _get_stdout_path(self) -> Path:
         """Return the path to the stdout.jsonl file for this agent."""
