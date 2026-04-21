@@ -98,9 +98,10 @@ def get_repo_root() -> Path:
     """
     repo_root, error = _try_get_repo_root_with_error()
     if repo_root is None:
-        raise ScheduleDeployError(
-            f"Could not find git repository root. Must be run from within a git repository. git stderr: {error}"
-        )
+        base_message = "Could not find git repository root. Must be run from within a git repository."
+        if error:
+            raise ScheduleDeployError(f"{base_message} git stderr: {error}")
+        raise ScheduleDeployError(base_message)
     return repo_root
 
 
@@ -112,8 +113,13 @@ def try_get_repo_root() -> Path | None:
     return _try_get_repo_root_with_error()[0]
 
 
-def _try_get_repo_root_with_error() -> tuple[Path | None, str]:
-    """Internal: like try_get_repo_root but also returns git stderr on failure."""
+def _try_get_repo_root_with_error() -> tuple[Path | None, str | None]:
+    """Internal: like try_get_repo_root but also returns git stderr on failure.
+
+    The second element is None on success, and git's stderr (possibly empty) on
+    failure. Callers can distinguish "no error available" (None) from "git
+    produced an empty stderr" (empty string) if they need to.
+    """
     with ConcurrencyGroup(name="git-toplevel") as cg:
         result = cg.run_process_to_completion(
             ["git", "rev-parse", "--show-toplevel"],
@@ -121,7 +127,7 @@ def _try_get_repo_root_with_error() -> tuple[Path | None, str]:
         )
     if result.returncode != 0:
         return None, result.stderr.strip()
-    return Path(result.stdout.strip()), ""
+    return Path(result.stdout.strip()), None
 
 
 def _ensure_modal_environment(environment_name: str) -> None:
