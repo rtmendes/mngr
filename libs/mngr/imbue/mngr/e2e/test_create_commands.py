@@ -10,7 +10,7 @@ from imbue.skitwright.expect import expect
 
 @pytest.mark.release
 @pytest.mark.tmux
-def test_create_runs_agent_types_configured_command(e2e: E2eSession) -> None:
+def test_create_command_agent_runs_post_dash_command_in_agent(e2e: E2eSession) -> None:
     # Use a locally-bound name since we assert on the exact command string below.
     expected_command = "sleep 123456789"
     e2e.write_tutorial_block("""
