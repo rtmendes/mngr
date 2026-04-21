@@ -75,13 +75,33 @@ echo "new section head:"
 echo "$NEW_SECTION" | head -5
 
 echo "invoking claude (uid=$(id -u), IS_SANDBOX=${IS_SANDBOX:-unset})..."
+echo "ANTHROPIC_API_KEY set: $([ -n "${ANTHROPIC_API_KEY:-}" ] && echo "yes (len=${#ANTHROPIC_API_KEY})" || echo "NO")"
+echo "claude --version: $(claude --version 2>&1)"
+
+# Enable claude internal debug logging to a known dir; we'll dump it after.
+CLAUDE_LOGS_DIR="${MNGR_AGENT_STATE_DIR:-/tmp}/claude-debug-logs"
+mkdir -p "$CLAUDE_LOGS_DIR"
+export CLAUDE_CODE_DEBUG_LOG_LEVEL=info
+export CLAUDE_CODE_DEBUG_LOGS_DIR="$CLAUDE_LOGS_DIR"
+
 SUMMARY=$(IS_SANDBOX=1 claude --print --dangerously-skip-permissions -p "Produce a concise, human-friendly summary of these changelog entries. Group related changes, use natural language, and keep it to a few bullet points. Output ONLY the markdown bullets, no preamble:
 
-$NEW_SECTION" 2>&1) || {
+$NEW_SECTION" 2>&1)
+CLAUDE_EXIT=$?
+echo "claude exit: $CLAUDE_EXIT"
+if [ -d "$CLAUDE_LOGS_DIR" ] && [ -n "$(ls -A "$CLAUDE_LOGS_DIR" 2>/dev/null)" ]; then
+    echo "=== claude debug logs ==="
+    for f in "$CLAUDE_LOGS_DIR"/*; do
+        echo "--- $f ---"
+        cat "$f"
+    done
+    echo "=== end claude debug logs ==="
+fi
+if [ "$CLAUDE_EXIT" -ne 0 ]; then
     echo "claude failed: $SUMMARY"
-    write_status "failed" "" "claude invocation failed"
+    write_status "failed" "" "claude invocation failed (exit $CLAUDE_EXIT)"
     exit 1
-}
+fi
 
 if [ -z "$SUMMARY" ]; then
     echo "claude returned empty"
