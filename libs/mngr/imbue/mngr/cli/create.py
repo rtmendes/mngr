@@ -1084,8 +1084,9 @@ def _resolve_source_location(
         host = provider.get_host(HostName(LOCAL_HOST_NAME))
         online_host, _ = ensure_host_started(host, is_start_desired=is_start_desired, provider=provider)
         clones_base = online_host.host_dir / "clones"
-        # Match the worktree naming convention and "agent" fallback (see hosts/host.py)
-        name_hint = opts.positional_name or opts.name or "agent"
+        # Match the worktree naming convention (see hosts/host.py). Fall back to the
+        # project name derived from the URL when the user didn't supply a name.
+        name_hint = opts.positional_name or opts.name or parse_project_name_from_url(opts.source) or "agent"
         cloned_path = clone_git_url_to_managed_dir(opts.source, clones_base, name_hint, mngr_ctx.concurrency_group)
         return ResolvedSource(location=HostLocation(host=online_host, path=cloned_path))
 
