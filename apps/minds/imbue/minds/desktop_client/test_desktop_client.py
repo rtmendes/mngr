@@ -22,6 +22,7 @@ from imbue.minds.desktop_client.conftest import make_agents_json
 from imbue.minds.desktop_client.conftest import make_resolver_with_data
 from imbue.minds.desktop_client.conftest import make_service_log
 from imbue.minds.desktop_client.cookie_manager import SESSION_COOKIE_NAME
+from imbue.minds.desktop_client.cookie_manager import create_session_cookie
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.request_events import RequestInbox
 from imbue.minds.desktop_client.request_events import create_sharing_request_event
@@ -94,7 +95,7 @@ def _create_test_desktop_client(
         http_client=http_client,
         agent_creator=agent_creator,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
 
     return client, auth_store
 
@@ -128,14 +129,22 @@ def _authenticate_client(
     client: TestClient,
     auth_store: FileAuthStore,
 ) -> None:
-    """Authenticate a test client by adding a one-time code and consuming it."""
-    code = OneTimeCode("auth-code-{}".format(AgentId()))
-    auth_store.add_one_time_code(code=code)
-    client.get(
-        "/authenticate",
-        params={"one_time_code": str(code)},
-        follow_redirects=False,
-    )
+    """Authenticate a test client by minting a signed session cookie and adding it to the jar.
+
+    The production path (GET /authenticate?one_time_code=...) returns a
+    ``Set-Cookie`` with ``Domain=localhost`` so the cookie is valid on both
+    ``localhost`` and ``<agent-id>.localhost`` subdomains. httpx's TestClient
+    cookie jar is stricter than real browsers about Domain=localhost and
+    silently drops that cookie on subsequent requests, so we set the cookie
+    directly on the jar here instead of round-tripping through /authenticate.
+    The server-side logic the test is exercising is independent of the
+    Set-Cookie emission path; the bare presence/signature of the cookie is
+    what ``_is_authenticated`` checks.
+    """
+    cookie_value = create_session_cookie(signing_key=auth_store.get_signing_key())
+    # Intentionally no Domain=: httpx's cookie jar silently drops Domain=localhost
+    # cookies on subsequent requests even with base_url=http://localhost.
+    client.cookies.set(SESSION_COOKIE_NAME, cookie_value, path="/")
 
 
 def test_landing_page_shows_login_when_unauthenticated(tmp_path: Path) -> None:
@@ -810,7 +819,7 @@ def _setup_failing_tunnel_server(
         http_client=None,
         tunnel_manager=_FailingTunnelManager(),
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     _authenticate_client(client=client, auth_store=auth_store)
     return client, auth_store, agent_id
 
@@ -1467,7 +1476,7 @@ def test_unhandled_exception_returns_500_with_message(tmp_path: Path) -> None:
     def explode() -> None:
         raise RuntimeError("test boom")
 
-    client = TestClient(app, raise_server_exceptions=False)
+    client = TestClient(app, base_url="http://localhost", raise_server_exceptions=False)
     response = client.get("/explode")
     assert response.status_code == 500
     assert "test boom" in response.text
@@ -1553,7 +1562,7 @@ def _create_test_client_with_stores(
         request_inbox=request_inbox,
         paths=WorkspacePaths(data_dir=tmp_path),
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     return client, auth_store
 
 
@@ -1647,7 +1656,7 @@ def test_requests_panel_card_routes_via_minds_bridge(tmp_path: Path) -> None:
         request_inbox=request_inbox,
         paths=WorkspacePaths(data_dir=tmp_path),
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     _authenticate_client(client, auth_store)
 
     response = client.get("/_chrome/requests-panel")
@@ -1705,3 +1714,90 @@ def test_auto_open_toggle(tmp_path: Path) -> None:
 
     config = MindsConfig(data_dir=tmp_path)
     assert config.get_auto_open_requests_panel() is False
+
+
+# -- Subdomain forwarding (agent-id.localhost) tests --
+
+
+def _make_workspace_stub_backend() -> FastAPI:
+    """A FastAPI app that pretends to be a minds_workspace_server."""
+    stub = FastAPI()
+
+    @stub.get("/", response_class=HTMLResponse)
+    def workspace_root() -> HTMLResponse:
+        return HTMLResponse("<html><body>workspace-root</body></html>")
+
+    @stub.get("/api/layout")
+    def workspace_layout() -> JSONResponse:
+        return JSONResponse({"layout": "stub"})
+
+    return stub
+
+
+def _create_subdomain_test_client(tmp_path: Path, agent_id: AgentId) -> tuple[TestClient, FileAuthStore]:
+    """Build a desktop client whose resolver routes the given agent to a stub backend."""
+    workspace_transport = httpx.ASGITransport(app=_make_workspace_stub_backend())
+
+    class _WorkspaceRoutingTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            host = request.url.host
+            if host == "workspace-backend":
+                return await workspace_transport.handle_async_request(request)
+            return httpx.Response(502, content=b"unknown host")
+
+    routing_client = httpx.AsyncClient(transport=_WorkspaceRoutingTransport(), follow_redirects=False, timeout=5.0)
+
+    auth_dir = tmp_path / "auth"
+    auth_store = FileAuthStore(data_directory=auth_dir)
+
+    discovered_agents = make_agents_json(agent_id)
+    resolver = make_resolver_with_data(
+        agents_json=discovered_agents,
+        service_logs={str(agent_id): make_service_log("system_interface", "http://workspace-backend")},
+    )
+
+    app = create_desktop_client(
+        auth_store=auth_store,
+        backend_resolver=resolver,
+        http_client=routing_client,
+    )
+    client = TestClient(app, base_url=f"http://{agent_id}.localhost")
+    return client, auth_store
+
+
+def test_subdomain_forward_unauth_html_redirects_to_login(tmp_path: Path) -> None:
+    agent_id = AgentId()
+    client, _ = _create_subdomain_test_client(tmp_path, agent_id)
+    response = client.get("/", headers={"accept": "text/html"}, follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("http://localhost:")
+    assert "/login?next=" in response.headers["location"]
+
+
+def test_subdomain_forward_unauth_non_html_is_403(tmp_path: Path) -> None:
+    agent_id = AgentId()
+    client, _ = _create_subdomain_test_client(tmp_path, agent_id)
+    response = client.get("/api/layout", headers={"accept": "application/json"})
+    assert response.status_code == 403
+
+
+def test_subdomain_forward_auth_forwards_to_workspace_server(tmp_path: Path) -> None:
+    agent_id = AgentId()
+    client, auth_store = _create_subdomain_test_client(tmp_path, agent_id)
+    _authenticate_client(client=client, auth_store=auth_store)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "workspace-root" in response.text
+
+
+def test_subdomain_forward_unknown_agent_returns_404(tmp_path: Path) -> None:
+    # agent_id is NOT registered in the resolver; the subdomain should 404.
+    # Create a client with a DIFFERENT agent registered and then visit agent_id's subdomain.
+    agent_id = AgentId()
+    other_id = AgentId()
+    client, auth_store = _create_subdomain_test_client(tmp_path, other_id)
+    _authenticate_client(client=client, auth_store=auth_store)
+    # Switch base_url to the unregistered agent
+    client.base_url = httpx.URL(f"http://{agent_id}.localhost")
+    response = client.get("/")
+    assert response.status_code == 404

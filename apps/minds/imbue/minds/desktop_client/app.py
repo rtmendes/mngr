@@ -3,13 +3,16 @@ import html
 import json
 import os
 import queue
+import re
 import socket as socket_module
 from collections.abc import AsyncGenerator
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
+from typing import Any
 from typing import Final
+from urllib.parse import quote
 
 import httpx
 import paramiko
@@ -268,6 +271,7 @@ def _handle_login(
 
 def _handle_authenticate(
     one_time_code: str,
+    request: Request,
     auth_store: AuthStoreDep,
 ) -> Response:
     code = OneTimeCode(one_time_code)
@@ -282,11 +286,22 @@ def _handle_authenticate(
     signing_key = auth_store.get_signing_key()
     cookie_value = create_session_cookie(signing_key=signing_key)
 
+    # Domain=localhost makes the cookie valid on `localhost` plus any
+    # `<agent-id>.localhost` subdomain the desktop client forwards to. Only
+    # emit it when the request host is actually on ``localhost`` (real
+    # deployments); other hosts (e.g. ``testserver`` in TestClient) fall back
+    # to host-only cookies, which Python's cookielib matches straightforwardly.
+    host_header = request.headers.get("host", "").split(":")[0].lower()
+    cookie_domain: str | None = (
+        "localhost" if host_header == "localhost" or host_header.endswith(".localhost") else None
+    )
+
     response = Response(status_code=307, headers={"Location": "/"})
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=cookie_value,
         path="/",
+        domain=cookie_domain,
         httponly=True,
         samesite="lax",
     )
@@ -838,6 +853,218 @@ def _get_tunnel_http_client(
         follow_redirects=False,
         timeout=_PROXY_TIMEOUT_SECONDS,
     )
+
+
+# -- Subdomain forwarding to per-workspace minds_workspace_server --
+
+_WORKSPACE_SUBDOMAIN_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^(agent-[a-f0-9]+)\.(?:localhost|127\.0\.0\.1)(?::\d+)?$",
+    re.IGNORECASE,
+)
+_WORKSPACE_SERVER_SERVICE_NAME: Final[ServiceName] = ServiceName("system_interface")
+
+
+def _parse_workspace_subdomain(host_header: str) -> AgentId | None:
+    """Return the agent ID if ``host_header`` is ``<agent-id>.localhost(:port)``.
+
+    Returns None for bare ``localhost``, ``127.0.0.1``, or unparseable values;
+    those requests are served by the desktop client's own routes.
+    """
+    if not host_header:
+        return None
+    match = _WORKSPACE_SUBDOMAIN_PATTERN.match(host_header)
+    if match is None:
+        return None
+    try:
+        return AgentId(match.group(1))
+    except ValueError:
+        return None
+
+
+def _unauthenticated_subdomain_response(request: Request) -> Response:
+    """Redirect to /login for HTML navigations; 403 for API/asset requests."""
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        next_url = str(request.url)
+        auth_port = request.app.state.auth_server_port or 8420
+        location = f"http://localhost:{auth_port}/login?next={quote(next_url, safe='')}"
+        return Response(status_code=302, headers={"Location": location})
+    return Response(status_code=403, content="Not authenticated")
+
+
+async def _forward_workspace_http(
+    request: Request,
+    workspace_backend_url: str,
+    http_client: httpx.AsyncClient,
+) -> Response:
+    """Byte-forward an HTTP request to a workspace_server URL.
+
+    Streams SSE responses (detected by the client's ``accept: text/event-stream``),
+    buffers everything else. Does NOT rewrite body or headers: the workspace_server
+    already emits /service/<name>/ prefixed URLs, scoped cookies, and the SW shim.
+    """
+    base = workspace_backend_url.rstrip("/")
+    path = request.url.path.lstrip("/")
+    url = f"{base}/{path}" if path else base + "/"
+    if request.url.query:
+        url = f"{url}?{request.url.query}"
+
+    headers = dict(request.headers)
+    headers.pop("host", None)
+    body = await request.body()
+
+    accept = request.headers.get("accept", "")
+    is_likely_sse = "text/event-stream" in accept
+
+    if is_likely_sse:
+        try:
+            stream_ctx = http_client.stream(method=request.method, url=url, headers=headers, content=body)
+        except httpx.ConnectError:
+            return Response(status_code=502, content="Workspace server connection refused")
+
+        async def _stream() -> AsyncGenerator[bytes, None]:
+            try:
+                async with stream_ctx as backend_response:
+                    async for chunk in backend_response.aiter_bytes():
+                        yield chunk
+            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.TimeoutException):
+                pass
+
+        return StreamingResponse(
+            _stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    try:
+        backend_response = await http_client.request(method=request.method, url=url, headers=headers, content=body)
+    except httpx.ConnectError:
+        return Response(status_code=502, content="Workspace server connection refused")
+    except httpx.ReadError:
+        return Response(status_code=502, content="Workspace server connection lost")
+    except httpx.RemoteProtocolError:
+        return Response(status_code=502, content="Workspace server disconnected without response")
+    except httpx.TimeoutException:
+        return Response(status_code=504, content="Workspace server timed out")
+
+    response = Response(content=backend_response.content, status_code=backend_response.status_code)
+    for header_key, header_value in backend_response.headers.multi_items():
+        if header_key.lower() in _EXCLUDED_RESPONSE_HEADERS:
+            continue
+        response.headers.append(header_key, header_value)
+    return response
+
+
+async def _handle_workspace_forward_http(request: Request) -> Response:
+    """Forward an HTTP request arriving at ``<agent-id>.localhost:8420`` to that
+    workspace's minds_workspace_server. Called from subdomain-routing middleware.
+    """
+    host_header = request.headers.get("host", "")
+    agent_id = _parse_workspace_subdomain(host_header)
+    if agent_id is None:
+        return Response(status_code=404)
+
+    auth_store: AuthStoreInterface = request.app.state.auth_store
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return _unauthenticated_subdomain_response(request)
+
+    backend_resolver: BackendResolverInterface = request.app.state.backend_resolver
+    if agent_id not in backend_resolver.list_known_workspace_ids():
+        return Response(status_code=404, content=f"Unknown workspace: {agent_id}")
+
+    workspace_url = backend_resolver.get_backend_url(agent_id, _WORKSPACE_SERVER_SERVICE_NAME)
+    if workspace_url is None:
+        if "text/html" in request.headers.get("accept", ""):
+            return HTMLResponse(content="<p>Workspace server not yet available. Retrying...</p>")
+        return Response(status_code=503, content="Workspace server not yet available")
+
+    try:
+        tunnel_client = await asyncio.get_running_loop().run_in_executor(
+            None, _get_tunnel_http_client, request.app, agent_id, workspace_url, backend_resolver
+        )
+    except (SSHTunnelError, paramiko.SSHException, OSError) as e:
+        logger.warning("SSH tunnel setup failed for workspace {}: {}", agent_id, e)
+        return Response(status_code=502, content=f"SSH tunnel to remote workspace failed: {e}")
+
+    active_client = tunnel_client or request.app.state.http_client
+    return await _forward_workspace_http(
+        request=request, workspace_backend_url=workspace_url, http_client=active_client
+    )
+
+
+async def _handle_workspace_forward_websocket(websocket: WebSocket) -> None:
+    """Forward a WebSocket upgrade arriving at ``<agent-id>.localhost:8420`` to the
+    workspace's minds_workspace_server. Auth still honored via the session cookie.
+    """
+    host_header = websocket.headers.get("host", "")
+    agent_id = _parse_workspace_subdomain(host_header)
+    if agent_id is None:
+        await websocket.close(code=4004, reason="Unknown host")
+        return
+
+    auth_store: AuthStoreInterface = websocket.app.state.auth_store
+    if not _is_authenticated(cookies=websocket.cookies, auth_store=auth_store):
+        await websocket.close(code=4003, reason="Not authenticated")
+        return
+
+    backend_resolver: BackendResolverInterface = websocket.app.state.backend_resolver
+    if agent_id not in backend_resolver.list_known_workspace_ids():
+        await websocket.close(code=4004, reason=f"Unknown workspace: {agent_id}")
+        return
+
+    workspace_url = backend_resolver.get_backend_url(agent_id, _WORKSPACE_SERVER_SERVICE_NAME)
+    if workspace_url is None:
+        await websocket.close(code=1013, reason="Workspace server not yet available")
+        return
+
+    try:
+        tunnel_socket_path = await asyncio.get_running_loop().run_in_executor(
+            None,
+            _get_tunnel_socket_path,
+            websocket.app.state.tunnel_manager,
+            agent_id,
+            workspace_url,
+            backend_resolver,
+        )
+    except (SSHTunnelError, paramiko.SSHException, OSError) as e:
+        logger.debug("SSH tunnel setup failed for workspace WS {}: {}", agent_id, e)
+        try:
+            await websocket.close(code=1011, reason="SSH tunnel failed")
+        except RuntimeError:
+            pass
+        return
+
+    ws_backend = workspace_url.replace("http://", "ws://").replace("https://", "wss://").rstrip("/")
+    path = websocket.url.path.lstrip("/")
+    ws_url = f"{ws_backend}/{path}" if path else ws_backend + "/"
+    if websocket.url.query:
+        ws_url = f"{ws_url}?{websocket.url.query}"
+
+    client_subprotocol_header = websocket.headers.get("sec-websocket-protocol")
+    subprotocols: list[str] = []
+    if client_subprotocol_header:
+        subprotocols = [s.strip() for s in client_subprotocol_header.split(",")]
+
+    try:
+        backend_ws_conn = _connect_backend_websocket(
+            ws_url=ws_url, subprotocols=subprotocols, tunnel_socket_path=tunnel_socket_path
+        )
+        async with backend_ws_conn as backend_ws:
+            await websocket.accept(subprotocol=backend_ws.subprotocol)
+            await asyncio.gather(
+                _forward_client_to_backend(client_websocket=websocket, backend_ws=backend_ws),
+                _forward_backend_to_client(client_websocket=websocket, backend_ws=backend_ws, agent_id=agent_id),
+            )
+    except (ConnectionRefusedError, OSError, TimeoutError, SSHTunnelError, paramiko.SSHException) as connection_error:
+        logger.debug("Backend WebSocket connection failed for workspace {}: {}", agent_id, connection_error)
+        try:
+            await websocket.close(code=1011, reason="Backend connection failed")
+        except RuntimeError:
+            pass
 
 
 # -- Agent creation route handlers --
@@ -1866,6 +2093,19 @@ def create_desktop_client(
         logger.error("Unhandled exception on {} {}: {}", request.method, request.url.path, exc, exc_info=exc)
         return Response(status_code=500, content=f"Internal Server Error: {exc}")
 
+    @app.middleware("http")
+    async def _subdomain_forwarding_middleware(request: Request, call_next: Any) -> Response:
+        """Dispatch ``<agent-id>.localhost:PORT/*`` to the workspace_server byte-forward.
+
+        Bare ``localhost`` / ``127.0.0.1`` traffic falls through to the normal
+        desktop-client routes via ``call_next``. Unknown subdomains return 404.
+        """
+        host_header = request.headers.get("host", "")
+        agent_id = _parse_workspace_subdomain(host_header)
+        if agent_id is None:
+            return await call_next(request)
+        return await _handle_workspace_forward_http(request)
+
     app.state.auth_store = auth_store
     app.state.backend_resolver = backend_resolver
     app.state.tunnel_manager = tunnel_manager
@@ -1977,5 +2217,17 @@ def create_desktop_client(
             backend_resolver=backend_resolver,
             tunnel_manager=tunnel_manager,
         )
+
+    # Catch-all WebSocket route for ``<agent-id>.localhost:PORT/*``. Registered
+    # last so specific paths (e.g. ``/forwarding/...``) still take precedence.
+    # For requests arriving on the bare-origin host, the handler closes the WS
+    # with a 4004 since those paths weren't matched by any other route.
+    @app.websocket("/{path:path}")
+    async def subdomain_forwarding_websocket(websocket: WebSocket, path: str) -> None:
+        host_header = websocket.headers.get("host", "")
+        if _parse_workspace_subdomain(host_header) is None:
+            await websocket.close(code=4004, reason="Not found")
+            return
+        await _handle_workspace_forward_websocket(websocket)
 
     return app
