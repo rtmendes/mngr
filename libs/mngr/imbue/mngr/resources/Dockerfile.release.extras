@@ -26,6 +26,13 @@ RUN update-alternatives --set iptables /usr/sbin/iptables-legacy \
 # ---- Playwright (chromium + deps) baked in for minds release tests ----
 # Bake-in (not sandbox_init_cmd) so the install only happens at image build
 # time; otherwise every sandbox would re-download ~300MB.
+#
+# Pin PLAYWRIGHT_BROWSERS_PATH to an absolute location so tests that
+# isolate $HOME (e.g. via the autouse isolate_home fixture in mngr's
+# conftest) still find the baked-in chromium. The default lookup path
+# is $HOME/.cache/ms-playwright, which points at the pytest tmp dir
+# once isolate_home kicks in, where nothing is installed.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN uv run --with playwright python -m playwright install --with-deps chromium
 
 # ---- minds_workspace_server frontend build ----
