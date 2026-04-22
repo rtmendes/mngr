@@ -404,22 +404,30 @@ def _stream_subagent_events(agent_id: str, subagent_session_id: str, request: Re
     )
 
 
-def _layout_filename(request: Request) -> str:
-    """Return the layout filename based on the access mode query parameter."""
-    mode = request.query_params.get("mode", "")
-    if mode and mode in ("cloudflare", "local", "dev"):
-        return f"layout-{mode}.json"
-    return "layout.json"
+_LAYOUT_FILENAME = "layout.json"
 
 
-def _get_layout(agent_id: str, request: Request) -> Response:
-    """Get the saved workspace layout for an agent."""
-    agent_info = _find_agent(agent_id, request)
-    if agent_info is None:
-        return _agent_not_found_response(agent_id)
+def _primary_agent_layout_dir() -> Path | None:
+    """Return the workspace layout directory for this workspace's primary agent.
 
-    filename = _layout_filename(request)
-    layout_file = agent_info.agent_state_dir / "workspace_layout" / filename
+    The workspace_server always serves a single workspace (its own primary
+    agent); the layout lives at $MNGR_HOST_DIR/agents/<MNGR_AGENT_ID>/workspace_layout/.
+    Returns None if either env var is missing, which should only happen in
+    dev/test setups that don't care about persistence.
+    """
+    agent_id = os.environ.get("MNGR_AGENT_ID", "")
+    if not agent_id:
+        return None
+    return _get_host_dir() / "agents" / agent_id / "workspace_layout"
+
+
+def _get_layout() -> Response:
+    """Get the saved workspace layout for this workspace's primary agent."""
+    layout_dir = _primary_agent_layout_dir()
+    if layout_dir is None:
+        return JSONResponse(content=None, status_code=404)
+
+    layout_file = layout_dir / _LAYOUT_FILENAME
     if not layout_file.exists():
         return JSONResponse(content=None, status_code=404)
 
@@ -430,11 +438,12 @@ def _get_layout(agent_id: str, request: Request) -> Response:
         return JSONResponse(content=None, status_code=404)
 
 
-async def _save_layout(agent_id: str, request: Request) -> Response:
-    """Save the workspace layout for an agent."""
-    agent_info = _find_agent(agent_id, request)
-    if agent_info is None:
-        return _agent_not_found_response(agent_id)
+async def _save_layout(request: Request) -> Response:
+    """Save the workspace layout for this workspace's primary agent."""
+    layout_dir = _primary_agent_layout_dir()
+    if layout_dir is None:
+        error = ErrorResponse(detail="No primary agent configured for this workspace")
+        return JSONResponse(content=error.model_dump(), status_code=500)
 
     try:
         body = await request.body()
@@ -444,10 +453,8 @@ async def _save_layout(agent_id: str, request: Request) -> Response:
         error = ErrorResponse(detail="Invalid JSON in request body")
         return JSONResponse(content=error.model_dump(), status_code=400)
 
-    filename = _layout_filename(request)
-    layout_dir = agent_info.agent_state_dir / "workspace_layout"
     layout_dir.mkdir(parents=True, exist_ok=True)
-    layout_file = layout_dir / filename
+    layout_file = layout_dir / _LAYOUT_FILENAME
     layout_file.write_bytes(body)
 
     return JSONResponse(content={"status": "ok"})
@@ -706,8 +713,8 @@ def create_application(
     application.add_api_route("/api/agents/{agent_id}/events", _get_events, methods=["GET"])
     application.add_api_route("/api/agents/{agent_id}/stream", _stream_events, methods=["GET"])
     application.add_api_route("/api/agents/{agent_id}/message", _send_message_endpoint, methods=["POST"])
-    application.add_api_route("/api/agents/{agent_id}/layout", _get_layout, methods=["GET"])
-    application.add_api_route("/api/agents/{agent_id}/layout", _save_layout, methods=["POST"])
+    application.add_api_route("/api/layout", _get_layout, methods=["GET"])
+    application.add_api_route("/api/layout", _save_layout, methods=["POST"])
     application.add_api_route("/api/agents/{agent_id}/screen", _get_screen_capture, methods=["GET"])
     application.add_api_route("/api/agents/{agent_id}/destroy", _destroy_agent, methods=["POST"])
     application.add_api_route("/api/sharing/{service_name}", _get_sharing_status_endpoint, methods=["GET"])
