@@ -263,6 +263,7 @@
 
 # Autofix session artifacts
 **/.autofix/
+**/.reviewer/logs/
 **/.reviewer/outputs/
 **/.reviewer/settings.local.json
 **/.reviewer/.stop_hook_consecutive_blocks
