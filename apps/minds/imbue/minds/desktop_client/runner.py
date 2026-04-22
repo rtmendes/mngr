@@ -35,6 +35,9 @@ from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingUrl
 from imbue.minds.desktop_client.cloudflare_client import CloudflareSecret
 from imbue.minds.desktop_client.cloudflare_client import CloudflareUsername
 from imbue.minds.desktop_client.cloudflare_client import OwnerEmail
+from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayDestructionHandler
+from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayDiscoveryHandler
+from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayManager
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.request_events import RequestInbox
@@ -141,6 +144,8 @@ def start_desktop_client(
     backend_resolver = MngrCliBackendResolver()
     stream_manager = MngrStreamManager(resolver=backend_resolver)
     tunnel_manager = SSHTunnelManager()
+    latchkey_gateway_manager = LatchkeyGatewayManager()
+    latchkey_gateway_manager.start()
 
     minds_config = MindsConfig(data_dir=data_directory)
     cloudflare_client = _build_cloudflare_client(minds_config.cloudflare_forwarding_url)
@@ -189,6 +194,15 @@ def start_desktop_client(
         data_dir=data_directory,
     )
     stream_manager.add_on_agent_discovered_callback(discovery_handler)
+
+    # Register callbacks that spawn/terminate a dedicated ``latchkey gateway``
+    # subprocess for each agent that runs on this machine or in a local
+    # container/VM. Cloud/VPS-hosted agents are skipped.
+    latchkey_discovery_handler = LatchkeyGatewayDiscoveryHandler(gateway_manager=latchkey_gateway_manager)
+    latchkey_destruction_handler = LatchkeyGatewayDestructionHandler(gateway_manager=latchkey_gateway_manager)
+    stream_manager.add_on_agent_discovered_callback(latchkey_discovery_handler)
+    stream_manager.add_on_agent_destroyed_callback(latchkey_destruction_handler)
+
     stream_manager.start()
 
     # Start health checking for reverse tunnels
@@ -199,6 +213,7 @@ def start_desktop_client(
         backend_resolver=backend_resolver,
         http_client=None,
         tunnel_manager=tunnel_manager,
+        latchkey_gateway_manager=latchkey_gateway_manager,
         agent_creator=agent_creator,
         cloudflare_client=cloudflare_client,
         telegram_orchestrator=telegram_orchestrator,
