@@ -398,7 +398,7 @@ jobs:
         run: brew install tmux unison
 
       - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code@2.1.75
+        run: npm install -g @anthropic-ai/claude-code@2.1.116
 
       - name: Configure Docker Hub mirror
         if: runner.os == 'Linux'
