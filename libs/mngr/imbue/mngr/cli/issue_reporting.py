@@ -24,6 +24,7 @@ from imbue.mngr.errors import BaseMngrError
 GITHUB_REPO: Final[str] = "imbue-ai/mngr"
 GITHUB_BASE_URL: Final[str] = f"https://github.com/{GITHUB_REPO}"
 ISSUE_TITLE_PREFIX: Final[str] = "[NotImplemented]"
+
 # Maximum URL length to stay within browser and GitHub limits
 _MAX_URL_LENGTH: Final[int] = 8000
 
@@ -311,9 +312,7 @@ def _offer_diagnose(prompt_file_path: Path) -> None:
     if os.environ.get("IS_AUTONOMOUS", "0") == "1":
         return
 
-    create_cmd = (
-        f"mngr create --source {MNGR_REPO_URL} --branch main: --message-file {prompt_file_path}"
-    )
+    create_cmd = f"mngr create --source {MNGR_REPO_URL} --branch main: --message-file {prompt_file_path}"
 
     logger.info("")
     logger.info("To launch an agent to diagnose this problem, run:")
