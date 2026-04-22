@@ -1623,6 +1623,8 @@ def test_create_accepts_name_flag_alone(
             "--transfer=none",
             "--from",
             str(temp_work_dir),
+            "--",
+            "true",
         ],
         obj=plugin_manager,
     )
