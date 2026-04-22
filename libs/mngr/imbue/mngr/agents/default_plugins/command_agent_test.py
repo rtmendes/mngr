@@ -71,7 +71,31 @@ def test_assemble_command_raises_when_no_args_and_no_override(
     temp_mngr_ctx: MngrContext,
     tmp_path: Path,
 ) -> None:
-    """Empty agent_args with no override produces a helpful UserInputError."""
+    """Empty agent_args with no override and no config.command produces a helpful UserInputError."""
     agent = _make_command_agent(local_host, temp_mngr_ctx, tmp_path)
     with pytest.raises(UserInputError, match=r"--type command requires a command after"):
         agent.assemble_command(local_host, agent_args=(), command_override=None)
+
+
+def test_assemble_command_uses_agent_config_command(
+    local_host: Host,
+    temp_mngr_ctx: MngrContext,
+    tmp_path: Path,
+) -> None:
+    """agent_config.command is used when agent_args is empty."""
+    config = CommandAgentConfig(command=CommandString("python -m http.server 8080"))
+    agent = _make_command_agent(local_host, temp_mngr_ctx, tmp_path, agent_config=config)
+    cmd = agent.assemble_command(local_host, agent_args=(), command_override=None)
+    assert cmd == CommandString("python -m http.server 8080")
+
+
+def test_assemble_command_concatenates_config_command_and_agent_args(
+    local_host: Host,
+    temp_mngr_ctx: MngrContext,
+    tmp_path: Path,
+) -> None:
+    """agent_config.command is prepended to agent_args (matches BaseAgent.assemble_command)."""
+    config = CommandAgentConfig(command=CommandString("python -m http.server"))
+    agent = _make_command_agent(local_host, temp_mngr_ctx, tmp_path, agent_config=config)
+    cmd = agent.assemble_command(local_host, agent_args=("--bind", "0.0.0.0"), command_override=None)
+    assert cmd == CommandString("python -m http.server --bind 0.0.0.0")

@@ -14,21 +14,29 @@ class CommandAgentConfig(AgentTypeConfig):
 
 
 class CommandAgent(BaseAgent[CommandAgentConfig]):
-    """Agent type whose command is whatever comes after ``--`` on the CLI.
+    """Agent type whose command comes from ``agent_config.command`` and/or the CLI args after ``--``.
 
     Used when the caller wants to run an arbitrary shell command without
-    registering a dedicated agent type. Everything after ``--`` is joined
-    with plain spaces (no shell-quoting) and executed as the agent's main
-    command, e.g.::
+    registering a dedicated agent type. The final command is
+    ``{agent_config.command} {agent_args}`` joined with plain spaces, e.g.::
 
         mngr create my-task --type command -- sleep 99999
         mngr create my-task --type command -- 'echo hi && sleep 60'
 
+    A custom type can also pin the base command in config::
+
+        [agent_types.my_server]
+        parent_type = "command"
+        command = "python -m http.server 8080"
+
+    Then ``mngr create web my_server`` runs ``python -m http.server 8080``,
+    and ``mngr create web my_server -- --bind 0.0.0.0`` runs
+    ``python -m http.server 8080 --bind 0.0.0.0``.
+
+    At least one of ``agent_config.command`` or ``agent_args`` must be set.
     Because args are joined with plain spaces, shell metacharacters like
     ``&&``, ``|``, or ``;`` must be inside a single quoted argument so
-    that they survive intact to the agent's shell. The stored command
-    string is executed by the agent's outer shell, so there is no need
-    to wrap it in ``sh -c`` yourself.
+    that they survive intact to the agent's shell.
     """
 
     def assemble_command(
@@ -39,11 +47,16 @@ class CommandAgent(BaseAgent[CommandAgentConfig]):
     ) -> CommandString:
         if command_override is not None:
             return command_override
-        if not agent_args:
+        parts: list[str] = []
+        if self.agent_config.command is not None:
+            parts.append(str(self.agent_config.command))
+        parts.extend(agent_args)
+        if not parts:
             raise UserInputError(
-                "--type command requires a command after `--`, e.g. `mngr create foo --type command -- sleep 99999`"
+                "--type command requires a command after `--` (or `command = ...` set on the agent type), "
+                "e.g. `mngr create foo --type command -- sleep 99999`"
             )
-        return CommandString(" ".join(agent_args))
+        return CommandString(" ".join(parts))
 
 
 @hookimpl
