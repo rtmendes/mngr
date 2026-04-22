@@ -1699,6 +1699,8 @@ def test_create_provider_flag_redundant_with_address_is_ok(
             "--transfer=none",
             "--from",
             str(temp_work_dir),
+            "--",
+            "true",
         ],
         obj=plugin_manager,
     )
