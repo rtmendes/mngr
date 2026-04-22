@@ -322,9 +322,7 @@ function buildDropdownItems(): Array<{ label: string; action: () => void; divide
   // (that's the surrounding chrome UI, not a tab-able app) and "terminal"
   // (reachable via the "New terminal" menu item further down). Everything
   // else, including the default "web" example server, is openable.
-  const apps = getApplications().filter(
-    (app) => app.name !== "system_interface" && app.name !== "terminal",
-  );
+  const apps = getApplications().filter((app) => app.name !== "system_interface" && app.name !== "terminal");
   for (const app of apps) {
     if (!openAppNames.has(app.name)) {
       const proxyUrl = getApplicationUrl(app.name, app.url);
@@ -654,6 +652,26 @@ function initializeDockview(parentElement: HTMLElement): void {
   dockviewContainer.style.width = "100%";
   dockviewContainer.style.height = "100%";
   parentElement.appendChild(dockviewContainer);
+
+  // dockview-core's Scrollbar only reads event.deltaY, so mice with a dedicated
+  // horizontal scroll wheel (e.g. Logitech MX Master) emit deltaX events that
+  // the tab bar never reacts to. Delegate wheel here and translate deltaX into
+  // scrollLeft on the tabs container; dockview's own 'scroll' listener on that
+  // element will sync its internal offset, keeping the custom scrollbar thumb
+  // in step.
+  dockviewContainer.addEventListener(
+    "wheel",
+    (event: WheelEvent) => {
+      if (event.deltaX === 0) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const tabsContainer = target.closest<HTMLElement>(".dv-tabs-container");
+      if (!tabsContainer || !dockviewContainer?.contains(tabsContainer)) return;
+      event.preventDefault();
+      tabsContainer.scrollLeft += event.deltaX;
+    },
+    { passive: false },
+  );
 
   const dv = new DockviewComponent(dockviewContainer, {
     theme: themeLight,
