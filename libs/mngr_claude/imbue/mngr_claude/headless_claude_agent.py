@@ -294,16 +294,27 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
         # All three revert together by backing out this commit.
         parts.extend(["--debug", "all", "--debug-file", '"$MNGR_AGENT_STATE_DIR/claude-debug.log"'])
         cmd_str = " ".join(parts)
+        # Wrap the real invocation in `timeout 60` so the after-marker always
+        # lands (rc=124 = GNU timeout fired) even if claude itself hangs.
+        # Trivial-call probe runs first: if `claude --print "just say hi"`
+        # (no system prompt, no flags) also hangs/silent-exits, the hang is
+        # intrinsic to claude-in-sandbox. If it succeeds, the 110KB system
+        # prompt or one of the specific flags is the trigger.
         probe_before = (
             'echo "== DIAG before-claude $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
             '(claude --version; echo "help-lines=$(claude --help 2>&1 | wc -l)") '
             '>> "$MNGR_AGENT_STATE_DIR/stderr.log" 2>&1; '
+            'echo "== DIAG trivial-call start $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
+            'timeout 20 claude --print "just say hi" > "$MNGR_AGENT_STATE_DIR/trivial-stdout.txt" '
+            '2>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
+            'echo "== DIAG trivial-call rc=$? $(date -Iseconds) bytes=$(wc -c < \\"$MNGR_AGENT_STATE_DIR/trivial-stdout.txt\\") ==" '
+            '>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
             'echo "== DIAG pre-invoke done ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"'
         )
         probe_after = 'echo "== DIAG after-claude rc=$? $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"'
         return CommandString(
             f"{probe_before}; "
-            f'{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
+            f'timeout 60 {cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
             f"{probe_after}"
         )
 
