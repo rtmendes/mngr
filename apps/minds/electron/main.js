@@ -1086,7 +1086,10 @@ async function startBackendWithRetry() {
       (event) => handleAuthEvent(event),
     );
 
-    backendBaseUrl = `http://127.0.0.1:${port}`;
+    // Use `localhost` (not `127.0.0.1`) so the auth cookie, which is issued with
+    // `Domain=localhost`, is valid both here and on every `<agent-id>.localhost`
+    // subdomain the desktop client forwards to.
+    backendBaseUrl = `http://localhost:${port}`;
 
     console.log('[startup] Backend ready. Loading chrome from', backendBaseUrl + '/_chrome');
 
