@@ -38,9 +38,7 @@ function getAgentTerminalUrl(agentId: string): string {
   // agent isn't in the local cache yet, fall back to no name arg and let
   // agent.sh attach to the ambient session.
   const agent = getAgentById(agentId);
-  const args = agent?.name
-    ? `arg=_&arg=agent&arg=${encodeURIComponent(agent.name)}`
-    : "arg=_&arg=agent";
+  const args = agent?.name ? `arg=_&arg=agent&arg=${encodeURIComponent(agent.name)}` : "arg=_&arg=agent";
   return `${baseUrl}${separator}${args}`;
 }
 
@@ -213,7 +211,7 @@ export function ChatPanel(): m.Component<{ agentId: string }> {
     if (!isConversationNotFound(agentId)) {
       connectToStream(agentId);
     } else {
-      disconnectFromStream();
+      disconnectFromStream(agentId);
     }
   }
 
@@ -386,6 +384,9 @@ export function ChatPanel(): m.Component<{ agentId: string }> {
   return {
     onremove() {
       disconnectLogWs();
+      if (currentAgentId !== null) {
+        disconnectFromStream(currentAgentId);
+      }
     },
 
     view(vnode) {
