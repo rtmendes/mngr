@@ -1,7 +1,6 @@
 """Integration tests for the schedule run command (local provider)."""
 
 import json
-from pathlib import Path
 
 import click
 import pytest
@@ -13,6 +12,7 @@ from imbue.mngr_schedule.cli.run import run_local_trigger
 from imbue.mngr_schedule.data_types import ScheduleTriggerDefinition
 from imbue.mngr_schedule.data_types import ScheduledMngrCommand
 from imbue.mngr_schedule.implementations.local.deploy import deploy_local_schedule
+from imbue.mngr_schedule.implementations.local.deploy import get_local_trigger_run_script
 
 
 def _deploy_echo_trigger(
@@ -60,14 +60,14 @@ def test_run_local_trigger_not_found_raises(
 
 
 def test_run_local_trigger_missing_script_raises(
-    tmp_path: Path,
     temp_mngr_ctx: MngrContext,
 ) -> None:
     """If the record exists but run.sh is missing, should raise ClickException."""
     _deploy_echo_trigger(temp_mngr_ctx)
 
-    # Delete the run.sh file
-    run_script = tmp_path / ".mngr" / "schedule" / "triggers" / "test-trigger" / "run.sh"
+    # Delete the run.sh file (resolve the path via the public helper so a
+    # layout change in deploy.py doesn't silently break this test).
+    run_script = get_local_trigger_run_script(temp_mngr_ctx, "test-trigger")
     run_script.unlink()
 
     with pytest.raises(click.ClickException, match="Wrapper script not found"):
