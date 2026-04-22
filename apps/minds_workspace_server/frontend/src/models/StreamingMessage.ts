@@ -10,6 +10,10 @@ import { apiUrl } from "../base-path";
 import { appendEvents, type TranscriptEvent } from "./Response";
 
 const activeStreams = new Map<string, EventSource>();
+// Tombstones for agents whose streams were explicitly closed via
+// disconnectFromStream. Used by pending error-triggered reconnect timeouts
+// to distinguish an intentional shutdown from a transient error.
+const explicitlyDisconnectedAgents = new Set<string>();
 
 export interface StreamingMessage {
   conversationId: string;
@@ -25,6 +29,9 @@ export function connectToStream(agentId: string): void {
     return;
   }
 
+  // A fresh connect supersedes any prior explicit-disconnect tombstone.
+  explicitlyDisconnectedAgents.delete(agentId);
+
   const eventSource = new EventSource(apiUrl(`/api/agents/${encodeURIComponent(agentId)}/stream`));
   activeStreams.set(agentId, eventSource);
 
@@ -34,14 +41,16 @@ export function connectToStream(agentId: string): void {
   };
 
   eventSource.onerror = () => {
-    // Close this specific stream and schedule a reconnect. The map check
-    // before reconnect avoids reviving a stream for an agent that has been
-    // explicitly disconnected (e.g. its panel was unmounted).
+    // Close this specific stream and schedule a reconnect. Reconnect is
+    // skipped if another caller already reconnected this agent, or if the
+    // agent was explicitly disconnected (e.g. its panel was unmounted) while
+    // this timeout was pending.
     if (activeStreams.get(agentId) === eventSource) {
       eventSource.close();
       activeStreams.delete(agentId);
       setTimeout(() => {
-        if (!activeStreams.has(agentId)) {
+        const wasExplicitlyDisconnected = explicitlyDisconnectedAgents.delete(agentId);
+        if (!wasExplicitlyDisconnected && !activeStreams.has(agentId)) {
           connectToStream(agentId);
         }
       }, 3000);
@@ -50,6 +59,10 @@ export function connectToStream(agentId: string): void {
 }
 
 export function disconnectFromStream(agentId: string): void {
+  // Always record the intent, even if no stream is currently active. A
+  // pending error-triggered reconnect timeout for this agent must see the
+  // tombstone so it does not revive the stream.
+  explicitlyDisconnectedAgents.add(agentId);
   const eventSource = activeStreams.get(agentId);
   if (eventSource !== undefined) {
     eventSource.close();
