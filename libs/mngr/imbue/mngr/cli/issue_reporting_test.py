@@ -2,18 +2,17 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-import click
 import pytest
 from inline_snapshot import snapshot
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.subprocess_utils import FinishedProcess
-from imbue.mngr.cli.issue_reporting import DIAGNOSE_FLOW_META_KEY
 from imbue.mngr.cli.issue_reporting import ExistingIssue
 from imbue.mngr.cli.issue_reporting import GITHUB_BASE_URL
+from imbue.mngr.cli.issue_reporting import MNGR_REPO_URL
 from imbue.mngr.cli.issue_reporting import UNEXPECTED_ERROR_TITLE_PREFIX
-from imbue.mngr.cli.issue_reporting import _is_diagnose_command
 from imbue.mngr.cli.issue_reporting import _offer_diagnose
+from imbue.mngr.cli.issue_reporting import build_diagnose_prompt
 from imbue.mngr.cli.issue_reporting import build_issue_body
 from imbue.mngr.cli.issue_reporting import build_issue_title
 from imbue.mngr.cli.issue_reporting import build_new_issue_url
@@ -22,8 +21,7 @@ from imbue.mngr.cli.issue_reporting import build_unexpected_error_issue_title
 from imbue.mngr.cli.issue_reporting import handle_not_implemented_error
 from imbue.mngr.cli.issue_reporting import handle_unexpected_error
 from imbue.mngr.cli.issue_reporting import search_for_existing_issue
-from imbue.mngr.cli.issue_reporting import write_diagnose_context_file
-from imbue.mngr.main import cli
+from imbue.mngr.cli.issue_reporting import write_diagnose_prompt_file
 from imbue.mngr.utils.testing import capture_loguru
 
 
@@ -374,42 +372,61 @@ def test_build_unexpected_error_issue_body_includes_traceback() -> None:
 
 
 # =============================================================================
-# Tests for write_diagnose_context_file
+# Tests for build_diagnose_prompt
 # =============================================================================
 
 
-def test_write_diagnose_context_file_creates_json() -> None:
-    path = write_diagnose_context_file(
+def test_build_diagnose_prompt_contains_version_and_traceback() -> None:
+    prompt = build_diagnose_prompt(
+        error_type="ValueError",
+        error_message="oops",
+        traceback_str="Traceback (most recent call last):\n  foo",
+        mngr_version="0.2.4",
+    )
+    assert "0.2.4" in prompt
+    assert "ValueError: oops" in prompt
+    assert "Traceback (most recent call last):" in prompt
+    # Includes agent instructions
+    assert "python scripts/open-issue.py" in prompt
+    assert "Root cause analysis" in prompt
+
+
+# =============================================================================
+# Tests for write_diagnose_prompt_file
+# =============================================================================
+
+
+def test_write_diagnose_prompt_file_writes_prompt_text() -> None:
+    path = write_diagnose_prompt_file(
         traceback_str="Traceback:\n  ValueError: oops",
         mngr_version="0.2.4",
         error_type="ValueError",
         error_message="oops",
     )
     assert path.exists()
-    data = json.loads(path.read_text())
-    assert data["traceback_str"] == "Traceback:\n  ValueError: oops"
-    assert data["mngr_version"] == "0.2.4"
-    assert data["error_type"] == "ValueError"
-    assert data["error_message"] == "oops"
+    content = path.read_text()
+    assert "0.2.4" in content
+    assert "ValueError: oops" in content
+    assert "Traceback:\n  ValueError: oops" in content
     # Clean up
     path.unlink(missing_ok=True)
 
 
-def test_write_diagnose_context_file_deterministic_name() -> None:
+def test_write_diagnose_prompt_file_deterministic_name() -> None:
     """Same inputs produce the same file path (content-addressed)."""
-    path1 = write_diagnose_context_file("tb", "0.2.4", "Err", "msg")
-    path2 = write_diagnose_context_file("tb", "0.2.4", "Err", "msg")
+    path1 = write_diagnose_prompt_file("tb", "0.2.4", "Err", "msg")
+    path2 = write_diagnose_prompt_file("tb", "0.2.4", "Err", "msg")
     assert path1 == path2
-    assert path1.name.startswith("mngr-diagnose-context-")
-    assert path1.name.endswith(".json")
+    assert path1.name.startswith("mngr-diagnose-prompt-")
+    assert path1.name.endswith(".txt")
     # Clean up
     path1.unlink(missing_ok=True)
 
 
-def test_write_diagnose_context_file_different_inputs() -> None:
+def test_write_diagnose_prompt_file_different_inputs() -> None:
     """Different inputs produce different file paths."""
-    path1 = write_diagnose_context_file("tb1", "0.2.4", "Err", "msg1")
-    path2 = write_diagnose_context_file("tb2", "0.2.4", "Err", "msg2")
+    path1 = write_diagnose_prompt_file("tb1", "0.2.4", "Err", "msg1")
+    path2 = write_diagnose_prompt_file("tb2", "0.2.4", "Err", "msg2")
     assert path1 != path2
     # Clean up
     path1.unlink(missing_ok=True)
@@ -425,44 +442,17 @@ def test_offer_diagnose_skips_when_autonomous(monkeypatch: pytest.MonkeyPatch) -
     """_offer_diagnose produces no output when IS_AUTONOMOUS=1."""
     monkeypatch.setenv("IS_AUTONOMOUS", "1")
     with capture_loguru(level="INFO") as log_output:
-        _offer_diagnose(Path("/tmp/fake-ctx.json"), ctx=None)
+        _offer_diagnose(Path("/tmp/fake-prompt.txt"))
     assert log_output.getvalue() == ""
 
 
-def test_offer_diagnose_shows_install_hint_when_no_plugin() -> None:
-    """_offer_diagnose shows install + run instructions when plugin is not installed."""
+def test_offer_diagnose_prints_create_command() -> None:
+    """_offer_diagnose prints a `mngr create` command referencing the prompt file."""
+    prompt_path = Path("/tmp/mngr-diagnose-prompt-abc123.txt")
     with capture_loguru(level="INFO") as log_output:
-        _offer_diagnose(Path("/tmp/fake-ctx.json"), ctx=None)
+        _offer_diagnose(prompt_path)
     output = log_output.getvalue()
-    assert "mngr plugin add imbue-mngr-diagnose" in output
-    assert "mngr diagnose --context-file" in output
-
-
-# =============================================================================
-# Tests for _is_diagnose_command
-# =============================================================================
-
-
-def test_is_diagnose_command_returns_false_for_none() -> None:
-    assert _is_diagnose_command(None) is False
-
-
-def test_is_diagnose_command_returns_false_without_flag() -> None:
-    """A context from a non-diagnose command has the flag unset."""
-    ctx = click.Context(cli)
-    assert _is_diagnose_command(ctx) is False
-
-
-def test_is_diagnose_command_returns_true_when_flag_set_on_shared_meta() -> None:
-    """Diagnose sets the flag via ctx.meta; click shares .meta across the tree.
-
-    This mirrors what happens at runtime: diagnose writes to its own ctx.meta
-    before invoking create, and the root context's .meta dict reflects that
-    write (they are the same dict).
-    """
-    root_ctx = click.Context(cli)
-    # A child ctx's .meta is the same dict as the parent's
-    child_ctx = click.Context(cli, parent=root_ctx)
-    child_ctx.meta[DIAGNOSE_FLOW_META_KEY] = True
-
-    assert _is_diagnose_command(root_ctx) is True
+    assert "mngr create" in output
+    assert f"--source {MNGR_REPO_URL}" in output
+    assert "--branch main:" in output
+    assert f"--message-file {prompt_path}" in output

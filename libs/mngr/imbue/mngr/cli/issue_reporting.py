@@ -267,92 +267,100 @@ def get_mngr_version() -> str:
         return "unknown"
 
 
-def write_diagnose_context_file(
+MNGR_REPO_URL: Final[str] = f"https://github.com/{GITHUB_REPO}.git"
+
+
+@pure
+def build_diagnose_prompt(
+    error_type: str,
+    error_message: str,
+    traceback_str: str,
+    mngr_version: str,
+) -> str:
+    """Build the initial message for the diagnostic agent.
+
+    The agent receives this as its starting prompt, running inside a worktree
+    of the mngr repo that was cloned from MNGR_REPO_URL.
+    """
+    parts: list[str] = [
+        "You are diagnosing a bug in the `mngr` CLI tool (https://github.com/imbue-ai/mngr).",
+        "You are working inside a worktree of the repository.",
+        "",
+        "## Task",
+        "Find the root cause of this bug and prepare a GitHub issue report.",
+        "",
+        "Your report should include:",
+        "- Root cause analysis with specific file/line references",
+        "- Minimal reproduction steps or the error traceback (whichever better demonstrates the bug)",
+        "- If helpful, edit the code to test your hypothesis about the cause -- you can",
+        "  include a git diff in the issue as evidence that you've verified the root cause",
+        "",
+        "The issue body must include an **Environment** section with:",
+        f"- mngr version: {mngr_version}",
+        "- Commit hash inspected: run `git rev-parse HEAD` in this worktree",
+        "- Versions of any other tools relevant to the issue",
+        "",
+        "Write your issue body to a markdown file, then run:",
+        '  python scripts/open-issue.py --title "Your issue title" body.md',
+        "This will open the issue in the browser for the user to review before submission.",
+        "",
+        "## mngr Version",
+        mngr_version,
+        "",
+        "## Problem Description",
+        f"{error_type}: {error_message}",
+        "",
+        "## Error Traceback",
+        "```",
+        traceback_str,
+        "```",
+    ]
+    return "\n".join(parts)
+
+
+def write_diagnose_prompt_file(
     traceback_str: str,
     mngr_version: str,
     error_type: str,
     error_message: str,
 ) -> Path:
-    """Write error context to a temp JSON file for use by `mngr diagnose`.
+    """Write a diagnostic-agent prompt to a temp file for `mngr create --message-file`.
 
-    Returns the path to the written file.
+    Returns the path to the written file. Content-addressed so repeated calls
+    with the same inputs produce the same path.
     """
-    content = json.dumps(
-        {
-            "traceback_str": traceback_str,
-            "mngr_version": mngr_version,
-            "error_type": error_type,
-            "error_message": error_message,
-        }
+    prompt = build_diagnose_prompt(
+        error_type=error_type,
+        error_message=error_message,
+        traceback_str=traceback_str,
+        mngr_version=mngr_version,
     )
-    content_hash = hashlib.sha256(content.encode()).hexdigest()[:12]
-    path = Path(f"/tmp/mngr-diagnose-context-{content_hash}.json")
-    path.write_text(content)
+    content_hash = hashlib.sha256(prompt.encode()).hexdigest()[:12]
+    path = Path(f"/tmp/mngr-diagnose-prompt-{content_hash}.txt")
+    path.write_text(prompt)
     return path
 
 
-DIAGNOSE_FLOW_META_KEY: Final[str] = "mngr_in_diagnose_flow"
-
-
-def _is_diagnose_command(ctx: click.Context | None) -> bool:
-    """Check if an error is propagating out of an in-flight diagnose flow.
-
-    Diagnose sets ``ctx.meta[DIAGNOSE_FLOW_META_KEY] = True`` before delegating
-    to create. click.Context.meta is shared across the context tree, so the
-    AliasAwareGroup can see this flag on the root context when catching the
-    exception -- even though by then the inner contexts have been unwound.
-
-    We use a dedicated key rather than ``hook_command_name`` because create's
-    ``setup_command_context`` overwrites ``hook_command_name`` to "create" when
-    diagnose delegates to it, so that key cannot reliably distinguish "the
-    inner create crashed" from "a top-level create crashed".
-    """
-    if ctx is None:
-        return False
-    return ctx.meta.get(DIAGNOSE_FLOW_META_KEY) is True
-
-
-def _offer_diagnose(
-    context_file_path: Path,
-    ctx: click.Context | None,
-) -> None:
-    """Print the diagnose command the user can run to investigate the crash.
-
-    If the diagnose plugin is not installed, also prints the install command.
-    """
+def _offer_diagnose(prompt_file_path: Path) -> None:
+    """Print a `mngr create` command the user can run to launch a diagnostic agent."""
     if os.environ.get("IS_AUTONOMOUS", "0") == "1":
         return
 
-    diagnose_cmd = f"mngr diagnose --context-file {context_file_path}"
-
-    pm = ctx.obj if ctx is not None else None
-    has_diagnose = pm is not None and pm.has_plugin("diagnose")
+    create_cmd = (
+        f"mngr create --source {MNGR_REPO_URL} --branch main: --message-file {prompt_file_path}"
+    )
 
     logger.info("")
-    if has_diagnose:
-        logger.info("To launch an agent to diagnose this problem, run:")
-        logger.info("  {}", diagnose_cmd)
-    else:
-        logger.info(
-            "To launch an agent to diagnose this problem, install the diagnose plugin"
-            " and then run the diagnose command:"
-        )
-        logger.info("  mngr plugin add imbue-mngr-diagnose")
-        logger.info("  {}", diagnose_cmd)
+    logger.info("To launch an agent to diagnose this problem, run:")
+    logger.info("  {}", create_cmd)
 
 
-def handle_unexpected_error(
-    error: Exception,
-    is_interactive: bool | None = None,
-    ctx: click.Context | None = None,
-) -> NoReturn:
-    """Handle an unexpected error by showing the traceback and optionally reporting it.
+def handle_unexpected_error(error: Exception, is_interactive: bool | None = None) -> NoReturn:
+    """Handle an unexpected error by logging the traceback and suggesting a diagnosis.
 
-    Two distinct flows depending on context:
-    - Normal command crash: offer `mngr diagnose` to investigate. No GitHub issue fallback
-      unless diagnose itself fails.
-    - Diagnose command crash: skip diagnose (avoid recursion), go straight to GitHub issue
-      reporting with a message acknowledging the irony.
+    Writes the error traceback + a diagnostic prompt to a temp file, then prints
+    a copy-paste-ready `mngr create` command that launches an agent in a worktree
+    of the mngr repo with that prompt as its initial message.
     """
     tb_str = "".join(traceback.format_exception(type(error), error, error.__traceback__))
 
@@ -368,26 +376,15 @@ def handle_unexpected_error(
 
     error_message = str(error) if str(error) else type(error).__name__
 
-    if _is_diagnose_command(ctx):
-        # The diagnostic agent itself crashed -- skip diagnose (would recurse),
-        # go straight to GitHub issue reporting.
-        logger.info("")
-        logger.info("Alas, the crash-diagnosing agent has crashed...")
-        title = build_unexpected_error_issue_title(error)
-        body = build_unexpected_error_issue_body(error, tb_str)
-        _prompt_and_report_issue(title, body, error_message)
-        raise SystemExit(1)
-
-    # Normal command crash: write an error-context file and print the diagnose
-    # command the user can run to investigate. If writing the context file
-    # raises (e.g. disk full), let it propagate -- the original error has
-    # already been logged above.
-    context_path = write_diagnose_context_file(
+    # Write the prompt file and print a `mngr create` command the user can copy-paste.
+    # If writing the prompt raises (e.g. disk full), let it propagate -- the original
+    # error has already been logged above.
+    prompt_path = write_diagnose_prompt_file(
         traceback_str=tb_str,
         mngr_version=get_mngr_version(),
         error_type=type(error).__name__,
         error_message=error_message,
     )
-    _offer_diagnose(context_path, ctx)
+    _offer_diagnose(prompt_path)
 
     raise SystemExit(1)
