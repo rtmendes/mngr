@@ -12,6 +12,7 @@ This test reads both values and asserts they match.
 """
 
 import base64
+import json
 import os
 import re
 import tomllib
@@ -61,8 +62,6 @@ def _fetch_template_claude_version(token: str) -> str | None:
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            import json
-
             payload = json.loads(response.read())
     except (urllib.error.URLError, OSError, ValueError):
         return None
