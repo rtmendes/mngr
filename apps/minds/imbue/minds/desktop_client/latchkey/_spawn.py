@@ -22,6 +22,7 @@ def spawn_detached_latchkey_gateway(
     listen_host: str,
     listen_port: int,
     log_path: Path,
+    latchkey_directory: Path | None = None,
 ) -> int:
     """Start a detached ``latchkey gateway`` and return its PID.
 
@@ -30,6 +31,11 @@ def spawn_detached_latchkey_gateway(
     stdout/stderr are appended to ``log_path`` (the parent directory is
     created if needed). It reads listen host/port from the environment
     variables latchkey documents (``LATCHKEY_GATEWAY_LISTEN_*``).
+
+    When ``latchkey_directory`` is supplied, ``LATCHKEY_DIRECTORY`` is set
+    in the child's environment so all minds-managed gateways share a single
+    credential / config directory instead of falling back to ``~/.latchkey``.
+    The parent directory is created if needed.
 
     The returned ``Popen`` object is intentionally allowed to go out of
     scope. Python's ``subprocess`` module parks finished children on an
@@ -41,6 +47,9 @@ def spawn_detached_latchkey_gateway(
     env = dict(os.environ)
     env["LATCHKEY_GATEWAY_LISTEN_HOST"] = listen_host
     env["LATCHKEY_GATEWAY_LISTEN_PORT"] = str(listen_port)
+    if latchkey_directory is not None:
+        latchkey_directory.mkdir(parents=True, exist_ok=True)
+        env["LATCHKEY_DIRECTORY"] = str(latchkey_directory)
 
     log_file = log_path.open("ab")
     try:

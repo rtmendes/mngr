@@ -35,6 +35,7 @@ from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingUrl
 from imbue.minds.desktop_client.cloudflare_client import CloudflareSecret
 from imbue.minds.desktop_client.cloudflare_client import CloudflareUsername
 from imbue.minds.desktop_client.cloudflare_client import OwnerEmail
+from imbue.minds.desktop_client.latchkey.gateway import LATCHKEY_BINARY
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayDestructionHandler
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayDiscoveryHandler
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManager
@@ -145,7 +146,7 @@ def start_desktop_client(
     backend_resolver = MngrCliBackendResolver()
     stream_manager = MngrStreamManager(resolver=backend_resolver)
     tunnel_manager = SSHTunnelManager()
-    latchkey_gateway_manager = LatchkeyGatewayManager()
+    latchkey_gateway_manager = _build_latchkey_gateway_manager(data_directory=data_directory)
     latchkey_gateway_manager.start(data_dir=data_directory)
 
     minds_config = MindsConfig(data_dir=data_directory)
@@ -352,6 +353,32 @@ def _build_cloudflare_client(forwarding_url: AnyUrl) -> CloudflareForwardingClie
         username=CloudflareUsername(username) if username else None,
         secret=CloudflareSecret(secret) if secret else None,
         owner_email=OwnerEmail(owner_email) if owner_email else None,
+    )
+
+
+def _build_latchkey_gateway_manager(data_directory: Path) -> LatchkeyGatewayManager:
+    """Build a ``LatchkeyGatewayManager`` honoring minds-level env var overrides.
+
+    ``MINDS_LATCHKEY_BINARY`` can override the path to the ``latchkey`` CLI
+    (typically supplied by the Electron shell, which installs the npm
+    package under its own ``node_modules``). ``MINDS_LATCHKEY_DIRECTORY``
+    overrides the shared ``LATCHKEY_DIRECTORY`` that every spawned gateway
+    inherits; when unset we default to ``<minds_data_dir>/latchkey`` so all
+    gateways share a single credential store instead of scribbling into
+    ``~/.latchkey``.
+    """
+    binary_override = os.environ.get("MINDS_LATCHKEY_BINARY")
+    latchkey_binary = binary_override if binary_override else LATCHKEY_BINARY
+
+    directory_override = os.environ.get("MINDS_LATCHKEY_DIRECTORY")
+    if directory_override:
+        latchkey_directory: Path | None = Path(directory_override).expanduser()
+    else:
+        latchkey_directory = data_directory / "latchkey"
+
+    return LatchkeyGatewayManager(
+        latchkey_binary=latchkey_binary,
+        latchkey_directory=latchkey_directory,
     )
 
 

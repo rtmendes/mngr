@@ -11,7 +11,8 @@
     "dist": "pnpm build && pnpm exec todesktop build"
   },
   "dependencies": {
-    "@todesktop/runtime": "^1.6.0"
+    "@todesktop/runtime": "^1.6.0",
+    "latchkey": "^2.7.0"
   },
   "devDependencies": {
     "electron": "35.7.5",

@@ -201,6 +201,16 @@ class LatchkeyGatewayManager(MutableModel):
         frozen=True,
         description="Host to bind each spawned gateway to",
     )
+    latchkey_directory: Path | None = Field(
+        default=None,
+        frozen=True,
+        description=(
+            "Value to pass through as ``LATCHKEY_DIRECTORY`` to each spawned gateway. "
+            "When set, all minds-managed gateways share this credential/config directory "
+            "instead of falling back to the default ``~/.latchkey``. When ``None``, "
+            "latchkey uses its own default."
+        ),
+    )
 
     _data_dir: Path | None = PrivateAttr(default=None)
     _infos: dict[str, LatchkeyGatewayInfo] = PrivateAttr(default_factory=dict)
@@ -361,6 +371,7 @@ class LatchkeyGatewayManager(MutableModel):
                     listen_host=self.listen_host,
                     listen_port=port,
                     log_path=log_path,
+                    latchkey_directory=self.latchkey_directory,
                 )
             except OSError as e:
                 raise LatchkeyGatewayError(f"Failed to spawn Latchkey gateway for agent {agent_id}: {e}") from e

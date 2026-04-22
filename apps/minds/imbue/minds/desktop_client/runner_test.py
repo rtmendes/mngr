@@ -1,12 +1,15 @@
 import os
 from pathlib import Path
 
+import pytest
 from pydantic import AnyUrl
 from pydantic import PrivateAttr
 
+from imbue.minds.desktop_client.latchkey.gateway import LATCHKEY_BINARY
 from imbue.minds.desktop_client.runner import AgentDiscoveryHandler
 from imbue.minds.desktop_client.runner import _DEFAULT_MNGR_HOST_DIR
 from imbue.minds.desktop_client.runner import _build_cloudflare_client
+from imbue.minds.desktop_client.runner import _build_latchkey_gateway_manager
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
@@ -180,3 +183,34 @@ def test_agent_discovery_handler_handles_remote_agent_tunnel_error(tmp_path: Pat
     handler(agent_id, ssh_info, "docker")
     assert len(fake_manager._write_remote_calls) == 0
     fake_manager.cleanup()
+
+
+def test_build_latchkey_gateway_manager_uses_defaults_when_env_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MINDS_LATCHKEY_BINARY", raising=False)
+    monkeypatch.delenv("MINDS_LATCHKEY_DIRECTORY", raising=False)
+
+    manager = _build_latchkey_gateway_manager(data_directory=tmp_path)
+    assert manager.latchkey_binary == LATCHKEY_BINARY
+    assert manager.latchkey_directory == tmp_path / "latchkey"
+
+
+def test_build_latchkey_gateway_manager_honors_env_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MINDS_LATCHKEY_BINARY", "/custom/bin/latchkey")
+    monkeypatch.setenv("MINDS_LATCHKEY_DIRECTORY", str(tmp_path / "shared"))
+
+    manager = _build_latchkey_gateway_manager(data_directory=tmp_path)
+    assert manager.latchkey_binary == "/custom/bin/latchkey"
+    assert manager.latchkey_directory == tmp_path / "shared"
+
+
+def test_build_latchkey_gateway_manager_expands_home_in_directory_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MINDS_LATCHKEY_BINARY", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MINDS_LATCHKEY_DIRECTORY", "~/shared_latchkey")
+
+    manager = _build_latchkey_gateway_manager(data_directory=tmp_path)
+    assert manager.latchkey_directory == tmp_path / "shared_latchkey"
