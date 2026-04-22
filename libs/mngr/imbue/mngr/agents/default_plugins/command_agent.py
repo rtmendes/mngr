@@ -18,8 +18,13 @@ class CommandAgent(BaseAgent[CommandAgentConfig]):
 
     Used when the caller wants to run an arbitrary shell command without
     registering a dedicated agent type. The final command is
-    ``{agent_config.command} {agent_config.cli_args} {agent_args}`` joined
-    with plain spaces (matching ``BaseAgent.assemble_command`` ordering), e.g.::
+    ``{base} {agent_config.cli_args} {agent_args}`` joined with plain
+    spaces, where ``base`` is ``command_override`` if the caller supplies
+    one (via ``CreateAgentOptions.command``), otherwise
+    ``agent_config.command`` if set, otherwise empty. This ordering
+    matches ``BaseAgent.assemble_command`` except that when no base is
+    available this class raises ``UserInputError`` instead of falling
+    back to the agent type name. E.g.::
 
         mngr create my-task --type command -- sleep 99999
         mngr create my-task --type command -- 'echo hi && sleep 60'
@@ -34,10 +39,11 @@ class CommandAgent(BaseAgent[CommandAgentConfig]):
     and ``mngr create web my_server -- --bind 0.0.0.0`` runs
     ``python -m http.server 8080 --bind 0.0.0.0``.
 
-    At least one of ``agent_config.command`` or ``agent_args`` must be set.
-    Because args are joined with plain spaces, shell metacharacters like
-    ``&&``, ``|``, or ``;`` must be inside a single quoted argument so
-    that they survive intact to the agent's shell.
+    At least one of ``command_override``, ``agent_config.command``, or
+    ``agent_args`` must be set. Because args are joined with plain
+    spaces, shell metacharacters like ``&&``, ``|``, or ``;`` must be
+    inside a single quoted argument so that they survive intact to the
+    agent's shell.
     """
 
     def assemble_command(
