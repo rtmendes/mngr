@@ -140,15 +140,19 @@ def run_local_trigger(mngr_ctx: MngrContext, trigger_name: str, output_format: O
             on_output=on_output,
         )
 
+    # ConcurrencyGroup may surface a None returncode if the process was
+    # terminated without a clean exit; default to 1 to signal failure.
+    exit_code = finished.returncode if finished.returncode is not None else 1
+
     match output_format:
         case OutputFormat.HUMAN:
             # Output already streamed to stdout/stderr via _stream_human_output.
-            return finished.returncode if finished.returncode is not None else 1
+            return exit_code
         case OutputFormat.JSON | OutputFormat.JSONL:
             # Merge stderr into stdout so the emitted payload mirrors the
             # combined stream that the modal branch returns.
             _emit_output(finished.stdout + finished.stderr, output_format)
-            return finished.returncode if finished.returncode is not None else 1
+            return exit_code
         case _ as unreachable:
             assert_never(unreachable)
 
