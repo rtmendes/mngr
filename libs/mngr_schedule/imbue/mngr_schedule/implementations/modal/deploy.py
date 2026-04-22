@@ -99,15 +99,13 @@ def get_repo_root() -> Path:
     repo_root, error = _try_get_repo_root_with_error()
     if repo_root is None:
         base_message = "Could not find git repository root. Must be run from within a git repository."
-        # Honor the None-vs-"" distinction the helper advertises: None means
-        # the invocation itself failed (no stderr available), empty string
-        # means git ran but its stderr was empty, non-empty string is the
-        # stderr text.
-        if error is None:
-            raise ScheduleDeployError(f"{base_message} git invocation failed.")
-        if error == "":
-            raise ScheduleDeployError(f"{base_message} git ran but produced no stderr.")
-        raise ScheduleDeployError(f"{base_message} git stderr: {error}")
+        # `error` is guaranteed to be a str when `repo_root` is None -- see
+        # _try_get_repo_root_with_error's contract. An empty string just
+        # means git ran but produced no stderr, which still warrants its
+        # own distinct message for triage.
+        if error:
+            raise ScheduleDeployError(f"{base_message} git stderr: {error}")
+        raise ScheduleDeployError(f"{base_message} git ran but produced no stderr.")
     return repo_root
 
 
@@ -122,9 +120,11 @@ def try_get_repo_root() -> Path | None:
 def _try_get_repo_root_with_error() -> tuple[Path | None, str | None]:
     """Internal: like try_get_repo_root but also returns git stderr on failure.
 
-    The second element is None on success, and git's stderr (possibly empty) on
-    failure. Callers can distinguish "no error available" (None) from "git
-    produced an empty stderr" (empty string) if they need to.
+    On success returns ``(repo_root, None)``; on failure returns
+    ``(None, result.stderr.strip())`` where the stderr string may be empty.
+    The second tuple element is therefore always a ``str`` whenever the
+    first is ``None`` -- callers that see ``repo_root is None`` can treat
+    ``error`` as a plain (possibly empty) stderr string.
     """
     with ConcurrencyGroup(name="git-toplevel") as cg:
         result = cg.run_process_to_completion(
