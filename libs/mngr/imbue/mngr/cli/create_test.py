@@ -809,7 +809,6 @@ def test_create_headless_streams_output(
 def test_create_headless_with_message_does_not_raise(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
-    temp_host_dir: Path,
     tmp_path: Path,
 ) -> None:
     """Passing --message on the headless path must not blow up in api_create.
