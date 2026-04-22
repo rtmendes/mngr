@@ -16,9 +16,6 @@ set of currently known agents:
 - Persisted records whose subprocess is dead are dropped.
 - After the initial ``mngr observe`` snapshot has arrived, gateways whose
   agent is no longer discovered are terminated and their records deleted.
-
-Wiring the gateway's address into the agent's environment (so the agent
-actually uses it) happens in a follow-up task.
 """
 
 import shutil
@@ -216,7 +213,7 @@ class LatchkeyGatewayManager(MutableModel):
     restarts. Lifecycle is reconciled against persisted records on start.
     """
 
-    latchkey_binary: str = Field(default=LATCHKEY_BINARY, frozen=True, description="Path to latchkey binary")
+    latchkey_binary: str = Field(default=LATCHKEY_BINARY, frozen=True, description="Path to Latchkey binary")
     listen_host: str = Field(
         default=_DEFAULT_LISTEN_HOST,
         frozen=True,
@@ -243,7 +240,7 @@ class LatchkeyGatewayManager(MutableModel):
             for record in list_gateway_records(data_dir):
                 if _is_record_alive(record):
                     logger.info(
-                        "Adopted existing latchkey gateway for agent {} (pid={}, {}:{})",
+                        "Adopted existing Latchkey gateway for agent {} (pid={}, {}:{})",
                         record.agent_id,
                         record.pid,
                         record.host,
@@ -252,7 +249,7 @@ class LatchkeyGatewayManager(MutableModel):
                     self._infos[str(record.agent_id)] = _build_info_from_record(record)
                 else:
                     logger.info(
-                        "Discarding stale latchkey gateway record for agent {} (pid={})",
+                        "Discarding stale Latchkey gateway record for agent {} (pid={})",
                         record.agent_id,
                         record.pid,
                     )
@@ -296,7 +293,7 @@ class LatchkeyGatewayManager(MutableModel):
             data_dir = self._data_dir
             info = self._infos.pop(aid_str, None)
         if info is not None:
-            logger.info("Stopping latchkey gateway for agent {} (pid={})", agent_id, info.pid)
+            logger.info("Stopping Latchkey gateway for agent {} (pid={})", agent_id, info.pid)
             _terminate_pid(info.pid)
         if data_dir is not None:
             delete_gateway_record(data_dir, agent_id)
@@ -313,7 +310,7 @@ class LatchkeyGatewayManager(MutableModel):
                 return
             orphaned = [aid_str for aid_str in self._infos if AgentId(aid_str) not in known_agent_ids]
         for aid_str in orphaned:
-            logger.info("Reconciling: agent {} no longer known; terminating its latchkey gateway", aid_str)
+            logger.info("Reconciling: agent {} no longer known; terminating its Latchkey gateway", aid_str)
             self.stop_gateway_for_agent(AgentId(aid_str))
 
     def get_gateway_info(self, agent_id: AgentId) -> LatchkeyGatewayInfo | None:
@@ -346,13 +343,13 @@ class LatchkeyGatewayManager(MutableModel):
 
     def _spawn_gateway(self, agent_id: AgentId, data_dir: Path) -> LatchkeyGatewayInfo:
         if shutil.which(self.latchkey_binary) is None and not Path(self.latchkey_binary).is_file():
-            raise LatchkeyBinaryNotFoundError(f"latchkey binary not found: {self.latchkey_binary}")
+            raise LatchkeyBinaryNotFoundError(f"Latchkey binary not found: {self.latchkey_binary}")
 
         port = _allocate_free_port(self.listen_host)
         log_path = gateway_log_path(data_dir, agent_id)
 
         with log_span(
-            "Starting latchkey gateway for agent {} on {}:{}",
+            "Starting Latchkey gateway for agent {} on {}:{}",
             agent_id,
             self.listen_host,
             port,
@@ -365,7 +362,7 @@ class LatchkeyGatewayManager(MutableModel):
                     log_path=log_path,
                 )
             except OSError as e:
-                raise LatchkeyGatewayError(f"Failed to spawn latchkey gateway for agent {agent_id}: {e}") from e
+                raise LatchkeyGatewayError(f"Failed to spawn Latchkey gateway for agent {agent_id}: {e}") from e
 
         record = LatchkeyGatewayRecord(
             agent_id=agent_id,
@@ -391,7 +388,7 @@ class LatchkeyGatewayDiscoveryHandler(FrozenModel):
         del ssh_info
         if not is_local_reachable_provider(provider_name):
             logger.trace(
-                "Skipping latchkey gateway for agent {} on non-local provider {!r}",
+                "Skipping Latchkey gateway for agent {} on non-local provider {!r}",
                 agent_id,
                 provider_name,
             )
@@ -399,7 +396,7 @@ class LatchkeyGatewayDiscoveryHandler(FrozenModel):
         try:
             self.gateway_manager.ensure_gateway_started(agent_id)
         except LatchkeyGatewayError as e:
-            logger.warning("Failed to start latchkey gateway for agent {}: {}", agent_id, e)
+            logger.warning("Failed to start Latchkey gateway for agent {}: {}", agent_id, e)
 
 
 class LatchkeyGatewayDestructionHandler(FrozenModel):
