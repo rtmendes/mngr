@@ -61,14 +61,23 @@ COPY . /code/mngr/
 # GIT_CONFIG_NOSYSTEM=1 still need a per-test-home .gitconfig, which
 # isolate_home and isolate_git both now provide.
 RUN git config --system --add safe.directory '*'
-# Normalize /code/mngr/.git: when the build context originates from a git
-# worktree (e.g. a local `git worktree add` checkout), `.git` is a *file*
-# containing `gitdir: /path/on/host/.git/worktrees/<name>` instead of a
-# directory. That path does not exist inside the sandbox, so any
-# `git rev-parse --show-toplevel` from /code/mngr fails with "not a git
-# repository". Detect the worktree-style file, drop it, and re-init with
-# a single snapshot commit so `git ls-files` and friends still work for
-# ratchet tests and mngr CLI commands that need repo discovery.
+# Normalize /code/mngr/.git to a real in-image git directory. Three input
+# shapes must be handled:
+#
+# 1. `.git` is a *file* (worktree checkout): contains `gitdir: /host/.git/
+#    worktrees/<name>` which does not exist inside the sandbox. Drop it
+#    and re-init.
+# 2. `.git` is missing entirely: happens when the image build context is a
+#    tarball produced by `git archive` (e.g. mngr_schedule release tests
+#    deploy a scheduled task via `mngr schedule add`, which packages the
+#    target repo via git-archive and then rebuilds from that). Init a
+#    fresh repo so the rest of this step (and downstream tooling like
+#    `git ls-files`) works.
+# 3. `.git` is already a directory: leave it alone.
+#
+# Without this normalization, `git rev-parse --show-toplevel` and
+# friends fail from /code/mngr with "not a git repository", which
+# breaks ratchet tests and the mngr CLI's repo-discovery paths.
 #
 # Also ensure an `origin` remote is present -- offload's export_tree
 # invokes `git init` + `git fetch --depth=1` against a file:// URL, which
@@ -80,6 +89,11 @@ RUN git config --system --add safe.directory '*'
 RUN if [ -f /code/mngr/.git ]; then \
         echo "Normalizing worktree-style /code/mngr/.git -> fresh in-image .git" ; \
         rm /code/mngr/.git && cd /code/mngr && git init -q . && \
+        git add -A && \
+        git -c user.email=ci@local -c user.name=ci commit -q -m 'sandbox-init' ; \
+    elif [ ! -d /code/mngr/.git ]; then \
+        echo "No /code/mngr/.git at all -> fresh in-image .git" ; \
+        cd /code/mngr && git init -q . && \
         git add -A && \
         git -c user.email=ci@local -c user.name=ci commit -q -m 'sandbox-init' ; \
     fi && \
