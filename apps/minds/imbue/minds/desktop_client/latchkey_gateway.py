@@ -426,9 +426,7 @@ def _run_launcher_and_read_pid(command: list[str], pid_file: Path) -> int:
         pid_text = pid_file.read_text().strip()
         return int(pid_text)
     except (OSError, ValueError) as e:
-        raise LatchkeyGatewayError(
-            f"Latchkey gateway launcher produced an unreadable PID file at {pid_file}"
-        ) from e
+        raise LatchkeyGatewayError(f"Latchkey gateway launcher produced an unreadable PID file at {pid_file}") from e
 
 
 class LatchkeyGatewayDiscoveryHandler(FrozenModel):
