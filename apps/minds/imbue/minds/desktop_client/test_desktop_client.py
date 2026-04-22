@@ -1196,13 +1196,18 @@ def _create_subdomain_test_client(tmp_path: Path, agent_id: AgentId) -> tuple[Te
     return client, auth_store
 
 
-def test_subdomain_forward_unauth_html_redirects_to_login(tmp_path: Path) -> None:
+def test_subdomain_forward_unauth_html_redirects_to_landing(tmp_path: Path) -> None:
     agent_id = AgentId()
     client, _ = _create_subdomain_test_client(tmp_path, agent_id)
     response = client.get("/", headers={"accept": "text/html"}, follow_redirects=False)
     assert response.status_code == 302
-    assert response.headers["location"].startswith("http://localhost:")
-    assert "/login?next=" in response.headers["location"]
+    location = response.headers["location"]
+    assert location.startswith("http://localhost:")
+    # The redirect target must be the bare-origin landing route, not /login
+    # (which requires a one_time_code query param and would otherwise return
+    # 422 when the browser follows the redirect).
+    assert location.endswith("/")
+    assert "/login" not in location
 
 
 def test_subdomain_forward_unauth_non_html_is_403(tmp_path: Path) -> None:

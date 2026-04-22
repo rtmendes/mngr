@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Annotated
 from typing import Any
 from typing import Final
-from urllib.parse import quote
 
 import httpx
 import paramiko
@@ -421,12 +420,18 @@ def _parse_workspace_subdomain(host_header: str) -> AgentId | None:
 
 
 def _unauthenticated_subdomain_response(request: Request) -> Response:
-    """Redirect to /login for HTML navigations; 403 for API/asset requests."""
+    """Redirect to the bare-origin landing page for HTML navigations; 403 otherwise.
+
+    The landing page (``/``) renders the login prompt for unauthenticated
+    users. We deliberately do not redirect to ``/login`` because that route
+    requires a ``one_time_code`` query parameter -- sending a browser there
+    without one yields a 422 validation error. Users get their OTP from the
+    terminal output of the desktop client, not from this redirect.
+    """
     accept = request.headers.get("accept", "")
     if "text/html" in accept:
-        next_url = str(request.url)
         auth_port = request.app.state.auth_server_port or 8420
-        location = f"http://localhost:{auth_port}/login?next={quote(next_url, safe='')}"
+        location = f"http://localhost:{auth_port}/"
         return Response(status_code=302, headers={"Location": location})
     return Response(status_code=403, content="Not authenticated")
 
