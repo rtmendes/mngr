@@ -772,7 +772,6 @@ def test_resolve_initial_message_content_rejects_both(
 def test_create_headless_streams_output(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
-    temp_host_dir: Path,
     tmp_path: Path,
 ) -> None:
     """Creating a headless_command agent with --foreground should stream output.
