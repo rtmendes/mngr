@@ -1008,7 +1008,6 @@ def test_create_foreground_without_type_is_rejected(
 def test_create_headless_with_source_and_transfer_none_runs_in_place(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
-    temp_host_dir: Path,
     tmp_path: Path,
 ) -> None:
     """Headless with --source and --transfer=none should run the agent in the given directory.
