@@ -40,10 +40,11 @@ def is_streaming_headless_agent_type(agent_type: str) -> bool:
 
 
 def check_streaming_headless_agent_type(agent_type: str) -> None:
-    """Verify the given agent type implements StreamingHeadlessAgentMixin.
+    """Verify the agent type resolves to a class implementing StreamingHeadlessAgentMixin.
 
-    Raises MngrError if the agent type is not registered or does not
-    support streaming headless output.
+    Looks up the agent class via ``get_agent_class`` (which may fall back
+    to the default agent class for unregistered types) and raises MngrError
+    if the resolved class does not implement StreamingHeadlessAgentMixin.
     """
     if not is_streaming_headless_agent_type(agent_type):
         raise MngrError(
