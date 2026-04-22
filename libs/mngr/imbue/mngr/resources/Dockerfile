@@ -22,10 +22,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xxd \
     && rm -rf /var/lib/apt/lists/*
 
-# Install ttyd binary from GitHub releases (not available via apt)
+# Install ttyd binary from GitHub releases (not available via apt).
+# Retry with backoff because github.com releases intermittently reset the
+# connection when pulled from a Modal builder -- e.g. mngr_schedule release
+# tests fail with "curl: (35) Recv failure: Connection reset by peer" on
+# the nested deploy image build.
 RUN ARCH=$(uname -m) && \
-    curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${ARCH}" \
-    -o /usr/local/bin/ttyd && \
+    for attempt in 1 2 3 4 5; do \
+        curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+            "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${ARCH}" \
+            -o /usr/local/bin/ttyd && break ; \
+        echo "ttyd download attempt $attempt failed, retrying in $((attempt * 5))s..." ; \
+        sleep $((attempt * 5)) ; \
+    done && \
+    test -s /usr/local/bin/ttyd && \
     chmod +x /usr/local/bin/ttyd
 
 RUN mkdir -p -m 755 /etc/apt/keyrings \
