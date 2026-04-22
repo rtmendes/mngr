@@ -2,9 +2,20 @@
 #
 # wait_for_stop_hook.sh
 #
-# A Claude Code Stop hook that waits for all other stop hooks to finish
-# before proceeding. Exits when:
-#   1. All other stop hooks have exited.
+# A Claude Code Stop hook that waits for all other stop hooks to finish,
+# then runs post-completion actions before marking the agent inactive.
+#
+# Phases:
+#   1. Wait for all other stop hooks that were running at the start of the
+#      grace period to exit (or for MAX_WAIT seconds to elapse).
+#   2. Run post-completion actions:
+#        - If the code-guardian orchestrator wrote
+#          .reviewer/outputs/orchestrator_success, upload this commit's
+#          autofix issue files (.reviewer/outputs/autofix/issues/*.jsonl)
+#          to the code-review-json Modal volume and remove the marker.
+#        - Invoke notify_user (best-effort; silently skipped if the command
+#          is not defined).
+#   3. Mark the agent inactive and exit.
 #
 # Identification strategy:
 #   All stop hooks and bash tool tasks are direct children of the Claude
