@@ -4,6 +4,7 @@ Uses shared plugin test fixtures from mngr to avoid duplicating common
 fixture code across plugin libraries.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pluggy
@@ -13,6 +14,8 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.utils.plugin_testing import register_plugin_test_fixtures
+from imbue.mngr_schedule.data_types import ScheduleTriggerDefinition
+from imbue.mngr_schedule.data_types import ScheduledMngrCommand
 
 register_plugin_test_fixtures(globals())
 
@@ -68,6 +71,28 @@ def bare_temp_mngr_ctx(
 ) -> MngrContext:
     """MngrContext with no plugins loaded (bare hookspecs only)."""
     return _build_mngr_ctx(bare_plugin_manager, tmp_path)
+
+
+@pytest.fixture()
+def make_test_trigger() -> Callable[[str], ScheduleTriggerDefinition]:
+    """Factory fixture for building a minimal ``ScheduleTriggerDefinition``.
+
+    Returns a callable that takes a trigger name (default ``"test-trigger"``)
+    and returns a local-provider CREATE trigger with fixed stub fields. Used
+    across schedule unit tests so a change to the trigger shape only needs
+    to be made in one place.
+    """
+
+    def _build(name: str = "test-trigger") -> ScheduleTriggerDefinition:
+        return ScheduleTriggerDefinition(
+            name=name,
+            command=ScheduledMngrCommand.CREATE,
+            args="--message hello",
+            schedule_cron="0 2 * * *",
+            provider="local",
+        )
+
+    return _build
 
 
 @pytest.fixture()
