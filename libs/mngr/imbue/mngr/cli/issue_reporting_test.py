@@ -350,8 +350,8 @@ def test_build_diagnose_prompt_contains_version_and_traceback() -> None:
     assert "0.2.4" in prompt
     assert "ValueError: oops" in prompt
     assert "Traceback (most recent call last):" in prompt
-    # Includes agent instructions
-    assert "python scripts/open_issue.py" in prompt
+    # Includes agent instructions; `uv run` prefix is required per monorepo CLAUDE.md
+    assert "uv run python scripts/open_issue.py" in prompt
     assert "Root cause analysis" in prompt
 
 
