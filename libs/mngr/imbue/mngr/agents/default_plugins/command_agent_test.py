@@ -43,15 +43,27 @@ def _make_command_agent(
     )
 
 
-def test_assemble_command_returns_override_when_provided(
+def test_assemble_command_uses_override_as_base_and_appends_args(
     local_host: Host,
     temp_mngr_ctx: MngrContext,
     tmp_path: Path,
 ) -> None:
-    """command_override takes precedence and is returned verbatim."""
+    """command_override is used as the base command; cli_args and agent_args are still appended (matches BaseAgent)."""
     agent = _make_command_agent(local_host, temp_mngr_ctx, tmp_path)
     override = CommandString("echo from-override")
-    cmd = agent.assemble_command(local_host, agent_args=("ignored",), command_override=override)
+    cmd = agent.assemble_command(local_host, agent_args=("extra",), command_override=override)
+    assert cmd == CommandString("echo from-override extra")
+
+
+def test_assemble_command_override_alone_returns_override_verbatim(
+    local_host: Host,
+    temp_mngr_ctx: MngrContext,
+    tmp_path: Path,
+) -> None:
+    """command_override with no agent_args or cli_args returns the override unchanged."""
+    agent = _make_command_agent(local_host, temp_mngr_ctx, tmp_path)
+    override = CommandString("echo from-override")
+    cmd = agent.assemble_command(local_host, agent_args=(), command_override=override)
     assert cmd == override
 
 

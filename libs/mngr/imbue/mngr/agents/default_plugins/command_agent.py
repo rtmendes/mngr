@@ -47,8 +47,11 @@ class CommandAgent(BaseAgent[CommandAgentConfig]):
         command_override: CommandString | None,
     ) -> CommandString:
         if command_override is not None:
-            return command_override
-        base = str(self.agent_config.command) if self.agent_config.command is not None else None
+            base: str | None = str(command_override)
+        elif self.agent_config.command is not None:
+            base = str(self.agent_config.command)
+        else:
+            base = None
         if base is None and not agent_args:
             raise UserInputError(
                 "--type command requires a command after `--` (or `command = ...` set on the agent type), "
