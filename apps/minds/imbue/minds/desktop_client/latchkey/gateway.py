@@ -23,7 +23,6 @@ actually uses it) happens in a follow-up task.
 
 import shutil
 import socket
-import sys
 import threading
 from datetime import datetime
 from datetime import timezone
@@ -35,28 +34,22 @@ from loguru import logger
 from pydantic import Field
 from pydantic import PrivateAttr
 
-from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
-from imbue.concurrency_group.errors import ProcessError
-from imbue.concurrency_group.errors import ProcessSetupError
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
-from imbue.minds.desktop_client.latchkey_gateway_store import LatchkeyGatewayRecord
-from imbue.minds.desktop_client.latchkey_gateway_store import delete_gateway_record
-from imbue.minds.desktop_client.latchkey_gateway_store import gateway_log_path
-from imbue.minds.desktop_client.latchkey_gateway_store import list_gateway_records
-from imbue.minds.desktop_client.latchkey_gateway_store import save_gateway_record
+from imbue.minds.desktop_client.latchkey._spawn import spawn_detached_latchkey_gateway
+from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayRecord
+from imbue.minds.desktop_client.latchkey.store import delete_gateway_record
+from imbue.minds.desktop_client.latchkey.store import gateway_log_path
+from imbue.minds.desktop_client.latchkey.store import list_gateway_records
+from imbue.minds.desktop_client.latchkey.store import save_gateway_record
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.mngr.primitives import AgentId
 
 LATCHKEY_BINARY: Final[str] = "latchkey"
 
 _DEFAULT_LISTEN_HOST: Final[str] = "127.0.0.1"
-
-_LAUNCHER_MODULE: Final[str] = "imbue.minds.desktop_client._latchkey_gateway_launcher"
-
-_LAUNCHER_TIMEOUT_SECONDS: Final[float] = 15.0
 
 _LIVENESS_CONNECT_TIMEOUT_SECONDS: Final[float] = 1.0
 
@@ -218,8 +211,8 @@ def _build_info_from_record(record: LatchkeyGatewayRecord) -> LatchkeyGatewayInf
 class LatchkeyGatewayManager(MutableModel):
     """Spawns, adopts, and tracks per-agent ``latchkey gateway`` subprocesses.
 
-    Gateways are intentionally spawned with ``start_new_session=True`` via the
-    ``_latchkey_gateway_launcher`` helper so they survive desktop-client
+    Gateways are spawned detached (``start_new_session=True`` inside
+    :func:`spawn_detached_latchkey_gateway`) so they survive desktop-client
     restarts. Lifecycle is reconciled against persisted records on start.
     """
 
@@ -228,11 +221,6 @@ class LatchkeyGatewayManager(MutableModel):
         default=_DEFAULT_LISTEN_HOST,
         frozen=True,
         description="Host to bind each spawned gateway to",
-    )
-    launcher_python: str = Field(
-        default_factory=lambda: sys.executable,
-        frozen=True,
-        description="Python interpreter used to invoke the detached launcher module",
     )
 
     _data_dir: Path | None = PrivateAttr(default=None)
@@ -362,25 +350,6 @@ class LatchkeyGatewayManager(MutableModel):
 
         port = _allocate_free_port(self.listen_host)
         log_path = gateway_log_path(data_dir, agent_id)
-        pid_file = log_path.with_suffix(".pid")
-        # Clear any stale pid file so we can tell whether the launcher wrote one.
-        if pid_file.exists():
-            pid_file.unlink()
-        command = [
-            self.launcher_python,
-            "-m",
-            _LAUNCHER_MODULE,
-            "--latchkey-binary",
-            self.latchkey_binary,
-            "--listen-host",
-            self.listen_host,
-            "--listen-port",
-            str(port),
-            "--log-path",
-            str(log_path),
-            "--pid-file",
-            str(pid_file),
-        ]
 
         with log_span(
             "Starting latchkey gateway for agent {} on {}:{}",
@@ -388,7 +357,15 @@ class LatchkeyGatewayManager(MutableModel):
             self.listen_host,
             port,
         ):
-            pid = _run_launcher_and_read_pid(command, pid_file)
+            try:
+                pid = spawn_detached_latchkey_gateway(
+                    latchkey_binary=self.latchkey_binary,
+                    listen_host=self.listen_host,
+                    listen_port=port,
+                    log_path=log_path,
+                )
+            except OSError as e:
+                raise LatchkeyGatewayError(f"Failed to spawn latchkey gateway for agent {agent_id}: {e}") from e
 
         record = LatchkeyGatewayRecord(
             agent_id=agent_id,
@@ -399,34 +376,6 @@ class LatchkeyGatewayManager(MutableModel):
         )
         save_gateway_record(data_dir, record)
         return _build_info_from_record(record)
-
-
-def _run_launcher_and_read_pid(command: list[str], pid_file: Path) -> int:
-    """Invoke the detached launcher script and read the child PID from ``pid_file``.
-
-    A short-lived ``ConcurrencyGroup`` is created per invocation because the
-    launcher exits immediately after spawning its detached child -- we do not
-    need (or want) long-running process tracking here.
-    """
-    cg = ConcurrencyGroup(name="latchkey-gateway-launcher")
-    try:
-        with cg:
-            cg.run_process_to_completion(
-                command=command,
-                timeout=_LAUNCHER_TIMEOUT_SECONDS,
-                is_checked_after=True,
-            )
-    except ProcessSetupError as e:
-        raise LatchkeyGatewayError(f"Failed to invoke latchkey gateway launcher: {e}") from e
-    except ProcessError as e:
-        raise LatchkeyGatewayError(f"Latchkey gateway launcher failed: {e}") from e
-    if not pid_file.is_file():
-        raise LatchkeyGatewayError(f"Latchkey gateway launcher did not write PID file at {pid_file}")
-    try:
-        pid_text = pid_file.read_text().strip()
-        return int(pid_text)
-    except (OSError, ValueError) as e:
-        raise LatchkeyGatewayError(f"Latchkey gateway launcher produced an unreadable PID file at {pid_file}") from e
 
 
 class LatchkeyGatewayDiscoveryHandler(FrozenModel):

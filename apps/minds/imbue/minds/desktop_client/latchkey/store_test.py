@@ -2,12 +2,12 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 
-from imbue.minds.desktop_client.latchkey_gateway_store import LatchkeyGatewayRecord
-from imbue.minds.desktop_client.latchkey_gateway_store import delete_gateway_record
-from imbue.minds.desktop_client.latchkey_gateway_store import gateway_log_path
-from imbue.minds.desktop_client.latchkey_gateway_store import list_gateway_records
-from imbue.minds.desktop_client.latchkey_gateway_store import load_gateway_record
-from imbue.minds.desktop_client.latchkey_gateway_store import save_gateway_record
+from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayRecord
+from imbue.minds.desktop_client.latchkey.store import delete_gateway_record
+from imbue.minds.desktop_client.latchkey.store import gateway_log_path
+from imbue.minds.desktop_client.latchkey.store import list_gateway_records
+from imbue.minds.desktop_client.latchkey.store import load_gateway_record
+from imbue.minds.desktop_client.latchkey.store import save_gateway_record
 from imbue.mngr.primitives import AgentId
 
 

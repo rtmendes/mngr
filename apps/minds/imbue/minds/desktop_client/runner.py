@@ -35,10 +35,10 @@ from imbue.minds.desktop_client.cloudflare_client import CloudflareForwardingUrl
 from imbue.minds.desktop_client.cloudflare_client import CloudflareSecret
 from imbue.minds.desktop_client.cloudflare_client import CloudflareUsername
 from imbue.minds.desktop_client.cloudflare_client import OwnerEmail
-from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayDestructionHandler
-from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayDiscoveryHandler
-from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayManager
-from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayReconcileCallback
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayDestructionHandler
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayDiscoveryHandler
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManager
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayReconcileCallback
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.request_events import RequestInbox

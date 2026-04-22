@@ -10,17 +10,17 @@ from pathlib import Path
 import psutil
 import pytest
 
-from imbue.minds.desktop_client.latchkey_gateway import LatchkeyBinaryNotFoundError
-from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayDestructionHandler
-from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayDiscoveryHandler
-from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayManager
-from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayManagerNotStartedError
-from imbue.minds.desktop_client.latchkey_gateway import _cmdline_looks_like_latchkey_gateway
-from imbue.minds.desktop_client.latchkey_gateway import is_local_reachable_provider
-from imbue.minds.desktop_client.latchkey_gateway_store import LatchkeyGatewayRecord
-from imbue.minds.desktop_client.latchkey_gateway_store import list_gateway_records
-from imbue.minds.desktop_client.latchkey_gateway_store import load_gateway_record
-from imbue.minds.desktop_client.latchkey_gateway_store import save_gateway_record
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyBinaryNotFoundError
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayDestructionHandler
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayDiscoveryHandler
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManager
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManagerNotStartedError
+from imbue.minds.desktop_client.latchkey.gateway import _cmdline_looks_like_latchkey_gateway
+from imbue.minds.desktop_client.latchkey.gateway import is_local_reachable_provider
+from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayRecord
+from imbue.minds.desktop_client.latchkey.store import list_gateway_records
+from imbue.minds.desktop_client.latchkey.store import load_gateway_record
+from imbue.minds.desktop_client.latchkey.store import save_gateway_record
 from imbue.mngr.primitives import AgentId
 
 _POLL_INTERVAL_SECONDS = 0.05

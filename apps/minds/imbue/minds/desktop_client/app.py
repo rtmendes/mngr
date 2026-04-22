@@ -41,7 +41,7 @@ from imbue.minds.desktop_client.cookie_manager import SESSION_COOKIE_NAME
 from imbue.minds.desktop_client.cookie_manager import create_session_cookie
 from imbue.minds.desktop_client.cookie_manager import verify_session_cookie
 from imbue.minds.desktop_client.deps import BackendResolverDep
-from imbue.minds.desktop_client.latchkey_gateway import LatchkeyGatewayManager
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManager
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.proxy import generate_backend_loading_html
