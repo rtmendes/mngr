@@ -24,8 +24,12 @@ _RECORD_FILENAME = "latchkey_gateway.json"
 _AGENTS_DIR_NAME = "agents"
 
 
-class LatchkeyGatewayRecord(FrozenModel):
-    """Persisted metadata identifying a running Latchkey gateway subprocess."""
+class LatchkeyGatewayInfo(FrozenModel):
+    """Metadata identifying a running Latchkey gateway subprocess.
+
+    Used both as the return type of manager methods and as the on-disk
+    representation (one file per agent).
+    """
 
     agent_id: AgentId = Field(description="The agent this gateway is dedicated to")
     host: str = Field(description="Host the gateway is listening on (typically 127.0.0.1)")
@@ -34,55 +38,55 @@ class LatchkeyGatewayRecord(FrozenModel):
     started_at: datetime = Field(description="UTC timestamp when the gateway was started")
 
 
-def _agent_record_path(data_dir: Path, agent_id: AgentId) -> Path:
+def _agent_info_path(data_dir: Path, agent_id: AgentId) -> Path:
     return data_dir / _AGENTS_DIR_NAME / str(agent_id) / _RECORD_FILENAME
 
 
-def save_gateway_record(data_dir: Path, record: LatchkeyGatewayRecord) -> None:
-    """Write a gateway record for an agent, overwriting any existing one."""
-    path = _agent_record_path(data_dir, record.agent_id)
+def save_gateway_info(data_dir: Path, info: LatchkeyGatewayInfo) -> None:
+    """Write a gateway info record for an agent, overwriting any existing one."""
+    path = _agent_info_path(data_dir, info.agent_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(record.model_dump_json(indent=2))
-    logger.debug("Saved latchkey gateway record for agent {} at {}", record.agent_id, path)
+    path.write_text(info.model_dump_json(indent=2))
+    logger.debug("Saved latchkey gateway info for agent {} at {}", info.agent_id, path)
 
 
-def load_gateway_record(data_dir: Path, agent_id: AgentId) -> LatchkeyGatewayRecord | None:
-    """Read the gateway record for an agent, or None if missing or malformed."""
-    path = _agent_record_path(data_dir, agent_id)
+def load_gateway_info(data_dir: Path, agent_id: AgentId) -> LatchkeyGatewayInfo | None:
+    """Read the gateway info for an agent, or None if missing or malformed."""
+    path = _agent_info_path(data_dir, agent_id)
     if not path.is_file():
         return None
     try:
         raw = path.read_text()
     except OSError as e:
-        logger.warning("Failed to read latchkey gateway record at {}: {}", path, e)
+        logger.warning("Failed to read latchkey gateway info at {}: {}", path, e)
         return None
     try:
-        return LatchkeyGatewayRecord.model_validate_json(raw)
+        return LatchkeyGatewayInfo.model_validate_json(raw)
     except ValueError as e:
-        logger.warning("Malformed latchkey gateway record at {}: {}", path, e)
+        logger.warning("Malformed latchkey gateway info at {}: {}", path, e)
         return None
 
 
-def delete_gateway_record(data_dir: Path, agent_id: AgentId) -> None:
-    """Remove the stored gateway record for an agent (no-op if absent)."""
-    path = _agent_record_path(data_dir, agent_id)
+def delete_gateway_info(data_dir: Path, agent_id: AgentId) -> None:
+    """Remove the stored gateway info for an agent (no-op if absent)."""
+    path = _agent_info_path(data_dir, agent_id)
     if path.is_file():
         try:
             path.unlink()
-            logger.debug("Deleted latchkey gateway record for agent {}", agent_id)
+            logger.debug("Deleted latchkey gateway info for agent {}", agent_id)
         except OSError as e:
-            logger.warning("Failed to delete latchkey gateway record at {}: {}", path, e)
+            logger.warning("Failed to delete latchkey gateway info at {}: {}", path, e)
 
 
-def list_gateway_records(data_dir: Path) -> list[LatchkeyGatewayRecord]:
-    """Return all persisted gateway records under ``data_dir``.
+def list_gateway_infos(data_dir: Path) -> list[LatchkeyGatewayInfo]:
+    """Return all persisted gateway infos under ``data_dir``.
 
     Malformed records are logged and skipped rather than aborting the scan.
     """
     agents_dir = data_dir / _AGENTS_DIR_NAME
     if not agents_dir.is_dir():
         return []
-    records: list[LatchkeyGatewayRecord] = []
+    infos: list[LatchkeyGatewayInfo] = []
     for entry in agents_dir.iterdir():
         if not entry.is_dir():
             continue
@@ -90,12 +94,12 @@ def list_gateway_records(data_dir: Path) -> list[LatchkeyGatewayRecord]:
         if not path.is_file():
             continue
         try:
-            record = LatchkeyGatewayRecord.model_validate_json(path.read_text())
+            info = LatchkeyGatewayInfo.model_validate_json(path.read_text())
         except (OSError, ValueError) as e:
-            logger.warning("Skipping malformed latchkey gateway record at {}: {}", path, e)
+            logger.warning("Skipping malformed latchkey gateway info at {}: {}", path, e)
             continue
-        records.append(record)
-    return records
+        infos.append(info)
+    return infos
 
 
 def gateway_log_path(data_dir: Path, agent_id: AgentId) -> Path:

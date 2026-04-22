@@ -36,11 +36,11 @@ from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
 from imbue.minds.desktop_client.latchkey._spawn import spawn_detached_latchkey_gateway
-from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayRecord
-from imbue.minds.desktop_client.latchkey.store import delete_gateway_record
+from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
+from imbue.minds.desktop_client.latchkey.store import delete_gateway_info
 from imbue.minds.desktop_client.latchkey.store import gateway_log_path
-from imbue.minds.desktop_client.latchkey.store import list_gateway_records
-from imbue.minds.desktop_client.latchkey.store import save_gateway_record
+from imbue.minds.desktop_client.latchkey.store import list_gateway_infos
+from imbue.minds.desktop_client.latchkey.store import save_gateway_info
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.mngr.primitives import AgentId
 
@@ -69,15 +69,6 @@ class LatchkeyBinaryNotFoundError(LatchkeyGatewayError, FileNotFoundError):
 
 class LatchkeyGatewayManagerNotStartedError(LatchkeyGatewayError, RuntimeError):
     """Raised when the manager is used before ``start()`` has been called."""
-
-
-class LatchkeyGatewayInfo(FrozenModel):
-    """Metadata for a running per-agent Latchkey gateway."""
-
-    agent_id: AgentId = Field(description="The agent this gateway is dedicated to")
-    host: str = Field(description="Host the gateway is listening on (typically 127.0.0.1)")
-    port: int = Field(description="Port the gateway is listening on")
-    pid: int = Field(description="PID of the ``latchkey gateway`` process")
 
 
 def is_local_reachable_provider(provider_name: str) -> bool:
@@ -140,8 +131,8 @@ def _is_port_listening(host: str, port: int) -> bool:
     return True
 
 
-def _is_record_alive(record: LatchkeyGatewayRecord) -> bool:
-    """Verify that a persisted record still corresponds to our running gateway.
+def _is_info_alive(info: LatchkeyGatewayInfo) -> bool:
+    """Verify that an info still corresponds to our running gateway.
 
     Three checks, all must pass:
     1. A process with the recorded PID exists.
@@ -149,26 +140,26 @@ def _is_record_alive(record: LatchkeyGatewayRecord) -> bool:
     3. Something accepts TCP connections on the recorded host:port.
     """
     try:
-        process = psutil.Process(record.pid)
+        process = psutil.Process(info.pid)
         cmdline = process.cmdline()
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
-        logger.debug("Latchkey record for {} is stale (pid={}): {}", record.agent_id, record.pid, e)
+        logger.debug("Latchkey info for {} is stale (pid={}): {}", info.agent_id, info.pid, e)
         return False
     if not _cmdline_looks_like_latchkey_gateway(cmdline):
         logger.debug(
-            "Latchkey record for {} points at pid {} whose cmdline is not ours: {!r}",
-            record.agent_id,
-            record.pid,
+            "Latchkey info for {} points at pid {} whose cmdline is not ours: {!r}",
+            info.agent_id,
+            info.pid,
             cmdline,
         )
         return False
-    if not _is_port_listening(record.host, record.port):
+    if not _is_port_listening(info.host, info.port):
         logger.debug(
-            "Latchkey record for {} points at pid {} but {}:{} is not accepting connections",
-            record.agent_id,
-            record.pid,
-            record.host,
-            record.port,
+            "Latchkey info for {} points at pid {} but {}:{} is not accepting connections",
+            info.agent_id,
+            info.pid,
+            info.host,
+            info.port,
         )
         return False
     return True
@@ -196,15 +187,6 @@ def _terminate_pid(pid: int) -> None:
         logger.debug("Could not terminate pid {}: {}", pid, e)
 
 
-def _build_info_from_record(record: LatchkeyGatewayRecord) -> LatchkeyGatewayInfo:
-    return LatchkeyGatewayInfo(
-        agent_id=record.agent_id,
-        host=record.host,
-        port=record.port,
-        pid=record.pid,
-    )
-
-
 class LatchkeyGatewayManager(MutableModel):
     """Spawns, adopts, and tracks per-agent ``latchkey gateway`` subprocesses.
 
@@ -226,34 +208,47 @@ class LatchkeyGatewayManager(MutableModel):
     _is_started: bool = PrivateAttr(default=False)
 
     def start(self, data_dir: Path) -> None:
-        """Load persisted records from ``data_dir``, adopting still-alive gateways.
+        """Load persisted infos from ``data_dir``, adopting still-alive gateways.
 
         Dead records are removed from disk. Gateways that are still running
         and still look like ours are tracked internally so subsequent calls
         to ``ensure_gateway_started`` are no-ops for those agents.
+
+        Liveness probes include a TCP connect per info (up to
+        ``_LIVENESS_CONNECT_TIMEOUT_SECONDS`` each), which is why they run
+        outside the manager lock. ``start()`` is only expected to be called
+        once before any concurrent use of the manager, so there is no real
+        contention to worry about here.
         """
+        adopted: list[LatchkeyGatewayInfo] = []
+        stale: list[LatchkeyGatewayInfo] = []
+        for info in list_gateway_infos(data_dir):
+            if _is_info_alive(info):
+                adopted.append(info)
+            else:
+                stale.append(info)
+
         with self._lock:
             if self._is_started:
                 return
             self._data_dir = data_dir
             self._infos.clear()
-            for record in list_gateway_records(data_dir):
-                if _is_record_alive(record):
-                    logger.info(
-                        "Adopted existing Latchkey gateway for agent {} (pid={}, {}:{})",
-                        record.agent_id,
-                        record.pid,
-                        record.host,
-                        record.port,
-                    )
-                    self._infos[str(record.agent_id)] = _build_info_from_record(record)
-                else:
-                    logger.info(
-                        "Discarding stale Latchkey gateway record for agent {} (pid={})",
-                        record.agent_id,
-                        record.pid,
-                    )
-                    delete_gateway_record(data_dir, record.agent_id)
+            for info in adopted:
+                logger.info(
+                    "Adopted existing Latchkey gateway for agent {} (pid={}, {}:{})",
+                    info.agent_id,
+                    info.pid,
+                    info.host,
+                    info.port,
+                )
+                self._infos[str(info.agent_id)] = info
+            for info in stale:
+                logger.info(
+                    "Discarding stale Latchkey gateway record for agent {} (pid={})",
+                    info.agent_id,
+                    info.pid,
+                )
+                delete_gateway_info(data_dir, info.agent_id)
             self._is_started = True
 
     def stop(self) -> None:
@@ -273,30 +268,42 @@ class LatchkeyGatewayManager(MutableModel):
         Idempotent: returns the existing info when an adopted/live gateway
         is already tracked, otherwise spawns a fresh one on a newly
         allocated free port and persists a record.
+
+        The slow steps -- liveness probe of an existing info and subprocess
+        spawn -- run outside the manager lock; committing the result to
+        ``_infos`` and the on-disk record is done atomically under the lock.
         """
         aid_str = str(agent_id)
         with self._lock:
             data_dir = self._require_started_locked()
             existing = self._infos.get(aid_str)
-        if existing is not None and self._verify_info_alive(existing):
+        if existing is not None and _is_info_alive(existing):
             return existing
-        # Stale entry -- fall through and replace.
+        # Stale or absent -- spawn a replacement outside the lock.
         info = self._spawn_gateway(agent_id, data_dir)
         with self._lock:
             self._infos[aid_str] = info
+            save_gateway_info(data_dir, info)
         return info
 
     def stop_gateway_for_agent(self, agent_id: AgentId) -> None:
-        """Terminate the gateway for ``agent_id`` and delete its record."""
+        """Terminate the gateway for ``agent_id`` and delete its record.
+
+        The in-memory entry and the on-disk record are removed atomically
+        under the manager lock so no other caller can observe a half-torn-down
+        state. ``_terminate_pid`` is deliberately called outside the lock
+        because it can wait up to ``_TERMINATE_GRACE_SECONDS`` for the child
+        to exit.
+        """
         aid_str = str(agent_id)
         with self._lock:
             data_dir = self._data_dir
             info = self._infos.pop(aid_str, None)
+            if info is not None and data_dir is not None:
+                delete_gateway_info(data_dir, agent_id)
         if info is not None:
             logger.info("Stopping Latchkey gateway for agent {} (pid={})", agent_id, info.pid)
             _terminate_pid(info.pid)
-        if data_dir is not None:
-            delete_gateway_record(data_dir, agent_id)
 
     def reconcile_with_known_agents(self, known_agent_ids: frozenset[AgentId]) -> None:
         """Terminate gateways whose agent is no longer in ``known_agent_ids``.
@@ -330,18 +337,12 @@ class LatchkeyGatewayManager(MutableModel):
             )
         return self._data_dir
 
-    def _verify_info_alive(self, info: LatchkeyGatewayInfo) -> bool:
-        """Re-verify a tracked info's liveness using the same checks as adoption."""
-        record = LatchkeyGatewayRecord(
-            agent_id=info.agent_id,
-            host=info.host,
-            port=info.port,
-            pid=info.pid,
-            started_at=datetime.now(timezone.utc),
-        )
-        return _is_record_alive(record)
-
     def _spawn_gateway(self, agent_id: AgentId, data_dir: Path) -> LatchkeyGatewayInfo:
+        """Build a fresh ``LatchkeyGatewayInfo`` by spawning a detached gateway.
+
+        Does not mutate ``_infos`` or persist the info -- the caller is
+        responsible for committing both under the manager lock.
+        """
         if shutil.which(self.latchkey_binary) is None and not Path(self.latchkey_binary).is_file():
             raise LatchkeyBinaryNotFoundError(f"Latchkey binary not found: {self.latchkey_binary}")
 
@@ -364,15 +365,13 @@ class LatchkeyGatewayManager(MutableModel):
             except OSError as e:
                 raise LatchkeyGatewayError(f"Failed to spawn Latchkey gateway for agent {agent_id}: {e}") from e
 
-        record = LatchkeyGatewayRecord(
+        return LatchkeyGatewayInfo(
             agent_id=agent_id,
             host=self.listen_host,
             port=port,
             pid=pid,
             started_at=datetime.now(timezone.utc),
         )
-        save_gateway_record(data_dir, record)
-        return _build_info_from_record(record)
 
 
 class LatchkeyGatewayDiscoveryHandler(FrozenModel):

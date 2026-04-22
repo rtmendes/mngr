@@ -17,10 +17,10 @@ from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManager
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManagerNotStartedError
 from imbue.minds.desktop_client.latchkey.gateway import _cmdline_looks_like_latchkey_gateway
 from imbue.minds.desktop_client.latchkey.gateway import is_local_reachable_provider
-from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayRecord
-from imbue.minds.desktop_client.latchkey.store import list_gateway_records
-from imbue.minds.desktop_client.latchkey.store import load_gateway_record
-from imbue.minds.desktop_client.latchkey.store import save_gateway_record
+from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
+from imbue.minds.desktop_client.latchkey.store import list_gateway_infos
+from imbue.minds.desktop_client.latchkey.store import load_gateway_info
+from imbue.minds.desktop_client.latchkey.store import save_gateway_info
 from imbue.mngr.primitives import AgentId
 
 _POLL_INTERVAL_SECONDS = 0.05
@@ -144,7 +144,7 @@ def test_ensure_gateway_started_spawns_subprocess_persists_record_and_allocates_
         assert _wait_for_listening(info.host, info.port), "gateway did not start listening"
 
         # The record was persisted and matches the returned info.
-        record = load_gateway_record(tmp_path, agent_id)
+        record = load_gateway_info(tmp_path, agent_id)
         assert record is not None
         assert record.host == info.host
         assert record.port == info.port
@@ -175,7 +175,7 @@ def test_manager_stop_does_not_kill_running_gateway(tmp_path: Path) -> None:
 
         # In-memory tracking is gone, but the record and process live on.
         assert manager.list_gateways() == ()
-        assert load_gateway_record(tmp_path, agent_id) is not None
+        assert load_gateway_info(tmp_path, agent_id) is not None
         assert psutil.pid_exists(info.pid)
         assert _wait_for_listening(info.host, info.port)
     finally:
@@ -187,7 +187,7 @@ def test_manager_stop_does_not_kill_running_gateway(tmp_path: Path) -> None:
             pass
 
 
-def test_restart_adopts_live_gateway_and_discards_stale_record(tmp_path: Path) -> None:
+def test_restart_adopts_live_gateway_and_discards_stale_info(tmp_path: Path) -> None:
     fake_binary = _make_fake_latchkey_binary(tmp_path)
     # First "session": start a gateway for a live agent, then stop the manager.
     manager_a = LatchkeyGatewayManager(latchkey_binary=str(fake_binary))
@@ -200,14 +200,14 @@ def test_restart_adopts_live_gateway_and_discards_stale_record(tmp_path: Path) -
     # Inject a stale record (pid points at an unused PID range to simulate a
     # gateway that exited between sessions).
     stale_agent = AgentId()
-    stale_record = LatchkeyGatewayRecord(
+    stale_info = LatchkeyGatewayInfo(
         agent_id=stale_agent,
         host="127.0.0.1",
         port=1,
         pid=2**31 - 1,
         started_at=datetime.now(timezone.utc),
     )
-    save_gateway_record(tmp_path, stale_record)
+    save_gateway_info(tmp_path, stale_info)
 
     try:
         # Second "session": manager should adopt the live record and discard the stale one.
@@ -220,7 +220,7 @@ def test_restart_adopts_live_gateway_and_discards_stale_record(tmp_path: Path) -
             assert adopted.port == info.port
 
             assert manager_b.get_gateway_info(stale_agent) is None
-            assert load_gateway_record(tmp_path, stale_agent) is None
+            assert load_gateway_info(tmp_path, stale_agent) is None
 
             # A second ensure_gateway_started for the live agent should reuse
             # the adopted process -- no new PID allocated.
@@ -252,12 +252,12 @@ def test_reconcile_with_known_agents_terminates_orphans(tmp_path: Path) -> None:
 
         # Orphan got terminated, record removed.
         assert manager.get_gateway_info(orphan_agent) is None
-        assert load_gateway_record(tmp_path, orphan_agent) is None
+        assert load_gateway_info(tmp_path, orphan_agent) is None
         assert _wait_for_process_exit(orphan_info.pid), "orphan process did not exit"
 
         # Live agent untouched.
         assert manager.get_gateway_info(live_agent) == live_info
-        assert load_gateway_record(tmp_path, live_agent) is not None
+        assert load_gateway_info(tmp_path, live_agent) is not None
         assert psutil.pid_exists(live_info.pid)
     finally:
         manager.stop_gateway_for_agent(live_agent)
@@ -275,7 +275,7 @@ def test_stop_gateway_for_agent_terminates_subprocess_and_removes_record(tmp_pat
 
         manager.stop_gateway_for_agent(agent_id)
         assert manager.get_gateway_info(agent_id) is None
-        assert load_gateway_record(tmp_path, agent_id) is None
+        assert load_gateway_info(tmp_path, agent_id) is None
         assert _wait_for_process_exit(info.pid)
     finally:
         manager.stop()
@@ -299,7 +299,7 @@ def test_discovery_handler_skips_non_local_providers(tmp_path: Path) -> None:
         handler(AgentId(), None, "modal")
         handler(AgentId(), None, "vultr")
         assert manager.list_gateways() == ()
-        assert list_gateway_records(tmp_path) == []
+        assert list_gateway_infos(tmp_path) == []
     finally:
         manager.stop()
 
@@ -349,7 +349,7 @@ def test_destruction_handler_stops_gateway(tmp_path: Path) -> None:
 
         destruction(agent_id)
         assert manager.get_gateway_info(agent_id) is None
-        assert load_gateway_record(tmp_path, agent_id) is None
+        assert load_gateway_info(tmp_path, agent_id) is None
         assert _wait_for_process_exit(info.pid)
     finally:
         manager.stop()
