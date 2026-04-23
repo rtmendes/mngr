@@ -8,6 +8,7 @@ from typing import cast
 import click
 import pluggy
 import pytest
+import tomlkit
 from click.testing import CliRunner
 
 from imbue.imbue_common.model_update import to_update
@@ -38,6 +39,7 @@ from imbue.mngr.cli.create import _try_reuse_existing_agent
 from imbue.mngr.cli.create import create
 from imbue.mngr.config.data_types import CreateCliOptions
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.config.loader import get_or_create_profile_dir
 from imbue.mngr.errors import UserInputError
 from imbue.mngr.hosts.host import HostLocation
 from imbue.mngr.interfaces.data_types import HostLifecycleOptions
@@ -59,6 +61,23 @@ from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr.utils.editor import EditorSession
 from imbue.mngr.utils.logging import LoggingSuppressor
+from imbue.mngr.utils.toml_config import load_config_file_tomlkit
+from imbue.mngr.utils.toml_config import save_config_file
+
+
+def _write_agent_type_command_to_settings(settings_path: Path, type_name: str, command: str) -> None:
+    """Register ``type_name`` with ``command`` in ``settings.toml`` for tests.
+
+    Inlines the load / setdefault("agent_types") / save dance so tests that
+    declare a lightweight agent type do not need a top-level helper.
+    """
+    settings_doc = load_config_file_tomlkit(settings_path)
+    agent_types = settings_doc.setdefault("agent_types", tomlkit.table())
+    type_table = tomlkit.table()
+    type_table["command"] = command
+    agent_types[type_name] = type_table
+    save_config_file(settings_path, settings_doc)
+
 
 # =============================================================================
 # Tests for _CreateCommand.parse_args (-- passthrough arg handling)
@@ -772,16 +791,21 @@ def test_resolve_initial_message_content_rejects_both(
 def test_create_headless_streams_output(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
+    temp_host_dir: Path,
     tmp_path: Path,
 ) -> None:
     """Creating a headless_command agent with --foreground should stream output.
 
-    Overrides the built-in ``headless_command`` agent type's command via ``-S``
-    so the test does not need to write a settings.toml file. Uses an explicit
-    --source + --transfer=none to avoid depending on being inside a git repo
-    and to skip transfer (the shared path would otherwise try to rsync the
-    source dir, which is slow and unnecessary for a one-line ``echo`` agent).
+    Registers a custom headless_command-based agent type with a specific command
+    via settings.toml. Uses an explicit --source + --transfer=none to avoid
+    depending on being inside a git repo and to skip transfer (the shared path
+    would otherwise try to rsync the source dir, which is slow and unnecessary
+    for a one-line ``echo`` agent).
     """
+    profile_dir = get_or_create_profile_dir(temp_host_dir)
+    _write_agent_type_command_to_settings(
+        profile_dir / "settings.toml", "headless_command", "echo headless-test-output"
+    )
     source_dir = tmp_path / "headless-src"
     source_dir.mkdir()
     result = cli_runner.invoke(
@@ -794,8 +818,6 @@ def test_create_headless_streams_output(
             str(source_dir),
             "--transfer",
             "none",
-            "-S",
-            "agent_types.headless_command.command=echo headless-test-output",
         ],
         obj=plugin_manager,
         catch_exceptions=False,
@@ -809,6 +831,7 @@ def test_create_headless_streams_output(
 def test_create_headless_with_message_does_not_raise(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
+    temp_host_dir: Path,
     tmp_path: Path,
 ) -> None:
     """Passing --message on the headless path must not blow up in api_create.
@@ -820,6 +843,10 @@ def test_create_headless_with_message_does_not_raise(
     (headless_command has no prompt semantics); the test is purely
     checking that the flow completes when --message is supplied.
     """
+    profile_dir = get_or_create_profile_dir(temp_host_dir)
+    _write_agent_type_command_to_settings(
+        profile_dir / "settings.toml", "headless_command", "echo headless-test-output"
+    )
     source_dir = tmp_path / "headless-src"
     source_dir.mkdir()
     result = cli_runner.invoke(
@@ -834,8 +861,6 @@ def test_create_headless_with_message_does_not_raise(
             "none",
             "--message",
             "user message body",
-            "-S",
-            "agent_types.headless_command.command=echo headless-test-output",
         ],
         obj=plugin_manager,
         catch_exceptions=False,
@@ -1008,6 +1033,7 @@ def test_create_foreground_without_type_is_rejected(
 def test_create_headless_with_source_and_transfer_none_runs_in_place(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
+    temp_host_dir: Path,
     tmp_path: Path,
 ) -> None:
     """Headless with --source and --transfer=none should run the agent in the given directory.
@@ -1018,6 +1044,8 @@ def test_create_headless_with_source_and_transfer_none_runs_in_place(
     in-place. Uses a ``pwd`` command so the streamed output contains the
     work directory path.
     """
+    profile_dir = get_or_create_profile_dir(temp_host_dir)
+    _write_agent_type_command_to_settings(profile_dir / "settings.toml", "headless_command", "pwd")
     # Use a nested dir so the source-must-not-contain-state-dir check (which
     # scans for ``.mngr/``) does not fire against the shared pytest tmp root.
     source_dir = tmp_path / "headless-src"
@@ -1037,8 +1065,6 @@ def test_create_headless_with_source_and_transfer_none_runs_in_place(
             str(source_dir),
             "--transfer",
             "none",
-            "-S",
-            "agent_types.headless_command.command=pwd",
         ],
         obj=plugin_manager,
         catch_exceptions=False,
@@ -1055,9 +1081,9 @@ def test_create_headless_with_source_and_transfer_none_runs_in_place(
 # _create_agent calls _apply_host_labels on resolved online hosts so that
 # --host-label KEY=VALUE entries are honored for both headless and
 # interactive create (both for existing/local hosts and as a second,
-# idempotent application on newly-created hosts). These tests pin down the
-# helper's behavior so a refactor cannot silently re-introduce the
-# silent-drop bug that the headless path originally had.
+# idempotent application on newly-created hosts). These tests pin down
+# that behavior so a refactor cannot silently skip the host-label
+# application on any of those paths.
 
 
 def test_apply_host_labels_adds_tags_to_local_host(
