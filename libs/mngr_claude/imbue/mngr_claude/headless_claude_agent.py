@@ -274,22 +274,28 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
         if all_extra_args:
             parts.extend(all_extra_args)
 
-        # DIAGNOSTIC (ablation 3): claude --version/--help warmup + primer
-        # + --debug. Ablation 1 (primer only) and ablation 2 (primer +
-        # --debug) both failed 3/3. Remaining difference from the passing
-        # 4a49cd5ee bundle: the extra `claude --version` / `claude --help
-        # | wc -l` invocations in stderr warmup. Hypothesis: multiple cold
-        # claude invocations are collectively warming Node.js / config /
-        # filesystem paths that single invocations don't reach.
+        # DIAGNOSTIC (restore): exact 4a49cd5ee probe bundle that passed
+        # 5/5 in runs 54-58. Ablations 1-3 all failed; rerunning the full
+        # bundle to check whether the original success was the code or a
+        # transient Modal sandbox state.
         parts.extend(["--debug", "all", "--debug-file", '"$MNGR_AGENT_STATE_DIR/claude-debug.log"'])
         cmd_str = " ".join(parts)
-        warmup = (
-            "claude --version >/dev/null 2>&1 || true; "
-            "claude --help >/dev/null 2>&1 || true; "
-            'timeout 20 claude --print "hi" >/dev/null 2>&1 || true; '
+        probe_before = (
+            'echo "== DIAG before-claude $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
+            '(claude --version; echo "help-lines=$(claude --help 2>&1 | wc -l)") '
+            '>> "$MNGR_AGENT_STATE_DIR/stderr.log" 2>&1; '
+            'echo "== DIAG trivial-call start $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
+            'timeout 20 claude --print "just say hi" > "$MNGR_AGENT_STATE_DIR/trivial-stdout.txt" '
+            '2>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
+            'echo "== DIAG trivial-call rc=$? $(date -Iseconds) bytes=$(wc -c < \\"$MNGR_AGENT_STATE_DIR/trivial-stdout.txt\\") ==" '
+            '>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
+            'echo "== DIAG pre-invoke done ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"'
         )
+        probe_after = 'echo "== DIAG after-claude rc=$? $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"'
         return CommandString(
-            f'{warmup}{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"'
+            f"{probe_before}; "
+            f'timeout 60 {cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
+            f"{probe_after}"
         )
 
     def _get_stdout_path(self) -> Path:
