@@ -61,7 +61,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _BIFROST_PORT = 8080
+# Loopback address used for in-container admin traffic (FastAPI -> bifrost) and
+# for the readiness probe. Always safe to connect to regardless of which
+# interface bifrost is actually bound to.
 _BIFROST_HOST = "127.0.0.1"
+# Bind address for the inference Function: bifrost must listen on all
+# interfaces so Modal's @modal.web_server ingress proxy (which lives outside
+# the container's loopback) can reach it. The management Function keeps
+# binding to loopback since its bifrost is reached only in-container.
+_BIFROST_BIND_HOST_EXTERNAL = "0.0.0.0"
 _BIFROST_APP_DIR = "/app/bifrost"
 _BIFROST_BINARY = "bifrost-http"
 _BIFROST_NPM_VERSION = "1.6.2"
@@ -474,8 +482,14 @@ def _resolve_bifrost_binary() -> str:
     return binary
 
 
-def start_bifrost_subprocess(app_dir: str) -> "subprocess.Popen[bytes]":
-    """Start bifrost listening on localhost:_BIFROST_PORT and return the handle.
+def start_bifrost_subprocess(app_dir: str, bind_host: str) -> "subprocess.Popen[bytes]":
+    """Start bifrost on ``bind_host:_BIFROST_PORT`` and return the handle.
+
+    ``bind_host`` controls which interfaces bifrost listens on. Use
+    ``_BIFROST_BIND_HOST_EXTERNAL`` (``"0.0.0.0"``) for the inference Function
+    so Modal's ingress proxy can reach it, and ``_BIFROST_HOST``
+    (``"127.0.0.1"``) for the management Function where only in-container
+    FastAPI talks to bifrost.
 
     The process inherits the parent's environment so bifrost's ``env.VAR``
     config references resolve against our Modal Secret-injected variables.
@@ -488,7 +502,7 @@ def start_bifrost_subprocess(app_dir: str) -> "subprocess.Popen[bytes]":
         "-port",
         str(_BIFROST_PORT),
         "-host",
-        _BIFROST_HOST,
+        bind_host,
         "-log-level",
         "info",
     ]
@@ -513,6 +527,10 @@ def wait_for_bifrost_ready(
     poll_interval_seconds: float = _BIFROST_STARTUP_POLL_INTERVAL_SECONDS,
 ) -> None:
     """Poll until bifrost is accepting connections on the configured port.
+
+    Probes ``127.0.0.1:_BIFROST_PORT``. Loopback is reachable regardless of
+    whether bifrost was launched bound to loopback or all interfaces, so the
+    probe host is independent of the bind host.
 
     Raises ``BifrostNotReadyError`` if the process exits early, or if the
     port is not open within ``timeout_seconds``.
@@ -800,15 +818,17 @@ app = modal.App(name=f"bifrost-{_DEPLOY_ENV}", image=image)
 def bifrost_inference() -> None:
     """Modal Function that runs bifrost directly for inference traffic.
 
-    Modal routes external traffic to ``localhost:_BIFROST_PORT``, so agents
-    hit bifrost's OpenAI-compatible ``/v1/*`` routes (and its ``/api/*`` admin
+    Modal's ingress proxy forwards external traffic to port ``_BIFROST_PORT``
+    on the container, which means bifrost has to be bound to an externally
+    reachable interface (``0.0.0.0``) rather than loopback. Agents then hit
+    bifrost's OpenAI-compatible ``/v1/*`` routes (and its ``/api/*`` admin
     routes) directly. Admin routes are protected by bifrost's own bearer-token
     auth (``BIFROST_ADMIN_TOKEN``); inference routes are protected by
     per-agent virtual keys.
     """
     config_path = write_bifrost_config(_BIFROST_APP_DIR)
     logger.info("Wrote bifrost config to %s", config_path)
-    process = start_bifrost_subprocess(_BIFROST_APP_DIR)
+    process = start_bifrost_subprocess(_BIFROST_APP_DIR, bind_host=_BIFROST_BIND_HOST_EXTERNAL)
     wait_for_bifrost_ready(process)
 
 
@@ -825,15 +845,16 @@ def bifrost_inference() -> None:
 def bifrost_management() -> FastAPI:
     """Modal Function that runs the FastAPI management app.
 
-    Starts its own bifrost subprocess (listening on localhost) so the FastAPI
+    Starts its own bifrost subprocess bound to loopback so the FastAPI
     handlers can proxy admin calls to bifrost without going over Modal's
-    external network. All management containers share the same Neon DB as
-    the inference Function, so virtual keys created here are immediately
-    usable by inference containers.
+    external network -- and without exposing the admin API over the ingress
+    proxy (this Function is fronted by FastAPI, not bifrost). All management
+    containers share the same Neon DB as the inference Function, so virtual
+    keys created here are immediately usable by inference containers.
     """
     config_path = write_bifrost_config(_BIFROST_APP_DIR)
     logger.info("Wrote bifrost config to %s", config_path)
-    process = start_bifrost_subprocess(_BIFROST_APP_DIR)
+    process = start_bifrost_subprocess(_BIFROST_APP_DIR, bind_host=_BIFROST_HOST)
     wait_for_bifrost_ready(process)
     _init_supertokens()
     return web_app
