@@ -817,11 +817,12 @@ class AgentCreator(MutableModel):
                 is_checked_after=False,
             )
         if result.returncode != 0:
-            logger.warning(
-                "mngr destroy for host {} exited with code {}: {}",
-                host_id,
-                result.returncode,
-                result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
+            raise MngrCommandError(
+                "mngr destroy for host {} failed (exit code {}):\n{}".format(
+                    host_id,
+                    result.returncode,
+                    result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
+                )
             )
 
     def _destroy_single_agent(self, agent_id: AgentId) -> None:
@@ -833,11 +834,12 @@ class AgentCreator(MutableModel):
                 is_checked_after=False,
             )
         if result.returncode != 0:
-            logger.warning(
-                "mngr destroy exited with code {} for {}: {}",
-                result.returncode,
-                agent_id,
-                result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
+            raise MngrCommandError(
+                "mngr destroy failed for {} (exit code {}):\n{}".format(
+                    agent_id,
+                    result.returncode,
+                    result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
+                )
             )
 
     def _create_agent_background(
