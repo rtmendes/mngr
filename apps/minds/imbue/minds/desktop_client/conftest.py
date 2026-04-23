@@ -39,7 +39,7 @@ def short_tmp_path() -> Iterator[Path]:
 
 
 _FAKE_LEASE_RESPONSE: Final[dict[str, object]] = {
-    "host_db_id": "a1b2c3d4e5f6789012345678",
+    "host_db_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
     "vps_ip": "203.0.113.10",
     "ssh_port": 22,
     "ssh_user": "root",

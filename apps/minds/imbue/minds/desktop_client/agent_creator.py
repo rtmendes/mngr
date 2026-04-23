@@ -21,6 +21,7 @@ from enum import auto
 from pathlib import Path
 from typing import Final
 from typing import assert_never
+from uuid import UUID
 
 import tomlkit
 from loguru import logger
@@ -450,20 +451,19 @@ def _remove_dynamic_host_entry(dynamic_hosts_file: Path, host_name: str) -> None
     tmp_path.rename(dynamic_hosts_file)
 
 
-def _save_lease_info(data_dir: Path, agent_id: AgentId, host_db_id: str) -> None:
+def _save_lease_info(data_dir: Path, agent_id: AgentId, host_db_id: UUID) -> None:
     """Persist the lease's host_db_id so release can retrieve it later."""
     lease_dir = data_dir / "leases"
     lease_dir.mkdir(parents=True, exist_ok=True)
     (lease_dir / str(agent_id)).write_text(str(host_db_id))
 
 
-def _load_lease_info(data_dir: Path, agent_id: AgentId) -> str | None:
+def _load_lease_info(data_dir: Path, agent_id: AgentId) -> UUID | None:
     """Load the host_db_id for a leased agent, or None if not found."""
     lease_file = data_dir / "leases" / str(agent_id)
     if not lease_file.exists():
         return None
-    value = lease_file.read_text().strip()
-    return value if value else None
+    return UUID(lease_file.read_text().strip())
 
 
 def _remove_lease_info(data_dir: Path, agent_id: AgentId) -> None:
@@ -1112,7 +1112,7 @@ class AgentCreator(MutableModel):
         self,
         agent_id: AgentId,
         access_token: str,
-        host_db_id: str,
+        host_db_id: UUID,
         dynamic_hosts_file: Path,
         host_entry_name: str,
         log_queue: queue.Queue[str],

@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 from typing import Any
 from typing import Final
+from uuid import UUID
 from uuid import uuid4
 
 import click
@@ -174,9 +175,9 @@ def _insert_pool_host_row(
     host_id: str,
     container_ssh_port: int,
     version: str,
-) -> str:
+) -> UUID:
     """Insert a row into the pool_hosts table and return the row ID (UUID)."""
-    row_id = uuid4().hex
+    row_id = uuid4()
     conn = psycopg2.connect(database_url)
     try:
         with conn.cursor() as cur:
