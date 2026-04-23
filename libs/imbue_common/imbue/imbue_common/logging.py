@@ -2,6 +2,7 @@ import functools
 import inspect
 import json
 import os
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -236,30 +237,59 @@ def _build_flat_log_dict(
     return event
 
 
+_ROTATED_JSONL_TIMESTAMP_PATTERN: Final[re.Pattern[str]] = re.compile(r"^events\.jsonl\.(\d+)$")
+
+
+def _generate_rotation_timestamp() -> str:
+    """Generate a timestamp string for rotated file naming (YYYYMMDDHHMMSSffffff)."""
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond:06d}"
+
+
+def _cleanup_old_rotated_files(directory: Path, max_rotated_count: int) -> None:
+    """Remove the oldest rotated files, keeping at most max_rotated_count."""
+    rotated_files: list[Path] = []
+    for child in directory.iterdir():
+        if _ROTATED_JSONL_TIMESTAMP_PATTERN.match(child.name):
+            rotated_files.append(child)
+    rotated_files.sort(key=lambda p: p.name)
+    files_to_remove = rotated_files[:-max_rotated_count] if max_rotated_count > 0 else rotated_files
+    for old_file in files_to_remove:
+        old_file.unlink(missing_ok=True)
+
+
 def make_jsonl_file_sink(
     file_path: str,
     event_type: str,
     event_source: str,
     command: str | None,
     max_size_bytes: int,
+    max_rotated_count: int = 10,
 ) -> Callable[..., None]:
     """Create a loguru sink function that writes flat JSONL to a rotating file.
 
     Bypasses loguru's colorizer entirely by using a callable sink instead of
     a format function. Handles file rotation when the file exceeds max_size_bytes.
+    Keeps at most max_rotated_count rotated files, removing the oldest on rotation.
+    Rotated files are named events.jsonl.<YYYYMMDDHHMMSSffffff>.
     """
     bound_type = event_type
     bound_source = event_source
     bound_command = command
     bound_path = file_path
     bound_max_size = max_size_bytes
+    bound_max_rotated = max_rotated_count
 
     # Mutable state for the file handle
-    state: dict[str, Any] = {"file": None, "size": 0}
+    state: dict[str, Any] = {"file": None, "size": 0, "cleaned_up": False}
 
     def _ensure_file() -> Any:
         if state["file"] is None:
             Path(bound_path).parent.mkdir(parents=True, exist_ok=True)
+            # Clean up old rotated files on first open
+            if not state["cleaned_up"]:
+                _cleanup_old_rotated_files(Path(bound_path).parent, bound_max_rotated)
+                state["cleaned_up"] = True
             state["file"] = open(bound_path, "a")
             try:
                 state["size"] = Path(bound_path).stat().st_size
@@ -271,15 +301,11 @@ def make_jsonl_file_sink(
         if state["size"] >= bound_max_size:
             if state["file"] is not None:
                 state["file"].close()
-            # Rotate: rename current file with numeric suffix
             path = Path(bound_path)
-            rotation_idx = 1
-            while True:
-                rotated = path.with_name(f"{path.name}.{rotation_idx}")
-                if not rotated.exists():
-                    break
-                rotation_idx += 1
+            timestamp = _generate_rotation_timestamp()
+            rotated = path.with_name(f"{path.name}.{timestamp}")
             path.rename(rotated)
+            _cleanup_old_rotated_files(path.parent, bound_max_rotated)
             state["file"] = open(bound_path, "a")
             state["size"] = 0
 

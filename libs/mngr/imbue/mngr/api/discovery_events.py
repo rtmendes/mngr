@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 import threading
 from collections.abc import Callable
@@ -226,17 +227,64 @@ def make_full_discovery_snapshot_event(
 # === File I/O ===
 
 
+_DISCOVERY_MAX_FILE_SIZE_BYTES: Final[int] = 50 * 1024 * 1024
+_DISCOVERY_MAX_ROTATED_COUNT: Final[int] = 1
+
+
 def append_discovery_event(config: MngrConfig, event: EventEnvelope) -> None:
     """Append a single discovery event to the JSONL file.
 
     Creates parent directories if they do not exist. Uses a single write() call
-    for safe concurrent appending under PIPE_BUF.
+    for safe concurrent appending under PIPE_BUF. Rotates the file when it
+    exceeds _DISCOVERY_MAX_FILE_SIZE_BYTES.
     """
     events_path = get_discovery_events_path(config)
     events_path.parent.mkdir(parents=True, exist_ok=True)
+    _rotate_discovery_events_if_needed(events_path)
     line = json.dumps(event.model_dump(mode="json"), separators=(",", ":")) + "\n"
     with open(events_path, "a") as f:
         f.write(line)
+
+
+def _rotate_discovery_events_if_needed(events_path: Path) -> None:
+    """Rotate the discovery events file if it exceeds the size limit."""
+    try:
+        file_size = events_path.stat().st_size
+    except OSError:
+        return
+    if file_size < _DISCOVERY_MAX_FILE_SIZE_BYTES:
+        return
+    timestamp = _generate_discovery_rotation_timestamp()
+    rotated = events_path.with_name(f"{events_path.name}.{timestamp}")
+    try:
+        events_path.rename(rotated)
+    except OSError as e:
+        logger.trace("Failed to rotate discovery events file: {}", e)
+        return
+    _cleanup_old_discovery_rotated_files(events_path.parent)
+
+
+def _generate_discovery_rotation_timestamp() -> str:
+    """Generate a timestamp string for rotated file naming (YYYYMMDDHHMMSSffffff)."""
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond:06d}"
+
+
+_ROTATED_DISCOVERY_FILE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^events\.jsonl\.(\d+)$")
+
+
+def _cleanup_old_discovery_rotated_files(directory: Path) -> None:
+    """Remove old rotated discovery event files, keeping at most _DISCOVERY_MAX_ROTATED_COUNT."""
+    rotated_files: list[Path] = []
+    for child in directory.iterdir():
+        if _ROTATED_DISCOVERY_FILE_PATTERN.match(child.name):
+            rotated_files.append(child)
+    rotated_files.sort(key=lambda p: p.name)
+    files_to_remove = (
+        rotated_files[:-_DISCOVERY_MAX_ROTATED_COUNT] if _DISCOVERY_MAX_ROTATED_COUNT > 0 else rotated_files
+    )
+    for old_file in files_to_remove:
+        old_file.unlink(missing_ok=True)
 
 
 def emit_agent_discovered(config: MngrConfig, agent: DiscoveredAgent) -> None:

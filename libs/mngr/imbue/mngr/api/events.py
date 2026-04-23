@@ -98,7 +98,7 @@ class EventSourceInfo(FrozenModel):
 
     source_path: str = Field(description="Path relative to events dir, e.g. 'messages' or 'logs/mngr'")
     rotated_files: tuple[str, ...] = Field(
-        description="Sorted rotated file names, oldest first (e.g. events.jsonl.3, events.jsonl.2, events.jsonl.1)"
+        description="Sorted rotated file names, oldest first (e.g. events.jsonl.20260301, events.jsonl.20260302)"
     )
     is_current_file_present: bool = Field(default=True, description="Whether events.jsonl exists in this source")
 
@@ -289,15 +289,15 @@ def _read_event_content_via_host(
     display_name: str,
 ) -> str:
     """Read event content by executing cat on the online host."""
-    with log_span("Reading event file '{}' for {} via host", event_file_name, display_name):
-        file_path = events_path / event_file_name
-        result = online_host.execute_idempotent_command(
-            f"cat {shlex.quote(str(file_path))}",
-            timeout_seconds=30.0,
-        )
-        if not result.success:
-            raise MngrError(f"Failed to read event file '{event_file_name}': {result.stderr}")
-        return result.stdout
+    logger.trace("Reading event file '{}' for {} via host", event_file_name, display_name)
+    file_path = events_path / event_file_name
+    result = online_host.execute_idempotent_command(
+        f"cat {shlex.quote(str(file_path))}",
+        timeout_seconds=30.0,
+    )
+    if not result.success:
+        raise MngrError(f"Failed to read event file '{event_file_name}': {result.stderr}")
+    return result.stdout
 
 
 # =============================================================================
@@ -450,19 +450,18 @@ def _event_passes_cel_filters(
 
 @pure
 def _sort_rotated_files_oldest_first(filenames: Sequence[str]) -> list[str]:
-    """Sort rotated file names so oldest (highest number) comes first.
+    """Sort rotated file names so oldest (lowest timestamp) comes first.
 
-    Input: ['events.jsonl.1', 'events.jsonl.3', 'events.jsonl.2']
-    Output: ['events.jsonl.3', 'events.jsonl.2', 'events.jsonl.1']
+    Input: ['events.jsonl.20260415130000000000', 'events.jsonl.20260415120000000000']
+    Output: ['events.jsonl.20260415120000000000', 'events.jsonl.20260415130000000000']
     """
-    numbered: list[tuple[int, str]] = []
+    timestamped: list[tuple[str, str]] = []
     for name in filenames:
         match = _ROTATED_FILE_PATTERN.match(name)
         if match:
-            numbered.append((int(match.group(1)), name))
-    # Sort by number descending (highest number = oldest)
-    numbered.sort(key=lambda pair: pair[0], reverse=True)
-    return [name for _, name in numbered]
+            timestamped.append((match.group(1), name))
+    timestamped.sort(key=lambda pair: pair[0])
+    return [name for _, name in timestamped]
 
 
 # =============================================================================
@@ -486,13 +485,13 @@ def _discover_event_sources_via_host(
     events_path: Path,
 ) -> list[EventSourceInfo]:
     """Find all events.jsonl files recursively under events_path via host commands."""
-    with log_span("Discovering event sources via host"):
-        cmd = f"find {shlex.quote(str(events_path))} -name 'events.jsonl*' -type f 2>/dev/null | sort; true"
-        result = online_host.execute_idempotent_command(cmd, timeout_seconds=15.0)
-        if not result.stdout.strip():
-            return []
+    logger.trace("Discovering event sources via host")
+    cmd = f"find {shlex.quote(str(events_path))} -name 'events.jsonl*' -type f 2>/dev/null | sort; true"
+    result = online_host.execute_idempotent_command(cmd, timeout_seconds=15.0)
+    if not result.stdout.strip():
+        return []
 
-        return _parse_discovered_files(result.stdout, str(events_path))
+    return _parse_discovered_files(result.stdout, str(events_path))
 
 
 @pure

@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import tomllib
 from collections.abc import Callable
+from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from typing import Any
@@ -113,18 +115,39 @@ def _format_nanosecond_timestamp(dt: Any) -> str:
     return utc_dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{utc_dt.microsecond * 1000:09d}Z"
 
 
+_ROTATED_WATCHER_FILE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^events\.jsonl\.(\d+)$")
+
+_DEFAULT_MAX_ROTATED_COUNT: Final[int] = 10
+
+
+def _cleanup_old_watcher_rotated_files(directory: Path, max_rotated_count: int) -> None:
+    """Remove the oldest rotated files, keeping at most max_rotated_count."""
+    rotated_files: list[Path] = []
+    for child in directory.iterdir():
+        if _ROTATED_WATCHER_FILE_PATTERN.match(child.name):
+            rotated_files.append(child)
+    rotated_files.sort(key=lambda p: p.name)
+    files_to_remove = rotated_files[:-max_rotated_count] if max_rotated_count > 0 else rotated_files
+    for old_file in files_to_remove:
+        old_file.unlink(missing_ok=True)
+
+
 def _make_jsonl_file_sink(
     file_path: str,
     event_type: str,
     event_source: str,
     max_size_bytes: int = 10 * 1024 * 1024,
+    max_rotated_count: int = _DEFAULT_MAX_ROTATED_COUNT,
 ) -> Callable[..., None]:
     """Create a loguru sink function that writes flat JSONL to a rotating file."""
-    state: dict[str, Any] = {"file": None, "size": 0}
+    state: dict[str, Any] = {"file": None, "size": 0, "cleaned_up": False}
 
     def _ensure_file() -> Any:
         if state["file"] is None:
             Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+            if not state["cleaned_up"]:
+                _cleanup_old_watcher_rotated_files(Path(file_path).parent, max_rotated_count)
+                state["cleaned_up"] = True
             state["file"] = open(file_path, "a")
             try:
                 state["size"] = Path(file_path).stat().st_size
@@ -138,8 +161,11 @@ def _make_jsonl_file_sink(
                 state["file"].close()
                 state["file"] = None
             path = Path(file_path)
-            rotation_idx = next(idx for idx in range(1, 10000) if not path.with_name(f"{path.name}.{idx}").exists())
-            path.rename(path.with_name(f"{path.name}.{rotation_idx}"))
+            now = datetime.now(timezone.utc)
+            timestamp = now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond:06d}"
+            rotated = path.with_name(f"{path.name}.{timestamp}")
+            path.rename(rotated)
+            _cleanup_old_watcher_rotated_files(path.parent, max_rotated_count)
             state["size"] = 0
 
     def sink(message: Any) -> None:
