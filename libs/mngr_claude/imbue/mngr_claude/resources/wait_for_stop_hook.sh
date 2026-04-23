@@ -201,6 +201,7 @@ INITIAL_HOOKS=$(get_other_stop_hooks "$CLAUDE_PID" "$OUR_WRAPPER")
 
 if [ -z "$INITIAL_HOOKS" ]; then
     echo "wait_for_stop_hook: no other stop hooks found after grace period"
+    run_post_completion
     mark_inactive
     exit 0
 fi
@@ -226,6 +227,7 @@ while true; do
 
     if [ "$WAITED" -ge "$MAX_WAIT" ]; then
         echo "wait_for_stop_hook: timed out after ${MAX_WAIT}s waiting for hooks, marking inactive" >&2
+        run_post_completion
         mark_inactive
         exit 0
     fi
