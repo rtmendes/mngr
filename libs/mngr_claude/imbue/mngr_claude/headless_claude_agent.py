@@ -292,15 +292,14 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
             'echo "== DIAG pre-invoke done ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"'
         )
         probe_after = 'echo "== DIAG after-claude rc=$? $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"'
-        # DIAGNOSTIC ablation 4: drop `timeout 60` wrapper on the real
-        # invocation. Everything else identical to the passing bundle.
-        # If this fails 3/3, `timeout` itself is the fix -- most likely
-        # via its process-group / signal-session semantics that claude
-        # enters under. If it passes 3/3, the fix is somewhere else in
-        # the bundle (markers, subshell, or stderr redirect shape).
+        # DIAGNOSTIC ablation 5: drop timeout 60, keep probes, redirect
+        # stdin from /dev/null. Hypothesis: timeout's real effect is
+        # detaching stdin from the tmux pane's controlling TTY, and
+        # `</dev/null` achieves the same without the GNU-coreutils
+        # dependency.
         return CommandString(
             f"{probe_before}; "
-            f'{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
+            f'{cmd_str} < /dev/null > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
             f"{probe_after}"
         )
 
