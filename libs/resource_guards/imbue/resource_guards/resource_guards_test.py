@@ -280,10 +280,9 @@ def test_start_and_stop_resource_guards_round_trip(
     register_resource_guard("echo")
     register_sdk_guard("test_sdk", lambda: install_called.append(1), lambda: cleanup_called.append(1))
 
-    # The outer pytest session already registered a _ResourceGuardPlugin at sessionstart
-    # so the runtest hooks fire for every test. start_resource_guards() is idempotent
-    # when a plugin is already registered, which means the one on the pluginmanager
-    # below is that outer plugin -- not a new one we just created.
+    # The outer session registered its _ResourceGuardPlugin at pytest_sessionstart. Capture
+    # it so we can verify stop_resource_guards() does NOT rip that plugin out when this
+    # test's start_resource_guards() was a no-op for plugin registration.
     outer_plugin = request.config.pluginmanager.get_plugin("resource_guards")
 
     start_resource_guards(request.session)
@@ -292,24 +291,15 @@ def test_start_and_stop_resource_guards_round_trip(
     assert install_called == [1]
     assert request.config.pluginmanager.get_plugin("resource_guards") is not None
 
-    # Temporarily unregister so the plugin reference looks clean for stop_resource_guards,
-    # but re-register the outer plugin afterwards so every subsequent test in this session
-    # still gets _pytest_runtest_setup/_teardown/_makereport -- without those hooks the
-    # per-test env_patcher never runs and the previous test's _PYTEST_GUARD_* env leaks
-    # into every subsequent test, blocking any resource invocation even when marked.
-    request.config.pluginmanager.unregister(name="resource_guards")
-
     stop_resource_guards()
 
     assert resource_guards._guard_wrapper_dir is None
     assert cleanup_called == [1]
-
-    if outer_plugin is not None:
-        request.config.pluginmanager.register(outer_plugin, "resource_guards")
-
-    # Regression: without re-registration the outer session's runtest hooks stop firing,
-    # leaving env vars from the most-recent test stuck on every subsequent test.
-    assert outer_plugin is None or request.config.pluginmanager.get_plugin("resource_guards") is outer_plugin
+    # Regression: the outer session's plugin must survive stop_resource_guards(), since this
+    # test's start call did not register it. Without ownership tracking in start/stop, the
+    # outer plugin would be unregistered here and every subsequent test in the session
+    # would lose its runtest_setup/teardown hooks.
+    assert request.config.pluginmanager.get_plugin("resource_guards") is outer_plugin
 
 
 # ---------------------------------------------------------------------------
