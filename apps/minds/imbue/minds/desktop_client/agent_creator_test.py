@@ -10,7 +10,10 @@ from imbue.minds.desktop_client.agent_creator import AgentCreationStatus
 from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.agent_creator import _build_mngr_create_command
 from imbue.minds.desktop_client.agent_creator import _is_local_path
+from imbue.minds.desktop_client.agent_creator import _load_or_create_leased_host_keypair
 from imbue.minds.desktop_client.agent_creator import _make_host_name
+from imbue.minds.desktop_client.agent_creator import _remove_dynamic_host_entry
+from imbue.minds.desktop_client.agent_creator import _write_dynamic_host_entry
 from imbue.minds.desktop_client.agent_creator import checkout_branch
 from imbue.minds.desktop_client.agent_creator import clone_git_repo
 from imbue.minds.desktop_client.agent_creator import extract_repo_name
@@ -411,3 +414,166 @@ def test_agent_creator_server_port_defaults_to_zero() -> None:
         paths=WorkspacePaths(data_dir=Path("/tmp/test")),
     )
     assert creator.server_port == 0
+
+
+# -- LEASED mode tests --
+
+
+def test_build_mngr_create_command_raises_for_leased_mode() -> None:
+    """LEASED mode should not use mngr create and must raise."""
+    with pytest.raises(MngrCommandError, match="LEASED mode does not use mngr create"):
+        _build_mngr_create_command(
+            launch_mode=LaunchMode.LEASED,
+            agent_name=AgentName("test-agent"),
+            agent_id=AgentId(),
+        )
+
+
+# -- _load_or_create_leased_host_keypair tests --
+
+
+def test_load_or_create_leased_host_keypair_generates_new_key(tmp_path: Path) -> None:
+    """First call should generate a new ed25519 keypair."""
+    private_key_path, public_key = _load_or_create_leased_host_keypair(tmp_path)
+
+    assert private_key_path.exists()
+    assert private_key_path.parent == tmp_path / "ssh" / "keys" / "leased_host"
+    assert private_key_path.name == "id_ed25519"
+    assert (private_key_path.parent / "id_ed25519.pub").exists()
+    assert public_key.startswith("ssh-ed25519 ")
+
+
+def test_load_or_create_leased_host_keypair_reuses_existing_key(tmp_path: Path) -> None:
+    """Second call should return the same keypair without regenerating."""
+    private_key_path_1, public_key_1 = _load_or_create_leased_host_keypair(tmp_path)
+    private_key_path_2, public_key_2 = _load_or_create_leased_host_keypair(tmp_path)
+
+    assert private_key_path_1 == private_key_path_2
+    assert public_key_1 == public_key_2
+
+
+# -- _write_dynamic_host_entry tests --
+
+
+def test_write_dynamic_host_entry_creates_valid_toml(tmp_path: Path) -> None:
+    """Writing a host entry should produce a valid TOML file."""
+    hosts_file = tmp_path / "dynamic_hosts.toml"
+    _write_dynamic_host_entry(
+        dynamic_hosts_file=hosts_file,
+        host_name="test-host",
+        address="10.0.0.1",
+        port=2222,
+        user="root",
+        key_file=Path("/home/user/.ssh/id_ed25519"),
+    )
+
+    import tomlkit
+
+    content = tomlkit.loads(hosts_file.read_text())
+    assert "test-host" in content
+    assert content["test-host"]["address"] == "10.0.0.1"
+    assert content["test-host"]["port"] == 2222
+    assert content["test-host"]["user"] == "root"
+    assert content["test-host"]["key_file"] == "/home/user/.ssh/id_ed25519"
+
+
+def test_write_dynamic_host_entry_appends_to_existing(tmp_path: Path) -> None:
+    """Writing a second host entry should preserve the first."""
+    hosts_file = tmp_path / "dynamic_hosts.toml"
+    _write_dynamic_host_entry(
+        dynamic_hosts_file=hosts_file,
+        host_name="host-a",
+        address="10.0.0.1",
+        port=22,
+        user="root",
+        key_file=Path("/key1"),
+    )
+    _write_dynamic_host_entry(
+        dynamic_hosts_file=hosts_file,
+        host_name="host-b",
+        address="10.0.0.2",
+        port=2222,
+        user="ubuntu",
+        key_file=Path("/key2"),
+    )
+
+    import tomlkit
+
+    content = tomlkit.loads(hosts_file.read_text())
+    assert "host-a" in content
+    assert "host-b" in content
+    assert content["host-a"]["address"] == "10.0.0.1"
+    assert content["host-b"]["address"] == "10.0.0.2"
+
+
+def test_write_dynamic_host_entry_creates_parent_directories(tmp_path: Path) -> None:
+    """The function should create parent directories if they do not exist."""
+    hosts_file = tmp_path / "nested" / "dir" / "dynamic_hosts.toml"
+    _write_dynamic_host_entry(
+        dynamic_hosts_file=hosts_file,
+        host_name="test-host",
+        address="10.0.0.1",
+        port=22,
+        user="root",
+        key_file=Path("/key"),
+    )
+    assert hosts_file.exists()
+
+
+# -- _remove_dynamic_host_entry tests --
+
+
+def test_remove_dynamic_host_entry_removes_section(tmp_path: Path) -> None:
+    """Removing a host entry should delete its section from the TOML file."""
+    hosts_file = tmp_path / "dynamic_hosts.toml"
+    _write_dynamic_host_entry(
+        dynamic_hosts_file=hosts_file,
+        host_name="host-a",
+        address="10.0.0.1",
+        port=22,
+        user="root",
+        key_file=Path("/key1"),
+    )
+    _write_dynamic_host_entry(
+        dynamic_hosts_file=hosts_file,
+        host_name="host-b",
+        address="10.0.0.2",
+        port=2222,
+        user="ubuntu",
+        key_file=Path("/key2"),
+    )
+
+    _remove_dynamic_host_entry(hosts_file, "host-a")
+
+    import tomlkit
+
+    content = tomlkit.loads(hosts_file.read_text())
+    assert "host-a" not in content
+    assert "host-b" in content
+
+
+def test_remove_dynamic_host_entry_noop_for_missing_file(tmp_path: Path) -> None:
+    """Removing from a nonexistent file should be a no-op."""
+    hosts_file = tmp_path / "nonexistent.toml"
+    _remove_dynamic_host_entry(hosts_file, "host-a")
+    assert not hosts_file.exists()
+
+
+def test_remove_dynamic_host_entry_noop_for_missing_section(tmp_path: Path) -> None:
+    """Removing a nonexistent section should be a no-op."""
+    hosts_file = tmp_path / "dynamic_hosts.toml"
+    _write_dynamic_host_entry(
+        dynamic_hosts_file=hosts_file,
+        host_name="host-a",
+        address="10.0.0.1",
+        port=22,
+        user="root",
+        key_file=Path("/key"),
+    )
+
+    _remove_dynamic_host_entry(hosts_file, "host-b")
+
+    import tomlkit
+
+    content = tomlkit.loads(hosts_file.read_text())
+    assert "host-a" in content
