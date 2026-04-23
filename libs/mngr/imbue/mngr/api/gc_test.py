@@ -2146,6 +2146,17 @@ def test_get_orphaned_source_dirs_keeps_clone_with_unpushed_branch(
     assert [info.path for info in kept] == [clone]
 
 
+def test_local_branches_not_on_any_remote_treats_failure_as_unpushed(local_host: Host, tmp_path: Path) -> None:
+    """If git for-each-ref fails (e.g. path is not a git repo), report non-empty so
+    the caller keeps the repo rather than deleting it. This guards against data loss
+    when branch enumeration cannot succeed.
+    """
+    not_a_repo = tmp_path / "not-a-repo"
+    not_a_repo.mkdir()
+    result = _local_branches_not_on_any_remote_on_host(local_host, not_a_repo)
+    assert result, "failure must be treated as possibly-unpushed so the caller keeps the repo"
+
+
 # =========================================================================
 # gc_machines: online host minimum age and auth error tests
 # =========================================================================

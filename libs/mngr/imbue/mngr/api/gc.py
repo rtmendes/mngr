@@ -850,19 +850,28 @@ def _get_orphaned_source_dirs(
     return deletable, kept
 
 
+_BRANCH_LISTING_FAILED_SENTINEL: Final[str] = "<branch listing failed>"
+
+
 def _local_branches_not_on_any_remote_on_host(host: OnlineHostInterface, repo_path: Path) -> list[str]:
     """Return local branches in repo_path whose tip is not contained in any remote ref.
 
     Runs git via host.execute_idempotent_command so this works for both local and remote
-    hosts. Failure is treated as "possibly unpushed" to stay on the safe side.
+    hosts. Failure is treated as "possibly unpushed" to stay on the safe side: we return
+    a non-empty list containing a sentinel so the caller keeps the repo instead of
+    deleting it.
     """
     quoted_path = shlex.quote(str(repo_path))
     list_result = host.execute_idempotent_command(
         f"git -C {quoted_path} for-each-ref --format={shlex.quote('%(refname:short)')} refs/heads/"
     )
     if not list_result.success:
-        logger.debug("Failed to list local branches in {}: {}", repo_path, list_result.stderr.strip())
-        return []
+        logger.warning(
+            "Failed to list local branches in {} ({}); treating as possibly-unpushed to avoid data loss.",
+            repo_path,
+            list_result.stderr.strip(),
+        )
+        return [_BRANCH_LISTING_FAILED_SENTINEL]
 
     unpushed: list[str] = []
     for branch in list_result.stdout.splitlines():
