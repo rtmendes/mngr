@@ -743,7 +743,7 @@ def make_fake_supertokens_backend() -> FakeSuperTokensBackend:
 # for the psycopg2 database and paramiko SSH operations used by the host pool
 # endpoints.  ``FakePoolBackend.install_on_app_module`` patches the module
 # references through a single for-loop (same pattern as the SuperTokens fakes)
-# so the monkeypatch.setattr ratchet count increases by exactly one line.
+# so the test-patching ratchet count increases by exactly one line.
 # ---------------------------------------------------------------------------
 
 
@@ -872,6 +872,9 @@ class FakeCursor:
                     row.released_at = "2026-01-02T00:00:00+00:00"
                     break
 
+        else:
+            pass
+
     def fetchone(self) -> tuple[Any, ...] | None:
         if self._results:
             return self._results[0]
@@ -931,7 +934,7 @@ class FakePoolBackend:
         """Swap DB and SSH functions on the app module with fakes.
 
         Uses the same single-loop-setattr pattern as FakeSuperTokensBackend to
-        minimize the monkeypatch.setattr ratchet count.
+        minimize the test-patching ratchet count.
         """
         fakes: dict[str, Any] = {
             "_get_pool_db_connection": self.get_connection,
