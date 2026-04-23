@@ -321,9 +321,10 @@ def _offer_diagnose(prompt_file_path: Path) -> None:
 def handle_unexpected_error(error: Exception, is_interactive: bool | None = None) -> NoReturn:
     """Handle an unexpected error by logging the traceback and suggesting a diagnosis.
 
-    Writes the error traceback + a diagnostic prompt to a temp file, then prints
-    a copy-paste-ready `mngr create` command that launches an agent in a worktree
-    of the mngr repo with that prompt as its initial message.
+    Writes a diagnostic prompt (which embeds the error traceback) to a temp
+    file, then prints a copy-paste-ready `mngr create` command that launches
+    an agent in a worktree of the mngr repo with that prompt as its initial
+    message.
     """
     tb_str = "".join(traceback.format_exception(type(error), error, error.__traceback__))
 
