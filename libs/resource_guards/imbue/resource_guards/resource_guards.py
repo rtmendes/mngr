@@ -38,6 +38,7 @@ from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
+import pluggy
 import pytest
 
 
@@ -83,7 +84,7 @@ _guarded_resources: list[str] = []
 # out and leave every subsequent test without its runtest_setup/teardown.
 _owns_guard_plugin: bool = False
 _guard_plugin: "_ResourceGuardPlugin | None" = None
-_guard_plugin_manager: Any | None = None
+_guard_plugin_manager: pluggy.PluginManager | None = None
 
 # Module-level state for SDK guards. Each entry is (name, install_fn, cleanup_fn).
 # Populated by register_sdk_guard() before create_sdk_resource_guards() runs.
