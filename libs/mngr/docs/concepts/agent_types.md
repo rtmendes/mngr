@@ -93,4 +93,4 @@ Agent types come from installed plugins and your config:
 mngr plugin list    # Shows installed plugins (listing agent types per plugin [future])
 ```
 
-Built-in plugins provide `claude` and `codex` by default.
+Built-in plugins provide `claude`, `codex`, and `command` by default.
