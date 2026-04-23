@@ -11,8 +11,9 @@
 #   2. Run post-completion actions:
 #        - If the code-guardian orchestrator wrote
 #          .reviewer/outputs/orchestrator_success, upload this commit's
-#          autofix issue files (.reviewer/outputs/autofix/issues/*.jsonl)
-#          to the code-review-json Modal volume and remove the marker.
+#          autofix issue file
+#          (.reviewer/outputs/autofix/issues/${HEAD_hash}.jsonl) to the
+#          code-review-json Modal volume and remove the marker.
 #        - Invoke notify_user (best-effort; silently skipped if the command
 #          is not defined).
 #   3. Mark the agent inactive and exit.
@@ -125,33 +126,32 @@ mark_inactive() {
 }
 
 # --- Post-completion: upload autofix issues to Modal volume (best-effort) ---
+# Uploads only the current commit's issue file (autofix writes one file per
+# commit at .reviewer/outputs/autofix/issues/{hash}.jsonl). Files from prior
+# commits are ignored so that each commit's upload contains exactly its own
+# issues.
 upload_autofix_issues() {
-    local issues_dir=".reviewer/outputs/autofix/issues"
-    if [ ! -d "$issues_dir" ] || ! ls "$issues_dir"/*.jsonl >/dev/null 2>&1; then
+    local commit
+    commit=$(git rev-parse HEAD 2>/dev/null) || return
+    [ -n "$commit" ] || return
+
+    local issues_file=".reviewer/outputs/autofix/issues/${commit}.jsonl"
+    if [ ! -s "$issues_file" ]; then
         return
     fi
 
-    local commit
-    commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
     local nested_path="${commit:0:4}/${commit:4:4}/${commit:8:4}/${commit:12:4}/${commit:16}"
-
     local volume_name="code-review-json"
     local volume_mount="/code_reviews"
 
-    local combined
-    combined=$(mktemp)
-    cat "$issues_dir"/*.jsonl > "$combined"
-
     # Method 1: Copy to mounted volume + sync (Modal sandbox)
     local mount_dir="${volume_mount}/${nested_path}"
-    if mkdir -p "${mount_dir}" 2>/dev/null && cp "$combined" "${mount_dir}/autofix.json" 2>/dev/null; then
+    if mkdir -p "${mount_dir}" 2>/dev/null && cp "$issues_file" "${mount_dir}/autofix.json" 2>/dev/null; then
         sync "${volume_mount}" 2>/dev/null || true
     fi
 
     # Method 2: Upload via modal CLI (local machine with Modal credentials)
-    uv run modal volume put "${volume_name}" "$combined" "/${nested_path}/autofix.json" --force 2>/dev/null || true
-
-    rm -f "$combined"
+    uv run modal volume put "${volume_name}" "$issues_file" "/${nested_path}/autofix.json" --force 2>/dev/null || true
 }
 
 # --- Post-completion actions (run after all other stop hooks finish) ---
