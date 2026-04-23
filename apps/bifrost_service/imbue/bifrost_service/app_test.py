@@ -211,8 +211,11 @@ def test_delete_virtual_key_accepts_empty_body_response() -> None:
         transport=transport,
     )
 
-    # Should not raise. A JSONDecodeError here would indicate the regression.
-    client.delete_virtual_key("vk-empty")
+    try:
+        # Should not raise. A JSONDecodeError here would indicate the regression.
+        client.delete_virtual_key("vk-empty")
+    finally:
+        client.client.close()
 
 
 def test_delete_virtual_key_accepts_empty_body_on_200() -> None:
