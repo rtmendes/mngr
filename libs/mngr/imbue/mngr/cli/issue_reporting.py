@@ -159,6 +159,12 @@ def _search_issues_via_gh_cli(search_text: str, cg: ConcurrencyGroup) -> Existin
     )
 
 
+# FIXME: to make this sane, we want to search for the type of error being
+# raised plus the function it is being raised from (the lowest-level frame in
+# the traceback that is actually from one of our libraries). Otherwise we're
+# likely to miss existing issues whenever the error message contains anything
+# random or dynamic (memory addresses, random IDs, timestamps, etc.) that
+# prevents a substring match against existing issues.
 def search_for_existing_issue(search_text: str, cg: ConcurrencyGroup) -> ExistingIssue | None:
     """Search for an existing GitHub issue matching the error message."""
     try:
