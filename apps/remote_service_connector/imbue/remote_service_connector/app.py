@@ -18,6 +18,7 @@ import io
 import json
 import logging
 import os
+import shlex
 from collections.abc import Callable
 from collections.abc import Iterator
 from typing import Any
@@ -1238,9 +1239,10 @@ def _append_authorized_key(
         client.connect(hostname=host, port=port, username=user, pkey=private_key, timeout=15)
         key_line = public_key_to_add.strip()
         commands = (
-            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-            f"echo '{key_line}' >> ~/.ssh/authorized_keys && "
-            "chmod 600 ~/.ssh/authorized_keys"
+            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo {} >> ~/.ssh/authorized_keys && ".format(
+                shlex.quote(key_line)
+            )
+            + "chmod 600 ~/.ssh/authorized_keys"
         )
         _stdin, _stdout, stderr = client.exec_command(commands)
         exit_status = _stdout.channel.recv_exit_status()
