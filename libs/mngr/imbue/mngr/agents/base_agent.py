@@ -97,7 +97,7 @@ class BaseAgent(AgentInterface[AgentConfigT]):
         agent_args: tuple[str, ...],
         command_override: CommandString | None,
     ) -> CommandString:
-        """Default: ``command_override`` or ``agent_config.command`` as the base, then append ``cli_args`` and ``agent_args``.
+        """Assemble the agent command from an optional base plus ``cli_args`` and ``agent_args``.
 
         The base comes from ``command_override`` if provided, otherwise
         ``agent_config.command`` if set, otherwise nothing. After the base,
