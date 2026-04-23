@@ -158,11 +158,9 @@ def isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("ORIGINAL_CLAUDE_CONFIG_DIR", raising=False)
 
-    # Unconditionally (over)write the .gitconfig so the documented contract --
-    # every isolate_home() call re-establishes the safe.directory='*' exemption
-    # inside the fake HOME -- holds regardless of what a caller may have
-    # dropped into tmp_path. isolate_git() uses the same pattern and will
-    # overwrite this with its richer config when both are used together.
+    # Write a minimal .gitconfig with safe.directory='*' so subprocess git
+    # calls from this HOME don't trip git's ownership check. isolate_git()
+    # overwrites this with a richer config when both are used together.
     gitconfig = tmp_path / ".gitconfig"
     gitconfig.write_text("[safe]\n\tdirectory = *\n")
 
@@ -252,15 +250,11 @@ def isolate_git(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     for key, value in _GIT_ISOLATION_ENV.items():
         monkeypatch.setenv(key, value)
 
-    # Unconditionally (over)write the .gitconfig so this function's documented
-    # contract -- default [user] + [init] + [safe] sections in the fake HOME --
-    # holds regardless of whether isolate_home() ran first (isolate_home()
-    # writes a minimal [safe]-only .gitconfig for release-sandbox subprocess
-    # callers that don't go through isolate_git). safe.directory='*' is needed
-    # so release tests running as root against /code/mngr (owned by root in
-    # the offload sandbox) don't trip git's ownership check -- HOME points at
-    # a tmp dir set by isolate_home, so the image-time /root/.gitconfig
-    # safe.directory entry isn't visible to the subprocess.
+    # Overwrite the minimal .gitconfig isolate_home() wrote with the richer
+    # [user] + [init] + [safe] config this function promises. safe.directory='*'
+    # is load-bearing for release tests: they run as root against /code/mngr
+    # in the offload sandbox, and the image-time /root/.gitconfig exemption is
+    # invisible once isolate_home() points HOME at a tmp dir.
     gitconfig = Path.home() / ".gitconfig"
     gitconfig.write_text(
         "[user]\n\tname = Test User\n\temail = test@example.com\n"
