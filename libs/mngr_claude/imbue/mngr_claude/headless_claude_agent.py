@@ -280,27 +280,21 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
         # transient Modal sandbox state.
         parts.extend(["--debug", "all", "--debug-file", '"$MNGR_AGENT_STATE_DIR/claude-debug.log"'])
         cmd_str = " ".join(parts)
-        probe_before = (
-            'echo "== DIAG before-claude $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
-            '(claude --version; echo "help-lines=$(claude --help 2>&1 | wc -l)") '
+        # DIAGNOSTIC ablation 7: dump `type claude` + `type -a claude` +
+        # `declare -f claude` before the real invocation so we can see
+        # if bash has a function/alias named `claude` that's intercepting
+        # direct calls. `env claude` passes (ablation 6) and `timeout 60
+        # claude` passes; both bypass bash function/alias lookup.
+        probe_diag = (
+            'echo "== DIAG claude-lookup $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
+            '(type claude; echo "--"; type -a claude; echo "--"; declare -f claude; echo "--"; '
+            'alias claude 2>&1 || true; echo "--"; command -v claude) '
             '>> "$MNGR_AGENT_STATE_DIR/stderr.log" 2>&1; '
-            'echo "== DIAG trivial-call start $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
-            'timeout 20 claude --print "just say hi" > "$MNGR_AGENT_STATE_DIR/trivial-stdout.txt" '
-            '2>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
-            'echo "== DIAG trivial-call rc=$? $(date -Iseconds) bytes=$(wc -c < \\"$MNGR_AGENT_STATE_DIR/trivial-stdout.txt\\") ==" '
-            '>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
-            'echo "== DIAG pre-invoke done ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"'
+            'echo "== DIAG claude-lookup done ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"'
         )
-        probe_after = 'echo "== DIAG after-claude rc=$? $(date -Iseconds) ==" >> "$MNGR_AGENT_STATE_DIR/stderr.log"'
-        # DIAGNOSTIC ablation 6: `env` wrapper (trivial fork+exec, no
-        # process-group separation, no signal handling, no stdin
-        # redirection). If this passes, merely having a parent wrapper
-        # fork+exec the child is enough. If it fails, timeout's specific
-        # setpgid/setsid semantics are the mechanism.
         return CommandString(
-            f"{probe_before}; "
-            f'env {cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2>> "$MNGR_AGENT_STATE_DIR/stderr.log"; '
-            f"{probe_after}"
+            f"{probe_diag}; "
+            f'env {cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2>> "$MNGR_AGENT_STATE_DIR/stderr.log"'
         )
 
     def _get_stdout_path(self) -> Path:
