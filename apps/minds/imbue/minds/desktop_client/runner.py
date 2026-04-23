@@ -151,7 +151,7 @@ def start_desktop_client(
 
     minds_config = MindsConfig(data_dir=data_directory)
     cloudflare_client = _build_cloudflare_client(minds_config.cloudflare_forwarding_url)
-    agent_creator = AgentCreator(paths=paths)
+    agent_creator = AgentCreator(paths=paths, latchkey_gateway_manager=latchkey_gateway_manager)
     telegram_orchestrator = TelegramSetupOrchestrator(paths=paths)
     is_electron = os.getenv("MINDS_ELECTRON") == "1"
     notification_dispatcher = NotificationDispatcher(is_electron=is_electron)

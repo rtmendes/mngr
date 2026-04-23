@@ -10,12 +10,14 @@ from imbue.minds.desktop_client.agent_creator import AgentCreationStatus
 from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.agent_creator import _build_mngr_create_command
 from imbue.minds.desktop_client.agent_creator import _is_local_path
+from imbue.minds.desktop_client.agent_creator import _launch_mode_should_get_latchkey_gateway
 from imbue.minds.desktop_client.agent_creator import _make_host_name
 from imbue.minds.desktop_client.agent_creator import checkout_branch
 from imbue.minds.desktop_client.agent_creator import clone_git_repo
 from imbue.minds.desktop_client.agent_creator import extract_repo_name
 from imbue.minds.desktop_client.agent_creator import make_log_callback
 from imbue.minds.desktop_client.agent_creator import run_mngr_create
+from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManager
 from imbue.minds.errors import GitCloneError
 from imbue.minds.errors import GitOperationError
 from imbue.minds.errors import MngrCommandError
@@ -384,3 +386,88 @@ def test_make_log_callback_puts_lines_into_queue() -> None:
     callback("world\n", False)
     assert log_queue.get_nowait() == "hello"
     assert log_queue.get_nowait() == "world"
+
+
+# -- Latchkey gateway env plumbing --
+
+
+def test_launch_mode_should_get_latchkey_gateway_local_reachable() -> None:
+    assert _launch_mode_should_get_latchkey_gateway(LaunchMode.DEV)
+    assert _launch_mode_should_get_latchkey_gateway(LaunchMode.LOCAL)
+    assert _launch_mode_should_get_latchkey_gateway(LaunchMode.LIMA)
+
+
+def test_launch_mode_should_get_latchkey_gateway_excludes_cloud() -> None:
+    assert not _launch_mode_should_get_latchkey_gateway(LaunchMode.CLOUD)
+
+
+def test_build_mngr_create_command_injects_latchkey_gateway_env() -> None:
+    cmd, _api_key = _build_mngr_create_command(
+        launch_mode=LaunchMode.DEV,
+        agent_name=AgentName("test-agent"),
+        agent_id=AgentId(),
+        latchkey_gateway_url="http://127.0.0.1:5050",
+    )
+    env_values = [cmd[i + 1] for i, v in enumerate(cmd) if v == "--env"]
+    assert "LATCHKEY_GATEWAY=http://127.0.0.1:5050" in env_values
+
+
+def test_build_mngr_create_command_omits_latchkey_gateway_env_by_default() -> None:
+    cmd, _api_key = _build_mngr_create_command(
+        launch_mode=LaunchMode.DEV,
+        agent_name=AgentName("test-agent"),
+        agent_id=AgentId(),
+    )
+    env_values = [cmd[i + 1] for i, v in enumerate(cmd) if v == "--env"]
+    assert not any(v.startswith("LATCHKEY_GATEWAY=") for v in env_values)
+
+
+@pytest.mark.timeout(30)
+def test_agent_creator_cleans_up_pre_spawned_latchkey_gateway_on_failure(tmp_path: Path) -> None:
+    """When mngr create fails, any latchkey gateway pre-spawned for the agent must be torn down.
+
+    Uses a fake ``latchkey`` binary so this test does not require a real
+    Latchkey install. The agent creation itself fails because the "local
+    path" does not exist, which is the shortest path to exercising the
+    failure-cleanup branch.
+    """
+    fake_binary = tmp_path / "latchkey"
+    fake_binary.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, socket, signal, sys\n"
+        "host = os.environ['LATCHKEY_GATEWAY_LISTEN_HOST']\n"
+        "port = int(os.environ['LATCHKEY_GATEWAY_LISTEN_PORT'])\n"
+        "sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+        "sock.bind((host, port))\n"
+        "sock.listen(128)\n"
+        "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n"
+        "signal.pause()\n"
+    )
+    fake_binary.chmod(0o755)
+
+    gateway_manager = LatchkeyGatewayManager(latchkey_binary=str(fake_binary))
+    gateway_manager.start(data_dir=tmp_path / "gateway-data")
+    try:
+        creator = AgentCreator(
+            paths=WorkspacePaths(data_dir=tmp_path / "minds"),
+            latchkey_gateway_manager=gateway_manager,
+        )
+        # "Local path" that does not exist -- mngr create will not even get
+        # the chance to fail; _create_agent_background aborts with MngrCommandError.
+        agent_id = creator.start_creation("/definitely/not/here", launch_mode=LaunchMode.DEV)
+
+        for _ in range(100):
+            info = creator.get_creation_info(agent_id)
+            if info is not None and info.status == AgentCreationStatus.FAILED:
+                break
+            threading.Event().wait(0.05)
+        info = creator.get_creation_info(agent_id)
+        assert info is not None
+        assert info.status == AgentCreationStatus.FAILED
+        creator.wait_for_all()
+
+        # No lingering gateway or record for this agent.
+        assert gateway_manager.get_gateway_info(agent_id) is None
+    finally:
+        gateway_manager.stop()
