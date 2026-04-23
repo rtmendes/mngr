@@ -28,6 +28,7 @@ from watchdog.observers import Observer
 
 from imbue.imbue_common.logging import cleanup_old_rotated_files
 from imbue.imbue_common.logging import generate_rotation_timestamp
+from imbue.imbue_common.logging import rotation_lock
 
 
 class MngrNotInstalledError(RuntimeError):
@@ -144,15 +145,27 @@ def _make_jsonl_file_sink(
 
     def _rotate_if_needed() -> None:
         if state["size"] >= max_size_bytes:
-            if state["file"] is not None:
-                state["file"].close()
-                state["file"] = None
             path = Path(file_path)
-            timestamp = generate_rotation_timestamp()
-            rotated = path.with_name(f"{path.name}.{timestamp}")
-            path.rename(rotated)
-            cleanup_old_rotated_files(path.parent, max_rotated_count)
-            state["size"] = 0
+            with rotation_lock(path.parent):
+                # Re-check actual file size: another process may have already rotated
+                try:
+                    actual_size = path.stat().st_size
+                except OSError:
+                    actual_size = 0
+                if actual_size < max_size_bytes:
+                    if state["file"] is not None:
+                        state["file"].close()
+                        state["file"] = None
+                    state["size"] = actual_size
+                    return
+                if state["file"] is not None:
+                    state["file"].close()
+                    state["file"] = None
+                timestamp = generate_rotation_timestamp()
+                rotated = path.with_name(f"{path.name}.{timestamp}")
+                path.rename(rotated)
+                cleanup_old_rotated_files(path.parent, max_rotated_count)
+                state["size"] = 0
 
     def sink(message: Any) -> None:
         record = message.record

@@ -1,3 +1,4 @@
+import fcntl
 import functools
 import inspect
 import json
@@ -239,6 +240,42 @@ def _build_flat_log_dict(
 
 ROTATED_JSONL_PATTERN: Final[re.Pattern[str]] = re.compile(r"^events\.jsonl\.(\d+)$")
 
+_ROTATION_LOCK_FILENAME: Final[str] = ".rotation.lock"
+_ROTATION_LOCK_WARNING_SECONDS: Final[float] = 3.0
+
+
+@contextmanager
+def rotation_lock(directory: Path) -> Iterator[None]:
+    """Acquire an exclusive file lock for rotation operations in a directory.
+
+    Uses fcntl.flock which is automatically released when the fd is closed,
+    including if the process dies unexpectedly (the kernel closes the fd).
+    Emits a warning if acquiring or holding the lock takes too long.
+    """
+    lock_path = directory / _ROTATION_LOCK_FILENAME
+    directory.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+    try:
+        acquire_start = time.monotonic()
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            logger.warning("Waiting for rotation lock at {}", lock_path)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            acquire_elapsed = time.monotonic() - acquire_start
+            if acquire_elapsed > _ROTATION_LOCK_WARNING_SECONDS:
+                logger.warning("Rotation lock at {} took {:.1f}s to acquire", lock_path, acquire_elapsed)
+
+        hold_start = time.monotonic()
+        yield
+
+        hold_elapsed = time.monotonic() - hold_start
+        if hold_elapsed > _ROTATION_LOCK_WARNING_SECONDS:
+            logger.warning("Rotation lock at {} was held for {:.1f}s", lock_path, hold_elapsed)
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
 
 def generate_rotation_timestamp() -> str:
     """Generate a timestamp string for rotated file naming (YYYYMMDDHHMMSSffffff)."""
@@ -272,6 +309,7 @@ def make_jsonl_file_sink(
     a format function. Handles file rotation when the file exceeds max_size_bytes.
     Keeps at most max_rotated_count rotated files, removing the oldest on rotation.
     Rotated files are named events.jsonl.<YYYYMMDDHHMMSSffffff>.
+    Uses cooperative file locking to prevent races when multiple processes rotate.
     """
     bound_type = event_type
     bound_source = event_source
@@ -299,15 +337,28 @@ def make_jsonl_file_sink(
 
     def _rotate_if_needed() -> None:
         if state["size"] >= bound_max_size:
-            if state["file"] is not None:
-                state["file"].close()
             path = Path(bound_path)
-            timestamp = generate_rotation_timestamp()
-            rotated = path.with_name(f"{path.name}.{timestamp}")
-            path.rename(rotated)
-            cleanup_old_rotated_files(path.parent, bound_max_rotated)
-            state["file"] = open(bound_path, "a")
-            state["size"] = 0
+            with rotation_lock(path.parent):
+                # Re-check actual file size: another process may have already rotated
+                try:
+                    actual_size = path.stat().st_size
+                except OSError:
+                    actual_size = 0
+                if actual_size < bound_max_size:
+                    # Already rotated by another process -- reopen our handle
+                    if state["file"] is not None:
+                        state["file"].close()
+                    state["file"] = open(bound_path, "a")
+                    state["size"] = actual_size
+                    return
+                if state["file"] is not None:
+                    state["file"].close()
+                timestamp = generate_rotation_timestamp()
+                rotated = path.with_name(f"{path.name}.{timestamp}")
+                path.rename(rotated)
+                cleanup_old_rotated_files(path.parent, bound_max_rotated)
+                state["file"] = open(bound_path, "a")
+                state["size"] = 0
 
     def sink(message: Any) -> None:
         record = message.record

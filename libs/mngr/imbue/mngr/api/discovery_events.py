@@ -23,6 +23,7 @@ from imbue.imbue_common.logging import cleanup_old_rotated_files
 from imbue.imbue_common.logging import format_nanosecond_iso_timestamp
 from imbue.imbue_common.logging import generate_log_event_id
 from imbue.imbue_common.logging import generate_rotation_timestamp
+from imbue.imbue_common.logging import rotation_lock
 from imbue.imbue_common.pure import pure
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
@@ -255,14 +256,22 @@ def _rotate_discovery_events_if_needed(events_path: Path) -> None:
         return
     if file_size < _DISCOVERY_MAX_FILE_SIZE_BYTES:
         return
-    timestamp = generate_rotation_timestamp()
-    rotated = events_path.with_name(f"{events_path.name}.{timestamp}")
-    try:
-        events_path.rename(rotated)
-    except OSError as e:
-        logger.trace("Failed to rotate discovery events file: {}", e)
-        return
-    cleanup_old_rotated_files(events_path.parent, _DISCOVERY_MAX_ROTATED_COUNT)
+    with rotation_lock(events_path.parent):
+        # Re-check actual size: another process may have already rotated
+        try:
+            actual_size = events_path.stat().st_size
+        except OSError:
+            return
+        if actual_size < _DISCOVERY_MAX_FILE_SIZE_BYTES:
+            return
+        timestamp = generate_rotation_timestamp()
+        rotated = events_path.with_name(f"{events_path.name}.{timestamp}")
+        try:
+            events_path.rename(rotated)
+        except OSError as e:
+            logger.trace("Failed to rotate discovery events file: {}", e)
+            return
+        cleanup_old_rotated_files(events_path.parent, _DISCOVERY_MAX_ROTATED_COUNT)
 
 
 def emit_agent_discovered(config: MngrConfig, agent: DiscoveredAgent) -> None:
