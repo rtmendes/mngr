@@ -237,20 +237,20 @@ def _build_flat_log_dict(
     return event
 
 
-_ROTATED_JSONL_TIMESTAMP_PATTERN: Final[re.Pattern[str]] = re.compile(r"^events\.jsonl\.(\d+)$")
+ROTATED_JSONL_TIMESTAMP_PATTERN: Final[re.Pattern[str]] = re.compile(r"^events\.jsonl\.(\d+)$")
 
 
-def _generate_rotation_timestamp() -> str:
+def generate_rotation_timestamp() -> str:
     """Generate a timestamp string for rotated file naming (YYYYMMDDHHMMSSffffff)."""
     now = datetime.now(timezone.utc)
     return now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond:06d}"
 
 
-def _cleanup_old_rotated_files(directory: Path, max_rotated_count: int) -> None:
+def cleanup_old_rotated_files(directory: Path, max_rotated_count: int) -> None:
     """Remove the oldest rotated files, keeping at most max_rotated_count."""
     rotated_files: list[Path] = []
     for child in directory.iterdir():
-        if _ROTATED_JSONL_TIMESTAMP_PATTERN.match(child.name):
+        if ROTATED_JSONL_TIMESTAMP_PATTERN.match(child.name):
             rotated_files.append(child)
     rotated_files.sort(key=lambda p: p.name)
     files_to_remove = rotated_files[:-max_rotated_count] if max_rotated_count > 0 else rotated_files
@@ -288,7 +288,7 @@ def make_jsonl_file_sink(
             Path(bound_path).parent.mkdir(parents=True, exist_ok=True)
             # Clean up old rotated files on first open
             if not state["cleaned_up"]:
-                _cleanup_old_rotated_files(Path(bound_path).parent, bound_max_rotated)
+                cleanup_old_rotated_files(Path(bound_path).parent, bound_max_rotated)
                 state["cleaned_up"] = True
             state["file"] = open(bound_path, "a")
             try:
@@ -302,10 +302,10 @@ def make_jsonl_file_sink(
             if state["file"] is not None:
                 state["file"].close()
             path = Path(bound_path)
-            timestamp = _generate_rotation_timestamp()
+            timestamp = generate_rotation_timestamp()
             rotated = path.with_name(f"{path.name}.{timestamp}")
             path.rename(rotated)
-            _cleanup_old_rotated_files(path.parent, bound_max_rotated)
+            cleanup_old_rotated_files(path.parent, bound_max_rotated)
             state["file"] = open(bound_path, "a")
             state["size"] = 0
 

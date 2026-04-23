@@ -1,5 +1,4 @@
 import json
-import re
 import sys
 import threading
 from collections.abc import Callable
@@ -20,8 +19,10 @@ from imbue.imbue_common.event_envelope import EventId
 from imbue.imbue_common.event_envelope import EventSource
 from imbue.imbue_common.event_envelope import EventType
 from imbue.imbue_common.event_envelope import IsoTimestamp
+from imbue.imbue_common.logging import cleanup_old_rotated_files
 from imbue.imbue_common.logging import format_nanosecond_iso_timestamp
 from imbue.imbue_common.logging import generate_log_event_id
+from imbue.imbue_common.logging import generate_rotation_timestamp
 from imbue.imbue_common.pure import pure
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
@@ -254,37 +255,14 @@ def _rotate_discovery_events_if_needed(events_path: Path) -> None:
         return
     if file_size < _DISCOVERY_MAX_FILE_SIZE_BYTES:
         return
-    timestamp = _generate_discovery_rotation_timestamp()
+    timestamp = generate_rotation_timestamp()
     rotated = events_path.with_name(f"{events_path.name}.{timestamp}")
     try:
         events_path.rename(rotated)
     except OSError as e:
         logger.trace("Failed to rotate discovery events file: {}", e)
         return
-    _cleanup_old_discovery_rotated_files(events_path.parent)
-
-
-def _generate_discovery_rotation_timestamp() -> str:
-    """Generate a timestamp string for rotated file naming (YYYYMMDDHHMMSSffffff)."""
-    now = datetime.now(timezone.utc)
-    return now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond:06d}"
-
-
-_ROTATED_DISCOVERY_FILE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^events\.jsonl\.(\d+)$")
-
-
-def _cleanup_old_discovery_rotated_files(directory: Path) -> None:
-    """Remove old rotated discovery event files, keeping at most _DISCOVERY_MAX_ROTATED_COUNT."""
-    rotated_files: list[Path] = []
-    for child in directory.iterdir():
-        if _ROTATED_DISCOVERY_FILE_PATTERN.match(child.name):
-            rotated_files.append(child)
-    rotated_files.sort(key=lambda p: p.name)
-    files_to_remove = (
-        rotated_files[:-_DISCOVERY_MAX_ROTATED_COUNT] if _DISCOVERY_MAX_ROTATED_COUNT > 0 else rotated_files
-    )
-    for old_file in files_to_remove:
-        old_file.unlink(missing_ok=True)
+    cleanup_old_rotated_files(events_path.parent, _DISCOVERY_MAX_ROTATED_COUNT)
 
 
 def emit_agent_discovered(config: MngrConfig, agent: DiscoveredAgent) -> None:

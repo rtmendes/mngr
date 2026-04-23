@@ -11,12 +11,10 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import threading
 import tomllib
 from collections.abc import Callable
-from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from typing import Any
@@ -27,6 +25,9 @@ from loguru import logger
 from watchdog.events import FileSystemEvent
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
+
+from imbue.imbue_common.logging import cleanup_old_rotated_files
+from imbue.imbue_common.logging import generate_rotation_timestamp
 
 
 class MngrNotInstalledError(RuntimeError):
@@ -115,21 +116,7 @@ def _format_nanosecond_timestamp(dt: Any) -> str:
     return utc_dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{utc_dt.microsecond * 1000:09d}Z"
 
 
-_ROTATED_WATCHER_FILE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^events\.jsonl\.(\d+)$")
-
 _DEFAULT_MAX_ROTATED_COUNT: Final[int] = 10
-
-
-def _cleanup_old_watcher_rotated_files(directory: Path, max_rotated_count: int) -> None:
-    """Remove the oldest rotated files, keeping at most max_rotated_count."""
-    rotated_files: list[Path] = []
-    for child in directory.iterdir():
-        if _ROTATED_WATCHER_FILE_PATTERN.match(child.name):
-            rotated_files.append(child)
-    rotated_files.sort(key=lambda p: p.name)
-    files_to_remove = rotated_files[:-max_rotated_count] if max_rotated_count > 0 else rotated_files
-    for old_file in files_to_remove:
-        old_file.unlink(missing_ok=True)
 
 
 def _make_jsonl_file_sink(
@@ -146,7 +133,7 @@ def _make_jsonl_file_sink(
         if state["file"] is None:
             Path(file_path).parent.mkdir(parents=True, exist_ok=True)
             if not state["cleaned_up"]:
-                _cleanup_old_watcher_rotated_files(Path(file_path).parent, max_rotated_count)
+                cleanup_old_rotated_files(Path(file_path).parent, max_rotated_count)
                 state["cleaned_up"] = True
             state["file"] = open(file_path, "a")
             try:
@@ -161,11 +148,10 @@ def _make_jsonl_file_sink(
                 state["file"].close()
                 state["file"] = None
             path = Path(file_path)
-            now = datetime.now(timezone.utc)
-            timestamp = now.strftime("%Y%m%d%H%M%S") + f"{now.microsecond:06d}"
+            timestamp = generate_rotation_timestamp()
             rotated = path.with_name(f"{path.name}.{timestamp}")
             path.rename(rotated)
-            _cleanup_old_watcher_rotated_files(path.parent, max_rotated_count)
+            cleanup_old_rotated_files(path.parent, max_rotated_count)
             state["size"] = 0
 
     def sink(message: Any) -> None:
