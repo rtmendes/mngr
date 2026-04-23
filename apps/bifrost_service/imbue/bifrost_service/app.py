@@ -727,7 +727,7 @@ def _init_supertokens() -> None:
     if not connection_uri:
         return
     api_key = os.environ.get("SUPERTOKENS_API_KEY")
-    website_domain = os.environ.get("AUTH_WEBSITE_DOMAIN", "https://example.com")
+    website_domain = os.environ.get("AUTH_WEBSITE_DOMAIN", _DEFAULT_MANAGEMENT_DOMAIN)
     supertokens_init(
         supertokens_config=SupertokensConfig(connection_uri=connection_uri, api_key=api_key),
         app_info=InputAppInfo(
@@ -750,6 +750,16 @@ def _init_supertokens() -> None:
 
 
 _DEPLOY_ENV = os.environ.get("MNGR_DEPLOY_ENV", "production")
+
+# Modal URLs follow ``{workspace}--{app-name}-{function-name}.modal.run``, with
+# underscores in identifiers normalized to hyphens. For this deployment that's
+# ``joshalbrecht--bifrost-<env>-bifrost-management.modal.run``. This fallback
+# is only used when ``AUTH_WEBSITE_DOMAIN`` is not set in the secret; in
+# practice we set it explicitly from ``.minds/<env>/supertokens.sh``. Mirrors
+# the pattern in remote_service_connector so a given deployment has a sensible
+# default domain without depending on the monorepo (app.py is self-contained).
+_MODAL_WORKSPACE = "joshalbrecht"
+_DEFAULT_MANAGEMENT_DOMAIN = f"https://{_MODAL_WORKSPACE}--bifrost-{_DEPLOY_ENV}-bifrost-management.modal.run"
 
 image = (
     modal.Image.debian_slim()
