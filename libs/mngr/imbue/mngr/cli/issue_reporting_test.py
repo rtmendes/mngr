@@ -404,8 +404,10 @@ def test_offer_diagnose_skips_when_autonomous(monkeypatch: pytest.MonkeyPatch) -
     assert log_output.getvalue() == ""
 
 
-def test_offer_diagnose_prints_create_command() -> None:
+def test_offer_diagnose_prints_create_command(monkeypatch: pytest.MonkeyPatch) -> None:
     """_offer_diagnose prints a `mngr create` command referencing the prompt file."""
+    # Clear any inherited IS_AUTONOMOUS so the suppress-when-autonomous branch doesn't fire.
+    monkeypatch.delenv("IS_AUTONOMOUS", raising=False)
     prompt_path = Path("/tmp/mngr-diagnose-prompt-abc123.txt")
     with capture_loguru(level="INFO") as log_output:
         _offer_diagnose(prompt_path)
