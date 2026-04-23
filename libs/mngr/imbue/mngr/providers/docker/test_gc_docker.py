@@ -127,8 +127,16 @@ def test_discover_hosts_for_gc_includes_both_providers_when_one_offline(
 def test_gc_machines_destroys_running_docker_host_with_no_agents(
     docker_provider: DockerProviderInstance,
     temp_mngr_ctx: MngrContext,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """GC should destroy a running Docker host that has no agents."""
+    # Override the 10-minute minimum-age guard added in ae44584ac (to protect
+    # real production hosts from transient-empty-state GC). The test needs
+    # GC to destroy a freshly-created host -- waiting 10 minutes isn't
+    # practical, so drop the threshold to 0 for this test. The live
+    # provider is otherwise exercised (real docker create + destroy).
+    monkeypatch.setattr(docker_provider, "get_min_online_host_age_seconds", lambda: 0.0)
+
     host = docker_provider.create_host(HostName("test-gc-destroy"))
     host_id = host.id
 
