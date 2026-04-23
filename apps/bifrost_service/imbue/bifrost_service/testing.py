@@ -122,7 +122,3 @@ class FakeBifrostAdminClient(BifrostAdminClient):
             **existing,
             "current_usage": float(existing.get("current_usage", 0.0)) + amount,
         }
-
-
-def make_fake_admin_client() -> FakeBifrostAdminClient:
-    return FakeBifrostAdminClient()
