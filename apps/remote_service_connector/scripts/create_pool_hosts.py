@@ -62,23 +62,23 @@ def _get_agent_info(agent_name: str) -> dict[str, Any] | None:
         return None
 
     # mngr list --format json outputs one JSON object per line (jsonl-style) or a JSON array
-    for line in result.stdout.strip().splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            data = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        # Parse the JSON output: it may be a list of agents or a single agent object
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict) and item.get("name") == agent_name:
-                    return item
-        elif isinstance(data, dict) and data.get("name") == agent_name:
-            return data
-        else:
-            logger.debug("Skipped unrecognized JSON line: {}", stripped[:100])
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse mngr list output as JSON")
+        return None
+
+    agents: list[dict[str, Any]] = []
+    if isinstance(data, dict) and "agents" in data:
+        agents = data["agents"]
+    elif isinstance(data, list):
+        agents = data
+    elif isinstance(data, dict):
+        agents = [data]
+
+    for agent in agents:
+        if isinstance(agent, dict) and agent.get("name") == agent_name:
+            return agent
     return None
 
 
@@ -238,7 +238,7 @@ def _create_single_pool_host(
     logger.info("  Created agent: {}", agent_name)
 
     # Stop the agent
-    stop_result = _run_mngr_command(["stop", agent_name, "--no-graceful"])
+    stop_result = _run_mngr_command(["stop", agent_name])
     if stop_result.returncode != 0:
         logger.warning("mngr stop failed (continuing): {}", stop_result.stderr)
 
