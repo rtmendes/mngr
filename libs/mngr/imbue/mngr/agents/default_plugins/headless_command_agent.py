@@ -85,9 +85,11 @@ class HeadlessCommand(BaseHeadlessAgent[HeadlessCommandConfig]):
     ) -> CommandString:
         """Build the command with stdout/stderr redirected to files.
 
-        ``initial_message`` is accepted for interface compatibility but is
-        ignored: ``HeadlessCommand`` has no prompt-file protocol, so any
-        user-supplied ``--message`` cannot be delivered. The default
+        ``initial_message`` is forwarded to ``super().assemble_command``
+        for interface compatibility; the base implementation
+        (``BaseAgent.assemble_command``) does not use it. ``HeadlessCommand``
+        has no prompt-file protocol either, so any user-supplied
+        ``--message`` cannot be delivered. The default
         ``StreamingHeadlessAgentMixin.stage_initial_message`` logs a
         warning in that case so the drop is audible; callers that need
         actual prompt delivery should use an agent type that overrides
