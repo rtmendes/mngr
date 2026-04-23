@@ -800,23 +800,26 @@ class AgentCreator(MutableModel):
                 )
             )
 
-            # Persist lease info for later release
-            _save_lease_info(self.paths.data_dir, agent_id, lease_result.host_db_id)
-
-            # Write the dynamic host entry so mngr's SSH provider can discover it
+            # All post-lease operations are wrapped in try/except so that any
+            # failure (disk write, mngr rename/start, etc.) triggers cleanup
+            # and releases the host back to the pool.
             dynamic_hosts_file = self.paths.data_dir / "ssh" / "dynamic_hosts.toml"
             host_entry_name = "leased-{}".format(agent_id)
-            _write_dynamic_host_entry(
-                dynamic_hosts_file=dynamic_hosts_file,
-                host_name=host_entry_name,
-                address=lease_result.vps_ip,
-                port=lease_result.container_ssh_port,
-                user=lease_result.ssh_user,
-                key_file=private_key_path,
-            )
-            log_queue.put("[minds] Dynamic host entry written for {}".format(host_entry_name))
-
             try:
+                # Persist lease info for later release
+                _save_lease_info(self.paths.data_dir, agent_id, lease_result.host_db_id)
+
+                # Write the dynamic host entry so mngr's SSH provider can discover it
+                _write_dynamic_host_entry(
+                    dynamic_hosts_file=dynamic_hosts_file,
+                    host_name=host_entry_name,
+                    address=lease_result.vps_ip,
+                    port=lease_result.container_ssh_port,
+                    user=lease_result.ssh_user,
+                    key_file=private_key_path,
+                )
+                log_queue.put("[minds] Dynamic host entry written for {}".format(host_entry_name))
+
                 self._setup_and_start_leased_agent(
                     agent_id=agent_id,
                     aid=aid,
