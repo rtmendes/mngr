@@ -6,22 +6,11 @@
 
   // -- Per-agent accent color ------------------------------------------------
   //
-  // Mirrors workspace_accent() in templates.py: SHA-256 over the agent id,
-  // first four bytes mod 360 picks the OKLCH hue, fixed L/C match server.
+  // The shared `window.mindsAccent.get(agentId, cb)` helper (loaded from
+  // /_static/workspace_accent.js) mirrors workspace_accent() in templates.py.
   // The server also attaches `accent` to each workspace dict over SSE so the
   // client doesn't need to compute in the common case.
-  async function accentForAgentId(agentId) {
-    var enc = new TextEncoder().encode(agentId);
-    var digest = await crypto.subtle.digest('SHA-256', enc);
-    var view = new DataView(digest);
-    var hue = view.getUint32(0, false) % 360;
-    return 'oklch(65% 0.15 ' + hue + ')';
-  }
-  var accentCache = {};
-  function getAccent(agentId, cb) {
-    if (accentCache[agentId] !== undefined) { cb(accentCache[agentId]); return; }
-    accentForAgentId(agentId).then(function (c) { accentCache[agentId] = c; cb(c); });
-  }
+  function getAccent(agentId, cb) { window.mindsAccent.get(agentId, cb); }
 
   // -- Navigation adapter ---------------------------------------------------
   function navigateContent(url) {

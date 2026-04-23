@@ -5,19 +5,13 @@
   var isElectron = !!window.minds;
   var currentWorkspaceId = null;
   var lastWorkspaces = [];
-  var accentCache = {};
 
-  async function accentForAgentId(agentId) {
-    var enc = new TextEncoder().encode(agentId);
-    var digest = await crypto.subtle.digest('SHA-256', enc);
-    var view = new DataView(digest);
-    var hue = view.getUint32(0, false) % 360;
-    return 'oklch(65% 0.15 ' + hue + ')';
-  }
-  function getAccent(agentId, cb) {
-    if (accentCache[agentId] !== undefined) { cb(accentCache[agentId]); return; }
-    accentForAgentId(agentId).then(function (c) { accentCache[agentId] = c; cb(c); });
-  }
+  // Per-agent accent color comes from the shared
+  // `window.mindsAccent.get(agentId, cb)` helper in
+  // /_static/workspace_accent.js (itself mirroring workspace_accent() in
+  // templates.py). Used only when a workspace dict arrives without an
+  // `accent` field from the server.
+  function getAccent(agentId, cb) { window.mindsAccent.get(agentId, cb); }
 
   function selectWorkspace(agentId) {
     if (isElectron) window.minds.navigateContent('/goto/' + agentId + '/');
