@@ -43,7 +43,12 @@ def test_render_login_redirect_page_contains_redirect_script() -> None:
         one_time_code=OneTimeCode("abc123-secret-82341"),
     )
     assert "window.location.href" in html
-    assert "one_time_code=abc123-secret-82341" in html
+    # The URL is built at runtime with encodeURIComponent, so the code appears
+    # as a JS string literal (via Jinja's `tojson` filter) rather than inlined
+    # into the URL directly.
+    assert "abc123-secret-82341" in html
+    assert "/authenticate?one_time_code=" in html
+    assert "encodeURIComponent" in html
 
 
 def test_render_auth_error_page_shows_error_message() -> None:
