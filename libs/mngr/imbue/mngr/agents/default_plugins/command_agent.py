@@ -3,10 +3,7 @@ from __future__ import annotations
 from imbue.mngr import hookimpl
 from imbue.mngr.agents.base_agent import BaseAgent
 from imbue.mngr.config.data_types import AgentTypeConfig
-from imbue.mngr.errors import UserInputError
 from imbue.mngr.interfaces.agent import AgentInterface
-from imbue.mngr.interfaces.host import OnlineHostInterface
-from imbue.mngr.primitives import CommandString
 
 
 class CommandAgentConfig(AgentTypeConfig):
@@ -14,17 +11,14 @@ class CommandAgentConfig(AgentTypeConfig):
 
 
 class CommandAgent(BaseAgent[CommandAgentConfig]):
-    """Agent type whose command comes from ``agent_config.command`` and/or the CLI args after ``--``.
+    """Agent type for running arbitrary shell commands.
 
-    Used when the caller wants to run an arbitrary shell command without
-    registering a dedicated agent type. The final command is
-    ``{base} {agent_config.cli_args} {agent_args}`` joined with plain
-    spaces, where ``base`` is ``command_override`` if the caller supplies
-    one (via ``CreateAgentOptions.command``), otherwise
-    ``agent_config.command`` if set, otherwise empty. This ordering
-    matches ``BaseAgent.assemble_command`` except that when no base is
-    available this class raises ``UserInputError`` instead of falling
-    back to the agent type name. E.g.::
+    Entirely inherits ``BaseAgent.assemble_command``: the command is
+    ``{base} {cli_args} {agent_args}`` where ``base`` is ``command_override``
+    or ``agent_config.command`` (or omitted when the whole command lives in
+    ``agent_args``). Exists as a registered type so callers have a clear
+    ``--type command --`` invocation for shell commands without registering
+    a dedicated type. E.g.::
 
         mngr create my-task --type command -- sleep 99999
         mngr create my-task --type command -- 'echo hi && sleep 60'
@@ -39,37 +33,10 @@ class CommandAgent(BaseAgent[CommandAgentConfig]):
     and ``mngr create web my_server -- --bind 0.0.0.0`` runs
     ``python -m http.server 8080 --bind 0.0.0.0``.
 
-    At least one of ``command_override``, ``agent_config.command``, or
-    ``agent_args`` must be set. Because args are joined with plain
-    spaces, shell metacharacters like ``&&``, ``|``, or ``;`` must be
-    inside a single quoted argument so that they survive intact to the
-    agent's shell.
+    Because args are joined with plain spaces, shell metacharacters like
+    ``&&``, ``|``, or ``;`` must be inside a single quoted argument so
+    that they survive intact to the agent's shell.
     """
-
-    def assemble_command(
-        self,
-        host: OnlineHostInterface,
-        agent_args: tuple[str, ...],
-        command_override: CommandString | None,
-    ) -> CommandString:
-        if command_override is not None:
-            base: str | None = str(command_override)
-        elif self.agent_config.command is not None:
-            base = str(self.agent_config.command)
-        else:
-            base = None
-        if base is None and not agent_args:
-            raise UserInputError(
-                "--type command requires a command after `--` (or `command = ...` set on the agent type), "
-                "e.g. `mngr create foo --type command -- sleep 99999`"
-            )
-        parts: list[str] = []
-        if base is not None:
-            parts.append(base)
-        if self.agent_config.cli_args:
-            parts.extend(self.agent_config.cli_args)
-        parts.extend(agent_args)
-        return CommandString(" ".join(parts))
 
 
 @hookimpl

@@ -22,6 +22,7 @@ from imbue.imbue_common.logging import log_span
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import HostConnectionError
 from imbue.mngr.errors import SendMessageError
+from imbue.mngr.errors import UserInputError
 from imbue.mngr.hosts.common import check_agent_type_known
 from imbue.mngr.hosts.common import determine_lifecycle_state
 from imbue.mngr.hosts.tmux import LONG_MESSAGE_THRESHOLD
@@ -96,24 +97,33 @@ class BaseAgent(AgentInterface[AgentConfigT]):
         agent_args: tuple[str, ...],
         command_override: CommandString | None,
     ) -> CommandString:
-        """Default: command_override or config.command or agent_type, then append cli_args and agent_args.
+        """Default: ``command_override`` or ``agent_config.command`` as the base, then append ``cli_args`` and ``agent_args``.
 
-        If no explicit command is defined, falls back to using the agent_type as a command.
-        This allows using arbitrary commands as agent types (e.g., 'mngr create my-agent echo').
+        The base must come from either ``command_override`` or the agent type's
+        ``command = "..."`` config. If neither is set, raises ``UserInputError``
+        unless ``agent_args`` is non-empty (in which case ``agent_args`` is used
+        as the whole command, which is the ``command`` agent type's usage).
         """
         if command_override is not None:
             base = str(command_override)
         elif self.agent_config.command is not None:
             base = str(self.agent_config.command)
         else:
-            # Fall back to using the agent type as a command (documented "Direct command" behavior)
-            base = str(self.agent_type)
+            base = None
 
-        parts = [base]
+        parts: list[str] = []
+        if base is not None:
+            parts.append(base)
         if self.agent_config.cli_args:
             parts.extend(self.agent_config.cli_args)
-        if agent_args:
-            parts.extend(agent_args)
+        parts.extend(agent_args)
+
+        if not parts:
+            raise UserInputError(
+                f"Agent type '{self.agent_type}' has no command configured. Either set "
+                f"`command = '...'` on the type, or pass a shell command after `--` "
+                f"(e.g. `mngr create foo --type command -- sleep 99999`)."
+            )
 
         command = CommandString(" ".join(parts))
         logger.trace("Assembled command: {}", command)

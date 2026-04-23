@@ -85,7 +85,7 @@ def test_assemble_command_raises_when_no_args_and_no_override(
 ) -> None:
     """Empty agent_args with no override and no config.command produces a helpful UserInputError."""
     agent = _make_command_agent(local_host, temp_mngr_ctx, tmp_path)
-    with pytest.raises(UserInputError, match=r"--type command requires a command after"):
+    with pytest.raises(UserInputError, match=r"has no command configured"):
         agent.assemble_command(local_host, agent_args=(), command_override=None)
 
 
