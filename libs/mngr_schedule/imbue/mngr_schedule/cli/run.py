@@ -147,4 +147,7 @@ def run_modal_trigger(provider: ModalProviderInstance, trigger_name: str) -> str
     try:
         return invoke_modal_trigger_function(record)
     except MngrError as exc:
-        raise click.ClickException(f"Modal invocation failed for trigger '{trigger_name}': {exc}") from None
+        # invoke_modal_trigger_function's MngrError already describes the
+        # failure (e.g. "Modal invocation failed: ..."); only add the
+        # trigger name as context so we don't doubly prefix the message.
+        raise click.ClickException(f"Trigger '{trigger_name}': {exc}") from None
