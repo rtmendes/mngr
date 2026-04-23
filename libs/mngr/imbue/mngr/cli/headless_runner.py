@@ -1,3 +1,4 @@
+import shlex
 import sys
 from collections.abc import Callable
 from collections.abc import Iterator
@@ -60,11 +61,21 @@ def create_work_dir_on_host(host: OnlineHostInterface) -> Path:
 
 
 def remove_work_dir_on_host(host: OnlineHostInterface, work_path: Path) -> None:
-    """Remove a work directory on the host, suppressing errors."""
+    """Remove a work directory on the host, best-effort.
+
+    Logs a warning (but does not raise) on transport-level failures or
+    non-zero exit codes so cleanup errors are visible without breaking
+    the main flow. execute_idempotent_command returns a CommandResult and
+    does not raise on non-zero exit, so explicitly check result.success.
+    """
     try:
-        host.execute_idempotent_command(f"rm -rf '{work_path}'")
+        result = host.execute_idempotent_command(f"rm -rf {shlex.quote(str(work_path))}")
     except (OSError, BaseMngrError) as exc:
         logger.warning("Failed to remove work dir {}: {}", work_path, exc)
+        return
+    if not result.success:
+        detail = result.stderr.strip() or result.stdout.strip()
+        logger.warning("Failed to remove work dir {}: {}", work_path, detail)
 
 
 @contextmanager
