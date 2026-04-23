@@ -193,9 +193,13 @@ def start_desktop_client(
     stream_manager.add_on_agent_discovered_callback(discovery_handler)
 
     # Register callbacks that spawn/terminate a dedicated ``latchkey gateway``
-    # subprocess for each agent that runs on this machine or in a local
-    # container/VM. Cloud/VPS-hosted agents are skipped.
-    latchkey_discovery_handler = LatchkeyGatewayDiscoveryHandler(gateway_manager=latchkey_gateway_manager)
+    # subprocess for each discovered agent. For agents running in a container,
+    # VM, or VPS the handler also sets up a reverse SSH tunnel so the agent
+    # can reach the host-side gateway on a constant ``127.0.0.1`` URL.
+    latchkey_discovery_handler = LatchkeyGatewayDiscoveryHandler(
+        gateway_manager=latchkey_gateway_manager,
+        tunnel_manager=tunnel_manager,
+    )
     latchkey_destruction_handler = LatchkeyGatewayDestructionHandler(gateway_manager=latchkey_gateway_manager)
     stream_manager.add_on_agent_discovered_callback(latchkey_discovery_handler)
     stream_manager.add_on_agent_destroyed_callback(latchkey_destruction_handler)

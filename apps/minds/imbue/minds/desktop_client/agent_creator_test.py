@@ -1,5 +1,7 @@
 import queue as queue_mod
 import threading
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 
 import pytest
@@ -8,16 +10,18 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.agent_creator import AgentCreationStatus
 from imbue.minds.desktop_client.agent_creator import AgentCreator
+from imbue.minds.desktop_client.agent_creator import _build_latchkey_gateway_url
 from imbue.minds.desktop_client.agent_creator import _build_mngr_create_command
 from imbue.minds.desktop_client.agent_creator import _is_local_path
-from imbue.minds.desktop_client.agent_creator import _launch_mode_should_get_latchkey_gateway
 from imbue.minds.desktop_client.agent_creator import _make_host_name
 from imbue.minds.desktop_client.agent_creator import checkout_branch
 from imbue.minds.desktop_client.agent_creator import clone_git_repo
 from imbue.minds.desktop_client.agent_creator import extract_repo_name
 from imbue.minds.desktop_client.agent_creator import make_log_callback
 from imbue.minds.desktop_client.agent_creator import run_mngr_create
+from imbue.minds.desktop_client.latchkey.gateway import AGENT_SIDE_LATCHKEY_PORT
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManager
+from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
 from imbue.minds.errors import GitCloneError
 from imbue.minds.errors import GitOperationError
 from imbue.minds.errors import MngrCommandError
@@ -418,14 +422,28 @@ def test_agent_creator_server_port_defaults_to_zero() -> None:
 # -- Latchkey gateway env plumbing --
 
 
-def test_launch_mode_should_get_latchkey_gateway_local_reachable() -> None:
-    assert _launch_mode_should_get_latchkey_gateway(LaunchMode.DEV)
-    assert _launch_mode_should_get_latchkey_gateway(LaunchMode.LOCAL)
-    assert _launch_mode_should_get_latchkey_gateway(LaunchMode.LIMA)
+def _sample_gateway_info(port: int) -> LatchkeyGatewayInfo:
+    return LatchkeyGatewayInfo(
+        agent_id=AgentId(),
+        host="127.0.0.1",
+        port=port,
+        pid=99999,
+        started_at=datetime.now(timezone.utc),
+    )
 
 
-def test_launch_mode_should_get_latchkey_gateway_excludes_cloud() -> None:
-    assert not _launch_mode_should_get_latchkey_gateway(LaunchMode.CLOUD)
+def test_build_latchkey_gateway_url_dev_uses_dynamic_host_port() -> None:
+    url = _build_latchkey_gateway_url(LaunchMode.DEV, _sample_gateway_info(port=54321))
+    assert url == "http://127.0.0.1:54321"
+
+
+@pytest.mark.parametrize("launch_mode", [LaunchMode.LOCAL, LaunchMode.LIMA, LaunchMode.CLOUD])
+def test_build_latchkey_gateway_url_containerized_uses_fixed_agent_side_port(launch_mode: LaunchMode) -> None:
+    # Containerized / VM / VPS agents see the gateway on a reverse-tunneled
+    # fixed port inside their own 127.0.0.1 -- regardless of the dynamic
+    # host-side port the gateway is actually listening on.
+    url = _build_latchkey_gateway_url(launch_mode, _sample_gateway_info(port=54321))
+    assert url == f"http://127.0.0.1:{AGENT_SIDE_LATCHKEY_PORT}"
 
 
 def test_build_mngr_create_command_injects_latchkey_gateway_env() -> None:

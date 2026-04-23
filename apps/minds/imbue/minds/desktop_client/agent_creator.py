@@ -34,8 +34,10 @@ from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.api_key_store import generate_api_key
 from imbue.minds.desktop_client.api_key_store import hash_api_key
 from imbue.minds.desktop_client.api_key_store import save_api_key_hash
+from imbue.minds.desktop_client.latchkey.gateway import AGENT_SIDE_LATCHKEY_PORT
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayError
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManager
+from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
 from imbue.minds.errors import GitCloneError
 from imbue.minds.errors import GitOperationError
 from imbue.minds.errors import MngrCommandError
@@ -227,18 +229,20 @@ def _make_host_name(agent_name: AgentName) -> str:
 WELCOME_INITIAL_MESSAGE: Final[str] = "/welcome"
 
 
-def _launch_mode_should_get_latchkey_gateway(launch_mode: LaunchMode) -> bool:
-    """Return True for launch modes whose agents can reach a gateway on the local machine.
+def _build_latchkey_gateway_url(launch_mode: LaunchMode, info: LatchkeyGatewayInfo) -> str:
+    """Return the ``LATCHKEY_GATEWAY`` URL the agent should see in its environment.
 
-    Mirrors ``is_local_reachable_provider`` on the provider-name side: DEV
-    (same machine), LOCAL (Docker container on the same machine), and LIMA
-    (VM on the same machine) all qualify. CLOUD (VPS) does not.
+    DEV agents run on the bare host and reach the gateway on its dynamic host
+    port directly. Every other mode runs inside a container/VM/VPS whose own
+    loopback is bridged to the host-side gateway via an SSH reverse tunnel
+    bound to a fixed remote port, so the URL is the same constant for every
+    such agent.
     """
     match launch_mode:
-        case LaunchMode.DEV | LaunchMode.LOCAL | LaunchMode.LIMA:
-            return True
-        case LaunchMode.CLOUD:
-            return False
+        case LaunchMode.DEV:
+            return f"http://{info.host}:{info.port}"
+        case LaunchMode.LOCAL | LaunchMode.LIMA | LaunchMode.CLOUD:
+            return f"http://127.0.0.1:{AGENT_SIDE_LATCHKEY_PORT}"
         case _ as unreachable:
             assert_never(unreachable)
 
@@ -426,9 +430,12 @@ class AgentCreator(MutableModel):
         default=None,
         frozen=True,
         description=(
-            "Optional gateway manager. When provided, creation pre-spawns a gateway for each "
-            "local-reachable agent and passes its URL to ``mngr create`` as "
-            "``--env LATCHKEY_GATEWAY=...`` so the agent's ``latchkey`` CLI proxies through it."
+            "Optional gateway manager. When provided, creation pre-spawns a gateway for every "
+            "agent and passes the appropriate URL to ``mngr create`` as "
+            "``--env LATCHKEY_GATEWAY=...`` so the agent's ``latchkey`` CLI proxies through it. "
+            "For DEV agents the URL is the gateway's dynamic host port; for container/VM/VPS "
+            "agents it is a constant URL on the agent-side loopback that ``LatchkeyGatewayDiscoveryHandler`` "
+            "bridges back via an SSH reverse tunnel once the agent is discovered."
         ),
     )
 
@@ -568,10 +575,11 @@ class AgentCreator(MutableModel):
                 with self._lock:
                     self._statuses[aid] = AgentCreationStatus.CREATING
 
-                # Pre-spawn a Latchkey gateway for local-reachable agents so
-                # we can inject ``LATCHKEY_GATEWAY`` at ``mngr create`` time.
-                # CLOUD agents (VPS) cannot reach the local machine, so we
-                # do not spawn a gateway or set the env var for them.
+                # Pre-spawn a Latchkey gateway for every agent so we can
+                # inject ``LATCHKEY_GATEWAY`` at ``mngr create`` time. For
+                # container/VM/VPS agents the URL points at a constant
+                # agent-side port that is bridged back to the host-side
+                # gateway via an SSH reverse tunnel set up on discovery.
                 latchkey_gateway_url = self._maybe_start_latchkey_gateway(agent_id, launch_mode, log_queue)
 
                 parsed_name = AgentName(agent_name)
@@ -625,14 +633,18 @@ class AgentCreator(MutableModel):
         launch_mode: LaunchMode,
         log_queue: queue.Queue[str],
     ) -> str | None:
-        """Pre-spawn a Latchkey gateway if appropriate and return its URL, or None.
+        """Pre-spawn a Latchkey gateway for this agent and return the URL to inject.
+
+        The URL depends on ``launch_mode``: DEV agents see the gateway on its
+        dynamic host port directly; containerized/VM/VPS agents see it on a
+        constant port on their own loopback, which is bridged back to the host
+        by a reverse SSH tunnel established when the agent is discovered (see
+        ``LatchkeyGatewayDiscoveryHandler``).
 
         Returns ``None`` (and logs a warning) when gateway spawning fails so
         agent creation can still proceed without a gateway URL.
         """
         if self.latchkey_gateway_manager is None:
-            return None
-        if not _launch_mode_should_get_latchkey_gateway(launch_mode):
             return None
         try:
             info = self.latchkey_gateway_manager.ensure_gateway_started(agent_id)
@@ -640,6 +652,6 @@ class AgentCreator(MutableModel):
             logger.warning("Pre-spawning Latchkey gateway for agent {} failed: {}", agent_id, e)
             log_queue.put(f"[minds] Warning: Latchkey gateway could not be started for this agent: {e}")
             return None
-        url = f"http://{info.host}:{info.port}"
+        url = _build_latchkey_gateway_url(launch_mode, info)
         log_queue.put(f"[minds] Latchkey gateway for this agent: {url}")
         return url

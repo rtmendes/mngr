@@ -26,6 +26,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Final
 
+import paramiko
 import psutil
 from loguru import logger
 from pydantic import Field
@@ -42,6 +43,8 @@ from imbue.minds.desktop_client.latchkey.store import gateway_log_path
 from imbue.minds.desktop_client.latchkey.store import list_gateway_infos
 from imbue.minds.desktop_client.latchkey.store import save_gateway_info
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
+from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
+from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
 from imbue.mngr.primitives import AgentId
 
 LATCHKEY_BINARY: Final[str] = "latchkey"
@@ -52,11 +55,13 @@ _LIVENESS_CONNECT_TIMEOUT_SECONDS: Final[float] = 1.0
 
 _TERMINATE_GRACE_SECONDS: Final[float] = 5.0
 
-# Providers whose agents run on the local machine or can easily reach it
-# (containers and VMs on the same host). Cloud/VPS providers (``modal``,
-# ``vultr``, ...) are excluded because agents there cannot reach 127.0.0.1
-# on this machine.
-_LOCAL_REACHABLE_PROVIDER_NAMES: Final[frozenset[str]] = frozenset({"local", "docker", "lima"})
+# Fixed port that every containerized/VM/VPS agent sees on its own 127.0.0.1
+# when reaching the Latchkey gateway. A per-agent SSH reverse tunnel bridges
+# this to the dynamic per-agent gateway port on the desktop host, so the
+# ``LATCHKEY_GATEWAY`` env var injected at ``mngr create`` time can be the
+# same constant URL for every agent. Matches the documented default of the
+# upstream ``latchkey gateway`` CLI (``1989``).
+AGENT_SIDE_LATCHKEY_PORT: Final[int] = 1989
 
 
 class LatchkeyGatewayError(Exception):
@@ -69,16 +74,6 @@ class LatchkeyBinaryNotFoundError(LatchkeyGatewayError, FileNotFoundError):
 
 class LatchkeyGatewayManagerNotStartedError(LatchkeyGatewayError, RuntimeError):
     """Raised when the manager is used before ``start()`` has been called."""
-
-
-def is_local_reachable_provider(provider_name: str) -> bool:
-    """Return True iff agents on this provider can reach the local machine.
-
-    Covers the local machine itself (``local``) and provider types that
-    create containers or VMs on the local host (``docker``, ``lima``).
-    Cloud/VPS providers (``modal``, ``vultr``, ...) are excluded.
-    """
-    return provider_name in _LOCAL_REACHABLE_PROVIDER_NAMES
 
 
 def _allocate_free_port(host: str) -> int:
@@ -386,27 +381,49 @@ class LatchkeyGatewayManager(MutableModel):
 
 
 class LatchkeyGatewayDiscoveryHandler(FrozenModel):
-    """Discovery callback that spawns a Latchkey gateway for each local-reachable agent.
+    """Discovery callback that spawns a Latchkey gateway for each agent and tunnels it in.
 
     Intended to be registered via ``MngrStreamManager.add_on_agent_discovered_callback``.
-    Ignores agents whose provider is not local-reachable (cloud/VPS).
+
+    For every discovered agent, ensures a dedicated ``latchkey gateway`` subprocess
+    is running on the desktop host. Agents that reach the desktop via SSH
+    (containers, VMs, VPS) also get a reverse tunnel that exposes the host-side
+    gateway on the agent's own ``127.0.0.1:AGENT_SIDE_LATCHKEY_PORT``. DEV-mode
+    agents run on the bare host and need no tunnel; their ``LATCHKEY_GATEWAY``
+    env var points directly at the dynamic host port.
     """
 
     gateway_manager: LatchkeyGatewayManager = Field(description="Manager that owns the gateway subprocesses")
+    tunnel_manager: SSHTunnelManager = Field(
+        description="SSH tunnel manager used to reverse-forward the host-side gateway into remote agents"
+    )
 
     def __call__(self, agent_id: AgentId, ssh_info: RemoteSSHInfo | None, provider_name: str) -> None:
-        del ssh_info
-        if not is_local_reachable_provider(provider_name):
-            logger.trace(
-                "Skipping Latchkey gateway for agent {} on non-local provider {!r}",
-                agent_id,
-                provider_name,
-            )
-            return
+        del provider_name
         try:
-            self.gateway_manager.ensure_gateway_started(agent_id)
+            info = self.gateway_manager.ensure_gateway_started(agent_id)
         except LatchkeyGatewayError as e:
             logger.warning("Failed to start Latchkey gateway for agent {}: {}", agent_id, e)
+            return
+
+        if ssh_info is None:
+            # DEV-mode agent runs on the bare host; it reaches the gateway
+            # directly on its dynamic host port, so no tunnel is needed.
+            return
+
+        try:
+            self.tunnel_manager.setup_reverse_tunnel(
+                ssh_info=ssh_info,
+                local_port=info.port,
+                remote_port=AGENT_SIDE_LATCHKEY_PORT,
+            )
+        except (SSHTunnelError, OSError, paramiko.SSHException) as e:
+            logger.warning(
+                "Failed to set up Latchkey reverse tunnel for agent {} (host-side port {}): {}",
+                agent_id,
+                info.port,
+                e,
+            )
 
 
 class LatchkeyGatewayDestructionHandler(FrozenModel):

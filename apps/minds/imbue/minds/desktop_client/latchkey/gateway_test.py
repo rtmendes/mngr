@@ -9,34 +9,23 @@ from pathlib import Path
 
 import psutil
 import pytest
+from pydantic import PrivateAttr
 
+from imbue.minds.desktop_client.latchkey.gateway import AGENT_SIDE_LATCHKEY_PORT
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyBinaryNotFoundError
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayDestructionHandler
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayDiscoveryHandler
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManager
 from imbue.minds.desktop_client.latchkey.gateway import LatchkeyGatewayManagerNotStartedError
 from imbue.minds.desktop_client.latchkey.gateway import _cmdline_looks_like_latchkey_gateway
-from imbue.minds.desktop_client.latchkey.gateway import is_local_reachable_provider
 from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
-from imbue.minds.desktop_client.latchkey.store import list_gateway_infos
 from imbue.minds.desktop_client.latchkey.store import load_gateway_info
 from imbue.minds.desktop_client.latchkey.store import save_gateway_info
+from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
+from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
 from imbue.mngr.primitives import AgentId
 
 _POLL_INTERVAL_SECONDS = 0.05
-
-
-def test_is_local_reachable_provider_accepts_local_providers() -> None:
-    assert is_local_reachable_provider("local")
-    assert is_local_reachable_provider("docker")
-    assert is_local_reachable_provider("lima")
-
-
-def test_is_local_reachable_provider_rejects_vps_providers() -> None:
-    assert not is_local_reachable_provider("modal")
-    assert not is_local_reachable_provider("vultr")
-    assert not is_local_reachable_provider("unknown")
-    assert not is_local_reachable_provider("")
 
 
 def test_cmdline_matcher_accepts_plausible_latchkey_gateway() -> None:
@@ -290,36 +279,93 @@ def test_stop_gateway_for_agent_is_no_op_when_not_running(tmp_path: Path) -> Non
         manager.stop()
 
 
-def test_discovery_handler_skips_non_local_providers(tmp_path: Path) -> None:
+def test_discovery_handler_spawns_for_every_provider(tmp_path: Path) -> None:
+    """Every provider -- including cloud/VPS -- gets a gateway now that agents
+    on remote hosts reach the desktop via a reverse SSH tunnel."""
     fake_binary = _make_fake_latchkey_binary(tmp_path)
     manager = LatchkeyGatewayManager(latchkey_binary=str(fake_binary))
     manager.start(data_dir=tmp_path)
+    tunnel_manager = SSHTunnelManager()
     try:
-        handler = LatchkeyGatewayDiscoveryHandler(gateway_manager=manager)
-        handler(AgentId(), None, "modal")
-        handler(AgentId(), None, "vultr")
-        assert manager.list_gateways() == ()
-        assert list_gateway_infos(tmp_path) == []
+        handler = LatchkeyGatewayDiscoveryHandler(
+            gateway_manager=manager, tunnel_manager=tunnel_manager
+        )
+        agent_by_provider = {
+            name: AgentId() for name in ("local", "docker", "lima", "vultr", "modal")
+        }
+        for provider_name, agent_id in agent_by_provider.items():
+            # ssh_info=None is fine here -- it keeps the test off the SSH path.
+            # The "does it also set up a reverse tunnel when ssh_info is given"
+            # behavior is covered by a dedicated test below.
+            handler(agent_id, None, provider_name)
+        assert {info.agent_id for info in manager.list_gateways()} == set(agent_by_provider.values())
     finally:
+        for agent_id in agent_by_provider.values():
+            manager.stop_gateway_for_agent(agent_id)
+        manager.stop()
+        tunnel_manager.cleanup()
+
+
+class _RecordingTunnelManager(SSHTunnelManager):
+    """SSHTunnelManager that records setup_reverse_tunnel calls instead of doing SSH."""
+
+    _calls: list[tuple[RemoteSSHInfo, int, int]] = PrivateAttr(default_factory=list)
+
+    def setup_reverse_tunnel(
+        self,
+        ssh_info: RemoteSSHInfo,
+        local_port: int,
+        agent_state_dir: str | None = None,
+        remote_port: int = 0,
+    ) -> int:
+        del agent_state_dir
+        self._calls.append((ssh_info, local_port, remote_port))
+        return remote_port
+
+
+def test_discovery_handler_sets_up_reverse_tunnel_when_ssh_info_given(tmp_path: Path) -> None:
+    fake_binary = _make_fake_latchkey_binary(tmp_path)
+    manager = LatchkeyGatewayManager(latchkey_binary=str(fake_binary))
+    manager.start(data_dir=tmp_path)
+    tunnel_manager = _RecordingTunnelManager()
+    try:
+        handler = LatchkeyGatewayDiscoveryHandler(
+            gateway_manager=manager, tunnel_manager=tunnel_manager
+        )
+        ssh_info = RemoteSSHInfo(
+            user="root", host="192.0.2.1", port=22, key_path=tmp_path / "k"
+        )
+        agent_id = AgentId()
+        handler(agent_id, ssh_info, "docker")
+
+        info = manager.get_gateway_info(agent_id)
+        assert info is not None
+
+        # Exactly one reverse tunnel, bridging the dynamic host-side gateway port
+        # to the fixed agent-side port on the container's loopback.
+        assert tunnel_manager._calls == [(ssh_info, info.port, AGENT_SIDE_LATCHKEY_PORT)]
+    finally:
+        manager.stop_gateway_for_agent(agent_id)
         manager.stop()
 
 
-def test_discovery_handler_spawns_for_local_providers(tmp_path: Path) -> None:
+def test_discovery_handler_skips_reverse_tunnel_for_dev_agents(tmp_path: Path) -> None:
+    """DEV agents (ssh_info is None) run on the bare host and need no tunnel."""
     fake_binary = _make_fake_latchkey_binary(tmp_path)
     manager = LatchkeyGatewayManager(latchkey_binary=str(fake_binary))
     manager.start(data_dir=tmp_path)
+    tunnel_manager = _RecordingTunnelManager()
     try:
-        handler = LatchkeyGatewayDiscoveryHandler(gateway_manager=manager)
-        local_agent = AgentId()
-        docker_agent = AgentId()
-        lima_agent = AgentId()
-        handler(local_agent, None, "local")
-        handler(docker_agent, None, "docker")
-        handler(lima_agent, None, "lima")
-        assert {info.agent_id for info in manager.list_gateways()} == {local_agent, docker_agent, lima_agent}
+        handler = LatchkeyGatewayDiscoveryHandler(
+            gateway_manager=manager, tunnel_manager=tunnel_manager
+        )
+        agent_id = AgentId()
+        handler(agent_id, None, "local")
+
+        assert manager.get_gateway_info(agent_id) is not None
+        assert tunnel_manager._calls == []
     finally:
-        for agent in (local_agent, docker_agent, lima_agent):
-            manager.stop_gateway_for_agent(agent)
+        manager.stop_gateway_for_agent(agent_id)
         manager.stop()
 
 
@@ -327,10 +373,14 @@ def test_discovery_handler_swallows_gateway_errors(tmp_path: Path) -> None:
     """A missing binary must not crash the discovery callback -- just log a warning."""
     manager = LatchkeyGatewayManager(latchkey_binary=str(tmp_path / "missing"))
     manager.start(data_dir=tmp_path)
+    tunnel_manager = _RecordingTunnelManager()
     try:
-        handler = LatchkeyGatewayDiscoveryHandler(gateway_manager=manager)
+        handler = LatchkeyGatewayDiscoveryHandler(
+            gateway_manager=manager, tunnel_manager=tunnel_manager
+        )
         handler(AgentId(), None, "local")
         assert manager.list_gateways() == ()
+        assert tunnel_manager._calls == []
     finally:
         manager.stop()
 
@@ -339,8 +389,11 @@ def test_destruction_handler_stops_gateway(tmp_path: Path) -> None:
     fake_binary = _make_fake_latchkey_binary(tmp_path)
     manager = LatchkeyGatewayManager(latchkey_binary=str(fake_binary))
     manager.start(data_dir=tmp_path)
+    tunnel_manager = _RecordingTunnelManager()
     try:
-        discovery = LatchkeyGatewayDiscoveryHandler(gateway_manager=manager)
+        discovery = LatchkeyGatewayDiscoveryHandler(
+            gateway_manager=manager, tunnel_manager=tunnel_manager
+        )
         destruction = LatchkeyGatewayDestructionHandler(gateway_manager=manager)
         agent_id = AgentId()
         discovery(agent_id, None, "docker")
