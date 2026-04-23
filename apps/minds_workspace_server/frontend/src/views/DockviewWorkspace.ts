@@ -668,9 +668,9 @@ function initializeDockview(parentElement: HTMLElement): void {
   });
 
   // Agent-triggered refresh: reload every open iframe tab whose
-  // data-service-name attribute matches the server_name the agent named. This
-  // arrives over the existing workspace server WebSocket as
-  // {type: "refresh_service", server_name}.
+  // data-service-name attribute matches the service_name the agent named.
+  // This arrives over the existing workspace server WebSocket as
+  // {type: "refresh_service", service_name}.
   _refreshServiceListener = (serviceName: string) => {
     reloadIframesForService(serviceName);
   };
