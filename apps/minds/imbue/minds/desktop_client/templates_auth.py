@@ -22,7 +22,6 @@ _JINJA_ENV: Final[Environment] = Environment(
 def render_auth_page(
     default_to_signup: bool = True,
     message: str | None = None,
-    server_port: int = 0,
 ) -> str:
     """Render the sign-up / sign-in page."""
     title = "Create account" if default_to_signup else "Sign in"
@@ -30,7 +29,6 @@ def render_auth_page(
         title=title,
         default_to_signup=default_to_signup,
         message=message,
-        server_port=server_port,
     )
 
 
