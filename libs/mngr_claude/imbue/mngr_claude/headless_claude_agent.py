@@ -274,17 +274,22 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
         if all_extra_args:
             parts.extend(all_extra_args)
 
-        # DIAGNOSTIC (ablation 2): primer + --debug on real call.
-        # Ablation 1 (primer alone) failed 3/3. Adding back --debug all +
-        # --debug-file to the real call to test whether it's --debug that
-        # changes claude's behavior (perhaps forcing synchronous logging
-        # or disabling an async path that hangs cold in Modal/gVisor).
-        # Dropping --version/--help warmup and timeout 60 still.
+        # DIAGNOSTIC (ablation 3): claude --version/--help warmup + primer
+        # + --debug. Ablation 1 (primer only) and ablation 2 (primer +
+        # --debug) both failed 3/3. Remaining difference from the passing
+        # 4a49cd5ee bundle: the extra `claude --version` / `claude --help
+        # | wc -l` invocations in stderr warmup. Hypothesis: multiple cold
+        # claude invocations are collectively warming Node.js / config /
+        # filesystem paths that single invocations don't reach.
         parts.extend(["--debug", "all", "--debug-file", '"$MNGR_AGENT_STATE_DIR/claude-debug.log"'])
         cmd_str = " ".join(parts)
-        primer = 'timeout 20 claude --print "hi" >/dev/null 2>&1 || true; '
+        warmup = (
+            "claude --version >/dev/null 2>&1 || true; "
+            "claude --help >/dev/null 2>&1 || true; "
+            'timeout 20 claude --print "hi" >/dev/null 2>&1 || true; '
+        )
         return CommandString(
-            f'{primer}{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"'
+            f'{warmup}{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"'
         )
 
     def _get_stdout_path(self) -> Path:
