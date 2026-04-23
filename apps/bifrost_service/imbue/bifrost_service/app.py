@@ -730,6 +730,11 @@ def _init_supertokens() -> None:
     """
     connection_uri = os.environ.get("SUPERTOKENS_CONNECTION_URI")
     if not connection_uri:
+        logger.warning(
+            "SUPERTOKENS_CONNECTION_URI is not set; the management API will return 503 "
+            "for every authenticated request. Check that the supertokens-<env> Modal "
+            "secret is populated and attached to bifrost_management."
+        )
         return
     api_key = os.environ.get("SUPERTOKENS_API_KEY")
     website_domain = os.environ.get("AUTH_WEBSITE_DOMAIN", _DEFAULT_MANAGEMENT_DOMAIN)
