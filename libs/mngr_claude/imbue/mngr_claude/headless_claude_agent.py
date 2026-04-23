@@ -274,28 +274,29 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
         if all_extra_args:
             parts.extend(all_extra_args)
 
-        # DIAGNOSTIC (restore): exact 4a49cd5ee probe bundle that passed
-        # 5/5 in runs 54-58. Ablations 1-3 all failed; rerunning the full
-        # bundle to check whether the original success was the code or a
-        # transient Modal sandbox state.
-        parts.extend(["--debug", "all", "--debug-file", '"$MNGR_AGENT_STATE_DIR/claude-debug.log"'])
         cmd_str = " ".join(parts)
-        # DIAGNOSTIC ablation 8: absolute path `/root/.local/bin/claude`,
-        # no env/timeout wrapper. Bypasses bash PATH lookup and any
-        # function/alias shadowing. Combined with writing `type claude`
-        # to .test_output/ so we can read it regardless of pass/fail.
-        cmd_str_absolute = cmd_str.replace(base, "/root/.local/bin/claude", 1)
-        probe_diag = (
-            "mkdir -p /code/mngr/.test_output; "
-            '(echo "== DIAG claude-lookup $(date -Iseconds) =="; '
-            'type claude; echo "--"; type -a claude; echo "--"; declare -f claude; echo "--"; '
-            'alias claude 2>&1 || true; echo "--"; command -v claude; echo "--"; '
-            'which claude; echo "--"; hash -t claude 2>&1 || true) '
-            "> /code/mngr/.test_output/claude-lookup.txt 2>&1"
-        )
+        # Wrap `claude` in `env` so the tmux pane runs claude through an
+        # intermediate fork+exec rather than invoking it directly. Empirical
+        # finding from test_ask_simple_query inside offload-release sandboxes
+        # (Modal-in-Modal under gVisor): a bare `claude --print ...` (or
+        # equivalently, invoking claude by absolute path `/root/.local/bin/
+        # claude ...`) hangs indefinitely with 0 bytes of stdout and 0 bytes
+        # of stderr, even with `--verbose --include-partial-messages` set,
+        # which normally always emits at least a startup warning. Running
+        # `env claude ...` or `timeout 60 claude ...` both fix the hang
+        # with no other changes; ablation bisection across 9 variants
+        # confirmed the `env` wrapper is sufficient and no other piece of
+        # the original probe bundle (primer invocations, --debug flags,
+        # --version/--help warmup, stdin redirect, shell markers) matters.
+        # `type claude` inside the hanging sandbox shows no alias, no shell
+        # function, and a single PATH entry, so the mechanism isn't bash
+        # alias/function shadowing. Best working theory: the bare direct
+        # invocation interacts with the tmux pane's controlling-TTY / signal
+        # state in some way that env's extra exec layer breaks the
+        # dependency on. Explanation is open; fix is not -- ablation runs
+        # 54-58, 68-70 and 77-79 all passed 3/3 or 5/5 with the env prefix.
         return CommandString(
-            f"{probe_diag}; "
-            f'{cmd_str_absolute} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"'
+            f'env {cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"'
         )
 
     def _get_stdout_path(self) -> Path:
@@ -324,13 +325,6 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
         if stdout_error:
             sources.append(stdout_error)
         sources.append(f"[work-dir]\n{self._get_work_dir_diagnostic()}")
-        # DIAGNOSTIC: surface claude's own --debug-file log in the
-        # test_ask_simple_query silent-hang post-mortem. assemble_command
-        # pins --debug-file to $MNGR_AGENT_STATE_DIR/claude-debug.log so
-        # whatever claude writes before it hangs is captured in a path
-        # independent of stdout/stderr redirection.
-        debug_log = self._get_agent_dir() / "claude-debug.log"
-        sources.append(f"[claude-debug]\n{render_file_diagnostic(self.host, debug_log, 'claude-debug.log')}")
         return sources
 
     def _get_work_dir_diagnostic(self) -> str:

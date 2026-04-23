@@ -219,10 +219,11 @@ def test_assemble_command_uses_command_override(
     """assemble_command should use command_override when provided."""
     agent, host = _make_headless_agent(local_provider, tmp_path)
     cmd = agent.assemble_command(host, agent_args=(), command_override=CommandString("/custom/claude"))
-    # Substring rather than startswith because the assembled command now
-    # wraps the real claude invocation with DIAGNOSTIC pre/post probes for
-    # the test_ask_simple_query silent-exit debug. Reverts when those land.
-    assert "/custom/claude --print" in cmd
+    # Substring rather than startswith because assemble_command prefixes
+    # the real claude invocation with `env ` to dodge the silent-exit
+    # hang seen inside offload-release Modal-in-Modal sandboxes. See
+    # assemble_command's comment for details.
+    assert "env /custom/claude --print" in cmd
 
 
 def test_assemble_command_raises_without_command(
