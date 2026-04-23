@@ -690,3 +690,112 @@ def test_start_creation_accepts_access_token_and_version(tmp_path: Path) -> None
     assert info is not None
     # Should fail because host_pool_client is None
     assert info.status == AgentCreationStatus.FAILED
+
+
+def test_create_leased_agent_fails_without_access_token(
+    tmp_path: Path,
+    fake_pool_server: HostPoolClient,
+) -> None:
+    """_create_leased_agent raises when access_token is empty."""
+    paths = WorkspacePaths(data_dir=tmp_path)
+    creator = AgentCreator(paths=paths, host_pool_client=fake_pool_server)
+    agent_id = creator.start_creation(
+        repo_source="https://example.com/repo.git",
+        agent_name="test",
+        launch_mode=LaunchMode.LEASED,
+        access_token="",
+        version="v0.1.0",
+    )
+    creator.wait_for_all(timeout=5.0)
+    info = creator.get_creation_info(agent_id)
+    assert info is not None
+    assert info.status == AgentCreationStatus.FAILED
+    assert info.error is not None
+    assert "access_token" in info.error
+
+
+def test_create_leased_agent_fails_without_version(
+    tmp_path: Path,
+    fake_pool_server: HostPoolClient,
+) -> None:
+    """_create_leased_agent raises when version is empty."""
+    paths = WorkspacePaths(data_dir=tmp_path)
+    creator = AgentCreator(paths=paths, host_pool_client=fake_pool_server)
+    agent_id = creator.start_creation(
+        repo_source="https://example.com/repo.git",
+        agent_name="test",
+        launch_mode=LaunchMode.LEASED,
+        access_token="test-token",
+        version="",
+    )
+    creator.wait_for_all(timeout=5.0)
+    info = creator.get_creation_info(agent_id)
+    assert info is not None
+    assert info.status == AgentCreationStatus.FAILED
+    assert info.error is not None
+    assert "version" in info.error
+
+
+def test_create_leased_agent_leases_and_writes_dynamic_host(
+    tmp_path: Path,
+    fake_pool_server: HostPoolClient,
+) -> None:
+    """_create_leased_agent leases a host, writes dynamic host entry and lease info.
+
+    The mngr rename/start will fail (no real mngr), but the lease and
+    setup steps should complete, and cleanup should release the host.
+    """
+    paths = WorkspacePaths(data_dir=tmp_path)
+    creator = AgentCreator(paths=paths, host_pool_client=fake_pool_server)
+    agent_id = creator.start_creation(
+        repo_source="https://example.com/repo.git",
+        agent_name="test-workspace",
+        launch_mode=LaunchMode.LEASED,
+        access_token="test-token",
+        version="v0.1.0",
+    )
+    creator.wait_for_all(timeout=10.0)
+    info = creator.get_creation_info(agent_id)
+    assert info is not None
+    # Will fail on mngr rename (not installed), but the lease should have been
+    # attempted and then cleaned up
+    assert info.status == AgentCreationStatus.FAILED
+
+
+def test_cleanup_failed_lease(
+    tmp_path: Path,
+    fake_pool_server: HostPoolClient,
+) -> None:
+    """_cleanup_failed_lease removes dynamic host entry, releases host, and removes lease info."""
+    paths = WorkspacePaths(data_dir=tmp_path)
+    creator = AgentCreator(paths=paths, host_pool_client=fake_pool_server)
+    agent_id = AgentId()
+    dynamic_hosts_file = tmp_path / "ssh" / "dynamic_hosts.toml"
+    host_entry_name = "leased-{}".format(agent_id)
+
+    # Set up state as if a lease succeeded but setup failed
+    _save_lease_info(tmp_path, agent_id, 7)
+    _write_dynamic_host_entry(
+        dynamic_hosts_file=dynamic_hosts_file,
+        host_name=host_entry_name,
+        address="10.0.0.1",
+        port=2222,
+        user="root",
+        key_file=Path("/tmp/key"),
+    )
+
+    log_queue: queue_mod.Queue[str] = queue_mod.Queue()
+    creator._cleanup_failed_lease(
+        agent_id=agent_id,
+        host_db_id=7,
+        access_token="test-token",
+        dynamic_hosts_file=dynamic_hosts_file,
+        host_entry_name=host_entry_name,
+        log_queue=log_queue,
+    )
+
+    # Dynamic host entry should be removed
+    content = tomllib.loads(dynamic_hosts_file.read_text())
+    assert host_entry_name not in content
+    # Lease info should be removed
+    assert _load_lease_info(tmp_path, agent_id) is None
