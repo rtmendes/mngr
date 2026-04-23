@@ -9,7 +9,6 @@ import secrets
 import uuid
 from typing import Any
 
-from imbue.bifrost_service.app import BifrostAdminApiError
 from imbue.bifrost_service.app import BifrostAdminClient
 from imbue.bifrost_service.app import VirtualKeyNotFoundError
 
@@ -32,7 +31,6 @@ class FakeBifrostAdminClient(BifrostAdminClient):
     virtual_key_by_id: dict[str, dict[str, Any]]
     create_count: int
     delete_count: int
-    should_fail_on_create: bool
 
     def __init__(self) -> None:
         # Skip the real HTTP client setup; we override every method that
@@ -41,7 +39,6 @@ class FakeBifrostAdminClient(BifrostAdminClient):
         self.virtual_key_by_id = {}
         self.create_count = 0
         self.delete_count = 0
-        self.should_fail_on_create = False
 
     def create_virtual_key(
         self,
@@ -49,8 +46,6 @@ class FakeBifrostAdminClient(BifrostAdminClient):
         budget_dollars: float,
         budget_reset_duration: str,
     ) -> dict[str, Any]:
-        if self.should_fail_on_create:
-            raise BifrostAdminApiError(409, f"Key '{name}' already exists")
         self.create_count = self.create_count + 1
         key_id = f"vk-{uuid.uuid4().hex}"
         key_value = f"sk-bf-{secrets.token_hex(16)}"
