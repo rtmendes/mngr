@@ -37,7 +37,6 @@ from imbue.mngr.primitives import DiscoveredHost
 from imbue.mngr.primitives import ErrorBehavior
 from imbue.mngr.primitives import HostState
 from imbue.mngr.primitives import ProviderInstanceName
-from imbue.mngr.utils.git_utils import find_source_repo_of_worktree
 from imbue.mngr.utils.git_utils import parse_worktree_git_file
 
 
@@ -812,6 +811,20 @@ def register_generated_source_dir(host: OnlineHostInterface, source_dir: Path) -
     host.set_certified_data(updated_data)
 
 
+def _find_source_repo_of_worktree_on_host(host: OnlineHostInterface, worktree_path: Path) -> Path | None:
+    """Host-aware counterpart to git_utils.find_source_repo_of_worktree.
+
+    Reads the worktree's .git file through host.read_text_file so this works for
+    both local and remote hosts. Returns None if the path is not a worktree or
+    the .git file cannot be read.
+    """
+    try:
+        content = host.read_text_file(worktree_path / ".git")
+    except (FileNotFoundError, OSError):
+        return None
+    return parse_worktree_git_file(content)
+
+
 def _get_orphaned_source_dirs(
     host: OnlineHostInterface, provider_name: ProviderInstanceName
 ) -> tuple[list[WorkDirInfo], list[WorkDirInfo]]:
@@ -832,7 +845,7 @@ def _get_orphaned_source_dirs(
         if work_dir_str in source_dirs:
             in_use_sources.add(work_dir_str)
             continue
-        source_of_worktree = find_source_repo_of_worktree(agent.work_dir)
+        source_of_worktree = _find_source_repo_of_worktree_on_host(host, agent.work_dir)
         if source_of_worktree is not None and str(source_of_worktree) in source_dirs:
             in_use_sources.add(str(source_of_worktree))
 
