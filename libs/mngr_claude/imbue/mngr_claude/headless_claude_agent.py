@@ -274,13 +274,14 @@ class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConf
         if all_extra_args:
             parts.extend(all_extra_args)
 
+        # DIAGNOSTIC (ablation 2): primer + --debug on real call.
+        # Ablation 1 (primer alone) failed 3/3. Adding back --debug all +
+        # --debug-file to the real call to test whether it's --debug that
+        # changes claude's behavior (perhaps forcing synchronous logging
+        # or disabling an async path that hangs cold in Modal/gVisor).
+        # Dropping --version/--help warmup and timeout 60 still.
+        parts.extend(["--debug", "all", "--debug-file", '"$MNGR_AGENT_STATE_DIR/claude-debug.log"'])
         cmd_str = " ".join(parts)
-        # DIAGNOSTIC (ablation 1): only the trivial-print primer. If this
-        # alone keeps test_ask_simple_query passing, the primer is the fix
-        # (warms claude's Node.js runtime / config probes before the real
-        # 110KB-system-prompt call, which hangs cold in Modal/gVisor
-        # sandboxes). If this fails, something else in the previous probe
-        # bundle was carrying the win.
         primer = 'timeout 20 claude --print "hi" >/dev/null 2>&1 || true; '
         return CommandString(
             f'{primer}{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"'
