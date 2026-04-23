@@ -1012,7 +1012,9 @@ function setupContentPartitionCookieSync() {
       sameSite: cookie.sameSite || 'lax',
     }).then(() => {
       kickChromeSSEReconnect();
-    }).catch(() => {});
+    }).catch((err) => {
+      console.warn('[cookie-sync] Failed to sync cookie to default session:', err);
+    });
   });
 }
 
@@ -1036,7 +1038,9 @@ async function syncContentCookiesToDefaultSession() {
         path: cookie.path || '/',
         sameSite: cookie.sameSite || 'lax',
       });
-    } catch { /* noop */ }
+    } catch (err) {
+      console.warn('[cookie-sync] Failed to sync cookie to default session:', err);
+    }
   }
 }
 
