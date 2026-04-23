@@ -15,8 +15,9 @@ class CommandAgent(BaseAgent[CommandAgentConfig]):
 
     Entirely inherits ``BaseAgent.assemble_command``: the command is
     ``{base} {cli_args} {agent_args}`` where ``base`` is ``command_override``
-    or ``agent_config.command`` (or omitted when the whole command lives in
-    ``agent_args``). Exists as a registered type so callers have a clear
+    or ``agent_config.command`` (or omitted when neither is set, leaving
+    ``cli_args`` + ``agent_args`` to form the whole command).
+    Exists as a registered type so callers have a clear
     ``--type command --`` invocation for shell commands without registering
     a dedicated type. E.g.::
 
