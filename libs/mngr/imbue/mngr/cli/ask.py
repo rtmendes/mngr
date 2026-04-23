@@ -260,8 +260,8 @@ class HeadlessClaudeBackend(ClaudeBackendInterface):
 
     def query(self, prompt: str, system_prompt: str) -> Iterator[str]:
         # `ask` always runs in a fresh throwaway directory -- nothing in the
-        # user's cwd should leak in, and our prompt files should not land in
-        # their repo.
+        # user's cwd should leak in, and our system-prompt file should not
+        # land in their repo.
         with (
             ephemeral_work_location(self.host) as work_location,
             headless_agent_output(
