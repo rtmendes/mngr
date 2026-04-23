@@ -817,17 +817,28 @@ function handleChromeSSEEvent(evt) {
     }));
     const newIds = new Set(workspaceList.map((w) => w.id));
 
-    // Navigate windows for destroyed workspaces back to home
+    // Handle windows for destroyed workspaces: close them if other
+    // windows exist, otherwise navigate to home so the user isn't left
+    // with nothing.
     for (const oldId of oldIds) {
       if (!newIds.has(oldId)) {
+        const affected = [];
         for (const b of bundles) {
-          if (b.window.isDestroyed()) continue;
-          if (b.currentWorkspaceId !== oldId) continue;
-          b.currentWorkspaceId = null;
-          if (b.contentView && !b.contentView.webContents.isDestroyed() && backendBaseUrl) {
-            b.contentView.webContents.loadURL(backendBaseUrl + '/');
+          if (!b.window.isDestroyed() && b.currentWorkspaceId === oldId) {
+            affected.push(b);
           }
-          updateOsTitle(b);
+        }
+        const liveBundleCount = [...bundles].filter((b) => !b.window.isDestroyed()).length;
+        for (const b of affected) {
+          if (liveBundleCount - affected.length >= 1) {
+            b.window.close();
+          } else {
+            b.currentWorkspaceId = null;
+            if (b.contentView && !b.contentView.webContents.isDestroyed() && backendBaseUrl) {
+              b.contentView.webContents.loadURL(backendBaseUrl + '/');
+            }
+            updateOsTitle(b);
+          }
         }
       }
     }
