@@ -16,6 +16,7 @@ Usage:
 """
 
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -129,8 +130,10 @@ def _install_management_key_via_ssh(
         ssh_key_path,
         "-p",
         str(port),
-        f"{user}@{vps_ip}",
-        f"mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '{key_line}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys",
+        "{}@{}".format(user, vps_ip),
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo {} >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys".format(
+            shlex.quote(key_line)
+        ),
     ]
     logger.info("  Installing management key on {}@{}:{}", user, vps_ip, port)
     result = subprocess.run(
@@ -152,9 +155,8 @@ def _install_management_key_via_mngr_exec(
     """Use `mngr exec` to install the management key inside the Docker container."""
     key_line = management_public_key.strip()
     command = (
-        f"mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-        f"echo '{key_line}' >> ~/.ssh/authorized_keys && "
-        f"chmod 600 ~/.ssh/authorized_keys"
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo {} >> ~/.ssh/authorized_keys && ".format(shlex.quote(key_line))
+        + "chmod 600 ~/.ssh/authorized_keys"
     )
     logger.info("  Installing management key in container via mngr exec")
     result = _run_mngr_command(["exec", agent_name, command], timeout=60)
