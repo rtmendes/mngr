@@ -221,6 +221,7 @@ def _create_single_pool_host(
         [
             "create",
             address,
+            "--new-host",
             "--no-connect",
             "--label",
             f"pool_version={version}",
