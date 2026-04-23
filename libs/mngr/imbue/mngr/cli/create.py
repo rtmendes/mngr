@@ -186,25 +186,25 @@ def _resolve_or_generate_agent_name(address: AgentAddress, opts: CreateCliOption
 # Flags that only make sense on the interactive-create path. Everything
 # related to source resolution, transfer, git, environment, provisioning,
 # and agent identity now flows through the shared _setup_create /
-# _create_agent pipeline and so works for headless too. The flags below
-# are rejected for one of three reasons:
-#   1. They drive the post-create "connect + attach" phase that headless
-#      skips entirely (--reconnect, --attach-command, --connect-command).
-#   2. They require delivering text via agent.send_message after startup,
-#      which headless agents do not support (--edit-message).
-#   3. They only make sense for long-lived agents, not one-shot streaming
-#      agents (--reuse, --update, --start-on-boot).
-# Accepting any of these silently would confuse users, so we reject early.
+# _create_agent pipeline and so works for headless too. Flags are
+# rejected when they fall into one of three categories: driving the
+# post-create connect/attach phase that headless skips; requiring
+# send_message-based delivery (which headless agents do not support);
+# or being tied to long-lived agents rather than one-shot streaming
+# runs. Accepting any such flag silently would confuse users, so we
+# reject early.
 #
-# Only non-boolean-pair flags go in this bulk-rejection list: their
-# presence is unambiguous, so any explicit setting conflicts. Boolean-pair
-# flags like --reconnect/--no-reconnect are handled separately below so we
-# only reject the positive form -- the --no-* form is redundant-but-compatible
-# with headless (which already does not reconnect/reuse/update/etc.).
+# Incompatible flags are split across two tuples. This one holds
+# unconditionally-rejected flags (anything explicitly set conflicts).
+# The `_HEADLESS_INCOMPATIBLE_BOOLEAN_PAIR_FLAGS` tuple below holds
+# --flag/--no-flag pairs where only the positive form conflicts --
+# passing the --no-* form is a redundant-but-compatible assertion of
+# the actual headless behavior and is tolerated.
 _HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
-    # --edit-message opens an editor and delivers the result via send_message
-    # after the agent boots. Headless agents have no send_message path.
+    # Opens an editor and delivers the result via send_message after the
+    # agent boots. Headless agents have no send_message path.
     ("edit_message", "--edit-message"),
+    # Post-create connect/attach phase that headless skips entirely.
     ("attach_command", "--attach-command"),
     ("connect_command", "--connect-command"),
 )
