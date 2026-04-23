@@ -233,4 +233,7 @@ def test_delete_virtual_key_accepts_empty_body_on_200() -> None:
         transport=transport,
     )
 
-    client.delete_virtual_key("vk-empty-200")
+    try:
+        client.delete_virtual_key("vk-empty-200")
+    finally:
+        client.client.close()
