@@ -37,6 +37,7 @@ from imbue.minds.desktop_client.api_key_store import hash_api_key
 from imbue.minds.desktop_client.api_key_store import save_api_key_hash
 from imbue.minds.desktop_client.host_pool_client import HostPoolClient
 from imbue.minds.desktop_client.host_pool_client import HostPoolError
+from imbue.minds.desktop_client.host_pool_client import LeaseHostResult
 from imbue.minds.errors import GitCloneError
 from imbue.minds.errors import GitOperationError
 from imbue.minds.errors import MngrCommandError
@@ -815,46 +816,111 @@ class AgentCreator(MutableModel):
             )
             log_queue.put("[minds] Dynamic host entry written for {}".format(host_entry_name))
 
-            # Rename the pre-provisioned agent to the user-chosen name
-            parsed_name = AgentName(agent_name)
-            log_queue.put("[minds] Renaming agent to '{}'...".format(parsed_name))
-            cg_rename = ConcurrencyGroup(name="mngr-rename")
-            with cg_rename:
-                rename_result = cg_rename.run_process_to_completion(
-                    command=[MNGR_BINARY, "rename", lease_result.agent_id, str(parsed_name)],
-                    is_checked_after=False,
-                    on_output=emit_log,
+            try:
+                self._setup_and_start_leased_agent(
+                    agent_id=agent_id,
+                    aid=aid,
+                    agent_name=agent_name,
+                    log_queue=log_queue,
+                    emit_log=emit_log,
+                    lease_result=lease_result,
                 )
-            if rename_result.returncode != 0:
-                raise MngrCommandError(
-                    "mngr rename failed (exit code {}): {}".format(
-                        rename_result.returncode,
-                        rename_result.stderr.strip() if rename_result.stderr.strip() else rename_result.stdout.strip(),
-                    )
+            except Exception:
+                self._cleanup_failed_lease(
+                    agent_id=agent_id,
+                    access_token=access_token,
+                    host_db_id=lease_result.host_db_id,
+                    dynamic_hosts_file=dynamic_hosts_file,
+                    host_entry_name=host_entry_name,
+                    log_queue=log_queue,
                 )
+                raise
 
-            # Start the agent
-            log_queue.put("[minds] Starting agent '{}'...".format(parsed_name))
-            cg_start = ConcurrencyGroup(name="mngr-start")
-            with cg_start:
-                start_result = cg_start.run_process_to_completion(
-                    command=[MNGR_BINARY, "start", str(parsed_name)],
-                    is_checked_after=False,
-                    on_output=emit_log,
+    def _setup_and_start_leased_agent(
+        self,
+        agent_id: AgentId,
+        aid: str,
+        agent_name: str,
+        log_queue: queue.Queue[str],
+        emit_log: OutputCallback,
+        lease_result: LeaseHostResult,
+    ) -> None:
+        """Rename and start the leased agent. Raises on failure."""
+        parsed_name = AgentName(agent_name)
+        log_queue.put("[minds] Renaming agent to '{}'...".format(parsed_name))
+        cg_rename = ConcurrencyGroup(name="mngr-rename")
+        with cg_rename:
+            rename_result = cg_rename.run_process_to_completion(
+                command=[MNGR_BINARY, "rename", lease_result.agent_id, str(parsed_name)],
+                is_checked_after=False,
+                on_output=emit_log,
+            )
+        if rename_result.returncode != 0:
+            raise MngrCommandError(
+                "mngr rename failed (exit code {}): {}".format(
+                    rename_result.returncode,
+                    rename_result.stderr.strip() if rename_result.stderr.strip() else rename_result.stdout.strip(),
                 )
-            if start_result.returncode != 0:
-                raise MngrCommandError(
-                    "mngr start failed (exit code {}): {}".format(
-                        start_result.returncode,
-                        start_result.stderr.strip() if start_result.stderr.strip() else start_result.stdout.strip(),
-                    )
+            )
+
+        log_queue.put("[minds] Starting agent '{}'...".format(parsed_name))
+        cg_start = ConcurrencyGroup(name="mngr-start")
+        with cg_start:
+            start_result = cg_start.run_process_to_completion(
+                command=[MNGR_BINARY, "start", str(parsed_name)],
+                is_checked_after=False,
+                on_output=emit_log,
+            )
+        if start_result.returncode != 0:
+            raise MngrCommandError(
+                "mngr start failed (exit code {}): {}".format(
+                    start_result.returncode,
+                    start_result.stderr.strip() if start_result.stderr.strip() else start_result.stdout.strip(),
                 )
+            )
 
-            log_queue.put("[minds] Leased agent started successfully.")
+        log_queue.put("[minds] Leased agent started successfully.")
 
-            port_suffix = ":{}".format(self.server_port) if self.server_port else ""
-            redirect_url = "http://{}.localhost{}/".format(agent_id, port_suffix)
+        port_suffix = ":{}".format(self.server_port) if self.server_port else ""
+        redirect_url = "http://{}.localhost{}/".format(agent_id, port_suffix)
 
-            with self._lock:
-                self._statuses[aid] = AgentCreationStatus.DONE
-                self._redirect_urls[aid] = redirect_url
+        with self._lock:
+            self._statuses[aid] = AgentCreationStatus.DONE
+            self._redirect_urls[aid] = redirect_url
+
+    def _cleanup_failed_lease(
+        self,
+        agent_id: AgentId,
+        access_token: str,
+        host_db_id: int,
+        dynamic_hosts_file: Path,
+        host_entry_name: str,
+        log_queue: queue.Queue[str],
+    ) -> None:
+        """Best-effort cleanup after a failed leased agent setup.
+
+        Removes the dynamic host entry, releases the host back to the pool,
+        and removes the persisted lease info. Logs warnings on cleanup failures
+        rather than masking the original error.
+        """
+        log_queue.put("[minds] Cleaning up after failed lease setup...")
+
+        try:
+            _remove_dynamic_host_entry(dynamic_hosts_file, host_entry_name)
+        except OSError as cleanup_exc:
+            logger.warning("Failed to remove dynamic host entry during cleanup: {}", cleanup_exc)
+
+        if self.host_pool_client is not None and access_token:
+            try:
+                is_released = self.host_pool_client.release_host(access_token, host_db_id)
+                if is_released:
+                    logger.debug("Released leased host {} during cleanup", host_db_id)
+                else:
+                    logger.warning("Failed to release leased host {} during cleanup", host_db_id)
+            except Exception as cleanup_exc:
+                logger.warning("Error releasing leased host {} during cleanup: {}", host_db_id, cleanup_exc)
+
+        try:
+            _remove_lease_info(self.paths.data_dir, agent_id)
+        except OSError as cleanup_exc:
+            logger.warning("Failed to remove lease info during cleanup: {}", cleanup_exc)
