@@ -1,5 +1,6 @@
 import queue as queue_mod
 import threading
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -467,9 +468,7 @@ def test_write_dynamic_host_entry_creates_valid_toml(tmp_path: Path) -> None:
         key_file=Path("/home/user/.ssh/id_ed25519"),
     )
 
-    import tomlkit
-
-    content = tomlkit.loads(hosts_file.read_text())
+    content = tomllib.loads(hosts_file.read_text())
     assert "test-host" in content
     assert content["test-host"]["address"] == "10.0.0.1"
     assert content["test-host"]["port"] == 2222
@@ -497,9 +496,7 @@ def test_write_dynamic_host_entry_appends_to_existing(tmp_path: Path) -> None:
         key_file=Path("/key2"),
     )
 
-    import tomlkit
-
-    content = tomlkit.loads(hosts_file.read_text())
+    content = tomllib.loads(hosts_file.read_text())
     assert "host-a" in content
     assert "host-b" in content
     assert content["host-a"]["address"] == "10.0.0.1"
@@ -545,9 +542,7 @@ def test_remove_dynamic_host_entry_removes_section(tmp_path: Path) -> None:
 
     _remove_dynamic_host_entry(hosts_file, "host-a")
 
-    import tomlkit
-
-    content = tomlkit.loads(hosts_file.read_text())
+    content = tomllib.loads(hosts_file.read_text())
     assert "host-a" not in content
     assert "host-b" in content
 
@@ -573,7 +568,5 @@ def test_remove_dynamic_host_entry_noop_for_missing_section(tmp_path: Path) -> N
 
     _remove_dynamic_host_entry(hosts_file, "host-b")
 
-    import tomlkit
-
-    content = tomlkit.loads(hosts_file.read_text())
+    content = tomllib.loads(hosts_file.read_text())
     assert "host-a" in content
