@@ -55,8 +55,10 @@ This is the same rsync that `propagate_changes` does as step 1, but it must happ
 
 ### 3. Install Electron dependencies
 
+`apps/minds/` is pnpm-managed (`pnpm-lock.yaml` is the authoritative lockfile; `pnpm-workspace.yaml` is present). Use pnpm:
+
 ```bash
-cd apps/minds && npm install && cd ../..
+cd apps/minds && pnpm install && cd ../..
 ```
 
 ### 4. Find your Docker SSH key
