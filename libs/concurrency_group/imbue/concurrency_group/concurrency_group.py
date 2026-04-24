@@ -225,7 +225,14 @@ class ConcurrencyGroup(MutableModel, AbstractContextManager):
                     except StrandTimedOutError as e:
                         timeout_errors.append(e)
                     try:
-                        process.terminate(force_kill_seconds=0.0)
+                        # Wait long enough for the background thread's
+                        # _shutdown_popen path (SIGTERM, reap) to complete.
+                        # Fire-and-forget (force_kill_seconds=0.0) races with
+                        # the session-level leak detector: the subprocess may
+                        # still be in flight when psutil scans at session end,
+                        # producing "leaked process" failures attributed to
+                        # whatever test ran last in the shard.
+                        process.terminate(force_kill_seconds=2.0)
                     except TimeoutExpired:
                         pass
         for tracked_thread in self._threads:
