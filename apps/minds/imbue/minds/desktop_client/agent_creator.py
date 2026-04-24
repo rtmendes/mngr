@@ -1144,6 +1144,26 @@ class AgentCreator(MutableModel):
                 )
             )
 
+        # Generate a new API key, inject it into the agent's env, and persist the hash
+        api_key = generate_api_key()
+        log_queue.put("[minds] Injecting MINDS_API_KEY...")
+        env_path = "/mngr/agents/{}/env".format(agent_id)
+        inject_command = ("sed -i '/^MINDS_API_KEY=/d' {path} && echo 'MINDS_API_KEY={key}' >> {path}").format(
+            path=env_path, key=api_key
+        )
+        cg_exec = ConcurrencyGroup(name="mngr-exec-apikey")
+        with cg_exec:
+            exec_result = cg_exec.run_process_to_completion(
+                command=[MNGR_BINARY, "exec", str(agent_id), inject_command],
+                is_checked_after=False,
+                on_output=emit_log,
+            )
+        if exec_result.returncode != 0:
+            logger.warning("Failed to inject MINDS_API_KEY: {}", exec_result.stderr.strip())
+        key_hash = hash_api_key(api_key)
+        save_api_key_hash(self.paths.data_dir, agent_id, key_hash)
+        log_queue.put("[minds] API key generated and hash stored.")
+
         log_queue.put("[minds] Leased agent started successfully.")
 
         if on_created is not None:
