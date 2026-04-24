@@ -23,6 +23,19 @@ from imbue.minds.desktop_client.api_key_store import generate_api_key
 
 _CONTAINER_SSH_PORT: Final[int] = 2222
 _MNGR_COMMAND_TIMEOUT_SECONDS: Final[int] = 600
+
+_RSYNC_EXCLUDES: Final[tuple[str, ...]] = (
+    ".git",
+    "__pycache__",
+    ".venv",
+    "node_modules",
+    ".test_output",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    "uv.lock",
+    ".external_worktrees",
+)
 _SSH_COMMAND_TIMEOUT_SECONDS: Final[int] = 60
 
 
@@ -108,6 +121,33 @@ def _get_agent_info(agent_name: str) -> dict[str, Any] | None:
         if isinstance(agent, dict) and agent.get("name") == agent_name:
             return agent
     return None
+
+
+def _sync_mngr_into_template(mngr_source: Path, workspace_dir: Path) -> None:
+    """Rsync the mngr monorepo into the template's vendor/mngr/ directory."""
+    vendor_mngr = workspace_dir / "vendor" / "mngr"
+    vendor_mngr.mkdir(parents=True, exist_ok=True)
+    exclude_args: list[str] = []
+    for pattern in _RSYNC_EXCLUDES:
+        exclude_args.extend(["--exclude", pattern])
+    command = (
+        ["rsync", "-a", "--delete"]
+        + exclude_args
+        + [
+            "{}/".format(mngr_source),
+            "{}/".format(vendor_mngr),
+        ]
+    )
+    logger.info("Syncing mngr source into {}", vendor_mngr)
+    cg = ConcurrencyGroup(name="rsync-vendor")
+    with cg:
+        result = cg.run_process_to_completion(
+            command=command,
+            is_checked_after=False,
+            timeout=120.0,
+        )
+    if result.returncode != 0:
+        logger.warning("rsync failed (exit {}): {}", result.returncode, result.stderr.strip())
 
 
 def _create_single_pool_host(
@@ -262,18 +302,29 @@ def pool() -> None:
 @click.option(
     "--database-url", required=True, type=str, envvar="DATABASE_URL", help="Neon PostgreSQL direct connection string"
 )
+@click.option(
+    "--mngr-source",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to the mngr monorepo root. If provided, rsyncs into the template's vendor/mngr/ before creating hosts.",
+)
 def pool_create(
     count: int,
     version: str,
     workspace_dir: str,
     management_public_key_file: str,
     database_url: str,
+    mngr_source: str | None,
 ) -> None:
     """Create pre-provisioned pool hosts for LEASED mode."""
     management_public_key = Path(management_public_key_file).read_text().strip()
     if not management_public_key:
         logger.error("Management public key file is empty")
         raise SystemExit(1)
+
+    workspace_path = Path(workspace_dir)
+    if mngr_source is not None:
+        _sync_mngr_into_template(Path(mngr_source), workspace_path)
 
     logger.info("Creating {} pool host(s) with version={}", count, version)
 
@@ -282,7 +333,7 @@ def pool_create(
         logger.info("[{}/{}]", i, count)
         try:
             is_success = _create_single_pool_host(
-                workspace_dir=Path(workspace_dir),
+                workspace_dir=workspace_path,
                 version=version,
                 management_public_key=management_public_key,
                 database_url=database_url,
