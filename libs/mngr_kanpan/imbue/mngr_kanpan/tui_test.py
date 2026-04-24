@@ -36,6 +36,7 @@ from imbue.mngr_kanpan.testing import make_mngr_ctx_with_config
 from imbue.mngr_kanpan.testing import make_pr_field
 from imbue.mngr_kanpan.tui import BOARD_SECTION_ORDER
 from imbue.mngr_kanpan.tui import _BUILTIN_COLUMN_DEFS
+from imbue.mngr_kanpan.tui import _BUILTIN_COMMANDS
 from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_DELETE
 from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_EXECUTE
 from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_PUSH
@@ -908,13 +909,14 @@ def test_dispatch_command_unmark_key_removes_mark() -> None:
     assert AgentName("agent-a") not in state.marks
 
 
-def test_dispatch_command_execute_key_with_marks() -> None:
-    # Use a non-builtin key ("z") so the batch goes through the individual-work
-    # path, not _start_batch_execution's hardcoded delete branch (which would
-    # submit a real `mngr destroy` subprocess). Use `command="true"` so the
-    # submitted subprocess exits immediately, and wait for the executor on
-    # cleanup so nothing outlives the test.
-    mark_cmd = CustomCommand(name="do-thing", command="true")
+def test_dispatch_command_execute_key_with_marks(tmp_path: Path) -> None:
+    # Use a non-builtin key ("z") so the test isn't entangled with builtin
+    # dispatch semantics. The command touches a marker file, and we assert it
+    # appears after executor shutdown -- proving the command actually ran
+    # (rather than just that state.executing was set).
+    marker = tmp_path / "executed"
+    assert not marker.exists()
+    mark_cmd = CustomCommand(name="do-thing", command=f"touch {marker}")
     state = _make_state(commands={"z": mark_cmd})
     state.marks = {AgentName("a"): "z"}
     execute_cmd = CustomCommand(name="execute")
@@ -922,8 +924,25 @@ def test_dispatch_command_execute_key_with_marks() -> None:
     # Should start batch execution (sets executing=True; with loop=None the
     # future is submitted but never polled, so executing stays True).
     assert state.executing is True
-    if state.executor is not None:
-        state.executor.shutdown(wait=True)
+    assert state.executor is not None
+    state.executor.shutdown(wait=True)
+    assert marker.exists()
+
+
+def test_dispatch_command_execute_user_override_of_delete_runs_shell(tmp_path: Path) -> None:
+    # Overriding the builtin "d" (delete) must route to the user's shell
+    # command, not to the hardcoded `mngr destroy` runner.
+    marker = tmp_path / "ran"
+    assert not marker.exists()
+    override = CustomCommand(name="my-delete", command=f"touch {marker}", markable="light red")
+    state = _make_state(commands={_BUILTIN_COMMAND_KEY_DELETE: override})
+    state.marks = {AgentName("a"): _BUILTIN_COMMAND_KEY_DELETE}
+    execute_cmd = CustomCommand(name="execute")
+    _dispatch_command(state, _BUILTIN_COMMAND_KEY_EXECUTE, execute_cmd)
+    assert state.executing is True
+    assert state.executor is not None
+    state.executor.shutdown(wait=True)
+    assert marker.exists()
 
 
 # =============================================================================
@@ -1311,7 +1330,7 @@ def test_submit_batch_item_push_with_work_dir(tmp_path: Path) -> None:
     item = _BatchWorkItem(
         name=AgentName("agent-a"),
         key=_BUILTIN_COMMAND_KEY_PUSH,
-        cmd=CustomCommand(name="push"),
+        cmd=_BUILTIN_COMMANDS[_BUILTIN_COMMAND_KEY_PUSH],
         entry=entry,
     )
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -1325,7 +1344,7 @@ def test_submit_batch_item_push_no_work_dir() -> None:
     item = _BatchWorkItem(
         name=AgentName("agent-a"),
         key=_BUILTIN_COMMAND_KEY_PUSH,
-        cmd=CustomCommand(name="push"),
+        cmd=_BUILTIN_COMMANDS[_BUILTIN_COMMAND_KEY_PUSH],
         entry=entry,
     )
     with ThreadPoolExecutor(max_workers=1) as pool:
