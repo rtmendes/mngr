@@ -790,7 +790,13 @@ class AgentCreator(MutableModel):
         aid = str(agent_id)
         try:
             with log_span("Destroying workspace {}", agent_id):
-                # Release leased host first (no-op if not a leased agent)
+                # Remove the dynamic host entry first so mngr observe stops
+                # trying to connect to the host while we tear it down.
+                dynamic_hosts_file = self.paths.data_dir / "ssh" / "dynamic_hosts.toml"
+                host_entry_name = "leased-{}".format(agent_id)
+                _remove_dynamic_host_entry(dynamic_hosts_file, host_entry_name)
+
+                # Release leased host (no-op if not a leased agent)
                 if access_token:
                     self.release_leased_host(agent_id, access_token)
 

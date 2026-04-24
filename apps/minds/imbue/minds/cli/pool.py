@@ -7,7 +7,6 @@ SSH port in UFW, and registers the host in the pool database.
 
 import json
 import shlex
-import subprocess
 from pathlib import Path
 from typing import Any
 from typing import Final
@@ -17,6 +16,9 @@ import click
 import psycopg2
 from loguru import logger
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.concurrency_group.errors import ConcurrencyGroupError
+from imbue.concurrency_group.subprocess_utils import FinishedProcess
 from imbue.minds.desktop_client.api_key_store import generate_api_key
 
 _CONTAINER_SSH_PORT: Final[int] = 2222
@@ -28,17 +30,18 @@ def _run_mngr_command(
     args: list[str],
     cwd: Path | None = None,
     timeout: int = _MNGR_COMMAND_TIMEOUT_SECONDS,
-) -> subprocess.CompletedProcess[str]:
+) -> FinishedProcess:
     """Run a mngr CLI command and return the result."""
     full_command = ["mngr"] + args
     logger.info("  Running: {}", " ".join(full_command))
-    return subprocess.run(
-        full_command,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=cwd,
-    )
+    cg = ConcurrencyGroup(name="pool-mngr")
+    with cg:
+        return cg.run_process_to_completion(
+            command=full_command,
+            timeout=float(timeout),
+            is_checked_after=False,
+            cwd=cwd,
+        )
 
 
 def _run_ssh_command(
@@ -64,12 +67,13 @@ def _run_ssh_command(
         command,
     ]
     logger.info("  SSH {}:{}: {}", vps_ip, port, command)
-    result = subprocess.run(
-        ssh_command,
-        capture_output=True,
-        text=True,
-        timeout=_SSH_COMMAND_TIMEOUT_SECONDS,
-    )
+    cg = ConcurrencyGroup(name="pool-ssh")
+    with cg:
+        result = cg.run_process_to_completion(
+            command=ssh_command,
+            timeout=float(_SSH_COMMAND_TIMEOUT_SECONDS),
+            is_checked_after=False,
+        )
     if result.returncode != 0:
         logger.warning("SSH command failed: {}", result.stderr.strip())
         return False
@@ -283,7 +287,7 @@ def pool_create(
                 management_public_key=management_public_key,
                 database_url=database_url,
             )
-        except (subprocess.SubprocessError, psycopg2.Error, OSError) as exc:
+        except (ConcurrencyGroupError, psycopg2.Error, OSError) as exc:
             logger.warning("[{}] Failed: {}", i, exc)
             is_success = False
 
