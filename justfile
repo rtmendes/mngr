@@ -97,14 +97,10 @@ test-offload-release args="":
     trap "rm -f .dockerignore" EXIT
 
     # MODAL_IMAGE_BUILDER_VERSION=2025.06 is required for enable_docker support (Docker-in-Docker alpha).
-    # GITHUB_TOKEN authorises cloning the private forever-claude-template repo
-    # used by minds desktop-client e2e tests; passing it unset is fine and makes
-    # the dev opt-in (tests that don't need the clone still run).
     MODAL_IMAGE_BUILDER_VERSION=2025.06 offload -c offload-modal-release.toml {{args}} run \
         --env "MODAL_TOKEN_ID=$MODAL_TOKEN_ID" \
         --env "MODAL_TOKEN_SECRET=$MODAL_TOKEN_SECRET" \
         --env "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
-        --env "GITHUB_TOKEN=${GITHUB_TOKEN:-}" \
         --env "IS_RELEASE=1" || [[ $? -eq 2 ]]
 
     # Copy results to the main worktree so new worktrees inherit baselines via COPY mode.

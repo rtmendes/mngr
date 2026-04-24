@@ -13,7 +13,6 @@ This test reads both values and asserts they match.
 
 import base64
 import json
-import os
 import re
 import tomllib
 import urllib.error
@@ -46,17 +45,16 @@ def _parse_dockerfile_claude_version(dockerfile_text: str) -> str:
     return version
 
 
-def _fetch_template_claude_version(token: str) -> str | None:
+def _fetch_template_claude_version() -> str | None:
     """Fetch forever-claude-template's pinned claude version via the GitHub contents API.
 
-    Uses the passed-in auth token (forever-claude-template is private). Returns
-    the version string on success, or None on any fetch / parse failure so the
-    caller can decide whether to skip (offline / no-token) or fail.
+    forever-claude-template is public so no auth token is needed. Returns
+    the version string on success, or None on any fetch / parse failure
+    so the caller can surface a single "fetch or parse failed" assertion.
     """
     request = urllib.request.Request(
         _TEMPLATE_CONTENTS_URL,
         headers={
-            "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "User-Agent": "mngr-claude-version-alignment-test",
         },
@@ -112,16 +110,9 @@ def test_claude_code_version_matches_forever_claude_template_pin() -> None:
     provisioning with "Claude version mismatch".
     """
     dockerfile_version = _parse_dockerfile_claude_version(_DOCKERFILE_PATH.read_text())
-    token = os.environ.get("GITHUB_TOKEN")
-    if not token:
-        pytest.skip(
-            "GITHUB_TOKEN not set; cannot fetch forever-claude-template "
-            "(private repo) to verify the pin alignment. Set GITHUB_TOKEN to run."
-        )
-    template_version = _fetch_template_claude_version(token)
+    template_version = _fetch_template_claude_version()
     assert template_version is not None, (
-        f"Failed to fetch or parse {_TEMPLATE_CONTENTS_URL}. Check GITHUB_TOKEN "
-        "scope (needs repo read access) and template repo reachability."
+        f"Failed to fetch or parse {_TEMPLATE_CONTENTS_URL}. Check template repo reachability."
     )
     assert dockerfile_version == template_version, (
         f"Dockerfile CLAUDE_CODE_VERSION={dockerfile_version!r} does not match "

@@ -143,16 +143,12 @@ def _get_template_repo() -> str:
     """Return the template repo source: a local path (from MINDS_TEMPLATE_REPO) or the git URL.
 
     When MINDS_TEMPLATE_REPO is set, returns the expanded local path.
-    When GITHUB_TOKEN is set, returns a token-authenticated HTTPS URL so the
-    private template can be cloned from inside a sandbox (e.g. offload release
-    runs). Otherwise returns the plain GitHub URL.
+    Otherwise returns the plain GitHub HTTPS URL -- forever-claude-template
+    is a public repo, so no credentials are needed.
     """
     env_value = os.environ.get("MINDS_TEMPLATE_REPO")
     if env_value is not None:
         return str(Path(env_value).expanduser())
-    token = os.environ.get("GITHUB_TOKEN")
-    if token:
-        return f"https://x-access-token:{token}@github.com/imbue-ai/forever-claude-template.git"
     return _TEMPLATE_GIT_URL
 
 
