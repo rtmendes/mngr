@@ -53,6 +53,39 @@ runs:
           echo "is_flaky_recovered=false" >> "$GITHUB_OUTPUT"
         fi
 
+    # Build a per-test table of retry counts and @pytest.mark.flaky status from
+    # junit.xml and the per-sandbox flaky manifests written by the conftest hook
+    # in libs/imbue_common. Appended to the run's step summary so it shows on
+    # the workflow run page, and exported as an output so downstream steps can
+    # attach it to the check-runs surfaced on the PR checks page.
+    - name: Generate retry + flaky summary
+      id: retry_summary
+      if: always()
+      shell: bash
+      env:
+        JUNIT_PATH: ${{ inputs.junit-path }}
+        CHECK_NAME: ${{ inputs.check-name }}
+      run: |
+        if [ ! -f "$JUNIT_PATH" ]; then
+          echo "junit.xml not found at $JUNIT_PATH; skipping summary" >&2
+          echo "summary_path=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        TESTS_DIR="$(dirname "$JUNIT_PATH")"
+        SUMMARY_FILE="$RUNNER_TEMP/retry-flaky-summary.md"
+        python3 "$GITHUB_WORKSPACE/scripts/junit_test_summary.py" \
+          --junit "$JUNIT_PATH" \
+          --flaky-manifest-glob "${TESTS_DIR}/**/flaky_tests_*.txt" \
+          --heading "$CHECK_NAME: retry + flaky summary" \
+          --output "$SUMMARY_FILE"
+        cat "$SUMMARY_FILE" >> "$GITHUB_STEP_SUMMARY"
+        echo "summary_path=$SUMMARY_FILE" >> "$GITHUB_OUTPUT"
+        {
+          echo 'summary_md<<RETRY_FLAKY_SUMMARY_EOF'
+          cat "$SUMMARY_FILE"
+          echo RETRY_FLAKY_SUMMARY_EOF
+        } >> "$GITHUB_OUTPUT"
+
     - name: Report test results
       if: always() && steps.flaky.outputs.is_flaky_recovered != 'true'
       uses: mikepenz/action-junit-report@v5
@@ -60,6 +93,7 @@ runs:
         report_paths: ${{ inputs.junit-path }}
         include_passed: false
         check_name: ${{ inputs.check-name }}
+        summary: ${{ steps.retry_summary.outputs.summary_md }}
 
     - name: Report test annotations (flaky recovered)
       if: always() && steps.flaky.outputs.is_flaky_recovered == 'true'
@@ -78,15 +112,23 @@ runs:
         CHECK_NAME: ${{ inputs.check-name }}
         REPO: ${{ github.repository }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        RETRY_SUMMARY_PATH: ${{ steps.retry_summary.outputs.summary_path }}
       # Build the JSON body with `jq -n --arg` so that any special characters
       # in $CHECK_NAME (quotes, backslashes, etc.) are properly escaped rather
       # than interpolated raw into a JSON string literal. `jq` is preinstalled
       # on GitHub-hosted runners.
       run: |
+        INTRO="One or more tests failed on first attempt but passed on retry. See the workflow run summary and job logs for the failed-attempt annotations and details."
+        if [ -n "$RETRY_SUMMARY_PATH" ] && [ -f "$RETRY_SUMMARY_PATH" ]; then
+          RETRY_BODY="$(cat "$RETRY_SUMMARY_PATH")"
+          SUMMARY="${INTRO}"$'\n\n'"${RETRY_BODY}"
+        else
+          SUMMARY="${INTRO}"
+        fi
         jq -n \
           --arg name "$CHECK_NAME" \
           --arg head_sha "$HEAD_SHA" \
-          --arg summary "One or more tests failed on first attempt but passed on retry. See the workflow run summary and job logs for the failed-attempt annotations and details." \
+          --arg summary "$SUMMARY" \
           '{
             name: $name,
             head_sha: $head_sha,
