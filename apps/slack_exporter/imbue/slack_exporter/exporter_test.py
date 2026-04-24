@@ -1006,7 +1006,9 @@ def test_run_export_refresh_window_discovers_replies_on_old_parent(temp_output_d
     # The refreshed parent was written to the updated stream (not created, since the key
     # already existed) with the new reply_count / latest_reply metadata.
     msg_updated = (temp_output_dir / "message" / "updated" / "events.jsonl").read_text().strip().splitlines()
-    updated_parents = [json.loads(line) for line in msg_updated if json.loads(line)["message_ts"] == "1700000000.000001"]
+    updated_parents = [
+        json.loads(line) for line in msg_updated if json.loads(line)["message_ts"] == "1700000000.000001"
+    ]
     # Latest update for the parent should have reply_count=2
     assert updated_parents[-1]["raw"]["reply_count"] == 2
     assert updated_parents[-1]["raw"]["latest_reply"] == "1700000000.000003"
