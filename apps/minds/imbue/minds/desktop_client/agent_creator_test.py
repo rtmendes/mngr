@@ -15,6 +15,7 @@ from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.agent_creator import _build_latchkey_gateway_url
 from imbue.minds.desktop_client.agent_creator import _build_mngr_create_command
 from imbue.minds.desktop_client.agent_creator import _is_local_path
+from imbue.minds.desktop_client.agent_creator import _leased_agent_address
 from imbue.minds.desktop_client.agent_creator import _load_lease_info
 from imbue.minds.desktop_client.agent_creator import _load_or_create_leased_host_keypair
 from imbue.minds.desktop_client.agent_creator import _make_host_name
@@ -96,6 +97,15 @@ def test_is_local_path_url() -> None:
 
 
 # -- _build_mngr_create_command tests --
+
+
+def test_leased_agent_address_uses_ssh_provider_and_leased_host_name() -> None:
+    """The explicit address matches the SSH provider + host-name pattern that
+    ``imbue.minds.bootstrap._ensure_mngr_settings`` sets up, so mngr discovery
+    only hits the SSH provider and skips ID lookup entirely."""
+    agent_id = AgentId()
+    address = _leased_agent_address(agent_id)
+    assert address == f"{agent_id}@leased-{agent_id}.ssh"
 
 
 def test_make_host_name() -> None:
