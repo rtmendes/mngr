@@ -72,7 +72,7 @@ _BIFROST_HOST = "127.0.0.1"
 _BIFROST_BIND_HOST_EXTERNAL = "0.0.0.0"
 _BIFROST_APP_DIR = "/app/bifrost"
 _BIFROST_BINARY = "bifrost-http"
-_BIFROST_NPM_VERSION = "1.5.0"
+_BIFROST_NPM_VERSION = "1.6.2"
 
 _BIFROST_ADMIN_BASE = f"http://{_BIFROST_HOST}:{_BIFROST_PORT}"
 _BIFROST_STARTUP_TIMEOUT_SECONDS = 60.0
@@ -401,9 +401,8 @@ def _build_bifrost_config() -> dict[str, Any]:
 
     Both the config store and the logs store are pointed at PostgreSQL on
     Neon. They use *different* databases (env-specified) to reduce load on any
-    single database. Secrets (DB credentials, encryption key, admin token,
-    provider API keys) are always referenced via bifrost's ``env.VAR`` syntax
-    so the actual values never land in the serialized config on disk.
+    single database. Env vars are resolved at config-generation time so the
+    config contains plain strings (required by bifrost >= 1.5).
     """
     return {
         "version": 2,
@@ -411,16 +410,16 @@ def _build_bifrost_config() -> dict[str, Any]:
             "drop_excess_requests": False,
             "allowed_origins": ["*"],
         },
-        "encryption_key": {"value": "env.BIFROST_ENCRYPTION_KEY"},
+        "encryption_key": os.environ["BIFROST_ENCRYPTION_KEY"],
         "auth_config": {
-            "mode": "bearer",
-            "bearer_token": {"value": "env.BIFROST_ADMIN_TOKEN"},
+            "admin_api_key": os.environ["BIFROST_ADMIN_TOKEN"],
         },
         "providers": {
             "anthropic": {
                 "keys": [
                     {
-                        "value": "env.ANTHROPIC_API_KEY",
+                        "name": "anthropic-primary",
+                        "value": os.environ["ANTHROPIC_API_KEY"],
                         "models": ["*"],
                         "weight": 1.0,
                     }
@@ -431,12 +430,12 @@ def _build_bifrost_config() -> dict[str, Any]:
             "enabled": True,
             "type": "postgres",
             "config": {
-                "host": {"value": "env.NEON_CONFIG_HOST"},
-                "port": {"value": "env.NEON_CONFIG_PORT"},
-                "user": {"value": "env.NEON_CONFIG_USER"},
-                "password": {"value": "env.NEON_CONFIG_PASSWORD"},
-                "db_name": {"value": "env.NEON_CONFIG_DB"},
-                "ssl_mode": {"value": "require"},
+                "host": os.environ["NEON_CONFIG_HOST"],
+                "port": os.environ["NEON_CONFIG_PORT"],
+                "user": os.environ["NEON_CONFIG_USER"],
+                "password": os.environ["NEON_CONFIG_PASSWORD"],
+                "db_name": os.environ["NEON_CONFIG_DB"],
+                "ssl_mode": "require",
                 "max_idle_conns": 2,
                 "max_open_conns": 10,
             },
@@ -445,12 +444,12 @@ def _build_bifrost_config() -> dict[str, Any]:
             "enabled": True,
             "type": "postgres",
             "config": {
-                "host": {"value": "env.NEON_LOGS_HOST"},
-                "port": {"value": "env.NEON_LOGS_PORT"},
-                "user": {"value": "env.NEON_LOGS_USER"},
-                "password": {"value": "env.NEON_LOGS_PASSWORD"},
-                "db_name": {"value": "env.NEON_LOGS_DB"},
-                "ssl_mode": {"value": "require"},
+                "host": os.environ["NEON_LOGS_HOST"],
+                "port": os.environ["NEON_LOGS_PORT"],
+                "user": os.environ["NEON_LOGS_USER"],
+                "password": os.environ["NEON_LOGS_PASSWORD"],
+                "db_name": os.environ["NEON_LOGS_DB"],
+                "ssl_mode": "require",
                 "max_idle_conns": 2,
                 "max_open_conns": 10,
             },
