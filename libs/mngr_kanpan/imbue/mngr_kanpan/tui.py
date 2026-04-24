@@ -186,16 +186,21 @@ def _mark_color(cmd: KanpanCommand) -> str | None:
     """Return the mark indicator color if ``cmd`` is markable, else ``None``.
 
     ``ActionBuiltinCommand`` is never markable. ``MarkableBuiltinCommand``
-    always carries a color string. ``CustomCommand.markable`` may be a
-    ``bool`` (use the default color) or a ``str`` (explicit color).
+    always carries a color string. ``CustomCommand.markable`` is
+    ``bool | str``: ``False`` means not markable, ``True`` means markable
+    with the default color, a ``str`` means that explicit color.
     """
     if isinstance(cmd, ActionBuiltinCommand):
         return None
     if isinstance(cmd, MarkableBuiltinCommand):
         return cmd.markable
-    if not cmd.markable:
-        return None
-    return cmd.markable if isinstance(cmd.markable, str) else _DEFAULT_MARK_COLOR
+    match cmd.markable:
+        case str() as color:
+            return color
+        case bool() as is_markable:
+            return _DEFAULT_MARK_COLOR if is_markable else None
+        case _:
+            assert_never(cmd.markable)
 
 
 def _osc8_wrap_content(inner_content: Any, osc_open: bytes, osc_close: bytes) -> Any:
