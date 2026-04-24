@@ -22,6 +22,8 @@ import argparse
 import glob
 import sys
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 from typing import Final
 
@@ -173,8 +175,8 @@ def _testcase_outcome(testcase: ET.Element) -> str:
 
 
 def _render_markdown(
-    per_test: dict[str, AttemptsRecord],
-    flaky_ids: set[str],
+    per_test: Mapping[str, AttemptsRecord],
+    flaky_ids: AbstractSet[str],
     heading: str,
 ) -> str:
     total_tests = len(per_test)
