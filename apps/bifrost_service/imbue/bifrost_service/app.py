@@ -411,8 +411,10 @@ def _build_bifrost_config() -> dict[str, Any]:
             "allowed_origins": ["*"],
         },
         "encryption_key": os.environ["BIFROST_ENCRYPTION_KEY"],
-        "auth": {
-            "admin_api_key": os.environ["BIFROST_ADMIN_TOKEN"],
+        "auth_config": {
+            "admin_username": "admin",
+            "admin_password": os.environ["BIFROST_ADMIN_TOKEN"],
+            "is_enabled": True,
         },
         "providers": {
             "anthropic": {
