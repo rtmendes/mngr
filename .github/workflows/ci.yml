@@ -147,7 +147,7 @@ jobs:
             exit 1
           fi
 
-      - name: Report test results (neutral on flaky recovery)
+      - name: Report test results
         if: always()
         uses: ./.github/actions/report-flaky-aware-tests
         with:
@@ -266,7 +266,7 @@ jobs:
           path: test-results/junit.xml
           key: offload-acceptance-durations-${{ github.ref }}-${{ github.run_id }}
 
-      - name: Report test results (neutral on flaky recovery)
+      - name: Report test results
         if: always()
         uses: ./.github/actions/report-flaky-aware-tests
         with:
