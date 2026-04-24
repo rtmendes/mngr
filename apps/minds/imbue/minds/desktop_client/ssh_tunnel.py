@@ -369,9 +369,7 @@ class SSHTunnelManager(MutableModel):
                 tunnel_info.local_port,
             )
             try:
-                first_dir: str | None = (
-                    tunnel_info.agent_state_dirs[0] if tunnel_info.agent_state_dirs else None
-                )
+                first_dir: str | None = tunnel_info.agent_state_dirs[0] if tunnel_info.agent_state_dirs else None
                 new_remote_port = self.setup_reverse_tunnel(
                     ssh_info=tunnel_info.ssh_info,
                     local_port=tunnel_info.local_port,

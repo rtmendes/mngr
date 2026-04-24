@@ -288,12 +288,8 @@ def test_discovery_handler_spawns_for_every_provider(tmp_path: Path) -> None:
     manager.start(data_dir=tmp_path)
     tunnel_manager = SSHTunnelManager()
     try:
-        handler = LatchkeyGatewayDiscoveryHandler(
-            gateway_manager=manager, tunnel_manager=tunnel_manager
-        )
-        agent_by_provider = {
-            name: AgentId() for name in ("local", "docker", "lima", "vultr", "modal")
-        }
+        handler = LatchkeyGatewayDiscoveryHandler(gateway_manager=manager, tunnel_manager=tunnel_manager)
+        agent_by_provider = {name: AgentId() for name in ("local", "docker", "lima", "vultr", "modal")}
         for provider_name, agent_id in agent_by_provider.items():
             # ssh_info=None is fine here -- it keeps the test off the SSH path.
             # The "does it also set up a reverse tunnel when ssh_info is given"
@@ -330,12 +326,8 @@ def test_discovery_handler_sets_up_reverse_tunnel_when_ssh_info_given(tmp_path: 
     manager.start(data_dir=tmp_path)
     tunnel_manager = _RecordingTunnelManager()
     try:
-        handler = LatchkeyGatewayDiscoveryHandler(
-            gateway_manager=manager, tunnel_manager=tunnel_manager
-        )
-        ssh_info = RemoteSSHInfo(
-            user="root", host="192.0.2.1", port=22, key_path=tmp_path / "k"
-        )
+        handler = LatchkeyGatewayDiscoveryHandler(gateway_manager=manager, tunnel_manager=tunnel_manager)
+        ssh_info = RemoteSSHInfo(user="root", host="192.0.2.1", port=22, key_path=tmp_path / "k")
         agent_id = AgentId()
         handler(agent_id, ssh_info, "docker")
 
@@ -357,9 +349,7 @@ def test_discovery_handler_skips_reverse_tunnel_for_dev_agents(tmp_path: Path) -
     manager.start(data_dir=tmp_path)
     tunnel_manager = _RecordingTunnelManager()
     try:
-        handler = LatchkeyGatewayDiscoveryHandler(
-            gateway_manager=manager, tunnel_manager=tunnel_manager
-        )
+        handler = LatchkeyGatewayDiscoveryHandler(gateway_manager=manager, tunnel_manager=tunnel_manager)
         agent_id = AgentId()
         handler(agent_id, None, "local")
 
@@ -376,9 +366,7 @@ def test_discovery_handler_swallows_gateway_errors(tmp_path: Path) -> None:
     manager.start(data_dir=tmp_path)
     tunnel_manager = _RecordingTunnelManager()
     try:
-        handler = LatchkeyGatewayDiscoveryHandler(
-            gateway_manager=manager, tunnel_manager=tunnel_manager
-        )
+        handler = LatchkeyGatewayDiscoveryHandler(gateway_manager=manager, tunnel_manager=tunnel_manager)
         handler(AgentId(), None, "local")
         assert manager.list_gateways() == ()
         assert tunnel_manager._calls == []
@@ -427,9 +415,7 @@ def _wait_for_counter(counter_path: Path, expected: int, timeout: float = 5.0) -
     return last
 
 
-def test_ensure_browser_runs_once_on_first_spawn(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ensure_browser_runs_once_on_first_spawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     counter_path = tmp_path / "ensure_browser_counter"
     monkeypatch.setenv("FAKE_LATCHKEY_COUNTER", str(counter_path))
     fake_binary = _make_fake_latchkey_binary_with_ensure_browser_counter(tmp_path, counter_path)
@@ -469,9 +455,7 @@ def test_destruction_handler_stops_gateway(tmp_path: Path) -> None:
     manager.start(data_dir=tmp_path)
     tunnel_manager = _RecordingTunnelManager()
     try:
-        discovery = LatchkeyGatewayDiscoveryHandler(
-            gateway_manager=manager, tunnel_manager=tunnel_manager
-        )
+        discovery = LatchkeyGatewayDiscoveryHandler(gateway_manager=manager, tunnel_manager=tunnel_manager)
         destruction = LatchkeyGatewayDestructionHandler(gateway_manager=manager)
         agent_id = AgentId()
         discovery(agent_id, None, "docker")
