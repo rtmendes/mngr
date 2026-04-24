@@ -36,7 +36,6 @@ from imbue.mngr_kanpan.testing import make_mngr_ctx_with_config
 from imbue.mngr_kanpan.testing import make_pr_field
 from imbue.mngr_kanpan.tui import BOARD_SECTION_ORDER
 from imbue.mngr_kanpan.tui import _BUILTIN_COLUMN_DEFS
-from imbue.mngr_kanpan.tui import _BUILTIN_COMMANDS
 from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_DELETE
 from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_EXECUTE
 from imbue.mngr_kanpan.tui import _BUILTIN_COMMAND_KEY_PUSH
@@ -1330,7 +1329,7 @@ def test_submit_batch_item_push_with_work_dir(tmp_path: Path) -> None:
     item = _BatchWorkItem(
         name=AgentName("agent-a"),
         key=_BUILTIN_COMMAND_KEY_PUSH,
-        cmd=_BUILTIN_COMMANDS[_BUILTIN_COMMAND_KEY_PUSH],
+        cmd=CustomCommand(name="push", is_builtin=True),
         entry=entry,
     )
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -1344,7 +1343,7 @@ def test_submit_batch_item_push_no_work_dir() -> None:
     item = _BatchWorkItem(
         name=AgentName("agent-a"),
         key=_BUILTIN_COMMAND_KEY_PUSH,
-        cmd=_BUILTIN_COMMANDS[_BUILTIN_COMMAND_KEY_PUSH],
+        cmd=CustomCommand(name="push", is_builtin=True),
         entry=entry,
     )
     with ThreadPoolExecutor(max_workers=1) as pool:

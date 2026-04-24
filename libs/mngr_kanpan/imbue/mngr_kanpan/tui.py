@@ -149,12 +149,12 @@ _BUILTIN_COMMAND_KEY_UNMARK = "u"
 _BUILTIN_COMMAND_KEY_EXECUTE = "x"
 
 _BUILTIN_COMMANDS: dict[str, CustomCommand] = {
-    _BUILTIN_COMMAND_KEY_REFRESH: CustomCommand(name="refresh"),
-    _BUILTIN_COMMAND_KEY_PUSH: CustomCommand(name="mark push", markable="yellow"),
-    _BUILTIN_COMMAND_KEY_DELETE: CustomCommand(name="mark delete", markable="light red"),
-    _BUILTIN_COMMAND_KEY_MUTE: CustomCommand(name="mute"),
-    _BUILTIN_COMMAND_KEY_UNMARK: CustomCommand(name="unmark"),
-    _BUILTIN_COMMAND_KEY_EXECUTE: CustomCommand(name="execute"),
+    _BUILTIN_COMMAND_KEY_REFRESH: CustomCommand(name="refresh", is_builtin=True),
+    _BUILTIN_COMMAND_KEY_PUSH: CustomCommand(name="mark push", markable="yellow", is_builtin=True),
+    _BUILTIN_COMMAND_KEY_DELETE: CustomCommand(name="mark delete", markable="light red", is_builtin=True),
+    _BUILTIN_COMMAND_KEY_MUTE: CustomCommand(name="mute", is_builtin=True),
+    _BUILTIN_COMMAND_KEY_UNMARK: CustomCommand(name="unmark", is_builtin=True),
+    _BUILTIN_COMMAND_KEY_EXECUTE: CustomCommand(name="execute", is_builtin=True),
 }
 
 _DEFAULT_MARK_COLOR = "light cyan"
@@ -546,12 +546,6 @@ def _run_shell_command_sync(command: str, agent_name: str) -> subprocess.Complet
     )
 
 
-def _is_builtin(cmd: CustomCommand, key: str) -> bool:
-    # Identity check: `_build_command_map` replaces the builtin value when the
-    # user overrides a key, so `is` distinguishes builtin from override.
-    return cmd is _BUILTIN_COMMANDS.get(key)
-
-
 def _start_batch_execution(state: _KanpanState) -> None:
     """Begin executing all marked operations sequentially."""
     if state.executor is None:
@@ -573,7 +567,7 @@ def _start_batch_execution(state: _KanpanState) -> None:
         # Only the builtin delete batches all marked agents into one `mngr
         # destroy` call. A user-defined override of "d" (or any other key)
         # runs per-agent via the individual-work path.
-        if mark_key == _BUILTIN_COMMAND_KEY_DELETE and _is_builtin(cmd, mark_key):
+        if mark_key == _BUILTIN_COMMAND_KEY_DELETE and cmd.is_builtin:
             delete_names.append(name)
         else:
             individual_work.append(_BatchWorkItem(name=name, key=mark_key, cmd=cmd, entry=entries_by_name.get(name)))
@@ -602,10 +596,10 @@ def _submit_batch_item(
     """Submit a single batch work item to the executor."""
     # Builtin delete / push have dedicated runners; any user override of the
     # same key falls through to the generic shell-command branch below.
-    if item.key == _BUILTIN_COMMAND_KEY_DELETE and _is_builtin(item.cmd, item.key):
+    if item.key == _BUILTIN_COMMAND_KEY_DELETE and item.cmd.is_builtin:
         names = [str(n) for n in item.batch_names] if item.batch_names else [str(item.name)]
         return executor.submit(_run_destroy, names)
-    if item.key == _BUILTIN_COMMAND_KEY_PUSH and _is_builtin(item.cmd, item.key):
+    if item.key == _BUILTIN_COMMAND_KEY_PUSH and item.cmd.is_builtin:
         if item.entry is None or item.entry.work_dir is None:
             return None
         return executor.submit(_run_git_push, str(item.entry.work_dir))

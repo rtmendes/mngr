@@ -81,6 +81,12 @@ class CustomCommand(FrozenModel):
         description="If truthy, pressing the key marks agents for batch execution with x instead of running immediately."
         " Set to a color name (e.g. 'light red') to customize the mark indicator color.",
     )
+    is_builtin: bool = Field(
+        default=False,
+        description="True only for entries in tui._BUILTIN_COMMANDS; controls whether a builtin-specific dispatch"
+        " path (e.g. `mngr destroy` for delete, `git push` for push) applies. User config always produces False"
+        " so user overrides of a builtin key route through the generic shell-command dispatch.",
+    )
 
 
 class KanpanPluginConfig(PluginConfig):
