@@ -436,3 +436,54 @@ def test_top_level_cov_flags_are_union_of_subproject_cov_flags() -> None:
         )
 
     assert not errors, "Top-level --cov= flags out of sync with subprojects:\n" + "\n".join(errors)
+
+
+def _get_coverage_omit(pyproject: dict) -> list[str]:
+    return [str(x) for x in pyproject.get("tool", {}).get("coverage", {}).get("run", {}).get("omit", [])]
+
+
+def test_top_level_coverage_omit_covers_subproject_omits() -> None:
+    """For every file in a subproject's package tree that the subproject's
+    `[tool.coverage.run].omit` patterns exclude, the top-level
+    `[tool.coverage.run].omit` must also exclude it.
+
+    Checks the file-level semantic (not pattern-level equality) because root and
+    subproject pyproject.tomls use different path conventions: subprojects use globs
+    like `*/testing.py`, while root can use either globs or fully-qualified paths like
+    `libs/<pkg>/imbue/<pkg>/testing.py`. Walking concrete files and matching via
+    fnmatch (the same matcher coverage.py uses) makes both forms equivalent.
+
+    Prevents a new subproject from silently omitting files that combined coverage
+    still counts at the root.
+    """
+    import fnmatch
+
+    top_omit = _get_coverage_omit(tomlkit.parse((_REPO_ROOT / "pyproject.toml").read_text()))
+
+    def root_excludes(rel_repo_path: str) -> bool:
+        return any(fnmatch.fnmatch(rel_repo_path, pat) for pat in top_omit)
+
+    missing: dict[str, list[str]] = {}
+    for project_dir in _get_all_project_dirs():
+        pkg_root = project_dir / "imbue" / project_dir.name
+        if not pkg_root.exists():
+            continue
+        sub_patterns = _get_coverage_omit(tomlkit.parse((project_dir / "pyproject.toml").read_text()))
+        if not sub_patterns:
+            continue
+        for f in pkg_root.rglob("*.py"):
+            if not f.is_file():
+                continue
+            rel_subproject = str(f.relative_to(project_dir))
+            if not any(fnmatch.fnmatch(rel_subproject, pat) for pat in sub_patterns):
+                continue
+            rel_repo = str(f.relative_to(_REPO_ROOT))
+            if not root_excludes(rel_repo):
+                missing.setdefault(project_dir.name, []).append(rel_repo)
+
+    errors = [
+        f"  {proj}:\n" + "\n".join(f"    - {p}" for p in sorted(files)) for proj, files in sorted(missing.items())
+    ]
+    assert not errors, (
+        "Top-level [tool.coverage.run].omit is missing entries for files that subprojects omit:\n" + "\n".join(errors)
+    )
