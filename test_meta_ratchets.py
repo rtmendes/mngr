@@ -399,6 +399,10 @@ def _get_addopts(pyproject: dict) -> object:
     return pyproject.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("addopts", [])
 
 
+def _get_coverage_omit(pyproject: dict) -> list[str]:
+    return [str(x) for x in pyproject.get("tool", {}).get("coverage", {}).get("run", {}).get("omit", [])]
+
+
 def test_top_level_cov_flags_are_union_of_subproject_cov_flags() -> None:
     """Ensure the top-level pyproject.toml `--cov=` flags are exactly the union of the
     subprojects' `--cov=` flags, except for packages whose source is fully omitted in the
@@ -409,9 +413,9 @@ def test_top_level_cov_flags_are_union_of_subproject_cov_flags() -> None:
     """
     top_pyproject = tomlkit.parse((_REPO_ROOT / "pyproject.toml").read_text())
     top_cov = _get_cov_packages(_get_addopts(top_pyproject))
-    top_omit = top_pyproject.get("tool", {}).get("coverage", {}).get("run", {}).get("omit", [])
+    top_omit = _get_coverage_omit(top_pyproject)
     fully_omitted = frozenset(
-        f"imbue.{m.group(1)}" for pat in top_omit if (m := _FULLY_OMITTED_PACKAGE_PATTERN.match(str(pat))) is not None
+        f"imbue.{m.group(1)}" for pat in top_omit if (m := _FULLY_OMITTED_PACKAGE_PATTERN.match(pat)) is not None
     )
 
     subproject_cov: set[str] = set()
@@ -437,10 +441,6 @@ def test_top_level_cov_flags_are_union_of_subproject_cov_flags() -> None:
         )
 
     assert not errors, "Top-level --cov= flags out of sync with subprojects:\n" + "\n".join(errors)
-
-
-def _get_coverage_omit(pyproject: dict) -> list[str]:
-    return [str(x) for x in pyproject.get("tool", {}).get("coverage", {}).get("run", {}).get("omit", [])]
 
 
 def test_top_level_coverage_omit_covers_subproject_omits() -> None:
