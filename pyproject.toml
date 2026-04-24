@@ -151,7 +151,7 @@ omit = [
     "*/conftest.py",
     # Test utility modules contain helpers only used by tests
     "*/testing.py",
-    "*/plugin_testing.py",
+    "*/utils/plugin_testing.py",
     "libs/imbue_common/imbue/imbue_common/ratchet_testing/ratchets.py",
     # Modal provider plugin requires network access for testing
     "libs/mngr_modal/imbue/mngr_modal/*",
