@@ -1,7 +1,7 @@
 """LiteLLM proxy deployed as a Modal serverless function.
 
 This file is entirely self-contained -- it has NO imports from the monorepo.
-Only stdlib and the litellm package (installed in the Modal image) are used.
+Only stdlib, modal, pyyaml, and litellm (installed in the Modal image) are used.
 This keeps deployment simple: ``modal deploy app.py`` ships just this file.
 
 The proxy exposes the Anthropic pass-through endpoint so that Claude Code
