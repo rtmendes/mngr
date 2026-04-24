@@ -817,8 +817,9 @@ app = modal.App(name=f"bifrost-{_DEPLOY_ENV}", image=image)
     ],
     timeout=600,
     scaledown_window=300,
+    min_containers=1,
 )
-@modal.web_server(port=_BIFROST_PORT, startup_timeout=120)
+@modal.web_server(port=_BIFROST_PORT, startup_timeout=300)
 def bifrost_inference() -> None:
     """Modal Function that runs bifrost directly for inference traffic.
 
