@@ -797,9 +797,12 @@ image = (
         # Install Node.js 20 (needed for the @maximhq/bifrost npm package).
         "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
         "apt-get install -y nodejs",
-        # Install the pinned bifrost binary. The npm wrapper downloads the
-        # platform-specific pre-built binary at install time.
+        # Install the pinned bifrost npm wrapper.
         f"npm install -g @maximhq/bifrost@{_BIFROST_NPM_VERSION}",
+        # Pre-download the Go binary. The npm wrapper downloads it on first
+        # invocation; running --help triggers the download and caches the
+        # binary so cold starts don't need to fetch 92 MB.
+        "bifrost --help || true",
     )
     .pip_install("fastapi[standard]", "httpx", "supertokens-python")
 )
