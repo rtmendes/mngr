@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import paramiko
 from loguru import logger
+from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import PrivateAttr
 
@@ -261,7 +262,16 @@ class SSHTunnelManager(MutableModel):
                 client = self._get_or_create_connection(ssh_info)
                 transport = _ssh_connection_transport(client)
 
-            assigned_remote_port = transport.request_port_forward("127.0.0.1", remote_port)
+            # Register a per-forward handler so paramiko dispatches each
+            # inbound channel to the correct local port, preserving the
+            # ``(server_addr, server_port)`` routing info. The default
+            # ``handler=None`` path puts every channel on a single transport-
+            # wide queue keyed only by arrival order, which silently cross-
+            # routes connections when multiple reverse tunnels share one
+            # transport (e.g. the minds API tunnel and a Latchkey gateway
+            # tunnel to the same agent host).
+            handler = _ForwardedTunnelHandler(local_port=local_port, shutdown_event=self._shutdown_event)
+            assigned_remote_port = transport.request_port_forward("127.0.0.1", remote_port, handler=handler)
             logger.info(
                 "Reverse tunnel established: remote 127.0.0.1:{} -> local 127.0.0.1:{}",
                 assigned_remote_port,
@@ -277,15 +287,6 @@ class SSHTunnelManager(MutableModel):
             )
             with self._lock:
                 self._reverse_tunnels[tunnel_key] = tunnel_info
-
-            # Start accepting forwarded connections in a background thread
-            thread = threading.Thread(
-                target=_reverse_tunnel_accept_loop,
-                args=(transport, local_port, self._shutdown_event),
-                daemon=True,
-                name=f"reverse-tunnel-{conn_key}-local-{local_port}",
-            )
-            thread.start()
 
             return assigned_remote_port
 
@@ -607,44 +608,62 @@ def _relay_data(sock: socket.socket, channel: paramiko.Channel) -> None:
             logger.trace("Error closing socket in relay: {}", e)
 
 
-def _reverse_tunnel_accept_loop(
-    transport: paramiko.Transport,
-    local_port: int,
-    shutdown_event: threading.Event,
-) -> None:
-    """Accept reverse-forwarded connections and relay them to the local server.
+class _ForwardedTunnelHandler(FrozenModel):
+    """Per-forward port-forward handler that relays inbound channels to ``127.0.0.1:local_port``.
 
-    When a remote process connects to the reverse-forwarded port, paramiko
-    delivers the connection as a channel via transport.accept(). This function
-    opens a local TCP connection to 127.0.0.1:local_port and relays data
-    bidirectionally.
+    Registered with paramiko via ``Transport.request_port_forward(..., handler=self)``.
+    Paramiko invokes ``__call__`` on its own dispatch thread for every inbound
+    connection to the specific reverse-forwarded port this handler is registered
+    against. Using a per-forward handler is load-bearing: it is the only way
+    paramiko preserves the ``(server_addr, server_port)`` routing info. The
+    default queue-based ``Transport.accept()`` path discards that info, which
+    silently cross-routes connections when multiple reverse tunnels share a
+    single transport.
+
+    Keeping ``__call__`` short is important: paramiko runs it on the transport's
+    internal dispatch thread, so any slow work would back up the transport.
+    We only do a non-blocking local ``connect()`` against loopback and hand
+    off to a dedicated relay thread.
     """
-    while not shutdown_event.is_set():
-        try:
-            channel = transport.accept(timeout=_SHUTDOWN_POLL_SECONDS)
-        except (paramiko.SSHException, EOFError) as e:
-            logger.debug("Reverse tunnel accept loop exiting: transport closed ({})", e)
-            break
-        if channel is None:
-            continue
 
+    # ``threading.Event`` is not pydantic-native; opt into arbitrary types for
+    # this handler specifically. The parent ``FrozenModel`` disallows them by
+    # default.
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
+    local_port: int = Field(description="127.0.0.1 TCP port inbound channels are relayed to")
+    shutdown_event: threading.Event = Field(
+        description="Shared shutdown flag; when set, newly arrived channels are closed without relaying"
+    )
+
+    def __call__(
+        self,
+        channel: paramiko.Channel,
+        _origin_addr: tuple[str, int],
+        _server_addr: tuple[str, int],
+    ) -> None:
+        if self.shutdown_event.is_set():
+            try:
+                channel.close()
+            except (paramiko.SSHException, OSError) as e:
+                logger.trace("Error closing channel during shutdown: {}", e)
+            return
         local_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            local_sock.connect(("127.0.0.1", local_port))
+            local_sock.connect(("127.0.0.1", self.local_port))
         except OSError as e:
-            logger.warning("Failed to connect to local port {} for reverse tunnel: {}", local_port, e)
+            logger.warning("Failed to connect to local port {} for reverse tunnel: {}", self.local_port, e)
             local_sock.close()
             try:
                 channel.close()
-            except (paramiko.SSHException, OSError):
-                pass
-            continue
-
+            except (paramiko.SSHException, OSError) as close_err:
+                logger.trace("Error closing channel after failed local connect: {}", close_err)
+            return
         threading.Thread(
             target=_relay_data,
             args=(local_sock, channel),
             daemon=True,
-            name=f"reverse-relay-127.0.0.1:{local_port}",
+            name=f"reverse-relay-127.0.0.1:{self.local_port}",
         ).start()
 
 
