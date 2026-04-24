@@ -1,3 +1,4 @@
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from textwrap import dedent
 
@@ -38,23 +39,17 @@ def test_parse_junit_counts_attempts(tmp_path: Path) -> None:
     assert per_test["pkg/test_x.py::test_b"].final_status == "flaky-recovered"
 
 
-def test_testcase_outcome_prefers_failure_over_skip(tmp_path: Path) -> None:
-    import xml.etree.ElementTree as ET
-
+def test_testcase_outcome_prefers_failure_over_skip() -> None:
     tc = ET.fromstring('<testcase name="x" time="0.1"><failure message="m"/><skipped/></testcase>')
     assert _testcase_outcome(tc) == "failed"
 
 
-def test_testcase_outcome_skipped(tmp_path: Path) -> None:
-    import xml.etree.ElementTree as ET
-
+def test_testcase_outcome_skipped() -> None:
     tc = ET.fromstring('<testcase name="x" time="0.1"><skipped/></testcase>')
     assert _testcase_outcome(tc) == "skipped"
 
 
-def test_testcase_outcome_passed(tmp_path: Path) -> None:
-    import xml.etree.ElementTree as ET
-
+def test_testcase_outcome_passed() -> None:
     tc = ET.fromstring('<testcase name="x" time="0.1"/>')
     assert _testcase_outcome(tc) == "passed"
 
