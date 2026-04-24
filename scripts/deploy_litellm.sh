@@ -9,7 +9,7 @@
 #     scripts/deploy_litellm.sh production
 #
 # Before deploying, push the litellm-<env> secret to Modal:
-#     uv run python scripts/push_modal_secrets.py litellm <env-name>
+#     uv run python scripts/push_modal_secrets.py <env-name>
 
 set -euo pipefail
 
