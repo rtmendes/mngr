@@ -126,6 +126,33 @@ def test_render_markdown_truncates_over_max_chars() -> None:
     assert "Unique tests: **100**" in md
 
 
+def test_render_markdown_keeps_all_rows_when_body_fits_without_footer() -> None:
+    """When the full table fits under max_chars we must keep every row and skip the footer.
+
+    Regression: previously the renderer always reserved footer headroom from the
+    budget, so a table whose full body was just under max_chars was still
+    truncated and got an "N additional test row(s) omitted" footer.
+    """
+    per_test: dict[str, AttemptsRecord] = {}
+    for i in range(5):
+        name = f"pkg/test.py::test_{i}"
+        r = AttemptsRecord(name=name)
+        r.record(outcome=RunStatus.PASSED)
+        per_test[name] = r
+
+    # Render without a cap so we know the unconstrained size.
+    full = _render_markdown(per_test=per_test, flaky_ids=set(), heading="H", max_chars=10_000)
+    # Pick a max_chars that fits the full output exactly but is below the
+    # old (body + 160-char footer headroom) budget, so the previous
+    # implementation would have truncated.
+    tight = _render_markdown(per_test=per_test, flaky_ids=set(), heading="H", max_chars=len(full))
+    assert tight == full
+    assert "additional test row(s) omitted" not in tight
+    # Every test row must still be present.
+    for i in range(5):
+        assert f"pkg/test.py::test_{i}" in tight
+
+
 def test_render_markdown_empty_run() -> None:
     md = _render_markdown(per_test={}, flaky_ids=set(), heading="H", max_chars=10_000)
     assert "No tests recorded" in md

@@ -264,11 +264,20 @@ def _assemble_with_truncation(
     """Join header + table, dropping trailing rows if the total exceeds max_chars.
 
     When truncation kicks in, appends a footer disclosing how many rows were
-    omitted so the reader knows the table is not complete.
+    omitted so the reader knows the table is not complete. If every row fits
+    within max_chars without a footer, all rows are kept and no footer is added.
     """
     fixed = "\n".join(header_lines + table_header) + "\n"
-    # Reserve headroom for the truncation footer so we do not emit rows we will
-    # later have to drop again after appending the footer.
+    # +1 per row for the newline that separates/terminates it in the body.
+    full_body_size = sum(len(row) + 1 for row in rows)
+
+    # Fast path: the full body fits under max_chars without any footer.
+    if len(fixed) + full_body_size <= max_chars:
+        body = "\n".join(rows) + ("\n" if rows else "")
+        return fixed + body
+
+    # Truncation path: reserve headroom for the footer so we do not emit rows
+    # we will later have to drop again once the footer is appended.
     footer_headroom = 160
     budget = max_chars - len(fixed) - footer_headroom
     kept_rows: list[str] = []
@@ -281,15 +290,12 @@ def _assemble_with_truncation(
         used += row_len
 
     body = "\n".join(kept_rows) + ("\n" if kept_rows else "")
-    assembled = fixed + body
-
     omitted = len(rows) - len(kept_rows)
-    if omitted > 0:
-        assembled += (
-            f"\n_... {omitted} additional test row(s) omitted to keep the summary under "
-            f"{max_chars} characters. See the workflow run page for the full list._\n"
-        )
-    return assembled
+    footer = (
+        f"\n_... {omitted} additional test row(s) omitted to keep the summary under "
+        f"{max_chars} characters. See the workflow run page for the full list._\n"
+    )
+    return fixed + body + footer
 
 
 if __name__ == "__main__":
