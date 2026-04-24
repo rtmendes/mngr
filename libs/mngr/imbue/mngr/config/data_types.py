@@ -74,7 +74,7 @@ def split_cli_args_string(cli_args: str) -> tuple[str, ...]:
 
 @pure
 def merge_tuples(base: tuple[str, ...], override: tuple[str, ...]) -> tuple[str, ...]:
-    """Merge string tuples, concatenating if both present."""
+    """Merge tuples by concatenation, returning base unchanged if override is empty."""
     if override:
         return base + override
     return base
@@ -893,6 +893,7 @@ class CreateCliOptions(CommonCliOptions):
     type: str | None
     reuse: bool
     connect: bool
+    foreground: bool
     connect_command: str | None
     ensure_clean: bool
     name: str | None
