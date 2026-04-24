@@ -1,4 +1,5 @@
 import ast
+import fnmatch
 import re
 import subprocess
 from pathlib import Path
@@ -456,8 +457,6 @@ def test_top_level_coverage_omit_covers_subproject_omits() -> None:
     Prevents a new subproject from silently omitting files that combined coverage
     still counts at the root.
     """
-    import fnmatch
-
     top_omit = _get_coverage_omit(tomlkit.parse((_REPO_ROOT / "pyproject.toml").read_text()))
 
     def root_excludes(rel_repo_path: str) -> bool:
