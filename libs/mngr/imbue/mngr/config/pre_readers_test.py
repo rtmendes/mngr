@@ -280,7 +280,7 @@ def test_load_local_config_uses_mngr_project_config_dir(
     assert result["prefix"] == "local-custom-"
 
 
-def test_read_default_command_uses_mngr_project_dir(
+def test_read_default_command_uses_mngr_project_config_dir(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
