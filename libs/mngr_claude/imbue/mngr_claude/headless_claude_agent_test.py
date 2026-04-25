@@ -951,6 +951,25 @@ def test_extract_assistant_message_id_returns_none_for_non_assistant_event() -> 
     assert extract_assistant_message_id(line) is None
 
 
+def test_extract_assistant_message_id_returns_none_for_malformed_json() -> None:
+    assert extract_assistant_message_id("not valid json {{{") is None
+
+
+def test_extract_assistant_message_id_returns_none_when_message_not_dict() -> None:
+    line = json.dumps({"type": "assistant", "message": "not_a_dict"})
+    assert extract_assistant_message_id(line) is None
+
+
+def test_extract_assistant_message_id_returns_none_when_id_not_string() -> None:
+    line = json.dumps(
+        {
+            "type": "assistant",
+            "message": {"id": 42, "role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+        }
+    )
+    assert extract_assistant_message_id(line) is None
+
+
 def test_extract_message_start_id_returns_id_for_message_start_event() -> None:
     line = _make_message_start_line("msg_abc")
     assert extract_message_start_id(line) == "msg_abc"
@@ -967,3 +986,28 @@ def test_extract_message_start_id_returns_none_for_top_level_assistant_event() -
 
 def test_extract_message_start_id_returns_none_for_malformed_json() -> None:
     assert extract_message_start_id("not valid json {{{") is None
+
+
+def test_extract_message_start_id_returns_none_when_event_not_dict() -> None:
+    line = json.dumps({"type": "stream_event", "event": "not_a_dict"})
+    assert extract_message_start_id(line) is None
+
+
+def test_extract_message_start_id_returns_none_when_message_not_dict() -> None:
+    line = json.dumps(
+        {
+            "type": "stream_event",
+            "event": {"type": "message_start", "message": "not_a_dict"},
+        }
+    )
+    assert extract_message_start_id(line) is None
+
+
+def test_extract_message_start_id_returns_none_when_id_not_string() -> None:
+    line = json.dumps(
+        {
+            "type": "stream_event",
+            "event": {"type": "message_start", "message": {"id": 42, "role": "assistant"}},
+        }
+    )
+    assert extract_message_start_id(line) is None
