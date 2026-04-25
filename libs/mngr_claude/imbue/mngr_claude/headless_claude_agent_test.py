@@ -775,29 +775,28 @@ _TOOL_USE_ONLY_ASSISTANT_EVENT = json.dumps(
     }
 )
 
-# Each entry: (scenario_id, lines, expected_chunks). The scenario_id is the
-# pytest id and serves as the behavioral name; the docstring above the
-# parametrize decorator covers the contract these scenarios collectively
-# describe (the dual-envelope stream_output parser).
-_DUAL_ENVELOPE_SCENARIOS: list[tuple[str, list[str], list[str]]] = [
-    (
+# Each entry is a pytest.param wrapping (lines, expected_chunks) and tagged
+# with a behavioral id. The docstring above the parametrize decorator covers
+# the contract these scenarios collectively describe (the dual-envelope
+# stream_output parser).
+_DUAL_ENVELOPE_SCENARIOS = [
+    pytest.param(
         # Without --include-partial-messages, claude emits only
         # system/assistant/result events (no `stream_event` deltas, as on
         # claude CLI v2.1.114+). The parser must still surface the response.
-        "yields_assistant_envelope_without_partial_messages",
         [
             '{"type":"system","subtype":"init","session_id":"abc"}',
             _make_assistant_message_line("Hello from claude"),
             '{"type":"result","subtype":"success","is_error":false,"result":"Hello from claude"}',
         ],
         ["Hello from claude"],
+        id="yields_assistant_envelope_without_partial_messages",
     ),
-    (
+    pytest.param(
         # With --include-partial-messages, claude emits per-token stream_event
         # deltas AND a final `assistant` summary containing the same text. The
         # parser must yield each token once (from the deltas) and skip the
         # summary so text is not double-emitted.
-        "does_not_double_emit_when_partial_and_assistant_interleave",
         [
             _make_stream_json_line("Hello "),
             _make_stream_json_line("world!"),
@@ -805,13 +804,13 @@ _DUAL_ENVELOPE_SCENARIOS: list[tuple[str, list[str], list[str]]] = [
             '{"type":"result","subtype":"success","is_error":false,"result":"Hello world!"}',
         ],
         ["Hello ", "world!"],
+        id="does_not_double_emit_when_partial_and_assistant_interleave",
     ),
-    (
+    pytest.param(
         # A subsequent assistant turn after a fully-streamed turn must still be
         # yielded -- the dedup state resets at each `assistant` boundary. A
         # tool-using session (partial deltas + assistant summary, then a second
         # assistant-only turn) otherwise loses the second turn's text.
-        "yields_assistant_envelopes_across_multiple_turns",
         [
             _make_stream_json_line("first "),
             _make_stream_json_line("answer"),
@@ -820,14 +819,14 @@ _DUAL_ENVELOPE_SCENARIOS: list[tuple[str, list[str], list[str]]] = [
             '{"type":"result","subtype":"success","is_error":false,"result":"second answer"}',
         ],
         ["first ", "answer", "second answer"],
+        id="yields_assistant_envelopes_across_multiple_turns",
     ),
-    (
+    pytest.param(
         # When the assistant summary contains text beyond what the deltas
         # yielded, that trailing text is emitted instead of silently dropped.
         # Models the failure mode where partial deltas end early (dropped
         # frame, truncated stream, etc.) and only the final summary carries
         # the full message text.
-        "emits_trailing_text_when_summary_extends_past_deltas",
         [
             _make_message_start_line("msg_a"),
             _make_stream_json_line("Hello "),
@@ -836,14 +835,14 @@ _DUAL_ENVELOPE_SCENARIOS: list[tuple[str, list[str], list[str]]] = [
             '{"type":"result","subtype":"success","is_error":false,"result":"Hello world! And then some."}',
         ],
         ["Hello ", "world", "! And then some."],
+        id="emits_trailing_text_when_summary_extends_past_deltas",
     ),
-    (
+    pytest.param(
         # If the partial-stream message_start id does not match the assistant
         # summary id, treat them as separate messages: the deltas are already
         # yielded and the full summary is yielded too, with no dedup attempt.
         # Models a streamed message whose summary was dropped before a new
         # message's summary arrived.
-        "yields_full_summary_when_assistant_id_does_not_match_streaming_id",
         [
             _make_message_start_line("msg_a"),
             _make_stream_json_line("first message body"),
@@ -851,11 +850,11 @@ _DUAL_ENVELOPE_SCENARIOS: list[tuple[str, list[str], list[str]]] = [
             '{"type":"result","subtype":"success","is_error":false,"result":"second message body"}',
         ],
         ["first message body", "second message body"],
+        id="yields_full_summary_when_assistant_id_does_not_match_streaming_id",
     ),
-    (
+    pytest.param(
         # A new `message_start` clears per-turn state so the second turn's
         # summary diff is computed against the second turn's deltas only.
-        "message_start_resets_buffer_across_turns",
         [
             _make_message_start_line("msg_a"),
             _make_stream_json_line("first"),
@@ -866,21 +865,22 @@ _DUAL_ENVELOPE_SCENARIOS: list[tuple[str, list[str], list[str]]] = [
             '{"type":"result","subtype":"success","is_error":false,"result":"second extra"}',
         ],
         ["first", "second", " extra"],
+        id="message_start_resets_buffer_across_turns",
     ),
-    (
+    pytest.param(
         # If deltas drift from the summary and no id info is available, fall
         # back to yielding the full summary rather than silently dropping it.
         # A possible partial double-emit is preferred over losing the
         # assistant message entirely.
-        "yields_full_summary_when_buffer_is_not_a_prefix",
         [
             _make_stream_json_line("drifted prefix"),
             _make_assistant_message_line("totally different summary text"),
             '{"type":"result","subtype":"success","is_error":false,"result":"totally different summary text"}',
         ],
         ["drifted prefix", "totally different summary text"],
+        id="yields_full_summary_when_buffer_is_not_a_prefix",
     ),
-    (
+    pytest.param(
         # A tool_use-only assistant event must end the current turn's dedup
         # state. Otherwise stale `yielded_text_chunks` from the streamed
         # deltas would dedup the next assistant text event whose id we
@@ -890,7 +890,6 @@ _DUAL_ENVELOPE_SCENARIOS: list[tuple[str, list[str], list[str]]] = [
         # yielded as-is; the tool_use-only event ends the turn with no text
         # emit AND clears the per-turn buffer; the second assistant event's
         # full text is then yielded.
-        "tool_use_only_assistant_event_ends_turn",
         [
             _make_message_start_line("msg_a"),
             _make_stream_json_line("Hello"),
@@ -899,15 +898,12 @@ _DUAL_ENVELOPE_SCENARIOS: list[tuple[str, list[str], list[str]]] = [
             '{"type":"result","subtype":"success","is_error":false,"result":"Hello there"}',
         ],
         ["Hello", "Hello there"],
+        id="tool_use_only_assistant_event_ends_turn",
     ),
 ]
 
 
-@pytest.mark.parametrize(
-    ("lines", "expected_chunks"),
-    [(lines, expected) for _scenario_id, lines, expected in _DUAL_ENVELOPE_SCENARIOS],
-    ids=[scenario_id for scenario_id, _lines, _expected in _DUAL_ENVELOPE_SCENARIOS],
-)
+@pytest.mark.parametrize(("lines", "expected_chunks"), _DUAL_ENVELOPE_SCENARIOS)
 def test_stream_output_dual_envelope_dispatch(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
