@@ -4,6 +4,7 @@ import json
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from typing import Callable
 
 from pydantic import Field
@@ -34,6 +35,24 @@ _STARTUP_GRACE_SECONDS: float = 10.0
 
 
 @pure
+def _parse_stream_line(line: str) -> dict[str, Any] | None:
+    """Decode a single stream-json line into a dict.
+
+    Returns the parsed dict on success, or None if the line is not valid
+    JSON or does not decode to a JSON object. Non-JSON lines (blank lines,
+    debug output that claude sometimes leaks to stdout) are expected and
+    silently skipped.
+    """
+    try:
+        parsed = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+@pure
 def extract_text_delta(line: str) -> str | None:
     """Extract text from a stream-json content_block_delta event.
 
@@ -41,11 +60,8 @@ def extract_text_delta(line: str) -> str | None:
     or None otherwise. This handles the partial-message envelope emitted by
     `claude --output-format stream-json --include-partial-messages`.
     """
-    try:
-        parsed = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
-        # Expected: the stream contains non-JSON lines (blank lines, debug
-        # output that claude sometimes leaks to stdout). Skip them silently.
+    parsed = _parse_stream_line(line)
+    if parsed is None:
         return None
 
     if parsed.get("type") != "stream_event":
@@ -81,10 +97,8 @@ def extract_assistant_text(line: str) -> str | None:
     line per assistant turn. Returns the concatenation of all text blocks, or
     None if the line is not an `assistant` event with at least one text block.
     """
-    try:
-        parsed = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
-        # Expected: non-JSON lines in the stream (see extract_text_delta).
+    parsed = _parse_stream_line(line)
+    if parsed is None:
         return None
 
     if parsed.get("type") != "assistant":
@@ -116,9 +130,8 @@ def extract_assistant_text(line: str) -> str | None:
 @pure
 def extract_assistant_message_id(line: str) -> str | None:
     """Extract `message.id` from a top-level `assistant` event, if present."""
-    try:
-        parsed = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
+    parsed = _parse_stream_line(line)
+    if parsed is None:
         return None
     if parsed.get("type") != "assistant":
         return None
@@ -141,9 +154,8 @@ def extract_message_start_id(line: str) -> str | None:
     subsequent text deltas with a later top-level `assistant` summary that
     carries the same id.
     """
-    try:
-        parsed = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
+    parsed = _parse_stream_line(line)
+    if parsed is None:
         return None
     if parsed.get("type") != "stream_event":
         return None
@@ -164,10 +176,8 @@ def extract_message_start_id(line: str) -> str | None:
 @pure
 def _is_result_event(line: str) -> bool:
     """Check if a stream-json line is a result event (signals completion)."""
-    try:
-        parsed = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
-        # Expected: non-JSON lines in the stream (see extract_text_delta).
+    parsed = _parse_stream_line(line)
+    if parsed is None:
         return False
     return parsed.get("type") == "result"
 
@@ -178,10 +188,8 @@ def _extract_result_error(line: str) -> str | None:
 
     Returns the error message if this is an error result, None otherwise.
     """
-    try:
-        parsed = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
-        # Expected: non-JSON lines in the stream (see extract_text_delta).
+    parsed = _parse_stream_line(line)
+    if parsed is None:
         return None
     if parsed.get("type") == "result" and parsed.get("is_error"):
         return parsed.get("result", "unknown error")
@@ -224,28 +232,82 @@ class _StreamTailState(MutableModel):
         self.yielded_text_in_current_turn = ""
 
     def _yield_text_for_line(self, stripped: str) -> Iterator[str]:
-        # message_start (partial stream): begin a new turn. Any deltas for the
-        # previous turn whose summary never arrived have already been yielded
-        # directly, so dropping the buffer here is safe.
-        started_id = extract_message_start_id(stripped)
-        if started_id is not None:
-            self._reset_turn_state()
-            self.streaming_message_id = started_id
+        # Parse the line once and dispatch on its `type`. The public
+        # extract_* helpers each call json.loads independently; using them
+        # in sequence here would parse the same line up to four times. The
+        # helpers are kept (and unit-tested) as standalone APIs but the
+        # streaming hot path decodes once and inspects the dict directly.
+        parsed = _parse_stream_line(stripped)
+        if parsed is None:
+            return
+
+        event_type = parsed.get("type")
+
+        if event_type == "stream_event":
+            yield from self._handle_stream_event(parsed)
+            return
+
+        if event_type == "assistant":
+            yield from self._handle_assistant_event(parsed)
+            return
+
+    def _handle_stream_event(self, parsed: dict[str, Any]) -> Iterator[str]:
+        event = parsed.get("event")
+        if not isinstance(event, dict):
+            return
+        inner_type = event.get("type")
+
+        # message_start (partial stream): begin a new turn. Any deltas for
+        # the previous turn whose summary never arrived have already been
+        # yielded directly, so dropping the buffer here is safe.
+        if inner_type == "message_start":
+            message = event.get("message")
+            if isinstance(message, dict):
+                message_id = message.get("id")
+                if isinstance(message_id, str):
+                    self._reset_turn_state()
+                    self.streaming_message_id = message_id
             return
 
         # text_delta (partial stream): yield the delta and record it in the
         # per-turn buffer so we can subtract it from the matching summary.
-        partial_text = extract_text_delta(stripped)
-        if partial_text is not None:
-            self.yielded_text_in_current_turn = self.yielded_text_in_current_turn + partial_text
-            yield partial_text
+        if inner_type == "content_block_delta":
+            delta = event.get("delta")
+            if not isinstance(delta, dict):
+                return
+            if delta.get("type") != "text_delta":
+                return
+            text = delta.get("text")
+            if not isinstance(text, str):
+                return
+            self.yielded_text_in_current_turn = self.yielded_text_in_current_turn + text
+            yield text
+
+    def _handle_assistant_event(self, parsed: dict[str, Any]) -> Iterator[str]:
+        # Top-level assistant event: reconcile against the per-turn buffer.
+        message = parsed.get("message")
+        if not isinstance(message, dict):
+            return
+        content_blocks = message.get("content")
+        if not isinstance(content_blocks, list):
             return
 
-        # Top-level assistant event: reconcile against the per-turn buffer.
-        assistant_text = extract_assistant_text(stripped)
-        if assistant_text is None:
+        text_parts: list[str] = []
+        for block in content_blocks:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                text_parts.append(text)
+
+        if not text_parts:
             return
-        assistant_id = extract_assistant_message_id(stripped)
+        assistant_text = "".join(text_parts)
+
+        message_id = message.get("id")
+        assistant_id = message_id if isinstance(message_id, str) else None
         is_definitely_different_message = (
             self.streaming_message_id is not None
             and assistant_id is not None
