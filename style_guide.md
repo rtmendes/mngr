@@ -1294,8 +1294,8 @@ Always use `loguru` for logging
 
 Always use the right log level for your statement:
 
-- `logger.exception`: use this to capture all *unexpected* exceptions. After calling this, just call "raise" to continue propagating the exception (since it is unexpected)
-- `logger.error`: use this for unexpected error situations (where there is no Exception, otherwise use)
+- `logger.opt(exception=exc).error(msg)`: use this to capture all *unexpected* exceptions. Never use `logger.exception` -- it relies on `sys.exc_info()`, which is unreliable in threaded code (the exception context can be cleared or replaced by another thread between the `except` block and the actual log emission). Always bind the exception explicitly via `logger.opt(exception=exc)`. After logging, just call "raise" to continue propagating the exception (since it is unexpected)
+- `logger.error`: use this for unexpected error situations (where there is no Exception). For *expected* domain exceptions (subtypes of `MngrError` / `BaseMngrError`), `logger.error("...: {}", exc)` is acceptable since the message captures the known error condition
 - `logger.warning`: use this for things that seem suspicious, but not worth crashing over (or you are in a part of the code that should not crash). These should be purged aggressively if ever seen in a log
 - `logger.info`: Use this to describe _what_ the application is doing at a high level. These messages are ideally something that would make sense to a user of the program. Info logs belong in CLI/user-facing code, not in library/API code
 - `logger.debug`: Use this to describe _how_ the application is doing it. These messages ideally make sense to the developer of the program. This is the primary level for library/API code
@@ -1360,7 +1360,13 @@ def create_todo(title: str) -> TodoItem:
 
 ## Exception logging
 
-Use `logger.exception` only for unexpected exceptions.
+Never use `logger.exception` -- it relies on `sys.exc_info()`, which is unreliable in
+threaded code. Always bind the exception explicitly with `logger.opt(exception=exc).error(msg)`
+when logging unexpected exceptions, so the full traceback is captured deterministically.
+
+For *expected* domain exceptions (subtypes of `MngrError` / `BaseMngrError`), formatting
+the exception into the message via `logger.error("...: {}", exc)` is fine -- the message
+itself describes the known error condition.
 
 ```python
 from loguru import logger
@@ -1379,7 +1385,7 @@ class TodoNotificationService(MutableModel):
         try:
             self._send_notification(reminder)
         except ConnectionError as e:
-            logger.exception(e, "Failed to send notification")
+            logger.opt(exception=e).error("Failed to send notification")
             raise
 ```
 

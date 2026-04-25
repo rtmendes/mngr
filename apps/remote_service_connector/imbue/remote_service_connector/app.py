@@ -1159,7 +1159,7 @@ def raise_as_http(exc: Exception) -> NoReturn:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if isinstance(exc, TunnelComponentTooLongError):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    logger.exception("Unexpected error in endpoint handler")
+    logger.error("Unexpected error in endpoint handler", exc_info=exc)
     raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 

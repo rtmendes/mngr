@@ -614,7 +614,7 @@ class AgentCreator(MutableModel):
                     self._redirect_urls[aid] = redirect_url
 
         except (GitCloneError, GitOperationError, MngrCommandError, ValueError, OSError) as e:
-            logger.error("Failed to create agent {}: {}", agent_id, e)
+            logger.opt(exception=e).error("Failed to create agent {}", agent_id)
             log_queue.put("[minds] ERROR: {}".format(e))
             with self._lock:
                 self._statuses[aid] = AgentCreationStatus.FAILED
