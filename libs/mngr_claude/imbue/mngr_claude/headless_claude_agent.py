@@ -291,33 +291,35 @@ class _StreamTailState(MutableModel):
 
     def _handle_assistant_event(self, parsed: dict[str, Any]) -> Iterator[str]:
         # Top-level assistant event: reconcile against the per-turn buffer.
+        # An assistant event always ends the current turn (it is the message
+        # summary), so the per-turn state is reset unconditionally on exit --
+        # even when the message has no text (e.g. tool_use-only) and no
+        # reconciliation is needed.
         assistant_text = _extract_assistant_text_from_parsed(parsed)
-        if assistant_text is None:
-            return
+        if assistant_text is not None:
+            assistant_id = _extract_assistant_message_id_from_parsed(parsed)
+            is_definitely_different_message = (
+                self.streaming_message_id is not None
+                and assistant_id is not None
+                and assistant_id != self.streaming_message_id
+            )
 
-        assistant_id = _extract_assistant_message_id_from_parsed(parsed)
-        is_definitely_different_message = (
-            self.streaming_message_id is not None
-            and assistant_id is not None
-            and assistant_id != self.streaming_message_id
-        )
-
-        if is_definitely_different_message:
-            # The streamed deltas belonged to a previous message whose summary
-            # never arrived. Yield the full summary for this new message.
-            yield assistant_text
-        elif assistant_text.startswith(self.yielded_text_in_current_turn):
-            # Summary continues / matches what we already yielded; emit only
-            # the trailing extra text (empty string when they match exactly).
-            trailing_text = assistant_text[len(self.yielded_text_in_current_turn) :]
-            if trailing_text:
-                yield trailing_text
-        else:
-            # Buffer is not a prefix of the summary. Either deltas drifted from
-            # the summary or this is a different message we cannot disambiguate
-            # by id. Yield the full summary; better a possible partial double-
-            # emit than dropping the assistant message entirely.
-            yield assistant_text
+            if is_definitely_different_message:
+                # The streamed deltas belonged to a previous message whose summary
+                # never arrived. Yield the full summary for this new message.
+                yield assistant_text
+            elif assistant_text.startswith(self.yielded_text_in_current_turn):
+                # Summary continues / matches what we already yielded; emit only
+                # the trailing extra text (empty string when they match exactly).
+                trailing_text = assistant_text[len(self.yielded_text_in_current_turn) :]
+                if trailing_text:
+                    yield trailing_text
+            else:
+                # Buffer is not a prefix of the summary. Either deltas drifted from
+                # the summary or this is a different message we cannot disambiguate
+                # by id. Yield the full summary; better a possible partial double-
+                # emit than dropping the assistant message entirely.
+                yield assistant_text
 
         self._reset_turn_state()
 

@@ -951,6 +951,55 @@ def test_stream_output_yields_full_summary_when_buffer_is_not_a_prefix(
     assert chunks == ["drifted prefix", "totally different summary text"]
 
 
+def test_stream_output_resets_turn_state_after_tool_use_only_assistant_event(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tool_use-only assistant event must end the current turn's dedup state.
+
+    Otherwise, stale `yielded_text_in_current_turn` from the streamed deltas
+    would dedup the next assistant text event whose id we cannot disambiguate
+    -- causing the second message's text to be partially suppressed when it
+    happens to share a prefix with the first message's already-yielded text.
+    """
+    _patch_agent_as_stopped(monkeypatch)
+    agent, host = _make_headless_agent(local_provider, tmp_path)
+
+    # tool_use-only assistant event for the same message id as the deltas.
+    # `is_definitely_different_message` is False (same id), so without a
+    # state reset the next assistant text would be diffed against the stale
+    # buffer "Hello" rather than treated as a fresh turn.
+    tool_use_only = json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg_a",
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "tu_1", "name": "bash", "input": {}}],
+            },
+        }
+    )
+    # Second assistant text -- no id provided -- whose text shares the
+    # prefix "Hello" with the prior turn's already-yielded delta.
+    lines = [
+        _make_message_start_line("msg_a"),
+        _make_stream_json_line("Hello"),
+        tool_use_only,
+        _make_assistant_message_line("Hello there"),
+        '{"type":"result","subtype":"success","is_error":false,"result":"Hello there"}',
+    ]
+    _write_fake_agent_output(host, agent, stdout="\n".join(lines) + "\n")
+
+    chunks = list(agent.stream_output())
+
+    # The streamed delta is yielded as-is. The tool_use-only assistant event
+    # ends the turn with no text emit AND clears the per-turn buffer. The
+    # second assistant event's full text is yielded -- it must NOT be
+    # treated as a continuation of the now-finished prior turn.
+    assert chunks == ["Hello", "Hello there"]
+
+
 def test_extract_assistant_message_id_returns_id_when_present() -> None:
     line = json.dumps(
         {
