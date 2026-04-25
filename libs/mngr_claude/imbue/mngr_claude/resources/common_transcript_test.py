@@ -63,8 +63,8 @@ def _make_user_event(
     timestamp: str,
     text: str = "",
     tool_results: list[dict[str, object]] | None = None,
-    is_meta: bool = False,
 ) -> str:
+    """Build a real (human-typed) user event."""
     if text and not tool_results:
         content: str | list[dict[str, object]] = text
     else:
@@ -75,15 +75,31 @@ def _make_user_event(
             for tr in tool_results:
                 blocks.append({"type": "tool_result", **tr})
         content = blocks
-    event: dict[str, Any] = {
-        "type": "user",
-        "uuid": uuid,
-        "timestamp": timestamp,
-        "message": {"role": "user", "content": content},
-    }
-    if is_meta:
-        event["isMeta"] = True
-    return json.dumps(event)
+    return json.dumps(
+        {
+            "type": "user",
+            "uuid": uuid,
+            "timestamp": timestamp,
+            "message": {"role": "user", "content": content},
+        }
+    )
+
+
+def _make_meta_event(uuid: str, timestamp: str, text: str) -> str:
+    """Build a framework-injected event (isMeta=true), e.g. Claude Code stop hook output.
+
+    Claude Code emits these with type='user' and isMeta=true on the top-level
+    JSONL entry. They are not human input despite the user type.
+    """
+    return json.dumps(
+        {
+            "type": "user",
+            "uuid": uuid,
+            "timestamp": timestamp,
+            "isMeta": True,
+            "message": {"role": "user", "content": text},
+        }
+    )
 
 
 class ScriptRunner:
@@ -510,7 +526,7 @@ def test_meta_user_message_with_stop_hook_prefix_classified_as_stop_hook(
     feedback = (
         "Stop hook feedback:\n[./scripts/main_claude_stop_hook.sh]: Everything up-to-date\nERROR: Some checks failed"
     )
-    runner.write_input([_make_user_event("uuid-stop", "2026-01-01T00:00:00Z", text=feedback, is_meta=True)])
+    runner.write_input([_make_meta_event("uuid-stop", "2026-01-01T00:00:00Z", text=feedback)])
 
     result = runner.run_single_pass()
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -534,7 +550,7 @@ def test_meta_user_message_without_stop_hook_prefix_classified_as_meta(tmp_path:
     """
     runner = ScriptRunner(tmp_path, stub_mngr_log_sh)
     text = "<local-command-caveat>Caveat: framework-generated note</local-command-caveat>"
-    runner.write_input([_make_user_event("uuid-meta", "2026-01-01T00:00:00Z", text=text, is_meta=True)])
+    runner.write_input([_make_meta_event("uuid-meta", "2026-01-01T00:00:00Z", text=text)])
 
     result = runner.run_single_pass()
     assert result.returncode == 0, f"stderr: {result.stderr}"
@@ -550,7 +566,7 @@ def test_meta_user_message_without_stop_hook_prefix_classified_as_meta(tmp_path:
 def test_meta_user_message_truncates_long_output(tmp_path: Path, stub_mngr_log_sh: str) -> None:
     runner = ScriptRunner(tmp_path, stub_mngr_log_sh)
     feedback = "Stop hook feedback:\n" + "x" * 5000
-    runner.write_input([_make_user_event("uuid-stop2", "2026-01-01T00:00:00Z", text=feedback, is_meta=True)])
+    runner.write_input([_make_meta_event("uuid-stop2", "2026-01-01T00:00:00Z", text=feedback)])
 
     result = runner.run_single_pass()
     assert result.returncode == 0, f"stderr: {result.stderr}"
