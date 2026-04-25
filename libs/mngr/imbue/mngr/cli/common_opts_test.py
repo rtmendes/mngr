@@ -1,6 +1,5 @@
 """Tests for common_opts module."""
 
-from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +8,6 @@ import pluggy
 import pytest
 from click.core import ParameterSource
 from click.testing import CliRunner
-from loguru import logger
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.cli.common_opts import _parse_setting_value
@@ -36,25 +34,6 @@ from imbue.mngr.primitives import LogLevel
 from imbue.mngr.primitives import OutputFormat
 
 hookimpl = pluggy.HookimplMarker("mngr")
-
-
-@pytest.fixture()
-def log_warnings() -> Generator[list[str], None, None]:
-    """Capture loguru warning messages for assertion in tests.
-
-    Tolerates handler removal during the test (e.g. setup_logging() calls
-    logger.remove() which clears all handlers, so the handler we added may
-    no longer exist by the time teardown runs).
-    """
-    messages: list[str] = []
-    handler_id = logger.add(lambda msg: messages.append(msg.record["message"]), level="WARNING", format="{message}")
-    try:
-        yield messages
-    finally:
-        try:
-            logger.remove(handler_id)
-        except ValueError:
-            pass
 
 
 def _make_click_context(
