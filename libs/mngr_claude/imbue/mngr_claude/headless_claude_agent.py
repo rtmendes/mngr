@@ -201,10 +201,8 @@ def extract_message_start_id(line: str) -> str | None:
 def _result_error_from_parsed(parsed: dict[str, Any]) -> str | None:
     """Extract error text from an already-parsed stream-json result event.
 
-    Returns the error message when `parsed` is a result event with
-    is_error=true, None otherwise. Caller is responsible for confirming
-    `parsed.get("type") == "result"` if they only want errors from result
-    events; this helper still gates on that internally for safety.
+    Returns the error message when `parsed` is a `result` event with
+    `is_error=true`, None otherwise (including for non-`result` events).
     """
     if parsed.get("type") == "result" and parsed.get("is_error"):
         return parsed.get("result", "unknown error")
