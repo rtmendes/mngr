@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from typing import Callable
 
+from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.mutable_model import MutableModel
@@ -273,10 +274,11 @@ class _StreamTailState(MutableModel):
                 yield from self._handle_stream_event(parsed)
             case "assistant":
                 yield from self._handle_assistant_event(parsed)
-            case _:
-                # Other event types (system, user, etc.) carry no text to
-                # surface here and are intentionally skipped.
-                pass
+            case other_event_type:
+                # Other event types (system, user, ping, future event types,
+                # etc.) carry no text to surface here and are intentionally
+                # skipped. Trace-log for debugging when something looks off.
+                logger.trace("Skipped stream-json event of unhandled type {!r}", other_event_type)
 
     def _handle_stream_event(self, parsed: dict[str, Any]) -> Iterator[str]:
         # message_start (partial stream): begin a new turn. Any deltas for
