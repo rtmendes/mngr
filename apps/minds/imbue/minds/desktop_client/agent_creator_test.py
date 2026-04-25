@@ -13,8 +13,10 @@ from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.agent_creator import AgentCreationStatus
 from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.agent_creator import PLACEHOLDER_ANTHROPIC_API_KEY
+from imbue.minds.desktop_client.agent_creator import _build_inject_anthropic_command
 from imbue.minds.desktop_client.agent_creator import _build_latchkey_gateway_url
 from imbue.minds.desktop_client.agent_creator import _build_mngr_create_command
+from imbue.minds.desktop_client.agent_creator import _build_patch_claude_config_command
 from imbue.minds.desktop_client.agent_creator import _is_git_worktree
 from imbue.minds.desktop_client.agent_creator import _is_local_path
 from imbue.minds.desktop_client.agent_creator import _leased_agent_address
@@ -1081,3 +1083,45 @@ def test_agent_creator_litellm_key_client_defaults_to_none(
         notification_dispatcher=notification_dispatcher,
     )
     assert creator.litellm_key_client is None
+
+
+def test_build_inject_anthropic_command_replaces_placeholder_and_appends_base_url() -> None:
+    cmd = _build_inject_anthropic_command(
+        litellm_key="sk-litellm-real-key-abc123",
+        litellm_base_url="https://proxy.modal.run/anthropic",
+        env_path="/mngr/agents/test-id/env",
+    )
+    assert PLACEHOLDER_ANTHROPIC_API_KEY in cmd
+    assert "sk-litellm-real-key-abc123" in cmd
+    assert "ANTHROPIC_BASE_URL=https://proxy.modal.run/anthropic" in cmd
+    assert "/mngr/agents/test-id/env" in cmd
+
+
+def test_build_inject_anthropic_command_uses_sed_replacement() -> None:
+    cmd = _build_inject_anthropic_command(
+        litellm_key="sk-test",
+        litellm_base_url="https://example.com/anthropic",
+        env_path="/tmp/env",
+    )
+    assert cmd.startswith("sed -i")
+    assert "sed -i '/^ANTHROPIC_BASE_URL=/d'" in cmd
+
+
+def test_build_patch_claude_config_command_targets_correct_path() -> None:
+    agent_id = AgentId()
+    cmd = _build_patch_claude_config_command(
+        litellm_key="sk-litellm-real-key-xyz",
+        agent_id=agent_id,
+    )
+    expected_path = "/mngr/agents/{}/state/plugin/claude/anthropic/.claude.json".format(agent_id)
+    assert expected_path in cmd
+    assert PLACEHOLDER_ANTHROPIC_API_KEY in cmd
+    assert "sk-litellm-real-key-xyz" in cmd
+
+
+def test_build_patch_claude_config_command_uses_sed() -> None:
+    cmd = _build_patch_claude_config_command(
+        litellm_key="sk-test",
+        agent_id=AgentId(),
+    )
+    assert cmd.startswith("sed -i")

@@ -35,6 +35,7 @@ from imbue.imbue_common.enums import UpperCaseStrEnum
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.mutable_model import MutableModel
+from imbue.imbue_common.pure import pure
 from imbue.minds.config.data_types import MNGR_BINARY
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.api_key_store import generate_api_key
@@ -97,6 +98,39 @@ LOG_SENTINEL: Final[str] = "__DONE__"
 PLACEHOLDER_ANTHROPIC_API_KEY: Final[str] = (
     "sk-ant-api03-PLACEHOLDER00000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
+
+
+@pure
+def _build_inject_anthropic_command(
+    litellm_key: str,
+    litellm_base_url: str,
+    env_path: str,
+) -> str:
+    """Build a shell command that replaces the placeholder ANTHROPIC_API_KEY and appends ANTHROPIC_BASE_URL."""
+    return (
+        "sed -i 's|{placeholder}|{real_key}|g' {path}"
+        " && sed -i '/^ANTHROPIC_BASE_URL=/d' {path}"
+        " && echo 'ANTHROPIC_BASE_URL={base_url}' >> {path}"
+    ).format(
+        placeholder=PLACEHOLDER_ANTHROPIC_API_KEY,
+        real_key=litellm_key,
+        path=env_path,
+        base_url=litellm_base_url,
+    )
+
+
+@pure
+def _build_patch_claude_config_command(
+    litellm_key: str,
+    agent_id: AgentId,
+) -> str:
+    """Build a shell command that replaces the placeholder key in the agent's claude config."""
+    claude_config_path = "/mngr/agents/{}/state/plugin/claude/anthropic/.claude.json".format(agent_id)
+    return "sed -i 's|{placeholder}|{real_key}|g' {path}".format(
+        placeholder=PLACEHOLDER_ANTHROPIC_API_KEY,
+        real_key=litellm_key,
+        path=claude_config_path,
+    )
 
 
 def make_log_callback(log_queue: queue.Queue[str]) -> OutputCallback:
@@ -1319,27 +1353,18 @@ class AgentCreator(MutableModel):
         # Build the inject command for ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL
         inject_anthropic_command: str | None = None
         if litellm_key is not None and litellm_base_url is not None:
-            # Replace the placeholder ANTHROPIC_API_KEY in the env file
-            # and append ANTHROPIC_BASE_URL
-            inject_anthropic_command = (
-                "sed -i 's|{placeholder}|{real_key}|g' {path}"
-                " && sed -i '/^ANTHROPIC_BASE_URL=/d' {path}"
-                " && echo 'ANTHROPIC_BASE_URL={base_url}' >> {path}"
-            ).format(
-                placeholder=PLACEHOLDER_ANTHROPIC_API_KEY,
-                real_key=litellm_key,
-                path=env_path,
-                base_url=litellm_base_url,
+            inject_anthropic_command = _build_inject_anthropic_command(
+                litellm_key=litellm_key,
+                litellm_base_url=litellm_base_url,
+                env_path=env_path,
             )
 
         # Build the command to patch the claude config JSON to approve the new key
         patch_claude_config_command: str | None = None
         if litellm_key is not None:
-            claude_config_path = "/mngr/agents/{}/state/plugin/claude/anthropic/.claude.json".format(agent_id)
-            patch_claude_config_command = "sed -i 's|{placeholder}|{real_key}|g' {path}".format(
-                placeholder=PLACEHOLDER_ANTHROPIC_API_KEY,
-                real_key=litellm_key,
-                path=claude_config_path,
+            patch_claude_config_command = _build_patch_claude_config_command(
+                litellm_key=litellm_key,
+                agent_id=agent_id,
             )
 
         cg = _make_child_cg("mngr-leased-setup", self.root_concurrency_group)
