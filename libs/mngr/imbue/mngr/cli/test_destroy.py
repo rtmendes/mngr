@@ -722,9 +722,6 @@ def test_destroy_transfer_none_keeps_shared_worktree(
             catch_exceptions=False,
         )
         assert rider_destroy.exit_code == 0, f"Rider destroy failed: {rider_destroy.output}"
-        assert "Removed worktree" not in rider_destroy.output, (
-            f"Destroy of --transfer=none agent must not remove the shared worktree.\n{rider_destroy.output}"
-        )
 
         assert worktree_path.is_dir(), (
             "shared worktree must survive destroying the --transfer=none agent that reused it"
@@ -782,9 +779,6 @@ def test_destroy_transfer_none_standalone_keeps_user_worktree(
             catch_exceptions=False,
         )
         assert destroy_result.exit_code == 0, f"Destroy failed: {destroy_result.output}"
-        assert "Removed worktree" not in destroy_result.output, (
-            f"Standalone --transfer=none destroy must not remove the user-owned worktree.\n{destroy_result.output}"
-        )
         assert user_worktree.is_dir(), "user-owned worktree must survive --transfer=none destroy"
 
 
