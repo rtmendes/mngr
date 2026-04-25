@@ -196,12 +196,17 @@ def extract_message_start_id(line: str) -> str | None:
 
 
 @pure
-def _is_result_event(line: str) -> bool:
-    """Check if a stream-json line is a result event (signals completion)."""
-    parsed = _parse_stream_line(line)
-    if parsed is None:
-        return False
-    return parsed.get("type") == "result"
+def _result_error_from_parsed(parsed: dict[str, Any]) -> str | None:
+    """Extract error text from an already-parsed stream-json result event.
+
+    Returns the error message when `parsed` is a result event with
+    is_error=true, None otherwise. Caller is responsible for confirming
+    `parsed.get("type") == "result"` if they only want errors from result
+    events; this helper still gates on that internally for safety.
+    """
+    if parsed.get("type") == "result" and parsed.get("is_error"):
+        return parsed.get("result", "unknown error")
+    return None
 
 
 @pure
@@ -213,9 +218,7 @@ def _extract_result_error(line: str) -> str | None:
     parsed = _parse_stream_line(line)
     if parsed is None:
         return None
-    if parsed.get("type") == "result" and parsed.get("is_error"):
-        return parsed.get("result", "unknown error")
-    return None
+    return _result_error_from_parsed(parsed)
 
 
 class _StreamTailState(MutableModel):
@@ -253,15 +256,11 @@ class _StreamTailState(MutableModel):
         self.streaming_message_id = None
         self.yielded_text_in_current_turn = ""
 
-    def _yield_text_for_line(self, stripped: str) -> Iterator[str]:
-        # Parse the line once and dispatch on its `type`, then delegate to
-        # the module-level extract helpers (their dict-accepting variants)
-        # so dict-walking logic lives in one place. The string-accepting
-        # public helpers are thin wrappers around the same dict logic.
-        parsed = _parse_stream_line(stripped)
-        if parsed is None:
-            return
-
+    def _yield_text_for_parsed(self, parsed: dict[str, Any]) -> Iterator[str]:
+        # Dispatch an already-parsed stream-json line on its `type`, then
+        # delegate to the module-level extract helpers (their dict-accepting
+        # variants) so dict-walking logic lives in one place. The string-
+        # accepting public helpers are thin wrappers around the same dict logic.
         event_type = parsed.get("type")
 
         if event_type == "stream_event":
@@ -353,11 +352,14 @@ class _StreamTailState(MutableModel):
                     stripped = line.strip()
                     if not stripped:
                         continue
-                    if _is_result_event(stripped):
-                        self.result_error = _extract_result_error(stripped)
+                    parsed = _parse_stream_line(stripped)
+                    if parsed is None:
+                        continue
+                    if parsed.get("type") == "result":
+                        self.result_error = _result_error_from_parsed(parsed)
                         got_result = True
                         break
-                    yield from self._yield_text_for_line(stripped)
+                    yield from self._yield_text_for_parsed(parsed)
 
         if not got_result:
             # Final drain after agent exits
@@ -371,10 +373,13 @@ class _StreamTailState(MutableModel):
                     stripped = line.strip()
                     if not stripped:
                         continue
-                    if _is_result_event(stripped):
-                        self.result_error = _extract_result_error(stripped)
+                    parsed = _parse_stream_line(stripped)
+                    if parsed is None:
+                        continue
+                    if parsed.get("type") == "result":
+                        self.result_error = _result_error_from_parsed(parsed)
                         break
-                    yield from self._yield_text_for_line(stripped)
+                    yield from self._yield_text_for_parsed(parsed)
 
 
 class NoPermissionsClaudeAgent(ClaudeAgent, NoPermissionsAgentMixin):
