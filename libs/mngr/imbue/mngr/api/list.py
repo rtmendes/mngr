@@ -485,7 +485,6 @@ def agent_details_to_cel_context(agent: AgentDetails) -> dict[str, Any]:
         result["runtime"] = result["runtime_seconds"]
 
     # Add idle: seconds since the most recent activity across user, agent, and host SSH.
-    # ssh_activity_time lives on the host, not at the top level of the agent dict.
     host_dict = result["host"] if isinstance(result.get("host"), dict) else None
     activity_candidates = [
         result.get("user_activity_time"),
