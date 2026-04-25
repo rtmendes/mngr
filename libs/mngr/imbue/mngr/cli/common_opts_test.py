@@ -40,11 +40,21 @@ hookimpl = pluggy.HookimplMarker("mngr")
 
 @pytest.fixture()
 def log_warnings() -> Generator[list[str], None, None]:
-    """Capture loguru warning messages for assertion in tests."""
+    """Capture loguru warning messages for assertion in tests.
+
+    Tolerates handler removal during the test (e.g. setup_logging() calls
+    logger.remove() which clears all handlers, so the handler we added may
+    no longer exist by the time teardown runs).
+    """
     messages: list[str] = []
     handler_id = logger.add(lambda msg: messages.append(msg.record["message"]), level="WARNING", format="{message}")
-    yield messages
-    logger.remove(handler_id)
+    try:
+        yield messages
+    finally:
+        try:
+            logger.remove(handler_id)
+        except ValueError:
+            pass
 
 
 def _make_click_context(
@@ -1119,4 +1129,78 @@ def test_disable_plugin_in_command_defaults_blocks_override_hook(
     assert terminal_entries == [], (
         f"Disabled plugin's override_command_options hook still fired, "
         f"injecting: {terminal_entries}. extra_window={extra_window}"
+    )
+
+
+# =============================================================================
+# Integration tests: MNGR_ALLOW_UNKNOWN_CONFIG threaded through setup_command_context
+# =============================================================================
+
+
+def _make_strict_test_command() -> click.Command:
+    """Build a click command that runs setup_command_context for the 'create' command.
+
+    `--pass-host-env` is added because load_config seeds `commands.create.defaults`
+    with that key, which the strict unknown-param check would otherwise reject.
+    """
+
+    @click.command()
+    @click.option("--pass-host-env", multiple=True, default=())
+    @add_common_options
+    @click.pass_context
+    def cmd(ctx: click.Context, **kwargs: Any) -> None:
+        setup_command_context(
+            ctx=ctx,
+            command_name="create",
+            command_class=CommonCliOptions,
+        )
+
+    return cmd
+
+
+def test_setup_command_context_raises_on_unknown_command_param_by_default(
+    cli_runner: CliRunner,
+    tmp_path: Path,
+    plugin_manager: pluggy.PluginManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without MNGR_ALLOW_UNKNOWN_CONFIG, a typo in [commands.create] must raise."""
+    # MNGR_PROJECT_DIR points directly at the directory containing settings.toml
+    # (see resolve_project_config_dir in config/pre_readers.py).
+    (tmp_path / "settings.toml").write_text('[commands.create]\nbogus_typo_param = "x"\n')
+
+    monkeypatch.delenv("MNGR_ALLOW_UNKNOWN_CONFIG", raising=False)
+    monkeypatch.setenv("MNGR_PROJECT_DIR", str(tmp_path))
+
+    cmd = _make_strict_test_command()
+
+    result = cli_runner.invoke(cmd, [], obj=plugin_manager, catch_exceptions=True)
+
+    # ConfigParseError extends ClickException, which click catches and renders to
+    # the runner's output before exiting non-zero. Check the rendered output rather
+    # than result.exception, which becomes SystemExit(1) after click's handler runs.
+    assert result.exit_code != 0
+    assert "bogus_typo_param" in result.output
+
+
+def test_setup_command_context_warns_on_unknown_command_param_when_lax(
+    cli_runner: CliRunner,
+    tmp_path: Path,
+    plugin_manager: pluggy.PluginManager,
+    monkeypatch: pytest.MonkeyPatch,
+    log_warnings: list[str],
+) -> None:
+    """With MNGR_ALLOW_UNKNOWN_CONFIG=1, a typo in [commands.create] should warn, not raise."""
+    (tmp_path / "settings.toml").write_text('[commands.create]\nbogus_typo_param = "x"\n')
+
+    monkeypatch.setenv("MNGR_ALLOW_UNKNOWN_CONFIG", "1")
+    monkeypatch.setenv("MNGR_PROJECT_DIR", str(tmp_path))
+
+    cmd = _make_strict_test_command()
+
+    result = cli_runner.invoke(cmd, [], obj=plugin_manager, catch_exceptions=False)
+
+    assert result.exit_code == 0, f"output={result.output!r} exception={result.exception!r}"
+    assert any("bogus_typo_param" in msg for msg in log_warnings), (
+        f"Expected a warning mentioning the unknown param, got: {log_warnings}"
     )
