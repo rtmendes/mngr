@@ -760,244 +760,174 @@ def test_extract_assistant_text_returns_none_when_content_not_list() -> None:
     assert extract_assistant_text(event) is None
 
 
-def test_stream_output_yields_assistant_envelope_without_partial_messages(
+# A tool_use-only assistant event for the "tool_use_only_assistant_event_ends_turn"
+# scenario. `is_definitely_different_message` is False (same id), so without a
+# state reset the next assistant text would be diffed against the stale buffer
+# "Hello" rather than treated as a fresh turn.
+_TOOL_USE_ONLY_ASSISTANT_EVENT = json.dumps(
+    {
+        "type": "assistant",
+        "message": {
+            "id": "msg_a",
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "tu_1", "name": "bash", "input": {}}],
+        },
+    }
+)
+
+# Each entry: (scenario_id, lines, expected_chunks). The scenario_id is the
+# pytest id and serves as the behavioral name; the docstring above the
+# parametrize decorator covers the contract these scenarios collectively
+# describe (the dual-envelope stream_output parser).
+_DUAL_ENVELOPE_SCENARIOS: list[tuple[str, list[str], list[str]]] = [
+    (
+        # Without --include-partial-messages, claude emits only
+        # system/assistant/result events (no `stream_event` deltas, as on
+        # claude CLI v2.1.114+). The parser must still surface the response.
+        "yields_assistant_envelope_without_partial_messages",
+        [
+            '{"type":"system","subtype":"init","session_id":"abc"}',
+            _make_assistant_message_line("Hello from claude"),
+            '{"type":"result","subtype":"success","is_error":false,"result":"Hello from claude"}',
+        ],
+        ["Hello from claude"],
+    ),
+    (
+        # With --include-partial-messages, claude emits per-token stream_event
+        # deltas AND a final `assistant` summary containing the same text. The
+        # parser must yield each token once (from the deltas) and skip the
+        # summary so text is not double-emitted.
+        "does_not_double_emit_when_partial_and_assistant_interleave",
+        [
+            _make_stream_json_line("Hello "),
+            _make_stream_json_line("world!"),
+            _make_assistant_message_line("Hello world!"),
+            '{"type":"result","subtype":"success","is_error":false,"result":"Hello world!"}',
+        ],
+        ["Hello ", "world!"],
+    ),
+    (
+        # A subsequent assistant turn after a fully-streamed turn must still be
+        # yielded -- the dedup state resets at each `assistant` boundary. A
+        # tool-using session (partial deltas + assistant summary, then a second
+        # assistant-only turn) otherwise loses the second turn's text.
+        "yields_assistant_envelopes_across_multiple_turns",
+        [
+            _make_stream_json_line("first "),
+            _make_stream_json_line("answer"),
+            _make_assistant_message_line("first answer"),
+            _make_assistant_message_line("second answer"),
+            '{"type":"result","subtype":"success","is_error":false,"result":"second answer"}',
+        ],
+        ["first ", "answer", "second answer"],
+    ),
+    (
+        # When the assistant summary contains text beyond what the deltas
+        # yielded, that trailing text is emitted instead of silently dropped.
+        # Models the failure mode where partial deltas end early (dropped
+        # frame, truncated stream, etc.) and only the final summary carries
+        # the full message text.
+        "emits_trailing_text_when_summary_extends_past_deltas",
+        [
+            _make_message_start_line("msg_a"),
+            _make_stream_json_line("Hello "),
+            _make_stream_json_line("world"),
+            _make_assistant_message_line("Hello world! And then some.", message_id="msg_a"),
+            '{"type":"result","subtype":"success","is_error":false,"result":"Hello world! And then some."}',
+        ],
+        ["Hello ", "world", "! And then some."],
+    ),
+    (
+        # If the partial-stream message_start id does not match the assistant
+        # summary id, treat them as separate messages: the deltas are already
+        # yielded and the full summary is yielded too, with no dedup attempt.
+        # Models a streamed message whose summary was dropped before a new
+        # message's summary arrived.
+        "yields_full_summary_when_assistant_id_does_not_match_streaming_id",
+        [
+            _make_message_start_line("msg_a"),
+            _make_stream_json_line("first message body"),
+            _make_assistant_message_line("second message body", message_id="msg_b"),
+            '{"type":"result","subtype":"success","is_error":false,"result":"second message body"}',
+        ],
+        ["first message body", "second message body"],
+    ),
+    (
+        # A new `message_start` clears per-turn state so the second turn's
+        # summary diff is computed against the second turn's deltas only.
+        "message_start_resets_buffer_across_turns",
+        [
+            _make_message_start_line("msg_a"),
+            _make_stream_json_line("first"),
+            _make_assistant_message_line("first", message_id="msg_a"),
+            _make_message_start_line("msg_b"),
+            _make_stream_json_line("second"),
+            _make_assistant_message_line("second extra", message_id="msg_b"),
+            '{"type":"result","subtype":"success","is_error":false,"result":"second extra"}',
+        ],
+        ["first", "second", " extra"],
+    ),
+    (
+        # If deltas drift from the summary and no id info is available, fall
+        # back to yielding the full summary rather than silently dropping it.
+        # A possible partial double-emit is preferred over losing the
+        # assistant message entirely.
+        "yields_full_summary_when_buffer_is_not_a_prefix",
+        [
+            _make_stream_json_line("drifted prefix"),
+            _make_assistant_message_line("totally different summary text"),
+            '{"type":"result","subtype":"success","is_error":false,"result":"totally different summary text"}',
+        ],
+        ["drifted prefix", "totally different summary text"],
+    ),
+    (
+        # A tool_use-only assistant event must end the current turn's dedup
+        # state. Otherwise stale `yielded_text_chunks` from the streamed
+        # deltas would dedup the next assistant text event whose id we
+        # cannot disambiguate -- causing the second message's text to be
+        # partially suppressed when it shares a prefix with the first
+        # message's already-yielded text. Here the streamed "Hello" delta is
+        # yielded as-is; the tool_use-only event ends the turn with no text
+        # emit AND clears the per-turn buffer; the second assistant event's
+        # full text is then yielded.
+        "tool_use_only_assistant_event_ends_turn",
+        [
+            _make_message_start_line("msg_a"),
+            _make_stream_json_line("Hello"),
+            _TOOL_USE_ONLY_ASSISTANT_EVENT,
+            _make_assistant_message_line("Hello there"),
+            '{"type":"result","subtype":"success","is_error":false,"result":"Hello there"}',
+        ],
+        ["Hello", "Hello there"],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected_chunks"),
+    [(lines, expected) for _scenario_id, lines, expected in _DUAL_ENVELOPE_SCENARIOS],
+    ids=[scenario_id for scenario_id, _lines, _expected in _DUAL_ENVELOPE_SCENARIOS],
+)
+def test_stream_output_dual_envelope_dispatch(
     local_provider: LocalProviderInstance,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    lines: list[str],
+    expected_chunks: list[str],
 ) -> None:
-    """stream_output should yield text from the default `assistant`-event envelope.
+    """stream_output correctly dispatches between the partial-stream `stream_event`
+    deltas and the top-level `assistant` summary envelope.
 
-    Reproduces the issue from claude CLI v2.1.114+: without
-    --include-partial-messages, claude emits only system/assistant/result events
-    (no `stream_event` deltas). The parser must still surface the response text.
+    Each parametrized case covers one behavioral contract of the dual-envelope
+    parser. See _DUAL_ENVELOPE_SCENARIOS above for the per-case rationale.
     """
     _patch_agent_as_stopped(monkeypatch)
     agent, host = _make_headless_agent(local_provider, tmp_path)
-
-    lines = [
-        '{"type":"system","subtype":"init","session_id":"abc"}',
-        _make_assistant_message_line("Hello from claude"),
-        '{"type":"result","subtype":"success","is_error":false,"result":"Hello from claude"}',
-    ]
     _write_fake_agent_output(host, agent, stdout="\n".join(lines) + "\n")
 
     chunks = list(agent.stream_output())
 
-    assert chunks == ["Hello from claude"]
-
-
-def test_stream_output_does_not_double_emit_when_partial_and_assistant_interleave(
-    local_provider: LocalProviderInstance,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """stream_output must not double-yield text when both envelopes appear in one turn.
-
-    With --include-partial-messages, claude emits per-token stream_event deltas
-    AND a final `assistant` summary message containing the same text. The parser
-    must yield each token once (from the deltas) and skip the summary.
-    """
-    _patch_agent_as_stopped(monkeypatch)
-    agent, host = _make_headless_agent(local_provider, tmp_path)
-
-    lines = [
-        _make_stream_json_line("Hello "),
-        _make_stream_json_line("world!"),
-        _make_assistant_message_line("Hello world!"),
-        '{"type":"result","subtype":"success","is_error":false,"result":"Hello world!"}',
-    ]
-    _write_fake_agent_output(host, agent, stdout="\n".join(lines) + "\n")
-
-    chunks = list(agent.stream_output())
-
-    assert chunks == ["Hello ", "world!"]
-
-
-def test_stream_output_yields_assistant_envelopes_across_multiple_turns(
-    local_provider: LocalProviderInstance,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A subsequent assistant turn after a fully-streamed turn should still be yielded.
-
-    Verifies the dedup flag resets at each `assistant` boundary. Otherwise a
-    tool-using session (partial deltas + assistant summary, then a second
-    assistant-only turn) would lose the second turn's text.
-    """
-    _patch_agent_as_stopped(monkeypatch)
-    agent, host = _make_headless_agent(local_provider, tmp_path)
-
-    lines = [
-        _make_stream_json_line("first "),
-        _make_stream_json_line("answer"),
-        _make_assistant_message_line("first answer"),
-        _make_assistant_message_line("second answer"),
-        '{"type":"result","subtype":"success","is_error":false,"result":"second answer"}',
-    ]
-    _write_fake_agent_output(host, agent, stdout="\n".join(lines) + "\n")
-
-    chunks = list(agent.stream_output())
-
-    assert chunks == ["first ", "answer", "second answer"]
-
-
-def test_stream_output_emits_trailing_text_when_summary_extends_past_deltas(
-    local_provider: LocalProviderInstance,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When the assistant summary contains text beyond what the deltas yielded,
-    that trailing text must be emitted instead of silently dropped.
-
-    Reproduces the failure mode where partial deltas end early (dropped frame,
-    truncated stream, etc.) and only the final `assistant` summary carries the
-    full message text.
-    """
-    _patch_agent_as_stopped(monkeypatch)
-    agent, host = _make_headless_agent(local_provider, tmp_path)
-
-    lines = [
-        _make_message_start_line("msg_a"),
-        _make_stream_json_line("Hello "),
-        _make_stream_json_line("world"),
-        _make_assistant_message_line("Hello world! And then some.", message_id="msg_a"),
-        '{"type":"result","subtype":"success","is_error":false,"result":"Hello world! And then some."}',
-    ]
-    _write_fake_agent_output(host, agent, stdout="\n".join(lines) + "\n")
-
-    chunks = list(agent.stream_output())
-
-    assert chunks == ["Hello ", "world", "! And then some."]
-
-
-def test_stream_output_yields_full_summary_when_assistant_id_does_not_match_streaming_id(
-    local_provider: LocalProviderInstance,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """If the partial-stream message_start id does not match the assistant
-    summary's id, treat them as separate messages: yield the deltas (already
-    streamed) AND the full summary, with no dedup attempt.
-
-    Covers the failure mode where a streamed message's summary is dropped and
-    a new message's summary arrives instead.
-    """
-    _patch_agent_as_stopped(monkeypatch)
-    agent, host = _make_headless_agent(local_provider, tmp_path)
-
-    lines = [
-        _make_message_start_line("msg_a"),
-        _make_stream_json_line("first message body"),
-        _make_assistant_message_line("second message body", message_id="msg_b"),
-        '{"type":"result","subtype":"success","is_error":false,"result":"second message body"}',
-    ]
-    _write_fake_agent_output(host, agent, stdout="\n".join(lines) + "\n")
-
-    chunks = list(agent.stream_output())
-
-    assert chunks == ["first message body", "second message body"]
-
-
-def test_stream_output_message_start_resets_buffer_across_turns(
-    local_provider: LocalProviderInstance,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A new `message_start` must clear per-turn state so the second turn's
-    summary diff is computed against the second turn's deltas only.
-    """
-    _patch_agent_as_stopped(monkeypatch)
-    agent, host = _make_headless_agent(local_provider, tmp_path)
-
-    lines = [
-        _make_message_start_line("msg_a"),
-        _make_stream_json_line("first"),
-        _make_assistant_message_line("first", message_id="msg_a"),
-        _make_message_start_line("msg_b"),
-        _make_stream_json_line("second"),
-        _make_assistant_message_line("second extra", message_id="msg_b"),
-        '{"type":"result","subtype":"success","is_error":false,"result":"second extra"}',
-    ]
-    _write_fake_agent_output(host, agent, stdout="\n".join(lines) + "\n")
-
-    chunks = list(agent.stream_output())
-
-    assert chunks == ["first", "second", " extra"]
-
-
-def test_stream_output_yields_full_summary_when_buffer_is_not_a_prefix(
-    local_provider: LocalProviderInstance,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """If deltas drift from the summary and no id info is available, fall back
-    to yielding the full summary rather than silently dropping it.
-
-    A possible partial double-emit is preferred over losing the assistant
-    message entirely.
-    """
-    _patch_agent_as_stopped(monkeypatch)
-    agent, host = _make_headless_agent(local_provider, tmp_path)
-
-    lines = [
-        _make_stream_json_line("drifted prefix"),
-        _make_assistant_message_line("totally different summary text"),
-        '{"type":"result","subtype":"success","is_error":false,"result":"totally different summary text"}',
-    ]
-    _write_fake_agent_output(host, agent, stdout="\n".join(lines) + "\n")
-
-    chunks = list(agent.stream_output())
-
-    assert chunks == ["drifted prefix", "totally different summary text"]
-
-
-def test_stream_output_resets_turn_state_after_tool_use_only_assistant_event(
-    local_provider: LocalProviderInstance,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A tool_use-only assistant event must end the current turn's dedup state.
-
-    Otherwise, stale `yielded_text_chunks` from the streamed deltas would
-    dedup the next assistant text event whose id we cannot disambiguate --
-    causing the second message's text to be partially suppressed when it
-    happens to share a prefix with the first message's already-yielded text.
-    """
-    _patch_agent_as_stopped(monkeypatch)
-    agent, host = _make_headless_agent(local_provider, tmp_path)
-
-    # tool_use-only assistant event for the same message id as the deltas.
-    # `is_definitely_different_message` is False (same id), so without a
-    # state reset the next assistant text would be diffed against the stale
-    # buffer "Hello" rather than treated as a fresh turn.
-    tool_use_only = json.dumps(
-        {
-            "type": "assistant",
-            "message": {
-                "id": "msg_a",
-                "role": "assistant",
-                "content": [{"type": "tool_use", "id": "tu_1", "name": "bash", "input": {}}],
-            },
-        }
-    )
-    # Second assistant text -- no id provided -- whose text shares the
-    # prefix "Hello" with the prior turn's already-yielded delta.
-    lines = [
-        _make_message_start_line("msg_a"),
-        _make_stream_json_line("Hello"),
-        tool_use_only,
-        _make_assistant_message_line("Hello there"),
-        '{"type":"result","subtype":"success","is_error":false,"result":"Hello there"}',
-    ]
-    _write_fake_agent_output(host, agent, stdout="\n".join(lines) + "\n")
-
-    chunks = list(agent.stream_output())
-
-    # The streamed delta is yielded as-is. The tool_use-only assistant event
-    # ends the turn with no text emit AND clears the per-turn buffer. The
-    # second assistant event's full text is yielded -- it must NOT be
-    # treated as a continuation of the now-finished prior turn.
-    assert chunks == ["Hello", "Hello there"]
+    assert chunks == expected_chunks
 
 
 def test_extract_assistant_message_id_returns_id_when_present() -> None:
