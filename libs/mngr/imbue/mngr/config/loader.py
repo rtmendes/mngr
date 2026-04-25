@@ -119,10 +119,7 @@ def load_config(
     )
 
     if strict is None:
-        # When MNGR_ALLOW_UNKNOWN_CONFIG is set, unknown fields in config files produce
-        # warnings instead of errors.  This is useful during development when a branch
-        # adds a new config field but other branches don't know about it yet.
-        strict = not parse_bool_env(os.environ.get("MNGR_ALLOW_UNKNOWN_CONFIG", ""))
+        strict = resolve_strict_from_env()
 
     # Load and merge config files in precedence order (user, project, local)
     for raw in (
@@ -285,6 +282,19 @@ def get_or_create_profile_dir(base_dir: Path) -> Path:
 # =============================================================================
 # Config Loading
 # =============================================================================
+
+
+def resolve_strict_from_env() -> bool:
+    """Return the strict policy implied by the MNGR_ALLOW_UNKNOWN_CONFIG env var.
+
+    Strict (True) is the default. When MNGR_ALLOW_UNKNOWN_CONFIG is set to a
+    truthy value, unknown fields produce warnings instead of errors, which is
+    useful when older mngr installations encounter newer config files.
+
+    Centralized here so that ``load_config`` and ``setup_command_context`` agree
+    on the policy and the env var is read in exactly one place.
+    """
+    return not parse_bool_env(os.environ.get("MNGR_ALLOW_UNKNOWN_CONFIG", ""))
 
 
 def _normalize_field_keys(raw: dict[str, Any], context: str) -> dict[str, Any]:

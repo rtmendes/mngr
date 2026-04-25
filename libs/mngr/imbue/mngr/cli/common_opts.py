@@ -1,5 +1,4 @@
 import json
-import os
 import string
 import sys
 import uuid
@@ -32,12 +31,12 @@ from imbue.mngr.config.data_types import OutputOptions
 from imbue.mngr.config.loader import block_disabled_plugins
 from imbue.mngr.config.loader import load_config
 from imbue.mngr.config.loader import parse_config
+from imbue.mngr.config.loader import resolve_strict_from_env
 from imbue.mngr.errors import ConfigParseError
 from imbue.mngr.errors import ParseSpecError
 from imbue.mngr.errors import UserInputError
 from imbue.mngr.primitives import LogLevel
 from imbue.mngr.primitives import OutputFormat
-from imbue.mngr.utils.env_utils import parse_bool_env
 from imbue.mngr.utils.logging import LoggingConfig
 from imbue.mngr.utils.logging import setup_logging
 
@@ -158,7 +157,7 @@ def setup_command_context(
     # validates section field names) and apply_config_defaults below (which
     # validates command parameter names).
     if strict is None:
-        strict = not parse_bool_env(os.environ.get("MNGR_ALLOW_UNKNOWN_CONFIG", ""))
+        strict = resolve_strict_from_env()
 
     # Load config (is_interactive will be resolved below)
     pm = ctx.obj
