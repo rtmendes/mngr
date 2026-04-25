@@ -154,6 +154,12 @@ def setup_command_context(
     # wrapped in ConcurrencyExceptionGroup, which would break Click's error handling.
     ctx.call_on_close(lambda: cg.__exit__(None, None, None))
 
+    # Resolve strict here so the same policy applies to both load_config (which
+    # validates section field names) and apply_config_defaults below (which
+    # validates command parameter names).
+    if strict is None:
+        strict = not parse_bool_env(os.environ.get("MNGR_ALLOW_UNKNOWN_CONFIG", ""))
+
     # Load config (is_interactive will be resolved below)
     pm = ctx.obj
     mngr_ctx = load_config(
@@ -194,7 +200,7 @@ def setup_command_context(
         )
 
     # Apply config defaults to parameters that came from defaults (not user-specified)
-    updated_params = apply_config_defaults(ctx, mngr_ctx.config, command_name)
+    updated_params = apply_config_defaults(ctx, mngr_ctx.config, command_name, strict=strict)
 
     # Apply create template if this is the create command and a template was specified
     if command_name == "create":
@@ -423,7 +429,13 @@ def apply_settings_to_config(
     return config.merge_with(settings_config)
 
 
-def apply_config_defaults(ctx: click.Context, config: MngrConfig, command_name: str) -> dict[str, Any]:
+def apply_config_defaults(
+    ctx: click.Context,
+    config: MngrConfig,
+    command_name: str,
+    *,
+    strict: bool = True,
+) -> dict[str, Any]:
     """Apply config defaults to parameters that were not explicitly set by the user.
 
     Uses ctx.get_parameter_source() to detect which parameters came from defaults.
@@ -432,6 +444,10 @@ def apply_config_defaults(ctx: click.Context, config: MngrConfig, command_name: 
     Special handling for tuple/list parameters:
     - An empty string value ("") clears the list (sets it to an empty tuple)
     - This allows env vars like MNGR_COMMANDS_CREATE_ADD_COMMAND= to clear config defaults
+
+    When strict=True, raises ConfigParseError for unknown parameter names; when
+    strict=False, logs a warning and skips them. Callers should resolve the
+    policy from MNGR_ALLOW_UNKNOWN_CONFIG once and pass the result through.
     """
     # Get command defaults from config
     command_defaults = config.commands.get(command_name)
@@ -443,7 +459,6 @@ def apply_config_defaults(ctx: click.Context, config: MngrConfig, command_name: 
     updated_params = ctx.params.copy()
 
     # For each parameter, check if it came from a default and if config has an override
-    allow_unknown = parse_bool_env(os.environ.get("MNGR_ALLOW_UNKNOWN_CONFIG", ""))
     for param_name, config_value in command_defaults.defaults.items():
         # Check if this parameter exists in the context
         if param_name not in ctx.params:
@@ -451,7 +466,7 @@ def apply_config_defaults(ctx: click.Context, config: MngrConfig, command_name: 
                 f"Unknown parameter '{param_name}' in commands.{command_name} config. "
                 f"Valid parameters: {sorted(ctx.params.keys())}"
             )
-            if allow_unknown:
+            if not strict:
                 logger.warning(msg)
                 continue
             raise ConfigParseError(msg)

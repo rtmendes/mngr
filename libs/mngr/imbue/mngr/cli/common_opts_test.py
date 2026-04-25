@@ -481,11 +481,8 @@ def test_parse_output_options_invalid_template_raises(mngr_test_prefix: str) -> 
 # =============================================================================
 
 
-def test_apply_config_defaults_raises_on_unknown_param_names(
-    monkeypatch: pytest.MonkeyPatch, mngr_test_prefix: str
-) -> None:
-    """apply_config_defaults should raise for params not in context."""
-    monkeypatch.delenv("MNGR_ALLOW_UNKNOWN_CONFIG", raising=False)
+def test_apply_config_defaults_raises_on_unknown_param_names(mngr_test_prefix: str) -> None:
+    """apply_config_defaults should raise for params not in context when strict=True."""
     ctx = _make_click_context(
         params={"name": "default"},
     )
@@ -494,7 +491,7 @@ def test_apply_config_defaults_raises_on_unknown_param_names(
         commands={"create": CommandDefaults(defaults={"nonexistent_param": "value", "name": "overridden"})},
     )
     with pytest.raises(ConfigParseError, match="nonexistent_param"):
-        apply_config_defaults(ctx, config, "create")
+        apply_config_defaults(ctx, config, "create", strict=True)
 
 
 # =============================================================================
@@ -1098,9 +1095,8 @@ def test_disable_plugin_in_command_defaults_blocks_override_hook(
 # silently dropped.
 
 
-def test_apply_config_defaults_raises_on_unknown_param(monkeypatch: pytest.MonkeyPatch, mngr_test_prefix: str) -> None:
-    """apply_config_defaults should raise ConfigParseError for unknown param names."""
-    monkeypatch.delenv("MNGR_ALLOW_UNKNOWN_CONFIG", raising=False)
+def test_apply_config_defaults_raises_on_unknown_param(mngr_test_prefix: str) -> None:
+    """apply_config_defaults should raise ConfigParseError for unknown param names when strict=True."""
     ctx = _make_click_context(params={"name": "default", "extra_window": ()})
 
     config = MngrConfig(
@@ -1109,14 +1105,11 @@ def test_apply_config_defaults_raises_on_unknown_param(monkeypatch: pytest.Monke
     )
 
     with pytest.raises(ConfigParseError, match="definitely_not_a_real_param"):
-        apply_config_defaults(ctx, config, "create")
+        apply_config_defaults(ctx, config, "create", strict=True)
 
 
-def test_apply_config_defaults_warns_on_unknown_param_when_allowed(
-    monkeypatch: pytest.MonkeyPatch, mngr_test_prefix: str
-) -> None:
-    """apply_config_defaults should warn (not raise) when MNGR_ALLOW_UNKNOWN_CONFIG is set."""
-    monkeypatch.setenv("MNGR_ALLOW_UNKNOWN_CONFIG", "1")
+def test_apply_config_defaults_warns_on_unknown_param_when_lax(mngr_test_prefix: str) -> None:
+    """apply_config_defaults should warn (not raise) when strict=False."""
     ctx = _make_click_context(params={"name": "default"})
 
     config = MngrConfig(
@@ -1125,5 +1118,5 @@ def test_apply_config_defaults_warns_on_unknown_param_when_allowed(
     )
 
     # Should not raise; unknown param is silently warned about.
-    result = apply_config_defaults(ctx, config, "create")
+    result = apply_config_defaults(ctx, config, "create", strict=False)
     assert "definitely_not_a_real_param" not in result

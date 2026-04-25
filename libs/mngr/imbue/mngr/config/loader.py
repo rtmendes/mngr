@@ -293,6 +293,10 @@ def _normalize_field_keys(raw: dict[str, Any], context: str) -> dict[str, Any]:
     TOML conventionally uses hyphens (`pass-env`), but Python dataclasses use
     underscores (`pass_env`). Normalize so both forms map to the same field.
     Raises ConfigParseError if normalization would create a duplicate key.
+
+    Note: when no key contains a hyphen, the input dict is returned as-is
+    (not a copy). Callers that subsequently mutate the result must defensively
+    wrap with `dict(...)` to avoid mutating the caller's dict.
     """
     if not any("-" in k for k in raw):
         return raw
