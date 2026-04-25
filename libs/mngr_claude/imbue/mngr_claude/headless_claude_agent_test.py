@@ -958,9 +958,9 @@ def test_stream_output_resets_turn_state_after_tool_use_only_assistant_event(
 ) -> None:
     """A tool_use-only assistant event must end the current turn's dedup state.
 
-    Otherwise, stale `yielded_text_in_current_turn` from the streamed deltas
-    would dedup the next assistant text event whose id we cannot disambiguate
-    -- causing the second message's text to be partially suppressed when it
+    Otherwise, stale `yielded_text_chunks` from the streamed deltas would
+    dedup the next assistant text event whose id we cannot disambiguate --
+    causing the second message's text to be partially suppressed when it
     happens to share a prefix with the first message's already-yielded text.
     """
     _patch_agent_as_stopped(monkeypatch)

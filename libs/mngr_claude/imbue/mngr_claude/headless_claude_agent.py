@@ -240,11 +240,13 @@ class _StreamTailState(MutableModel):
     # Used to correlate deltas with the later top-level `assistant` summary
     # that carries the same id. None when no partial-stream context is active.
     streaming_message_id: str | None = None
-    # Concatenation of text already yielded for the in-progress turn. Used
+    # Chunks of text already yielded for the in-progress turn, in order. Used
     # to compute the trailing diff when the `assistant` summary arrives, so
     # that text present in the summary but not in the deltas is still emitted
-    # without re-emitting text already streamed.
-    yielded_text_in_current_turn: str = ""
+    # without re-emitting text already streamed. Stored as a list (and joined
+    # lazily on summary arrival) to avoid O(N*M) repeated concatenation when
+    # a turn contains many small deltas.
+    yielded_text_chunks: list[str] = Field(default_factory=list)
 
     def _has_new_data_or_finished(self) -> bool:
         current_mtime = self.host.get_file_mtime(self.stdout_path)
@@ -254,7 +256,7 @@ class _StreamTailState(MutableModel):
 
     def _reset_turn_state(self) -> None:
         self.streaming_message_id = None
-        self.yielded_text_in_current_turn = ""
+        self.yielded_text_chunks = []
 
     def _yield_text_for_parsed(self, parsed: dict[str, Any]) -> Iterator[str]:
         # Dispatch an already-parsed stream-json line on its `type`, then
@@ -285,7 +287,7 @@ class _StreamTailState(MutableModel):
         # per-turn buffer so we can subtract it from the matching summary.
         delta_text = _extract_text_delta_from_parsed(parsed)
         if delta_text is not None:
-            self.yielded_text_in_current_turn = self.yielded_text_in_current_turn + delta_text
+            self.yielded_text_chunks.append(delta_text)
             yield delta_text
 
     def _handle_assistant_event(self, parsed: dict[str, Any]) -> Iterator[str]:
@@ -302,15 +304,18 @@ class _StreamTailState(MutableModel):
                 and assistant_id is not None
                 and assistant_id != self.streaming_message_id
             )
+            # Materialize the per-turn buffer once, here, instead of after every
+            # delta -- this turns an O(N*M) per-turn cost into O(M).
+            yielded_so_far = "".join(self.yielded_text_chunks)
 
             if is_definitely_different_message:
                 # The streamed deltas belonged to a previous message whose summary
                 # never arrived. Yield the full summary for this new message.
                 yield assistant_text
-            elif assistant_text.startswith(self.yielded_text_in_current_turn):
+            elif assistant_text.startswith(yielded_so_far):
                 # Summary continues / matches what we already yielded; emit only
                 # the trailing extra text (empty string when they match exactly).
-                trailing_text = assistant_text[len(self.yielded_text_in_current_turn) :]
+                trailing_text = assistant_text[len(yielded_so_far) :]
                 if trailing_text:
                     yield trailing_text
             else:
