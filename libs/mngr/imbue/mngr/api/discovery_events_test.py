@@ -11,7 +11,7 @@ from imbue.mngr.api.discovery_events import AgentDestroyedEvent
 from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
 from imbue.mngr.api.discovery_events import DISCOVERY_EVENT_SOURCE
 from imbue.mngr.api.discovery_events import DiscoveryEventType
-from imbue.mngr.api.discovery_events import DiscoverySchemaChanged
+from imbue.mngr.api.discovery_events import DiscoverySchemaChangedError
 from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
 from imbue.mngr.api.discovery_events import HostDestroyedEvent
 from imbue.mngr.api.discovery_events import HostDiscoveryEvent
@@ -294,7 +294,7 @@ def test_parse_unknown_event_type_returns_none() -> None:
 
 
 def test_parse_recognized_event_with_missing_field_raises_schema_changed() -> None:
-    """A line of a known event type that fails validation must raise DiscoverySchemaChanged."""
+    """A line of a known event type that fails validation must raise DiscoverySchemaChangedError."""
     # AGENT_DISCOVERED requires an "agent" field; omit it to simulate a schema mismatch.
     line = json.dumps(
         {
@@ -304,18 +304,18 @@ def test_parse_recognized_event_with_missing_field_raises_schema_changed() -> No
             "source": "mngr/discovery",
         }
     )
-    with pytest.raises(DiscoverySchemaChanged) as exc_info:
+    with pytest.raises(DiscoverySchemaChangedError) as exc_info:
         parse_discovery_event_line(line)
     assert exc_info.value.event_type == DiscoveryEventType.AGENT_DISCOVERED
 
 
 def test_parse_recognized_event_with_extra_field_raises_schema_changed() -> None:
-    """Discovery models use extra='forbid', so unexpected fields must raise DiscoverySchemaChanged."""
+    """Discovery models use extra='forbid', so unexpected fields must raise DiscoverySchemaChangedError."""
     agent = make_test_discovered_agent()
     event = make_agent_discovery_event(agent)
     data = event.model_dump(mode="json")
     data["unexpected_new_field"] = "value-from-future-schema"
-    with pytest.raises(DiscoverySchemaChanged):
+    with pytest.raises(DiscoverySchemaChangedError):
         parse_discovery_event_line(json.dumps(data))
 
 

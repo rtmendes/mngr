@@ -29,7 +29,7 @@ from imbue.imbue_common.pure import pure
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import BaseMngrError
-from imbue.mngr.errors import DiscoverySchemaChanged
+from imbue.mngr.errors import DiscoverySchemaChangedError
 from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import AgentId
@@ -419,7 +419,7 @@ def parse_discovery_event_line(line: str) -> DiscoveryEvent | None:
     Returns None for empty lines, malformed JSON, or unrecognized event types
     (the latter to support forward-compat with new event types).
 
-    Raises DiscoverySchemaChanged when the line is a recognized event type but
+    Raises DiscoverySchemaChangedError when the line is a recognized event type but
     fails schema validation -- this typically means the model fields evolved
     since the line was written.
     """
@@ -449,7 +449,7 @@ def parse_discovery_event_line(line: str) -> DiscoveryEvent | None:
             case _:
                 return None
     except ValidationError as e:
-        raise DiscoverySchemaChanged(str(event_type), str(e)) from e
+        raise DiscoverySchemaChangedError(str(event_type), str(e)) from e
 
 
 def find_latest_full_snapshot_offset(events_path: Path) -> int:
@@ -530,7 +530,7 @@ def resolve_provider_names_for_identifiers(
                 else:
                     # Host events and other types are not relevant for provider resolution
                     pass
-    except DiscoverySchemaChanged as e:
+    except DiscoverySchemaChangedError as e:
         # On-disk events are stale relative to current model schema. Returning None
         # makes the caller fall back to a full discovery scan, which appends a fresh
         # snapshot in the current schema and supersedes the stale data on next read.

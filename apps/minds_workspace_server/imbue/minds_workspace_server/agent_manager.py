@@ -30,7 +30,7 @@ from imbue.minds_workspace_server.models import ApplicationEntry
 from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
 from imbue.mngr.api.discovery_events import AgentDestroyedEvent
 from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
-from imbue.mngr.api.discovery_events import DiscoverySchemaChanged
+from imbue.mngr.api.discovery_events import DiscoverySchemaChangedError
 from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
 from imbue.mngr.api.discovery_events import HostDestroyedEvent
 from imbue.mngr.api.discovery_events import parse_discovery_event_line
@@ -719,7 +719,7 @@ class AgentManager:
             event = parse_discovery_event_line(stripped)
             if event is not None:
                 self._handle_discovery_event(event)
-        except DiscoverySchemaChanged as e:
+        except DiscoverySchemaChangedError as e:
             _loguru_logger.warning("Skipping discovery event with stale schema: {}", e)
         except (json.JSONDecodeError, ValueError, KeyError):
             _loguru_logger.exception("Error parsing observe line: {}", stripped[:200])

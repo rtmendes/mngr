@@ -395,7 +395,7 @@ class BinaryNotInstalledError(MngrError):
         super().__init__(f"{binary} is required for {purpose} but was not found on PATH")
 
 
-class DiscoverySchemaChanged(BaseMngrError, ValueError):
+class DiscoverySchemaChangedError(BaseMngrError, ValueError):
     """Raised when a discovery event line cannot be validated against the current schema.
 
     This typically means a field was added, removed, or renamed in a discovery event
