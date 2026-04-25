@@ -28,6 +28,7 @@ from imbue.imbue_common.logging import generate_log_event_id
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.pure import pure
+from imbue.mngr.api.discovery_events import DiscoverySchemaChanged
 from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
 from imbue.mngr.api.discovery_events import HostDestroyedEvent
 from imbue.mngr.api.discovery_events import parse_discovery_event_line
@@ -415,6 +416,12 @@ class AgentObserver(MutableModel):
             return
         try:
             event = parse_discovery_event_line(stripped)
+        except DiscoverySchemaChanged as e:
+            # Old-schema event in the file. The discovery stream subprocess writes
+            # periodic full snapshots in the current schema, which will supersede
+            # this line on the next poll.
+            logger.warning("Skipping discovery event with stale schema: {}", e)
+            return
         except (json.JSONDecodeError, ValueError) as e:
             logger.trace("Failed to parse discovery event: {}", e)
             return

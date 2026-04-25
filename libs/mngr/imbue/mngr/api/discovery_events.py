@@ -12,6 +12,7 @@ from typing import Final
 
 from loguru import logger
 from pydantic import Field
+from pydantic import ValidationError
 
 from imbue.imbue_common.enums import UpperCaseStrEnum
 from imbue.imbue_common.event_envelope import EventEnvelope
@@ -41,6 +42,22 @@ from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SSHInfo
 
 DISCOVERY_EVENT_SOURCE: Final[EventSource] = EventSource("mngr/discovery")
+
+
+class DiscoverySchemaChanged(BaseMngrError, ValueError):
+    """Raised when a discovery event line cannot be validated against the current schema.
+
+    This typically means a field was added, removed, or renamed in a discovery event
+    model since the line was written. Callers should treat the on-disk events as stale,
+    regenerate via a full discovery (which appends new events in the current schema),
+    and retry. If validation fails again after regeneration, the error is real and
+    should be surfaced rather than silently dropped.
+    """
+
+    def __init__(self, event_type: str, validation_error: str) -> None:
+        self.event_type = event_type
+        self.validation_error = validation_error
+        super().__init__(f"Discovery event of type {event_type!r} does not match current schema: {validation_error}")
 
 
 class DiscoveryEventType(UpperCaseStrEnum):
@@ -414,7 +431,12 @@ DiscoveryEvent = (
 def parse_discovery_event_line(line: str) -> DiscoveryEvent | None:
     """Parse a single JSONL line into the appropriate discovery event type.
 
-    Returns None if the line cannot be parsed or is not a recognized discovery event.
+    Returns None for empty lines, malformed JSON, or unrecognized event types
+    (the latter to support forward-compat with new event types).
+
+    Raises DiscoverySchemaChanged when the line is a recognized event type but
+    fails schema validation -- this typically means the model fields evolved
+    since the line was written.
     """
     stripped = line.strip()
     if not stripped:
@@ -425,21 +447,24 @@ def parse_discovery_event_line(line: str) -> DiscoveryEvent | None:
         return None
 
     event_type = data.get("type")
-    match event_type:
-        case DiscoveryEventType.AGENT_DISCOVERED:
-            return AgentDiscoveryEvent.model_validate(data)
-        case DiscoveryEventType.HOST_DISCOVERED:
-            return HostDiscoveryEvent.model_validate(data)
-        case DiscoveryEventType.AGENT_DESTROYED:
-            return AgentDestroyedEvent.model_validate(data)
-        case DiscoveryEventType.HOST_DESTROYED:
-            return HostDestroyedEvent.model_validate(data)
-        case DiscoveryEventType.DISCOVERY_FULL:
-            return FullDiscoverySnapshotEvent.model_validate(data)
-        case DiscoveryEventType.HOST_SSH_INFO:
-            return HostSSHInfoEvent.model_validate(data)
-        case _:
-            return None
+    try:
+        match event_type:
+            case DiscoveryEventType.AGENT_DISCOVERED:
+                return AgentDiscoveryEvent.model_validate(data)
+            case DiscoveryEventType.HOST_DISCOVERED:
+                return HostDiscoveryEvent.model_validate(data)
+            case DiscoveryEventType.AGENT_DESTROYED:
+                return AgentDestroyedEvent.model_validate(data)
+            case DiscoveryEventType.HOST_DESTROYED:
+                return HostDestroyedEvent.model_validate(data)
+            case DiscoveryEventType.DISCOVERY_FULL:
+                return FullDiscoverySnapshotEvent.model_validate(data)
+            case DiscoveryEventType.HOST_SSH_INFO:
+                return HostSSHInfoEvent.model_validate(data)
+            case _:
+                return None
+    except ValidationError as e:
+        raise DiscoverySchemaChanged(str(event_type), str(e)) from e
 
 
 def find_latest_full_snapshot_offset(events_path: Path) -> int:
@@ -520,7 +545,13 @@ def resolve_provider_names_for_identifiers(
                 else:
                     # Host events and other types are not relevant for provider resolution
                     pass
-    except (OSError, ValueError) as e:
+    except DiscoverySchemaChanged as e:
+        # On-disk events are stale relative to current model schema. Returning None
+        # makes the caller fall back to a full discovery scan, which appends a fresh
+        # snapshot in the current schema and supersedes the stale data on next read.
+        logger.warning("Discovery event schema mismatch -- falling back to full scan: {}", e)
+        return None
+    except OSError as e:
         logger.trace("Failed to read discovery events for provider resolution: {}", e)
         return None
 

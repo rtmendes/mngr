@@ -11,6 +11,7 @@ from imbue.mngr.api.discovery_events import AgentDestroyedEvent
 from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
 from imbue.mngr.api.discovery_events import DISCOVERY_EVENT_SOURCE
 from imbue.mngr.api.discovery_events import DiscoveryEventType
+from imbue.mngr.api.discovery_events import DiscoverySchemaChanged
 from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
 from imbue.mngr.api.discovery_events import HostDestroyedEvent
 from imbue.mngr.api.discovery_events import HostDiscoveryEvent
@@ -290,6 +291,63 @@ def test_parse_invalid_json_returns_none() -> None:
 
 def test_parse_unknown_event_type_returns_none() -> None:
     assert parse_discovery_event_line('{"type": "unknown_event"}') is None
+
+
+def test_parse_recognized_event_with_missing_field_raises_schema_changed() -> None:
+    """A line of a known event type that fails validation must raise DiscoverySchemaChanged."""
+    # AGENT_DISCOVERED requires an "agent" field; omit it to simulate a schema mismatch.
+    line = json.dumps(
+        {
+            "timestamp": "2025-01-01T00:00:00.000000000+00:00",
+            "type": DiscoveryEventType.AGENT_DISCOVERED,
+            "event_id": "evt-test",
+            "source": "mngr/discovery",
+        }
+    )
+    with pytest.raises(DiscoverySchemaChanged) as exc_info:
+        parse_discovery_event_line(line)
+    assert exc_info.value.event_type == DiscoveryEventType.AGENT_DISCOVERED
+
+
+def test_parse_recognized_event_with_extra_field_raises_schema_changed() -> None:
+    """Discovery models use extra='forbid', so unexpected fields must raise DiscoverySchemaChanged."""
+    agent = make_test_discovered_agent()
+    event = make_agent_discovery_event(agent)
+    data = event.model_dump(mode="json")
+    data["unexpected_new_field"] = "value-from-future-schema"
+    with pytest.raises(DiscoverySchemaChanged):
+        parse_discovery_event_line(json.dumps(data))
+
+
+def test_resolve_provider_names_returns_none_on_schema_mismatch(temp_config: MngrConfig) -> None:
+    """If the events file has a stale-schema entry, resolution must return None
+    (so the caller can fall back to a full discovery scan) rather than silently
+    succeed with partial data."""
+    # Write one valid full snapshot, then append a stale-schema agent-discovery event.
+    agent = DiscoveredAgent(
+        host_id=HostId.generate(),
+        agent_id=AgentId.generate(),
+        agent_name=AgentName("known-agent"),
+        provider_name=ProviderInstanceName("local"),
+        certified_data={},
+    )
+    write_full_discovery_snapshot(temp_config, [agent], [])
+
+    events_path = get_discovery_events_path(temp_config)
+    with open(events_path, "a") as f:
+        stale_line = json.dumps(
+            {
+                "timestamp": "2025-01-01T00:00:00.000000000+00:00",
+                "type": DiscoveryEventType.AGENT_DISCOVERED,
+                "event_id": "evt-stale",
+                "source": "mngr/discovery",
+                # Missing required "agent" field -- simulates schema evolution.
+            }
+        )
+        f.write(stale_line + "\n")
+
+    result = resolve_provider_names_for_identifiers(temp_config, ["known-agent"])
+    assert result is None
 
 
 # === find_latest_full_snapshot_offset Tests ===

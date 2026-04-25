@@ -23,6 +23,7 @@ from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.primitives import ServiceName
 from imbue.mngr.api.discovery_events import AgentDestroyedEvent
 from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
+from imbue.mngr.api.discovery_events import DiscoverySchemaChanged
 from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
 from imbue.mngr.api.discovery_events import HostDestroyedEvent
 from imbue.mngr.api.discovery_events import HostSSHInfoEvent
@@ -554,6 +555,9 @@ class MngrStreamManager(MutableModel):
         """
         try:
             event = parse_discovery_event_line(line)
+        except DiscoverySchemaChanged as e:
+            logger.warning("Skipping discovery event with stale schema: {} (line: {})", e, line[:200])
+            return
         except (json.JSONDecodeError, ValueError) as e:
             logger.error("Failed to parse discovery event line: {} (line: {})", e, line[:200])
             return
