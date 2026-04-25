@@ -153,12 +153,12 @@ class ListCliOptions(CommonCliOptions):
 @optgroup.option(
     "--include",
     multiple=True,
-    help="Include agents matching CEL expression, repeatable (e.g. 'state == \"RUNNING\"'); see 'Available Fields' below",
+    help="Include agents matching CEL expression (repeatable)",
 )
 @optgroup.option(
     "--exclude",
     multiple=True,
-    help="Exclude agents matching CEL expression, repeatable (e.g. 'host.provider == \"local\"'); see 'Available Fields' below",
+    help="Exclude agents matching CEL expression (repeatable)",
 )
 @optgroup.option(
     "--running",

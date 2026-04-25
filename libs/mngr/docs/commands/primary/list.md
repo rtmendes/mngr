@@ -27,8 +27,8 @@ mngr list [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--include` | text | Include agents matching CEL expression, repeatable (e.g. 'state == "RUNNING"'); see 'Available Fields' below | None |
-| `--exclude` | text | Exclude agents matching CEL expression, repeatable (e.g. 'host.provider == "local"'); see 'Available Fields' below | None |
+| `--include` | text | Include agents matching CEL expression (repeatable) | None |
+| `--exclude` | text | Exclude agents matching CEL expression (repeatable) | None |
 | `--running` | boolean | Show only running agents (alias for --include 'state == "RUNNING"') | `False` |
 | `--stopped` | boolean | Show only stopped agents (alias for --include 'state == "STOPPED"') | `False` |
 | `--archived` | boolean | Show only stopped agents (alias for --include 'has(labels.archived_at)') | `False` |
