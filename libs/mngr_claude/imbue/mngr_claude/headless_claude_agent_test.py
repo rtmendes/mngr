@@ -380,6 +380,31 @@ def test_stream_output_raises_with_stream_json_error_result(
         list(agent.stream_output())
 
 
+def test_stream_output_handles_non_string_result_error_payload(
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """stream_output should fall back to 'unknown error' when `result` is non-string.
+
+    Defensive: claude's API contract says `result` is a string for error
+    results, but if a future version emits null / a number / a structured
+    object, we honor the declared str | None return type rather than
+    leaking a non-string into the error path.
+    """
+    _patch_agent_as_stopped(monkeypatch)
+    agent, host = _make_headless_agent(local_provider, tmp_path)
+
+    _write_fake_agent_output(
+        host,
+        agent,
+        stdout='{"type":"result","subtype":"success","is_error":true,"result":null}\n',
+    )
+
+    with pytest.raises(MngrError, match="unknown error"):
+        list(agent.stream_output())
+
+
 def test_stream_output_raises_error_result_even_after_yielding_text(
     local_provider: LocalProviderInstance,
     tmp_path: Path,

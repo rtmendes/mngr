@@ -203,9 +203,15 @@ def _result_error_from_parsed(parsed: dict[str, Any]) -> str | None:
 
     Returns the error message when `parsed` is a `result` event with
     `is_error=true`, None otherwise (including for non-`result` events).
+    Falls back to "unknown error" when the `result` field is missing or
+    not a string, so the declared `str | None` return type is honored
+    even if claude emits a non-string `result` payload.
     """
     if parsed.get("type") == "result" and parsed.get("is_error"):
-        return parsed.get("result", "unknown error")
+        result_value = parsed.get("result")
+        if isinstance(result_value, str):
+            return result_value
+        return "unknown error"
     return None
 
 
@@ -276,7 +282,7 @@ class _StreamTailState(MutableModel):
                 # Other event types (system, user, ping, future event types,
                 # etc.) carry no text to surface here and are intentionally
                 # skipped. Trace-log for debugging when something looks off.
-                logger.trace("Skipped stream-json event of unhandled type {!r}", other_event_type)
+                logger.trace("Skipped stream-json event of type {!r} (no text to surface)", other_event_type)
 
     def _handle_stream_event(self, parsed: dict[str, Any]) -> Iterator[str]:
         # message_start (partial stream): begin a new turn. Any deltas for
@@ -302,7 +308,7 @@ class _StreamTailState(MutableModel):
         # outer dispatcher's handling of unknown top-level types.
         event = parsed.get("event")
         inner_event_type = event.get("type") if isinstance(event, dict) else None
-        logger.trace("Skipped stream-json stream_event of unhandled inner type {!r}", inner_event_type)
+        logger.trace("Skipped stream-json stream_event with inner type {!r} (no text to surface)", inner_event_type)
 
     def _handle_assistant_event(self, parsed: dict[str, Any]) -> Iterator[str]:
         # Top-level assistant event: reconcile against the per-turn buffer.
