@@ -16,6 +16,16 @@ def register_plugin_config(
     _plugin_config_registry[PluginName(plugin_name)] = config_class
 
 
+def unregister_plugin_config(plugin_name: str) -> None:
+    """Remove a plugin config registration if present.
+
+    Intended for tests that register a config class and need to clean up
+    afterwards so the global registry does not leak across test cases.
+    No-op if the plugin name is not currently registered.
+    """
+    _plugin_config_registry.pop(PluginName(plugin_name), None)
+
+
 def get_plugin_config_class(plugin_name: str) -> type[PluginConfig]:
     """Get the config class for a plugin.
 
