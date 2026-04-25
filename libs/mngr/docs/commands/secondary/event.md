@@ -26,6 +26,8 @@ is online, it reads files directly. When offline, it falls back to polling
 the volume. The command handles online/offline transitions automatically.
 Press Ctrl+C to stop.
 
+Alias: events
+
 **Usage:**
 
 ```text
