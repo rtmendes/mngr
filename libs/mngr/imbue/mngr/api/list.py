@@ -484,20 +484,26 @@ def agent_details_to_cel_context(agent: AgentDetails) -> dict[str, Any]:
     if result.get("runtime_seconds") is not None:
         result["runtime"] = result["runtime_seconds"]
 
-    # Add idle_seconds if available (computed from activity times)
-    if result.get("user_activity_time") or result.get("agent_activity_time"):
-        latest_activity = None
-        for activity_field in ["user_activity_time", "agent_activity_time", "ssh_activity_time"]:
-            activity_time = result.get(activity_field)
-            if activity_time:
-                if isinstance(activity_time, str):
-                    activity_dt = datetime.fromisoformat(activity_time.replace("Z", "+00:00"))
-                else:
-                    activity_dt = activity_time
-                if latest_activity is None or activity_dt > latest_activity:
-                    latest_activity = activity_dt
-        if latest_activity:
-            result["idle"] = (datetime.now(timezone.utc) - latest_activity).total_seconds()
+    # Add idle: seconds since the most recent activity across user, agent, and host SSH.
+    # ssh_activity_time lives on the host, not at the top level of the agent dict.
+    host_dict = result["host"] if isinstance(result.get("host"), dict) else None
+    activity_candidates = [
+        result.get("user_activity_time"),
+        result.get("agent_activity_time"),
+        host_dict.get("ssh_activity_time") if host_dict else None,
+    ]
+    latest_activity = None
+    for activity_time in activity_candidates:
+        if not activity_time:
+            continue
+        if isinstance(activity_time, str):
+            activity_dt = datetime.fromisoformat(activity_time.replace("Z", "+00:00"))
+        else:
+            activity_dt = activity_time
+        if latest_activity is None or activity_dt > latest_activity:
+            latest_activity = activity_dt
+    if latest_activity:
+        result["idle"] = (datetime.now(timezone.utc) - latest_activity).total_seconds()
 
     # Expose host.provider_name as host.provider too, so CEL filters can use either name
     # (host.provider is the documented short form; host.provider_name matches the data type)

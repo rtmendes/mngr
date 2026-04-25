@@ -147,7 +147,7 @@ The fields below can be used in three places, with the same names everywhere:
 **Computed fields** (derived from other fields, available in CEL filters and `--sort`):
 - `age` - Seconds since `create_time`
 - `runtime` - Alias for `runtime_seconds`
-- `idle` - Seconds since the more recent of `user_activity_time` and `agent_activity_time` (only present when at least one is set; differs from `idle_seconds`, which also factors in host SSH activity)
+- `idle` - Seconds since the most recent activity across `user_activity_time`, `agent_activity_time`, and `host.ssh_activity_time` (only present when at least one is set)
 
 **Host fields** (dot notation):
 - `host.name` - Host name
