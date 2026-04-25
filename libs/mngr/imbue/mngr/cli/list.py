@@ -722,8 +722,9 @@ def _get_header_label(field: str, custom_headers: dict[str, str] | None = None) 
     """Get the display label for a column header."""
     if custom_headers and field in custom_headers:
         return custom_headers[field]
-    if field in _HEADER_LABELS:
-        return _HEADER_LABELS[field]
+    canonical_field = _resolve_field_alias(field)
+    if canonical_field in _HEADER_LABELS:
+        return _HEADER_LABELS[canonical_field]
     return field.upper().replace(".", " ")
 
 
@@ -734,10 +735,12 @@ def _compute_column_widths(
     """Compute column widths sized to the terminal, distributing extra space to expandable columns."""
     separator_total = len(_COLUMN_SEPARATOR) * max(len(fields) - 1, 0)
 
-    # Start with minimum widths, ensuring each column is at least as wide as its header
+    # Start with minimum widths, ensuring each column is at least as wide as its header.
+    # Column-width tables are keyed by canonical field names, so resolve aliases before lookup.
     width_by_field: dict[str, int] = {}
     for field in fields:
-        min_data_width = _MIN_COLUMN_WIDTHS.get(field, _DEFAULT_MIN_COLUMN_WIDTH)
+        canonical_field = _resolve_field_alias(field)
+        min_data_width = _MIN_COLUMN_WIDTHS.get(canonical_field, _DEFAULT_MIN_COLUMN_WIDTH)
         header_width = len(_get_header_label(field, custom_headers))
         width_by_field[field] = max(min_data_width, header_width)
 
@@ -748,14 +751,14 @@ def _compute_column_widths(
     # Process columns sorted by tightest max cap first so capped leftovers flow to less
     # constrained columns in a single pass.
     if fields and extra_space > 0:
-        sorted_fields = sorted(fields, key=lambda f: _MAX_COLUMN_WIDTHS.get(f, float("inf")))
+        sorted_fields = sorted(fields, key=lambda f: _MAX_COLUMN_WIDTHS.get(_resolve_field_alias(f), float("inf")))
         remaining = extra_space
         for idx, field in enumerate(sorted_fields):
             fields_left = len(sorted_fields) - idx
             per_column = remaining // fields_left
             extra = 1 if (remaining % fields_left) > 0 else 0
             bonus = per_column + extra
-            max_width = _MAX_COLUMN_WIDTHS.get(field)
+            max_width = _MAX_COLUMN_WIDTHS.get(_resolve_field_alias(field))
             if max_width is not None and width_by_field[field] + bonus > max_width:
                 bonus = max(max_width - width_by_field[field], 0)
             width_by_field[field] = width_by_field[field] + bonus
@@ -1002,11 +1005,18 @@ def _format_value_as_string(value: Any) -> str:
 # Matches: "fieldname", "fieldname[0]", "fieldname[-1]", "fieldname[:3]", "fieldname[1:3]", etc.
 _BRACKET_PATTERN = re.compile(r"^([^\[]+)(?:\[([^\]]+)\])?$")
 
-# Aliases that let users reference fields by the same name in --fields/templates and CEL filters.
-# host.provider is the short form documented for CEL; the underlying attribute is host.provider_name.
+# Aliases that let users reference fields by the same name in --fields/--format
+# templates as they do in CEL filters and --sort. host.provider is the short form
+# documented for CEL; the underlying attribute is host.provider_name.
 _FIELD_ALIASES: Final[dict[str, str]] = {
     "host.provider": "host.provider_name",
 }
+
+
+@pure
+def _resolve_field_alias(field: str) -> str:
+    """Map a user-supplied field name to its canonical form for attribute/dict lookups."""
+    return _FIELD_ALIASES.get(field, field)
 
 
 class _CelSortKeyExtractor:
@@ -1060,8 +1070,9 @@ def _get_field_value(agent: AgentDetails, field: str) -> str:
     Supports nested fields like "host.name" and list slicing syntax like
     "host.snapshots[0]" or "host.snapshots[:3]".
     """
-    # Resolve aliases first so the same field names work in --fields and CEL filters
-    field = _FIELD_ALIASES.get(field, field)
+    # Resolve aliases first so a user-supplied alias (e.g. host.provider) maps to the
+    # canonical attribute name (host.provider_name) before walking the agent object.
+    field = _resolve_field_alias(field)
     # Handle nested fields (e.g., "host.name") with optional bracket notation
     # Also supports dict key access for plugin fields (e.g., "host.plugin.aws.iam_user")
     parts = field.split(".")

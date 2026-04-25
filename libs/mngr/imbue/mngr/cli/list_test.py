@@ -194,6 +194,18 @@ def test_get_field_value_provider_alias() -> None:
     assert result == "local"
 
 
+def test_get_header_label_resolves_alias() -> None:
+    """The alias host.provider should produce the same header label as host.provider_name."""
+    assert _get_header_label("host.provider") == _get_header_label("host.provider_name") == "PROVIDER"
+
+
+def test_compute_column_widths_resolves_alias_for_min_widths() -> None:
+    """Alias fields (host.provider) should pick up the same configured min width as the canonical name."""
+    aliased = _compute_column_widths(["host.provider"], 120)
+    canonical = _compute_column_widths(["host.provider_name"], 120)
+    assert aliased["host.provider"] == canonical["host.provider_name"]
+
+
 def test_get_field_value_list_index_first() -> None:
     """_get_field_value should extract first element with [0]."""
     snapshots = [
