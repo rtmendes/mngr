@@ -183,7 +183,6 @@ In follow mode (--follow), the command polls for new events. When the host
 is online, it reads files directly. When offline, it falls back to polling
 the volume. The command handles online/offline transitions automatically.
 Press Ctrl+C to stop.""",
-    aliases=("events",),
     examples=(
         ("Stream all events for an agent", "mngr event my-agent"),
         ("Stream only message events", "mngr event my-agent messages"),
