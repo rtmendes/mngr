@@ -311,7 +311,7 @@ def _normalize_field_keys(raw: dict[str, Any], context: str) -> dict[str, Any]:
     result: dict[str, Any] = {}
     seen_originals: dict[str, str] = {}
     for key, value in raw.items():
-        normalized = key.replace("-", "_") if "-" in key else key
+        normalized = key.replace("-", "_")
         if normalized in result:
             raise ConfigParseError(
                 f"Config in {context} has both '{seen_originals[normalized]}' and '{key}' "
