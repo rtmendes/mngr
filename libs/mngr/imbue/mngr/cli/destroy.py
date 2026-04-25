@@ -552,8 +552,12 @@ def _remove_created_branch(
 ) -> None:
     """Delete a git branch from the source repository.
 
-    Called after worktree removal, so git should allow the branch deletion.
-    Failures are logged as warnings but do not fail the destroy operation.
+    Called after the post-destroy GC pass, which is what removes the agent's
+    worktree (when GC and work-dir cleanup are both enabled). If the worktree
+    still has the branch checked out -- for example when --no-gc or
+    --no-allow-worktree-removal was passed -- ``git branch -D`` will fail;
+    such failures are logged as warnings and do not fail the destroy
+    operation.
     """
     try:
         result = cg.run_process_to_completion(
