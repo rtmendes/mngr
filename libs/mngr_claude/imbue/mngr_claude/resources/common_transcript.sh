@@ -63,6 +63,12 @@ import sys
 _MAX_INPUT_PREVIEW_LENGTH = 200
 _MAX_OUTPUT_LENGTH = 2000
 
+# Claude Code embeds stop hook output as user-message text starting with this
+# marker. We reclassify those messages as tool results so transcript viewers
+# show them with the tool role rather than the user role (the human did not
+# type them).
+_STOP_HOOK_PREFIX = "Stop hook feedback:"
+
 
 def _extract_text_content(content):
     """Extract plain text from a message content field (string or list of blocks)."""
@@ -217,20 +223,39 @@ def convert():
 
                 # Emit user text message if there is actual user text
                 if not _has_tool_results_only(content):
-                    event_id = _make_event_id(uuid, "user")
-                    if event_id not in existing_ids:
-                        text = _extract_text_content(content)
-                        if text:
+                    text = _extract_text_content(content)
+                    if text.startswith(_STOP_HOOK_PREFIX):
+                        event_id = _make_event_id(uuid, "stop_hook")
+                        if event_id not in existing_ids:
+                            output = text
+                            if len(output) > _MAX_OUTPUT_LENGTH:
+                                output = output[:_MAX_OUTPUT_LENGTH] + "..."
                             event = {
                                 "timestamp": timestamp,
-                                "type": "user_message",
+                                "type": "tool_result",
                                 "event_id": event_id,
                                 "source": "claude/common_transcript",
-                                "role": "user",
-                                "content": text,
+                                "tool_call_id": f"stop_hook-{uuid}",
+                                "tool_name": "stop_hook",
+                                "output": output,
+                                "is_error": False,
                                 "message_uuid": uuid,
                             }
                             new_events.append((timestamp, event))
+                    else:
+                        event_id = _make_event_id(uuid, "user")
+                        if event_id not in existing_ids:
+                            if text:
+                                event = {
+                                    "timestamp": timestamp,
+                                    "type": "user_message",
+                                    "event_id": event_id,
+                                    "source": "claude/common_transcript",
+                                    "role": "user",
+                                    "content": text,
+                                    "message_uuid": uuid,
+                                }
+                                new_events.append((timestamp, event))
 
                 # Emit tool result events for any tool_result blocks
                 if isinstance(content, list):

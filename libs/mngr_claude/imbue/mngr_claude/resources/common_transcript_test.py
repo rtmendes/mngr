@@ -496,6 +496,91 @@ def test_output_writes_to_correct_path(tmp_path: Path, stub_mngr_log_sh: str) ->
     assert len(expected_path.read_text().strip().splitlines()) == 1
 
 
+def test_stop_hook_feedback_emitted_as_tool_result(tmp_path: Path, stub_mngr_log_sh: str) -> None:
+    """User messages whose text starts with 'Stop hook feedback:' are reclassified as tool_result.
+
+    Claude Code injects stop hook output into the user-message stream, but the
+    human did not type it -- transcripts should display it with the tool role.
+    """
+    runner = ScriptRunner(tmp_path, stub_mngr_log_sh)
+    feedback = (
+        "Stop hook feedback:\n[./scripts/main_claude_stop_hook.sh]: Everything up-to-date\nERROR: Some checks failed"
+    )
+    runner.write_input([_make_user_event("uuid-stop", "2026-01-01T00:00:00Z", text=feedback)])
+
+    result = runner.run_single_pass()
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+    events = runner.get_output_events()
+    assert len(events) == 1
+    assert events[0]["type"] == "tool_result"
+    assert events[0]["tool_name"] == "stop_hook"
+    assert events[0]["tool_call_id"] == "stop_hook-uuid-stop"
+    assert events[0]["output"] == feedback
+    assert events[0]["is_error"] is False
+    assert events[0]["event_id"] == "uuid-stop-stop_hook"
+
+
+def test_stop_hook_feedback_truncates_long_output(tmp_path: Path, stub_mngr_log_sh: str) -> None:
+    runner = ScriptRunner(tmp_path, stub_mngr_log_sh)
+    feedback = "Stop hook feedback:\n" + "x" * 5000
+    runner.write_input([_make_user_event("uuid-stop2", "2026-01-01T00:00:00Z", text=feedback)])
+
+    result = runner.run_single_pass()
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+    events = runner.get_output_events()
+    assert len(events) == 1
+    assert events[0]["type"] == "tool_result"
+    assert len(events[0]["output"]) <= 2003
+
+
+def test_stop_hook_feedback_with_list_content(tmp_path: Path, stub_mngr_log_sh: str) -> None:
+    """Stop hook feedback delivered as a content list (with a text block) is also reclassified."""
+    runner = ScriptRunner(tmp_path, stub_mngr_log_sh)
+    user = json.dumps(
+        {
+            "type": "user",
+            "uuid": "uuid-stop-list",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "Stop hook feedback:\nWARN: nothing"}],
+            },
+        }
+    )
+    runner.write_input([user])
+
+    result = runner.run_single_pass()
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+    events = runner.get_output_events()
+    assert len(events) == 1
+    assert events[0]["type"] == "tool_result"
+    assert events[0]["tool_name"] == "stop_hook"
+
+
+def test_user_text_not_starting_with_stop_hook_marker_unchanged(tmp_path: Path, stub_mngr_log_sh: str) -> None:
+    """User text that merely mentions 'Stop hook feedback' but does not start with it stays a user_message."""
+    runner = ScriptRunner(tmp_path, stub_mngr_log_sh)
+    runner.write_input(
+        [
+            _make_user_event(
+                "uuid-mention",
+                "2026-01-01T00:00:00Z",
+                text="I want to discuss Stop hook feedback: how does it work?",
+            )
+        ]
+    )
+
+    result = runner.run_single_pass()
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+    events = runner.get_output_events()
+    assert len(events) == 1
+    assert events[0]["type"] == "user_message"
+
+
 def test_incremental_conversion(tmp_path: Path, stub_mngr_log_sh: str) -> None:
     """Running twice with new input should append without duplicates."""
     runner = ScriptRunner(tmp_path, stub_mngr_log_sh)
