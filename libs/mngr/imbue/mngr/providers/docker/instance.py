@@ -552,6 +552,26 @@ kill -TERM 1
             )
             self._host_store.write_host_record(updated_host_record)
 
+    def _mark_host_destroyed(self, host_id: HostId) -> None:
+        """Set stop_reason to DESTROYED on the host record.
+
+        Marks the host as DESTROYED for state derivation while preserving
+        snapshot records so gc_snapshots can age-gate their deletion.
+        """
+        host_record = self._host_store.read_host_record(host_id, use_cache=False)
+        if host_record is None:
+            return
+
+        updated_certified_data = host_record.certified_host_data.model_copy_update(
+            to_update(host_record.certified_host_data.field_ref().stop_reason, HostState.DESTROYED.value),
+            to_update(host_record.certified_host_data.field_ref().updated_at, datetime.now(timezone.utc)),
+        )
+        self._host_store.write_host_record(
+            host_record.model_copy_update(
+                to_update(host_record.field_ref().certified_host_data, updated_certified_data),
+            )
+        )
+
     def _save_failed_host_record(
         self,
         host_id: HostId,
@@ -1181,12 +1201,16 @@ kill -TERM 1
         self._evict_cached_host(host_id, replacement=restored_host)
         return restored_host
 
-    def destroy_host(
-        self,
-        host: HostInterface | HostId,
-        delete_snapshots: bool = True,
-    ) -> None:
-        """Destroy a Docker container permanently."""
+    def destroy_host(self, host: HostInterface | HostId) -> None:
+        """Destroy a Docker container permanently.
+
+        Stops and removes the container, then marks the host record as
+        DESTROYED via stop_reason. Snapshot records, snapshot images, and
+        the host volume directory are preserved so gc_snapshots can
+        age-gate their deletion (and so users can recover via
+        ``mngr create --snapshot``). Use ``delete_host`` to permanently
+        purge all records.
+        """
         host_id = host.id if isinstance(host, HostInterface) else host
 
         # Stop the host first (without creating a snapshot since we're destroying)
@@ -1200,19 +1224,28 @@ kill -TERM 1
             except docker.errors.DockerException as e:
                 logger.warning("Error removing container: {}", e)
 
-        if delete_snapshots:
-            # Delete snapshot images
-            host_record = self._host_store.read_host_record(host_id)
-            if host_record is not None:
-                for snap in host_record.certified_host_data.snapshots:
-                    try:
-                        self._docker_client.images.remove(snap.id)
-                    except docker.errors.DockerException as e:
-                        logger.warning("Error removing snapshot image {}: {}", snap.id, e)
+        self._mark_host_destroyed(host_id)
 
-            self._host_store.delete_host_record(host_id)
+        self._container_cache_by_id.pop(host_id, None)
+        self._evict_cached_host(host_id)
 
-        # Clean up the host volume directory
+    def delete_host(self, host: HostInterface) -> None:
+        """Permanently delete all records associated with a (destroyed) host.
+
+        Removes snapshot images, the host volume directory, and the host
+        record. Called by gc_machines once a destroyed host has aged past
+        ``destroyed_host_persisted_seconds``.
+        """
+        host_id = host.id
+
+        host_record = self._host_store.read_host_record(host_id)
+        if host_record is not None:
+            for snap in host_record.certified_host_data.snapshots:
+                try:
+                    self._docker_client.images.remove(snap.id)
+                except docker.errors.DockerException as e:
+                    logger.warning("Error removing snapshot image {}: {}", snap.id, e)
+
         if self.config.is_host_volume_created:
             volume_id = self._volume_id_for_host(host_id)
             try:
@@ -1220,14 +1253,9 @@ kill -TERM 1
             except (FileNotFoundError, OSError, MngrError) as e:
                 logger.trace("No host volume to clean up for {}: {}", host_id, e)
 
+        self._host_store.delete_host_record(host_id)
         self._container_cache_by_id.pop(host_id, None)
         self._evict_cached_host(host_id)
-
-    def delete_host(self, host: HostInterface) -> None:
-        """Permanently delete all records associated with a (destroyed) host."""
-        self._host_store.delete_host_record(host.id)
-        self._container_cache_by_id.pop(host.id, None)
-        self._evict_cached_host(host.id)
 
     def on_connection_error(self, host_id: HostId) -> None:
         """Clear all caches for a host on connection error."""
@@ -1348,7 +1376,10 @@ kill -TERM 1
                     host_obj = self._create_host_from_host_record(host_record)
                     # OfflineHost.get_state() uses certified data only (no SSH),
                     # so it's safe to call here unlike Host.get_state().
-                    hosts_with_state.append((host_obj, host_obj.get_state()))
+                    state = host_obj.get_state()
+                    if state == HostState.DESTROYED and not include_destroyed:
+                        continue
+                    hosts_with_state.append((host_obj, state))
                 except (OSError, ValueError, KeyError) as e:
                     logger.warning("Failed to create host from record {}: {}", host_id, e)
 
