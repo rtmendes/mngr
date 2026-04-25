@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -235,6 +236,10 @@ class _StreamTailState(MutableModel):
     chars_consumed: int = 0
     line_buffer: str = ""
     result_error: str | None = None
+    # Set to True once a stream-json `result` event has been seen. Once set,
+    # the tail loop stops; further lines (typically there are none) are not
+    # consumed.
+    got_result: bool = False
     # Id of the assistant message currently being streamed via partial deltas
     # (from `--include-partial-messages`'s `message_start` event), if any.
     # Used to correlate deltas with the later top-level `assistant` summary
@@ -327,9 +332,29 @@ class _StreamTailState(MutableModel):
 
         self._reset_turn_state()
 
+    def _yield_text_from_lines(self, lines: Iterable[str]) -> Iterator[str]:
+        """Process already-split stream-json lines, yielding text deltas.
+
+        Skips blank/non-JSON lines, records `result_error` and sets
+        `got_result` when a `result` event is seen (then stops iterating;
+        any lines after a result event are not consumed). Other events are
+        dispatched through `_yield_text_for_parsed` which yields any text.
+        """
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            parsed = _parse_stream_line(stripped)
+            if parsed is None:
+                continue
+            if parsed.get("type") == "result":
+                self.result_error = _result_error_from_parsed(parsed)
+                self.got_result = True
+                return
+            yield from self._yield_text_for_parsed(parsed)
+
     def tail_until_done(self) -> Iterator[str]:
-        got_result = False
-        while not got_result and not self.is_finished():
+        while not self.got_result and not self.is_finished():
             poll_until(
                 self._has_new_data_or_finished,
                 timeout=TAIL_POLL_TIMEOUT,
@@ -353,20 +378,9 @@ class _StreamTailState(MutableModel):
                 if not combined.endswith("\n"):
                     self.line_buffer = lines.pop()
 
-                for line in lines:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    parsed = _parse_stream_line(stripped)
-                    if parsed is None:
-                        continue
-                    if parsed.get("type") == "result":
-                        self.result_error = _result_error_from_parsed(parsed)
-                        got_result = True
-                        break
-                    yield from self._yield_text_for_parsed(parsed)
+                yield from self._yield_text_from_lines(lines)
 
-        if not got_result:
+        if not self.got_result:
             # Final drain after agent exits
             try:
                 content = self.host.read_text_file(self.stdout_path)
@@ -374,17 +388,7 @@ class _StreamTailState(MutableModel):
                 return
             remaining = self.line_buffer + content[self.chars_consumed :]
             if remaining:
-                for line in remaining.split("\n"):
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    parsed = _parse_stream_line(stripped)
-                    if parsed is None:
-                        continue
-                    if parsed.get("type") == "result":
-                        self.result_error = _result_error_from_parsed(parsed)
-                        break
-                    yield from self._yield_text_for_parsed(parsed)
+                yield from self._yield_text_from_lines(remaining.split("\n"))
 
 
 class NoPermissionsClaudeAgent(ClaudeAgent, NoPermissionsAgentMixin):
