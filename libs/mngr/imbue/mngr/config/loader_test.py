@@ -32,6 +32,7 @@ from imbue.mngr.config.loader import block_disabled_plugins
 from imbue.mngr.config.loader import get_or_create_profile_dir
 from imbue.mngr.config.loader import load_config
 from imbue.mngr.config.loader import parse_config
+from imbue.mngr.config.plugin_registry import register_plugin_config
 from imbue.mngr.errors import ConfigParseError
 from imbue.mngr.plugins import hookspecs
 from imbue.mngr.primitives import AgentTypeName
@@ -1629,6 +1630,14 @@ def test_parse_logging_config_normalizes_hyphens() -> None:
 
 def test_parse_plugins_normalizes_hyphens() -> None:
     """_parse_plugins should accept hyphenated TOML field names within a plugin block."""
-    raw = {"local": {"enabled": True}}
+
+    class _HyphenTestPluginConfig(PluginConfig):
+        custom_field: str = "default"
+
+    register_plugin_config("hyphen-test-plugin", _HyphenTestPluginConfig)
+
+    raw = {"hyphen-test-plugin": {"custom-field": "value"}}
     result = _parse_plugins(raw)
-    assert result[PluginName("local")].enabled is True
+    parsed = result[PluginName("hyphen-test-plugin")]
+    assert isinstance(parsed, _HyphenTestPluginConfig)
+    assert parsed.custom_field == "value"
