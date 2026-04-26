@@ -1360,11 +1360,21 @@ class AgentCreator(MutableModel):
 
         api_key = generate_api_key()
         env_path = "/mngr/agents/{}/env".format(agent_id)
+        host_env_path = "/mngr/env"
 
         # Build the inject command for MINDS_API_KEY
         inject_minds_key_command = (
             "sed -i '/^MINDS_API_KEY=/d' {path} && echo 'MINDS_API_KEY={key}' >> {path}"
         ).format(path=env_path, key=api_key)
+
+        # Inject MNGR_PREFIX into the host env so the workspace server
+        # and all services inside the container use the correct prefix
+        mngr_prefix = os.environ.get("MNGR_PREFIX", "")
+        inject_prefix_command: str | None = None
+        if mngr_prefix:
+            inject_prefix_command = (
+                "sed -i '/^MNGR_PREFIX=/d' {path} && echo 'MNGR_PREFIX={prefix}' >> {path}"
+            ).format(path=host_env_path, prefix=mngr_prefix)
 
         # Build the inject command for ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL
         inject_anthropic_command: str | None = None
@@ -1433,12 +1443,22 @@ class AgentCreator(MutableModel):
                         on_output=emit_log,
                     )
 
+                prefix_proc = None
+                if inject_prefix_command is not None:
+                    prefix_proc = cg.run_process_in_background(
+                        command=[MNGR_BINARY, "exec", address, inject_prefix_command],
+                        is_checked_by_group=True,
+                        on_output=emit_log,
+                    )
+
                 label_proc.wait()
                 minds_key_proc.wait()
                 if anthropic_proc is not None:
                     anthropic_proc.wait()
                 if claude_config_proc is not None:
                     claude_config_proc.wait()
+                if prefix_proc is not None:
+                    prefix_proc.wait()
 
                 # Step 3: start
                 log_queue.put("[minds] Starting agent '{}'...".format(parsed_name))
