@@ -283,15 +283,19 @@ def _create_single_pool_host(
 
     logger.info("  Created agent: {}", agent_name)
 
-    # Stop the agent process but keep the container running (sshd must stay
-    # accessible for the lease flow to inject user SSH keys via the management key).
-    stop_result = _run_mngr_command(["stop", agent_name])
+    # Stop the agent process inside the container but keep the container
+    # itself running. `mngr stop` would kill the container entirely (since the
+    # container entrypoint IS the agent process). Instead, kill just the tmux
+    # session that holds the agent. The container stays alive because its
+    # entrypoint is a `trap ... wait` wrapper, and sshd keeps it useful.
+    tmux_session = f"mngr-{agent_name}"
+    logger.info("  Stopping agent tmux session (keeping container alive)")
+    stop_result = _run_mngr_command(
+        ["exec", agent_name, f"tmux kill-session -t {tmux_session}"],
+        timeout=30,
+    )
     if stop_result.returncode != 0:
-        logger.warning("mngr stop failed (continuing): {}", stop_result.stderr)
-
-    # Ensure sshd is running in the container (it may not auto-start after stop)
-    logger.info("  Ensuring sshd is running in the container")
-    _run_mngr_command(["exec", agent_name, "/usr/sbin/sshd"], timeout=30)
+        logger.warning("tmux kill-session failed (continuing): {}", stop_result.stderr)
 
     # Get agent info from mngr list
     agent_info = _get_agent_info(agent_name)
