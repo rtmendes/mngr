@@ -61,6 +61,7 @@ class LiteLLMKeyClient(FrozenModel):
         key_alias: str | None,
         max_budget: float | None,
         budget_duration: str | None,
+        metadata: dict[str, str] | None,
     ) -> CreateKeyResult:
         """Create a new LiteLLM virtual key.
 
@@ -73,6 +74,8 @@ class LiteLLMKeyClient(FrozenModel):
             body["max_budget"] = max_budget
         if budget_duration is not None:
             body["budget_duration"] = budget_duration
+        if metadata is not None:
+            body["metadata"] = metadata
 
         try:
             response = httpx.post(

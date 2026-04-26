@@ -1335,6 +1335,10 @@ class AgentCreator(MutableModel):
                     key_alias=None,
                     max_budget=100.0,
                     budget_duration="1d",
+                    metadata={
+                        "agent_id": str(agent_id),
+                        "host_id": lease_result.host_id,
+                    },
                 )
                 litellm_key = key_result.key
                 litellm_base_url = key_result.base_url

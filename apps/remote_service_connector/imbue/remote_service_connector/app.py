@@ -315,6 +315,9 @@ class CreateKeyRequest(BaseModel):
     budget_duration: str | None = Field(
         default=None, description="Optional budget reset duration (e.g. '1d', '1h', '1w', '1M')"
     )
+    metadata: dict[str, str] | None = Field(
+        default=None, description="Optional metadata (e.g. agent_id, host_id) for resource tracking"
+    )
 
 
 class CreateKeyResponse(BaseModel):
@@ -1613,6 +1616,8 @@ def create_litellm_key(request: Request, body: CreateKeyRequest) -> dict[str, ob
             litellm_body["max_budget"] = body.max_budget
         if body.budget_duration is not None:
             litellm_body["budget_duration"] = body.budget_duration
+        if body.metadata is not None:
+            litellm_body["metadata"] = body.metadata
 
         resp = _litellm_request("POST", "/key/generate", json_body=litellm_body)
         data = resp.json()
