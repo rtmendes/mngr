@@ -125,7 +125,7 @@ def _build_patch_claude_config_command(
     agent_id: AgentId,
 ) -> str:
     """Build a shell command that replaces the placeholder key in the agent's claude config."""
-    claude_config_path = "/mngr/agents/{}/state/plugin/claude/anthropic/.claude.json".format(agent_id)
+    claude_config_path = "/mngr/agents/{}/plugin/claude/anthropic/.claude.json".format(agent_id)
     return "sed -i 's|{placeholder}|{real_key}|g' {path}".format(
         placeholder=PLACEHOLDER_ANTHROPIC_API_KEY,
         real_key=litellm_key,

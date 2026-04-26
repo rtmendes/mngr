@@ -1113,7 +1113,7 @@ def test_build_patch_claude_config_command_targets_correct_path() -> None:
         litellm_key="sk-litellm-real-key-xyz",
         agent_id=agent_id,
     )
-    expected_path = "/mngr/agents/{}/state/plugin/claude/anthropic/.claude.json".format(agent_id)
+    expected_path = "/mngr/agents/{}/plugin/claude/anthropic/.claude.json".format(agent_id)
     assert expected_path in cmd
     assert PLACEHOLDER_ANTHROPIC_API_KEY in cmd
     assert "sk-litellm-real-key-xyz" in cmd
