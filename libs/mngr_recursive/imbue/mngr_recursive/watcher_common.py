@@ -230,7 +230,7 @@ def load_watchers_section(agent_work_dir: Path) -> dict[str, Any]:
 
     Delegates parsing to try_load_toml so a corrupt minds.toml raises ConfigParseError
     (minds.toml is user-authored config -- problems must surface to the user, not be
-    silently dropped; see style guide: 'Config and settings file parse errors').
+    silently dropped; see style guide section 'Try/except').
     """
     raw = try_load_toml(agent_work_dir / "minds.toml")
     if raw is None:
