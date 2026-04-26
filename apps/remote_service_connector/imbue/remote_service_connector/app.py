@@ -1581,11 +1581,11 @@ def _litellm_request(
         headers=headers,
         json=json_body,
         params=params,
-        timeout=30.0,
+        timeout=60.0,
     )
     if response.status_code >= 400:
         detail = response.text[:500]
-        logger.warning("LiteLLM API error: {} {} -> {} {}", method, path, response.status_code, detail)
+        logger.warning("LiteLLM API error: %s %s -> %s %s", method, path, response.status_code, detail)
         raise HTTPException(status_code=response.status_code, detail="LiteLLM error: {}".format(detail))
     return response
 

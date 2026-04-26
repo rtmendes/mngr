@@ -12,7 +12,7 @@ from pydantic import Field
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.minds.errors import MindError
 
-_DEFAULT_TIMEOUT_SECONDS = 30.0
+_DEFAULT_TIMEOUT_SECONDS = 90.0
 
 
 class LiteLLMKeyError(MindError):
