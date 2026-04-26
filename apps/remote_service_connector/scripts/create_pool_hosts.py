@@ -35,6 +35,14 @@ _CONTAINER_SSH_PORT: Final[int] = 2222
 _MNGR_COMMAND_TIMEOUT_SECONDS: Final[int] = 600
 _SSH_COMMAND_TIMEOUT_SECONDS: Final[int] = 60
 
+# Placeholder ANTHROPIC_API_KEY injected into pool hosts at creation time so
+# that mngr provisioning writes it into the agent env file and claude config.
+# During lease setup the placeholder is sed-replaced with the real LiteLLM
+# virtual key.
+_PLACEHOLDER_ANTHROPIC_API_KEY: Final[str] = (
+    "sk-ant-api03-PLACEHOLDER000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+)
+
 
 def _run_mngr_command(
     args: list[str],
@@ -250,7 +258,9 @@ def _create_single_pool_host(
 
     logger.info("[{}] Creating pool host: {}", host_idx, address)
 
-    # Create the agent and host
+    # Create the agent and host. The placeholder ANTHROPIC_API_KEY is injected
+    # so that mngr provisioning writes it into the env file and claude config.
+    # It gets sed-replaced with the real LiteLLM virtual key during lease setup.
     create_result = _run_mngr_command(
         [
             "create",
@@ -263,6 +273,8 @@ def _create_single_pool_host(
             f"pool_region={region}",
             "--host-label",
             f"plan={plan}",
+            "--env",
+            f"ANTHROPIC_API_KEY={_PLACEHOLDER_ANTHROPIC_API_KEY}",
         ]
     )
     if create_result.returncode != 0:
