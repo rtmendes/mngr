@@ -31,7 +31,6 @@ from imbue.mngr.config.loader import get_or_create_profile_dir
 from imbue.mngr.config.loader import load_config
 from imbue.mngr.config.loader import parse_config
 from imbue.mngr.config.plugin_registry import register_plugin_config
-from imbue.mngr.config.plugin_registry import unregister_plugin_config
 from imbue.mngr.errors import ConfigParseError
 from imbue.mngr.plugins import hookspecs
 from imbue.mngr.primitives import AgentTypeName
@@ -1621,13 +1620,9 @@ def test_parse_plugins_normalizes_hyphens() -> None:
         custom_field: str = "default"
 
     register_plugin_config("hyphen-test-plugin", _HyphenTestPluginConfig)
-    try:
-        raw = {"hyphen-test-plugin": {"custom-field": "value"}}
-        result = _parse_plugins(raw)
-        parsed = result[PluginName("hyphen-test-plugin")]
-        assert isinstance(parsed, _HyphenTestPluginConfig)
-        assert parsed.custom_field == "value"
-    finally:
-        # Avoid leaking the test plugin registration into the module-global
-        # registry, which would persist across all subsequent tests in the run.
-        unregister_plugin_config("hyphen-test-plugin")
+
+    raw = {"hyphen-test-plugin": {"custom-field": "value"}}
+    result = _parse_plugins(raw)
+    parsed = result[PluginName("hyphen-test-plugin")]
+    assert isinstance(parsed, _HyphenTestPluginConfig)
+    assert parsed.custom_field == "value"
