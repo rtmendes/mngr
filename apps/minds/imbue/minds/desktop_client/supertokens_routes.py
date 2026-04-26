@@ -107,12 +107,7 @@ def _handle_auth_page(request: Request, message: str | None = None) -> HTMLRespo
     to sign-in mode (unless the user has never signed in before, in
     which case it shows sign-up as a convenience).
     """
-    is_signup_route = request.url.path.rstrip("/").endswith("/signup")
-    if is_signup_route:
-        default_to_signup = True
-    else:
-        session_store = _get_session_store(request)
-        default_to_signup = not session_store.has_signed_in_before()
+    default_to_signup = request.url.path.rstrip("/").endswith("/signup")
     return HTMLResponse(
         render_auth_page(
             default_to_signup=default_to_signup,
