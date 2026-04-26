@@ -25,6 +25,7 @@ from imbue.mngr.api.providers import reset_provider_instances
 from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.config.plugin_registry import reset_plugin_config_registry
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.plugin_catalog import get_independent_entry_point_names
 from imbue.mngr.plugins import hookspecs
@@ -496,6 +497,7 @@ def plugin_manager(
     reset_backend_registry()
     reset_agent_registry()
     reset_provider_instances()
+    reset_plugin_config_registry()
 
     # Discover all entry-point plugins and block everything except enabled_plugins
     all_eps = {ep.name for ep in importlib.metadata.entry_points(group="mngr")}
@@ -522,6 +524,7 @@ def plugin_manager(
     reset_backend_registry()
     reset_agent_registry()
     reset_provider_instances()
+    reset_plugin_config_registry()
 
 
 # =============================================================================
