@@ -30,6 +30,7 @@ from imbue.mngr.config.loader import block_disabled_plugins
 from imbue.mngr.config.loader import get_or_create_profile_dir
 from imbue.mngr.config.loader import load_config
 from imbue.mngr.config.loader import parse_config
+from imbue.mngr.config.plugin_registry import _plugin_config_registry
 from imbue.mngr.config.plugin_registry import register_plugin_config
 from imbue.mngr.errors import ConfigParseError
 from imbue.mngr.plugins import hookspecs
@@ -1619,10 +1620,16 @@ def test_parse_plugins_normalizes_hyphens() -> None:
     class _HyphenTestPluginConfig(PluginConfig):
         custom_field: str = "default"
 
+    # The plugin config registry is populated at module-import time by external
+    # plugin packages (e.g. mngr_notifications), so a blanket reset here would
+    # wipe legitimate registrations and break tests in other packages that look
+    # them up. Snapshot and restore just this test's addition instead.
     register_plugin_config("hyphen-test-plugin", _HyphenTestPluginConfig)
-
-    raw = {"hyphen-test-plugin": {"custom-field": "value"}}
-    result = _parse_plugins(raw)
-    parsed = result[PluginName("hyphen-test-plugin")]
-    assert isinstance(parsed, _HyphenTestPluginConfig)
-    assert parsed.custom_field == "value"
+    try:
+        raw = {"hyphen-test-plugin": {"custom-field": "value"}}
+        result = _parse_plugins(raw)
+        parsed = result[PluginName("hyphen-test-plugin")]
+        assert isinstance(parsed, _HyphenTestPluginConfig)
+        assert parsed.custom_field == "value"
+    finally:
+        _plugin_config_registry.pop(PluginName("hyphen-test-plugin"), None)
