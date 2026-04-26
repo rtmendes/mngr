@@ -148,19 +148,6 @@ def test_read_event_ids_from_jsonl_skips_blank_lines(tmp_path: Path) -> None:
     assert read_event_ids_from_jsonl(jsonl_file) == {"evt-a", "evt-b"}
 
 
-def test_mtime_poll_files_drops_paths_no_longer_watched(tmp_path: Path) -> None:
-    """Stale entries in mtime_cache for paths no longer in watch_paths are dropped."""
-    cache: dict[str, tuple[float, int]] = {}
-    test_file = tmp_path / "data.txt"
-    test_file.write_text("content")
-
-    assert mtime_poll_files([test_file], cache)
-    assert str(test_file) in cache
-
-    assert mtime_poll_files([], cache)
-    assert str(test_file) not in cache
-
-
 # -- require_env tests --
 
 
@@ -241,6 +228,19 @@ def test_mtime_poll_files_tracks_multiple_files(tmp_path: Path) -> None:
     file_a.write_text("a modified")
     os.utime(file_a, (0, 999999999))
     assert mtime_poll_files([file_a, file_b], cache)
+
+
+def test_mtime_poll_files_drops_paths_no_longer_watched(tmp_path: Path) -> None:
+    """Stale entries in mtime_cache for paths no longer in watch_paths are dropped."""
+    cache: dict[str, tuple[float, int]] = {}
+    test_file = tmp_path / "data.txt"
+    test_file.write_text("content")
+
+    assert mtime_poll_files([test_file], cache)
+    assert str(test_file) in cache
+
+    assert mtime_poll_files([], cache)
+    assert str(test_file) not in cache
 
 
 # -- mtime_poll_directories tests --
