@@ -7,7 +7,7 @@ Run coding agents in Docker containers. For general agent management, see [mngr 
 - Docker installed and a reachable daemon (local Docker Desktop, a remote daemon via `DOCKER_HOST`, or a configured Docker context)
 - mngr installed and working locally
 
-The Docker client used by mngr resolves the daemon in the same order as the Docker CLI: `DOCKER_HOST`, then the active Docker context (from `~/.docker/config.json`), then the platform default. This means Docker Desktop on macOS works without extra configuration.
+The Docker client used by mngr resolves the daemon in the same order as the Docker CLI: `DOCKER_HOST`, then the active Docker context (from `~/.docker/config.json`), then the platform default.
 
 ## Creating a local agent
 
@@ -21,6 +21,10 @@ This builds a container, drops you into a tmux session, and gives you the same i
 
 If you do not pass an image or a Dockerfile, mngr builds a default image from `debian:bookworm-slim` with the packages it needs (`openssh-server`, `tmux`, `curl`, `rsync`, `git`, `jq`, `xxd`, `ca-certificates`). For faster startup on repeated creates, supply your own image (see below) so these packages are pre-installed alongside your project's dependencies.
 
+### How `-b` and `-s` flags work
+
+The Docker provider passes `-b` (or `--build-arg`) flags straight through to `docker build` and `-s` (or `--start-arg`) flags straight through to `docker run`. So anything those CLIs support is available -- `-b --no-cache`, `-b --build-arg=KEY=VAL`, `-s --device=...`, `-s --ulimit=...`, capabilities, secrets, networks, etc. Check `docker build --help` and `docker run --help` for the full set.
+
 ### Using a template
 
 If your project has a Docker template defined in `.mngr/settings.toml`, you can use `-t my-docker` instead of passing flags manually:
@@ -29,17 +33,18 @@ If your project has a Docker template defined in `.mngr/settings.toml`, you can 
 mngr create my-agent -t my-docker
 ```
 
-Example template:
+A typical Docker template builds the project's own Dockerfile and points the agent at the path inside the container where the source ends up:
 
 ```toml
 [create_templates.my-docker]
 provider = "docker"
+build_arg = ["--file=path/to/Dockerfile", "build/context/dir"]
+target_path = "/code/my-project"
 agent_args = ["--dangerously-skip-permissions"]
 pass_env = ["GH_TOKEN"]
-extra_window = ["github_setup='ssh-keyscan github.com >> ~/.ssh/known_hosts && git remote set-url origin https://github.com/<org>/<repo>.git && gh auth setup-git'"]
 ```
 
-The container is an isolated environment, so `--dangerously-skip-permissions` is reasonable for the container itself -- but credentials forwarded via `pass_env` (e.g. `GH_TOKEN`) can still be used by the agent without confirmation. Note also that the container can read/write any bind-mounted host paths you pass via `-s -v=...`, so do not rely on the container as a strong sandbox if you mount sensitive host directories.
+`build_arg` entries are appended to `docker build -t <generated-tag>` (so the last entry is the build context). The container is an isolated environment, so `--dangerously-skip-permissions` is reasonable for the container itself -- but credentials forwarded via `pass_env` (e.g. `GH_TOKEN`) can still be used by the agent without confirmation. The container can also read/write any bind-mounted host paths you pass via `-s -v=...`, so do not rely on the container as a strong sandbox if you mount sensitive host directories.
 
 See [Create Templates](../customization.md#create-templates) for the full set of template options.
 
@@ -101,13 +106,31 @@ User-supplied bind mounts (`-s -v=...`) are independent of the host volume. They
 
 ## Getting changes back
 
-To retrieve changes from the agent's container, either **let the agent push via git** or **use `mngr pull`**.
+Three options, roughly in order of convenience for the local-Docker case.
 
-### Option A: Give the agent git credentials
+### Option A: Reach into the host volume
+
+When `is_host_volume_created = true` (the default), the agent's `host_dir` (and anything mngr puts under it, including worktree-mode work directories at `host_dir/worktrees/...`) lives on the shared Docker named volume. You can read it directly from the daemon host without any SSH:
+
+```bash
+# On Linux, the volume is mounted at a real path on disk:
+sudo ls /var/lib/docker/volumes/<prefix>docker-state-<user_id>/_data/volumes/
+
+# Anywhere (including Docker Desktop on macOS), use the state container:
+docker exec <prefix>docker-state-<user_id> ls /mngr-state/volumes/
+
+# Or copy out via any throwaway container that mounts the volume:
+docker run --rm -v <prefix>docker-state-<user_id>:/data alpine \
+    tar -C /data/volumes/vol-<host_hex> -cf - . | tar -C ./local-out -xf -
+```
+
+This bypasses SSH entirely and is the fastest option when the daemon is local. It only sees files mngr placed under `host_dir` -- if the agent's work dir is somewhere else (e.g. you used `target_path = /code/...` with a custom Dockerfile), use Option B or C instead.
+
+### Option B: Give the agent git credentials
 
 If the agent has `GH_TOKEN` (via `pass_env` in a template or `--pass-env` on the CLI), it can `git push` directly.
 
-### Option B: Use `mngr pull`
+### Option C: Use `mngr pull`
 
 `mngr pull` transfers changes from the agent to your local machine without needing git credentials on the agent. It supports two sync modes:
 
@@ -192,4 +215,4 @@ The SSH hostname is derived only from the explicit `host` config field, not from
 
 ## What else is possible
 
-The Docker provider passes `-b` flags through to `docker build` and `-s` flags through to `docker run`, so anything those CLIs support is available -- secrets via `--build-arg` / `--secret`, multi-stage builds, custom networks, devices via `--device`, ulimits, capabilities, etc. See `docker build --help` and `docker run --help` for the full set, and the [Docker provider reference](../core_plugins/providers/docker.md) for mngr-specific configuration.
+See the [Docker provider reference](../core_plugins/providers/docker.md) for the full list of provider config options. Anything supported by `docker build` / `docker run` is reachable via `-b` / `-s` -- secrets via `--secret`, multi-stage builds, `--device`, `--cap-add`, `--ulimit`, custom networks, etc.
