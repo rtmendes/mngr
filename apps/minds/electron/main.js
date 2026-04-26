@@ -1025,7 +1025,7 @@ function fetchInitialChromeState(timeoutMs = 4000) {
             const parsed = JSON.parse(payload);
             if (parsed.type === 'workspaces' && Array.isArray(parsed.workspaces)) {
               clearTimeout(timer);
-              finish({ authenticated: true, workspaces: parsed.workspaces });
+              finish({ authenticated: true, workspaces: parsed.workspaces, hasAccounts: !!parsed.has_accounts });
               return;
             }
             if (parsed.type === 'auth_required') {
@@ -1321,18 +1321,19 @@ async function startBackendWithRetry() {
       }
 
       if (!authenticated) {
-        // The one-time code was already consumed above. Both sessions now
-        // have the minds_session cookie. Show /welcome for first-time users
-        // or the home page if there was prior state.
+        // The one-time code was already consumed above but fetchInitialChromeState
+        // still returned unauthenticated (should not happen, but handle gracefully).
         if (initialBundle.contentView && !initialBundle.contentView.webContents.isDestroyed()) {
-          if (savedState.length === 0) {
-            initialBundle.contentView.webContents.loadURL(backendBaseUrl + '/welcome');
-          } else {
-            initialBundle.contentView.webContents.loadURL(backendBaseUrl + '/');
-          }
+          initialBundle.contentView.webContents.loadURL(backendBaseUrl + '/welcome');
+        }
+      } else if (!chromeState.hasAccounts && restorable.length === 0) {
+        // Locally authenticated but user has never signed in with SuperTokens
+        // and has no saved windows -- show the welcome/onboarding page.
+        if (initialBundle.contentView && !initialBundle.contentView.webContents.isDestroyed()) {
+          initialBundle.contentView.webContents.loadURL(backendBaseUrl + '/welcome');
         }
       } else if (restorable.length === 0) {
-        // Authenticated, but nothing to restore -- land on the home page.
+        // Has accounts but nothing to restore -- land on the create page.
         if (initialBundle.contentView && !initialBundle.contentView.webContents.isDestroyed()) {
           initialBundle.contentView.webContents.loadURL(backendBaseUrl + '/');
         }

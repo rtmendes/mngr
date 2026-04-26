@@ -1408,7 +1408,8 @@ async def _handle_chrome_events(
             # Send initial workspace list and request count
             session_store: MultiAccountSessionStore | None = request.app.state.session_store
             last_workspace_data = _build_workspace_list(backend_resolver, session_store)
-            yield "data: {}\n\n".format(json.dumps({"type": "workspaces", "workspaces": last_workspace_data}))
+            has_accounts = bool(session_store and session_store.list_accounts())
+            yield "data: {}\n\n".format(json.dumps({"type": "workspaces", "workspaces": last_workspace_data, "has_accounts": has_accounts}))
             inbox: RequestInbox | None = request.app.state.request_inbox
             last_request_count = inbox.get_pending_count() if inbox else 0
             yield "data: {}\n\n".format(json.dumps({"type": "request_count", "count": last_request_count}))
