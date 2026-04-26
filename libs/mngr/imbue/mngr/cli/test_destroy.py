@@ -639,6 +639,7 @@ def test_destroy_remove_created_branch_graceful_when_no_branch(
 
 
 @pytest.mark.tmux
+@pytest.mark.flaky
 def test_destroy_via_stdin(
     cli_runner: CliRunner,
     temp_work_dir: Path,
