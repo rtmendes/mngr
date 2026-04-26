@@ -13,7 +13,6 @@ import json
 import os
 import sys
 import threading
-import tomllib
 from collections.abc import Callable
 from datetime import timezone
 from pathlib import Path
@@ -29,7 +28,7 @@ from watchdog.observers import Observer
 from imbue.imbue_common.logging import cleanup_old_rotated_files
 from imbue.imbue_common.logging import generate_rotation_timestamp
 from imbue.imbue_common.logging import rotation_lock
-from imbue.mngr.errors import ConfigParseError
+from imbue.mngr.config.pre_readers import try_load_toml
 
 
 class MngrNotInstalledError(RuntimeError):
@@ -229,19 +228,13 @@ def read_event_ids_from_jsonl(file_path: Path) -> set[str]:
 def load_watchers_section(agent_work_dir: Path) -> dict[str, Any]:
     """Load the [watchers] section from minds.toml, or {} if the file is missing.
 
-    Raises ConfigParseError if the file exists but contains invalid TOML -- minds.toml
-    is user-authored config, so a parse error must surface to the user rather than be
-    silently dropped (see style guide: 'Config and settings file parse errors').
+    Delegates parsing to try_load_toml so a corrupt minds.toml raises ConfigParseError
+    (minds.toml is user-authored config -- problems must surface to the user, not be
+    silently dropped; see style guide: 'Config and settings file parse errors').
     """
-    settings_path = agent_work_dir / "minds.toml"
-    try:
-        content = settings_path.read_text()
-    except FileNotFoundError:
+    raw = try_load_toml(agent_work_dir / "minds.toml")
+    if raw is None:
         return {}
-    try:
-        raw = tomllib.loads(content)
-    except tomllib.TOMLDecodeError as exc:
-        raise ConfigParseError(f"Failed to parse {settings_path}: {exc}") from exc
     return raw.get("watchers", {})
 
 

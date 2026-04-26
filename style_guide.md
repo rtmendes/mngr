@@ -543,7 +543,7 @@ Be very conservative with what exceptions are caught. Prefer to crash instead of
 
 ## Config and settings file parse errors
 
-- Never silently skip a parse error on a user-authored config or settings file (e.g. `settings.toml`, `minds.toml`). Let `TOMLDecodeError` / `JSONDecodeError` propagate so the user knows to fix the file. Silent-skip is fine for internal state, JSONL streams, and external input -- the `check_silent_decode_error_catches` ratchet is a reminder, not a strict ban.
+- If something is wrong with a user-authored config or settings file (e.g. `settings.toml`, `minds.toml`) -- parse error, permission denied, missing required section, malformed value -- always blow up rather than ignore it and proceed with defaults. The user must see a loud failure naming the file, otherwise their edits silently do nothing. This applies to `TOMLDecodeError` / `JSONDecodeError`, `OSError`, missing keys, type mismatches, and anything else that means "we did not successfully consume the user's config." Silent-skip / graceful fallback is fine for internal state, JSONL streams, and external input (subprocess / API output, CLI flag values) -- the `check_silent_decode_error_catches` ratchet covers parse errors specifically and is a reminder, not a strict ban.
 
 ## Timeouts
 
