@@ -8,6 +8,10 @@ const { startBackend, shutdown, getBackendProcess } = require('./backend');
 
 todesktop.init();
 
+// Redirect Electron's userData directory to ~/.<MINDS_ROOT_NAME>/ so that dev
+// and production installs are fully isolated (cookies, sessions, caches, etc.).
+app.setPath('userData', paths.getDataDir());
+
 const isMac = process.platform === 'darwin';
 const TITLEBAR_HEIGHT = 38;
 const SIDEBAR_WIDTH = 260;
