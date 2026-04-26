@@ -1077,12 +1077,8 @@ def test_disable_plugin_in_command_defaults_blocks_override_hook(
 
     captured_params: list[dict[str, Any]] = []
 
-    # `--pass-host-env` matches the baseline default in load_config (which
-    # populates `commands.create.defaults["pass_host_env"]`); the test command
-    # must accept it or the new strict-unknown-param check rejects it.
     @click.command()
     @click.option("--extra-window", multiple=True, default=())
-    @click.option("--pass-host-env", multiple=True, default=())
     @add_common_options
     @click.pass_context
     def test_create(ctx: click.Context, **kwargs: Any) -> None:
@@ -1117,14 +1113,9 @@ def test_disable_plugin_in_command_defaults_blocks_override_hook(
 
 
 def _make_strict_test_command() -> click.Command:
-    """Build a click command that runs setup_command_context for the 'create' command.
-
-    `--pass-host-env` is added because load_config seeds `commands.create.defaults`
-    with that key, which the strict unknown-param check would otherwise reject.
-    """
+    """Build a click command that runs setup_command_context for the 'create' command."""
 
     @click.command()
-    @click.option("--pass-host-env", multiple=True, default=())
     @add_common_options
     @click.pass_context
     def cmd(ctx: click.Context, **kwargs: Any) -> None:
