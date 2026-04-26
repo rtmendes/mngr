@@ -438,7 +438,7 @@ def parse_discovery_event_line(line: str) -> DiscoveryEvent | None:
         return None
 
     event_type = data.get("type")
-    if event_type not in DiscoveryEventType.__members__.values():
+    if event_type not in DiscoveryEventType:
         return None
     try:
         return _DISCOVERY_EVENT_ADAPTER.validate_python(data)
