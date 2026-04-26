@@ -539,11 +539,7 @@ class TodoNotificationService(MutableModel):
             ) from e
 ```
 
-Be very conservative with what exceptions are caught. Prefer to crash instead of catching errors.
-
-## Config and settings file parse errors
-
-- If something is wrong with a user-authored config or settings file (e.g. `settings.toml`, `minds.toml`) -- parse error, permission denied, missing required section, malformed value -- always blow up rather than ignore it and proceed with defaults. The user must see a loud failure naming the file, otherwise their edits silently do nothing. This applies to `TOMLDecodeError` / `JSONDecodeError`, `OSError`, missing keys, type mismatches, and anything else that means "we did not successfully consume the user's config." Silent-skip / graceful fallback is fine for internal state, JSONL streams, and external input (subprocess / API output, CLI flag values) -- the `check_silent_decode_error_catches` ratchet covers parse errors specifically and is a reminder, not a strict ban.
+Be very conservative with what exceptions are caught. Prefer to crash instead of catching errors. In particular, when anything is wrong with a user-authored config or settings file (e.g. `settings.toml`, `minds.toml`) -- parse error, permission denied, missing section, malformed value -- raise rather than fall back to defaults; otherwise the program runs with configuration the user did not ask for and they have no way to know.
 
 ## Timeouts
 
