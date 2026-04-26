@@ -2295,7 +2295,7 @@ def _init_supertokens() -> None:
         modal.Secret.from_name(f"supertokens-{_DEPLOY_ENV}"),
         modal.Secret.from_name(f"neon-{_DEPLOY_ENV}"),
         modal.Secret.from_name(f"pool-ssh-{_DEPLOY_ENV}"),
-        modal.Secret.from_name(f"litellm-{_DEPLOY_ENV}"),
+        modal.Secret.from_name(f"litellm-connector-{_DEPLOY_ENV}"),
         modal.Secret.from_dict({"MNGR_DEPLOY_ENV": _DEPLOY_ENV}),
     ]
 )
