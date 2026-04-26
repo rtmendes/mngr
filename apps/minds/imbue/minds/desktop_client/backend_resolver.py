@@ -558,9 +558,6 @@ class MngrStreamManager(MutableModel):
         except DiscoverySchemaChangedError as e:
             logger.warning("Skipping discovery event with stale schema: {} (line: {})", e, line[:200])
             return
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.error("Failed to parse discovery event line: {} (line: {})", e, line[:200])
-            return
 
         if isinstance(event, FullDiscoverySnapshotEvent):
             self._handle_full_snapshot(event)

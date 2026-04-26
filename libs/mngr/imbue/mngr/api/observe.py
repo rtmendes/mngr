@@ -422,9 +422,6 @@ class AgentObserver(MutableModel):
             # this line on the next poll.
             logger.warning("Skipping discovery event with stale schema: {}", e)
             return
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.trace("Failed to parse discovery event: {}", e)
-            return
 
         if isinstance(event, FullDiscoverySnapshotEvent):
             self._handle_full_snapshot(event)

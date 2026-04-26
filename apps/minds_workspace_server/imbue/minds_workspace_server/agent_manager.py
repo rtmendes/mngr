@@ -717,12 +717,11 @@ class AgentManager:
             return
         try:
             event = parse_discovery_event_line(stripped)
-            if event is not None:
-                self._handle_discovery_event(event)
         except DiscoverySchemaChangedError as e:
             _loguru_logger.warning("Skipping discovery event with stale schema: {}", e)
-        except (json.JSONDecodeError, ValueError, KeyError):
-            _loguru_logger.exception("Error parsing observe line: {}", stripped[:200])
+            return
+        if event is not None:
+            self._handle_discovery_event(event)
 
     def _handle_discovery_event(self, event: object) -> None:
         """Handle a discovery event from mngr observe."""
