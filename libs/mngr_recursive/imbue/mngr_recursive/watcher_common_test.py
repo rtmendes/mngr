@@ -142,6 +142,23 @@ def test_read_event_ids_from_jsonl_handles_malformed_lines(tmp_path: Path) -> No
     assert read_event_ids_from_jsonl(jsonl_file) == {"evt-ok"}
 
 
+def test_read_event_ids_from_jsonl_skips_blank_lines(tmp_path: Path) -> None:
+    jsonl_file = tmp_path / "events.jsonl"
+    jsonl_file.write_text("\n" + json.dumps({"event_id": "evt-a"}) + "\n\n" + json.dumps({"event_id": "evt-b"}) + "\n")
+    assert read_event_ids_from_jsonl(jsonl_file) == {"evt-a", "evt-b"}
+
+
+def test_read_event_ids_from_jsonl_handles_oserror_on_open(tmp_path: Path) -> None:
+    """Returns whatever was collected before the OSError without crashing."""
+    jsonl_file = tmp_path / "events.jsonl"
+    jsonl_file.write_text(json.dumps({"event_id": "evt-1"}) + "\n")
+    jsonl_file.chmod(0)
+    try:
+        assert read_event_ids_from_jsonl(jsonl_file) == set()
+    finally:
+        jsonl_file.chmod(0o600)
+
+
 # -- require_env tests --
 
 
