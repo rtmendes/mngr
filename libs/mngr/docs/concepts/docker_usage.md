@@ -108,7 +108,7 @@ User-supplied bind mounts (`-s -v=...`) are independent of the host volume. They
 
 Three options, roughly in order of convenience for the local-Docker case.
 
-### Option A: Reach into the host volume
+### Option A: Read directly from the host volume
 
 When `is_host_volume_created = true` (the default), the agent's `host_dir` (and anything mngr puts under it, including worktree-mode work directories at `host_dir/worktrees/...`) lives on the shared Docker named volume. You can read it directly from the daemon host without any SSH:
 
