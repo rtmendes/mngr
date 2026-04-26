@@ -6,7 +6,6 @@ from typing import cast
 
 import pytest
 
-from imbue.imbue_common.event_envelope import EventType
 from imbue.mngr.api.discovery_events import AgentDestroyedEvent
 from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
 from imbue.mngr.api.discovery_events import DISCOVERY_EVENT_SOURCE
@@ -423,7 +422,6 @@ def test_parse_agent_destroyed_event_round_trips() -> None:
     timestamp, event_id = _make_envelope_fields()
     event = AgentDestroyedEvent(
         timestamp=timestamp,
-        type=EventType(DiscoveryEventType.AGENT_DESTROYED),
         event_id=event_id,
         source=DISCOVERY_EVENT_SOURCE,
         agent_id=agent_id,
@@ -441,7 +439,6 @@ def test_parse_host_destroyed_event_round_trips() -> None:
     timestamp, event_id = _make_envelope_fields()
     event = HostDestroyedEvent(
         timestamp=timestamp,
-        type=EventType(DiscoveryEventType.HOST_DESTROYED),
         event_id=event_id,
         source=DISCOVERY_EVENT_SOURCE,
         host_id=host_id,
@@ -490,7 +487,6 @@ def test_parse_host_ssh_info_event_round_trips() -> None:
     timestamp, event_id = _make_envelope_fields()
     event = HostSSHInfoEvent(
         timestamp=timestamp,
-        type=EventType(DiscoveryEventType.HOST_SSH_INFO),
         event_id=event_id,
         source=DISCOVERY_EVENT_SOURCE,
         host_id=host_id,

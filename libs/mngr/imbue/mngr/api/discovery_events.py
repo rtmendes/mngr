@@ -8,17 +8,20 @@ from datetime import timezone
 from enum import auto
 from pathlib import Path
 from threading import Lock
+from typing import Annotated
 from typing import Final
+from typing import Literal
 
 from loguru import logger
+from pydantic import Discriminator
 from pydantic import Field
+from pydantic import TypeAdapter
 from pydantic import ValidationError
 
 from imbue.imbue_common.enums import UpperCaseStrEnum
 from imbue.imbue_common.event_envelope import EventEnvelope
 from imbue.imbue_common.event_envelope import EventId
 from imbue.imbue_common.event_envelope import EventSource
-from imbue.imbue_common.event_envelope import EventType
 from imbue.imbue_common.event_envelope import IsoTimestamp
 from imbue.imbue_common.logging import cleanup_old_rotated_files
 from imbue.imbue_common.logging import format_nanosecond_iso_timestamp
@@ -62,18 +65,21 @@ class DiscoveryEventType(UpperCaseStrEnum):
 class AgentDiscoveryEvent(EventEnvelope):
     """A discovery event recording a single agent state change."""
 
+    type: Literal[DiscoveryEventType.AGENT_DISCOVERED] = DiscoveryEventType.AGENT_DISCOVERED
     agent: DiscoveredAgent = Field(description="The discovered agent data")
 
 
 class HostDiscoveryEvent(EventEnvelope):
     """A discovery event recording a single host state change."""
 
+    type: Literal[DiscoveryEventType.HOST_DISCOVERED] = DiscoveryEventType.HOST_DISCOVERED
     host: DiscoveredHost = Field(description="The discovered host data")
 
 
 class AgentDestroyedEvent(EventEnvelope):
     """A discovery event recording that an agent was destroyed."""
 
+    type: Literal[DiscoveryEventType.AGENT_DESTROYED] = DiscoveryEventType.AGENT_DESTROYED
     agent_id: AgentId = Field(description="ID of the destroyed agent")
     host_id: HostId = Field(description="ID of the host the agent was on")
 
@@ -81,6 +87,7 @@ class AgentDestroyedEvent(EventEnvelope):
 class HostDestroyedEvent(EventEnvelope):
     """A discovery event recording that a host was destroyed."""
 
+    type: Literal[DiscoveryEventType.HOST_DESTROYED] = DiscoveryEventType.HOST_DESTROYED
     host_id: HostId = Field(description="ID of the destroyed host")
     agent_ids: tuple[AgentId, ...] = Field(description="IDs of agents that were on the host")
 
@@ -88,6 +95,7 @@ class HostDestroyedEvent(EventEnvelope):
 class FullDiscoverySnapshotEvent(EventEnvelope):
     """A full snapshot of all agents and hosts from a complete discovery scan."""
 
+    type: Literal[DiscoveryEventType.DISCOVERY_FULL] = DiscoveryEventType.DISCOVERY_FULL
     agents: tuple[DiscoveredAgent, ...] = Field(description="All discovered agents")
     hosts: tuple[DiscoveredHost, ...] = Field(description="All discovered hosts")
 
@@ -95,8 +103,22 @@ class FullDiscoverySnapshotEvent(EventEnvelope):
 class HostSSHInfoEvent(EventEnvelope):
     """Records SSH connection info for a host."""
 
+    type: Literal[DiscoveryEventType.HOST_SSH_INFO] = DiscoveryEventType.HOST_SSH_INFO
     host_id: HostId = Field(description="ID of the host")
     ssh: SSHInfo = Field(description="SSH connection info for the host")
+
+
+DiscoveryEvent = Annotated[
+    AgentDiscoveryEvent
+    | HostDiscoveryEvent
+    | AgentDestroyedEvent
+    | HostDestroyedEvent
+    | FullDiscoverySnapshotEvent
+    | HostSSHInfoEvent,
+    Discriminator("type"),
+]
+
+_DISCOVERY_EVENT_ADAPTER: Final = TypeAdapter(DiscoveryEvent)
 
 
 # === Path Helpers ===
@@ -193,7 +215,6 @@ def make_agent_discovery_event(agent: DiscoveredAgent) -> AgentDiscoveryEvent:
     timestamp, event_id = _make_envelope_fields()
     return AgentDiscoveryEvent(
         timestamp=timestamp,
-        type=EventType(DiscoveryEventType.AGENT_DISCOVERED),
         event_id=event_id,
         source=DISCOVERY_EVENT_SOURCE,
         agent=agent,
@@ -205,7 +226,6 @@ def make_host_discovery_event(host: DiscoveredHost) -> HostDiscoveryEvent:
     timestamp, event_id = _make_envelope_fields()
     return HostDiscoveryEvent(
         timestamp=timestamp,
-        type=EventType(DiscoveryEventType.HOST_DISCOVERED),
         event_id=event_id,
         source=DISCOVERY_EVENT_SOURCE,
         host=host,
@@ -220,7 +240,6 @@ def make_full_discovery_snapshot_event(
     timestamp, event_id = _make_envelope_fields()
     return FullDiscoverySnapshotEvent(
         timestamp=timestamp,
-        type=EventType(DiscoveryEventType.DISCOVERY_FULL),
         event_id=event_id,
         source=DISCOVERY_EVENT_SOURCE,
         agents=tuple(agents),
@@ -295,7 +314,6 @@ def emit_agent_destroyed(config: MngrConfig, agent_id: AgentId, host_id: HostId)
     timestamp, event_id = _make_envelope_fields()
     event = AgentDestroyedEvent(
         timestamp=timestamp,
-        type=EventType(DiscoveryEventType.AGENT_DESTROYED),
         event_id=event_id,
         source=DISCOVERY_EVENT_SOURCE,
         agent_id=agent_id,
@@ -314,7 +332,6 @@ def emit_host_destroyed(
     timestamp, event_id = _make_envelope_fields()
     event = HostDestroyedEvent(
         timestamp=timestamp,
-        type=EventType(DiscoveryEventType.HOST_DESTROYED),
         event_id=event_id,
         source=DISCOVERY_EVENT_SOURCE,
         host_id=host_id,
@@ -329,7 +346,6 @@ def emit_host_ssh_info(config: MngrConfig, host_id: HostId, ssh: SSHInfo) -> Non
     timestamp, event_id = _make_envelope_fields()
     event = HostSSHInfoEvent(
         timestamp=timestamp,
-        type=EventType(DiscoveryEventType.HOST_SSH_INFO),
         event_id=event_id,
         source=DISCOVERY_EVENT_SOURCE,
         host_id=host_id,
@@ -402,16 +418,6 @@ def write_full_discovery_snapshot(
 # === Event Parsing ===
 
 
-DiscoveryEvent = (
-    AgentDiscoveryEvent
-    | HostDiscoveryEvent
-    | AgentDestroyedEvent
-    | HostDestroyedEvent
-    | FullDiscoverySnapshotEvent
-    | HostSSHInfoEvent
-)
-
-
 @pure
 def parse_discovery_event_line(line: str) -> DiscoveryEvent | None:
     """Parse a single JSONL line into the appropriate discovery event type.
@@ -432,22 +438,10 @@ def parse_discovery_event_line(line: str) -> DiscoveryEvent | None:
         return None
 
     event_type = data.get("type")
+    if event_type not in DiscoveryEventType.__members__.values():
+        return None
     try:
-        match event_type:
-            case DiscoveryEventType.AGENT_DISCOVERED:
-                return AgentDiscoveryEvent.model_validate(data)
-            case DiscoveryEventType.HOST_DISCOVERED:
-                return HostDiscoveryEvent.model_validate(data)
-            case DiscoveryEventType.AGENT_DESTROYED:
-                return AgentDestroyedEvent.model_validate(data)
-            case DiscoveryEventType.HOST_DESTROYED:
-                return HostDestroyedEvent.model_validate(data)
-            case DiscoveryEventType.DISCOVERY_FULL:
-                return FullDiscoverySnapshotEvent.model_validate(data)
-            case DiscoveryEventType.HOST_SSH_INFO:
-                return HostSSHInfoEvent.model_validate(data)
-            case _:
-                return None
+        return _DISCOVERY_EVENT_ADAPTER.validate_python(data)
     except ValidationError as e:
         raise DiscoverySchemaChangedError(str(event_type), str(e)) from e
 
