@@ -471,7 +471,6 @@ def _handle_goto_workspace(
     cross from ``localhost`` into ``<agent>.localhost`` (public-suffix rule).
     """
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
-        logger.warning("goto/{} failed auth: cookie={}", agent_id, SESSION_COOKIE_NAME in request.cookies)
         return Response(status_code=302, headers={"Location": "/"})
 
     try:
