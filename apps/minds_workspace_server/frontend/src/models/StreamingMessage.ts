@@ -80,7 +80,15 @@ async function reconnectWithSnapshot(agentId: string): Promise<void> {
   // between the snapshot read and the EventSource being registered on the
   // server are not lost. Once the fetch settles, the buffered events are
   // re-applied via appendEvents, which dedups by event_id.
-  inFlightSnapshotBuffersByAgent.set(agentId, []);
+  //
+  // We capture the buffer array by reference (rather than re-reading from
+  // the map in `finally`) so a concurrent reconnectWithSnapshot for the
+  // same agent -- which can happen if the new EventSource also errors and
+  // triggers its own 3s reconnect while this fetch is still in flight --
+  // cannot orphan and silently discard our buffered events. Each
+  // invocation drains its own buffer; appendEvents dedups by event_id.
+  const buffer: TranscriptEvent[] = [];
+  inFlightSnapshotBuffersByAgent.set(agentId, buffer);
   connectToStream(agentId);
   try {
     await fetchEvents(agentId);
@@ -89,16 +97,20 @@ async function reconnectWithSnapshot(agentId: string): Promise<void> {
     // reconnect attempt. Log so the failure is still visible in devtools.
     console.warn(`Snapshot refetch failed for agent ${agentId} during SSE reconnect`, error);
   } finally {
-    const buffered = inFlightSnapshotBuffersByAgent.get(agentId) ?? [];
-    inFlightSnapshotBuffersByAgent.delete(agentId);
+    // Only clear the map slot if it still points at our buffer; a later
+    // reconnectWithSnapshot may have replaced it, and that newer
+    // invocation owns the slot now.
+    if (inFlightSnapshotBuffersByAgent.get(agentId) === buffer) {
+      inFlightSnapshotBuffersByAgent.delete(agentId);
+    }
     // If the agent was explicitly disconnected (e.g. its panel was
     // unmounted) while the snapshot fetch was in flight, do not drain
     // buffered deltas into the global event store -- the user has moved
     // on and applying them would mutate state for a torn-down view.
     // Mirrors the guard that the onerror reconnect timeout already
     // applies before reviving a stream.
-    if (buffered.length > 0 && !explicitlyDisconnectedAgents.has(agentId)) {
-      appendEvents(agentId, buffered);
+    if (buffer.length > 0 && !explicitlyDisconnectedAgents.has(agentId)) {
+      appendEvents(agentId, buffer);
     }
   }
 }
