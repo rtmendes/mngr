@@ -285,6 +285,8 @@ def _create_single_pool_host(
             f"plan={plan}",
             "--env",
             f"ANTHROPIC_API_KEY={_PLACEHOLDER_ANTHROPIC_API_KEY}",
+            "--idle-mode",
+            "disabled",
         ],
         cwd=template_dir,
     )
