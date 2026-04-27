@@ -84,9 +84,10 @@ async function reconnectWithSnapshot(agentId: string): Promise<void> {
   connectToStream(agentId);
   try {
     await fetchEvents(agentId);
-  } catch {
+  } catch (error) {
     // Fetch failure is non-fatal; the next SSE error will trigger another
-    // reconnect attempt.
+    // reconnect attempt. Log so the failure is still visible in devtools.
+    console.warn(`Snapshot refetch failed for agent ${agentId} during SSE reconnect`, error);
   } finally {
     const buffered = inFlightSnapshotBuffersByAgent.get(agentId) ?? [];
     inFlightSnapshotBuffersByAgent.delete(agentId);
