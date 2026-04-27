@@ -10,6 +10,7 @@ from imbue.mngr.cli.transcript import _format_event_human
 from imbue.mngr.cli.transcript import _get_event_role
 from imbue.mngr.cli.transcript import _parse_transcript_events
 from imbue.mngr.cli.transcript import transcript
+from imbue.mngr.utils.testing import capture_loguru
 
 
 def _make_transcript_opts(
@@ -147,6 +148,28 @@ def test_parse_transcript_events_skips_malformed_json() -> None:
     content = "not json\n" + json.dumps({"type": "user_message", "content": "hello"}) + "\n"
     events = _parse_transcript_events(content, roles=())
     assert len(events) == 1
+
+
+def test_parse_transcript_events_warns_on_mid_file_corruption() -> None:
+    content = (
+        json.dumps({"type": "user_message", "content": "hello"})
+        + "\n"
+        + "this is not json {{{\n"
+        + json.dumps({"type": "assistant_message", "text": "hi"})
+        + "\n"
+    )
+    with capture_loguru(level="WARNING") as log_output:
+        events = _parse_transcript_events(content, roles=())
+    assert len(events) == 2
+    assert "Skipped corrupt JSONL line" in log_output.getvalue()
+
+
+def test_parse_transcript_events_silent_on_partial_last_line() -> None:
+    content = json.dumps({"type": "user_message", "content": "hello"}) + "\nincomplete{"
+    with capture_loguru(level="WARNING") as log_output:
+        events = _parse_transcript_events(content, roles=())
+    assert len(events) == 1
+    assert log_output.getvalue() == ""
 
 
 # =============================================================================
