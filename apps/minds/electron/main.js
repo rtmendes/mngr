@@ -423,11 +423,9 @@ function registerShortcutsFor(bundle, wc) {
     // When the app menu is installed, it owns cmd+W / cmd+Q / cmd+N; handling
     // them here too would double-fire (e.g. two new windows per cmd+N).
     if (appMenuInstalled) return;
-    if (modifier && !input.shift && !input.alt && key === 'w') {
-      event.preventDefault();
-      if (!bundle.window.isDestroyed()) bundle.window.close();
-      return;
-    }
+    // Ctrl+W on non-macOS: do NOT close the window. The keystroke should
+    // reach the web content (terminal, editor) where it means "delete word"
+    // or "close tab" depending on the app.
     if (modifier && !input.shift && !input.alt && key === 'q') {
       event.preventDefault();
       initiateFullQuit();
