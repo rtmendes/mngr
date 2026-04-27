@@ -74,7 +74,7 @@ This gives us:
 When `is_host_volume_created` is False, `host_dir` is a regular directory inside the container (created via `mkdir -p`), and `get_volume_for_host()` returns None. 
 Data is still preserved across stop/start (Docker preserves the container filesystem), but is not accessible while the container is stopped.
 
-When a host is destroyed via `destroy_host()`, the container is removed but the volume directory and host record are preserved (the host record is marked as `DESTROYED` via `stop_reason`). The volume and record are removed later by `delete_host()`, which `gc_machines` invokes once the destroyed host has aged past `destroyed_host_persisted_seconds`. This two-phase flow lets `gc_snapshots` age-gate snapshot cleanup and lets users recover via `mngr create --snapshot`.
+When a host is destroyed via `destroy_host()`, the container is removed but the volume directory and host record are preserved. They are removed later by `delete_host()`.
 
 ## SSH Architecture
 
