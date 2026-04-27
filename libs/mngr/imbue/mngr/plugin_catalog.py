@@ -233,6 +233,28 @@ def check_signal(signal: SignalCheck) -> bool:
             return False
 
 
+def get_plugin_install_hint(name: str) -> str:
+    """Return user-facing help text for a missing plugin entry point.
+
+    If the name appears in the catalog, names the actual PyPI package and
+    description. Otherwise returns a generic prompt to check installed
+    plugins, since fabricating a package name for an unknown name would be
+    misleading.
+    """
+    entry = get_catalog_entry(name)
+    if entry is not None:
+        return (
+            f"If you want the '{name}' plugin ({entry.description}),"
+            f" install '{entry.package_name}'. If you installed mngr as a uv"
+            f" tool, reinstall it with '--with {entry.package_name}'."
+        )
+    return (
+        f"'{name}' is not a known mngr plugin. If it is provided by a"
+        " third-party plugin, install that package and ensure the plugin is"
+        " enabled. Run 'mngr extras' to see installable plugins."
+    )
+
+
 def get_installable_packages() -> tuple[CatalogEntry, ...]:
     """Return one representative CatalogEntry per unique package.
 

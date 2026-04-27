@@ -2,6 +2,7 @@ from pathlib import Path
 
 from click import ClickException
 
+from imbue.mngr.plugin_catalog import get_plugin_install_hint
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import HostId
@@ -378,12 +379,7 @@ class UnknownBackendError(ConfigError):
         registered_str = ", ".join(self.registered) or "(none)"
         message = f"Unknown provider backend: {key}. Registered backends: {registered_str}"
         super().__init__(message)
-        self.user_help_text = (
-            f"If '{key}' is provided by a plugin, install the package that"
-            f" registers it (e.g. 'imbue-mngr-{key}') and ensure the plugin is"
-            " enabled. If you installed mngr as a uv tool, reinstall it with"
-            f" '--with imbue-mngr-{key}'."
-        )
+        self.user_help_text = get_plugin_install_hint(key)
 
 
 class NestedTmuxError(MngrError):
