@@ -12,6 +12,7 @@ mngr [create|c] [<ADDRESS>] [<AGENT_TYPE>] [-t <TEMPLATE>] [--new-host] [-w WIND
     [--snapshot <ID>] [-b <BUILD_ARG>] [-s <START_ARG>]
     [--env <KEY=VALUE>] [--env-file <FILE>] [--grant <PERMISSION>] [--extra-provision-command <COMMAND>] [--upload-file <LOCAL:REMOTE>]
     [--idle-timeout <SECONDS>] [--idle-mode <MODE>] [--start-on-boot|--no-start-on-boot] [--reuse|--no-reuse]
+    [--message <TEXT>] [--message-file <FILE>] [--edit-message]
     [--[no-]connect] [--[no-]auto-start] [--] [<AGENT_ARGS>...]
 ```
 

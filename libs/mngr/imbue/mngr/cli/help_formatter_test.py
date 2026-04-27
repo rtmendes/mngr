@@ -4,9 +4,11 @@ from pathlib import Path
 import click
 import pytest
 from click.testing import CliRunner
+from click_option_group import GroupedOption
 from click_option_group import optgroup
 
 from imbue.mngr.cli.common_opts import COMMON_OPTIONS_GROUP_NAME
+from imbue.mngr.cli.create import create as create_command
 from imbue.mngr.cli.help_formatter import CommandHelpMetadata
 from imbue.mngr.cli.help_formatter import _run_pager_with_subprocess
 from imbue.mngr.cli.help_formatter import _wrap_text
@@ -23,6 +25,7 @@ from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.main import BUILTIN_COMMANDS
 from imbue.mngr.main import PLUGIN_COMMANDS
 from imbue.mngr.main import cli
+from imbue.mngr.main import get_or_create_plugin_manager
 
 
 def test_is_interactive_terminal_returns_bool() -> None:
@@ -545,6 +548,124 @@ def test_commands_with_aliases_have_aliases_in_synopsis() -> None:
             f"Command '{cmd.name}' has aliases {metadata.aliases} but synopsis "
             f"doesn't contain '{expected_pattern}'. Synopsis: {metadata.synopsis}"
         )
+
+
+# Long-form flags from non-Common groups on `create` that are intentionally
+# omitted from the synopsis (e.g. niche flags, alternative spellings of things
+# already represented, or flags whose meaning is conveyed by a positional). If
+# you add a new flag to `mngr create` and decide it doesn't belong in the
+# synopsis, add it here so the ratchet stays green; otherwise add it to the
+# synopsis in create.py.
+_CREATE_SYNOPSIS_OPTOUT_FLAGS: frozenset[str] = frozenset(
+    {
+        "--name",
+        "--id",
+        "--name-style",
+        "--type",
+        "--provider",
+        "--host-name-style",
+        "--update",
+        "--foreground",
+        "--target-path",
+        "--include-unclean",
+        "--include-gitignored",
+        "--worktree-base-folder",
+        "--pass-env",
+        "--host-env",
+        "--host-env-file",
+        "--pass-host-env",
+        "--activity-sources",
+        "--reconnect",
+        "--attach-command",
+        "--connect-command",
+        "--yes",
+    }
+)
+
+
+def _flags_in_synopsis(synopsis: str) -> set[str]:
+    """Extract every flag form a reader would see in a synopsis line.
+
+    Handles plain `--foo`, alternation `--foo|--no-foo`, and the shorthand
+    `--[no-]foo` (which expands to both `--foo` and `--no-foo`).
+    """
+    flags: set[str] = set()
+    for match in re.finditer(r"--(\[no-\])?([a-zA-Z][\w-]*)", synopsis):
+        name = match.group(2)
+        flags.add(f"--{name}")
+        if match.group(1):
+            flags.add(f"--no-{name}")
+    for match in re.finditer(r"(?<![-\w])(-[a-zA-Z])(?![-\w])", synopsis):
+        flags.add(match.group(1))
+    return flags
+
+
+def _plugin_injected_create_flags() -> set[str]:
+    """All flag forms registered by plugins for the `create` command.
+
+    Plugin-injected options live in the same option groups as built-ins, so
+    the ratchet has to ask the plugin manager directly to tell them apart.
+    """
+    pm = get_or_create_plugin_manager()
+    flags: set[str] = set()
+    for mapping in pm.hook.register_cli_options(command_name="create"):
+        if mapping is None:
+            continue
+        for option_specs in mapping.values():
+            for spec in option_specs:
+                flags.update(spec.param_decls)
+    return flags
+
+
+def test_create_synopsis_lists_all_non_optout_flags() -> None:
+    """Every non-Common flag on `create` must appear in the synopsis or be opted out.
+
+    Catches both forgotten additions (new flag added without updating the
+    synopsis) and silent renames (flag renamed but synopsis still shows the
+    old name -- the old form will no longer be a click param so the test
+    can't see it; but the new name will be missing and trigger this check).
+    """
+    metadata = get_help_metadata("create")
+    assert metadata is not None
+    synopsis_flags = _flags_in_synopsis(metadata.synopsis)
+    plugin_flags = _plugin_injected_create_flags()
+
+    missing: list[str] = []
+    for param in create_command.params:
+        if not isinstance(param, GroupedOption):
+            continue
+        if param.group.name == COMMON_OPTIONS_GROUP_NAME:
+            continue
+        all_forms = tuple(param.opts) + tuple(param.secondary_opts)
+        long_forms = [opt for opt in all_forms if opt.startswith("--")]
+        if not long_forms:
+            continue
+        if any(form in plugin_flags for form in all_forms):
+            continue
+        if any(form in synopsis_flags for form in all_forms):
+            continue
+        if any(form in _CREATE_SYNOPSIS_OPTOUT_FLAGS for form in long_forms):
+            continue
+        missing.append(long_forms[0])
+
+    assert not missing, (
+        f"Flags on `mngr create` not present in the synopsis: {sorted(missing)}. "
+        f"Either add them to the synopsis in create.py, or, if intentionally "
+        f"omitted, add them to _CREATE_SYNOPSIS_OPTOUT_FLAGS in this file."
+    )
+
+    stale_optouts = sorted(
+        flag
+        for flag in _CREATE_SYNOPSIS_OPTOUT_FLAGS
+        if not any(
+            isinstance(p, GroupedOption) and flag in (tuple(p.opts) + tuple(p.secondary_opts))
+            for p in create_command.params
+        )
+    )
+    assert not stale_optouts, (
+        f"_CREATE_SYNOPSIS_OPTOUT_FLAGS contains flags that no longer exist on `mngr create`: "
+        f"{stale_optouts}. Remove them (likely renamed or deleted)."
+    )
 
 
 def test_all_subcommands_have_git_style_help() -> None:
