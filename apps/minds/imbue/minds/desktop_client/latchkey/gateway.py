@@ -36,6 +36,8 @@ from imbue.imbue_common.mutable_model import MutableModel
 from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
 from imbue.minds.desktop_client.latchkey._spawn import spawn_detached_latchkey_ensure_browser
 from imbue.minds.desktop_client.latchkey._spawn import spawn_detached_latchkey_gateway
+from imbue.minds.desktop_client.latchkey.permissions_store import delete_permissions_for_agent
+from imbue.minds.desktop_client.latchkey.permissions_store import permissions_path_for_agent
 from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
 from imbue.minds.desktop_client.latchkey.store import delete_gateway_info
 from imbue.minds.desktop_client.latchkey.store import ensure_browser_log_path
@@ -299,7 +301,8 @@ class LatchkeyGatewayManager(MutableModel):
         under the manager lock so no other caller can observe a half-torn-down
         state. ``_terminate_pid`` is deliberately called outside the lock
         because it can wait up to ``_TERMINATE_GRACE_SECONDS`` for the child
-        to exit.
+        to exit. The per-agent permissions file is also removed so a
+        future agent reusing the same id starts with a clean slate.
         """
         aid_str = str(agent_id)
         with self._lock:
@@ -310,6 +313,8 @@ class LatchkeyGatewayManager(MutableModel):
         if info is not None:
             logger.info("Stopping Latchkey gateway for agent {} (pid={})", agent_id, info.pid)
             _terminate_pid(info.pid)
+        if data_dir is not None:
+            delete_permissions_for_agent(data_dir, agent_id)
 
     def reconcile_with_known_agents(self, known_agent_ids: frozenset[AgentId]) -> None:
         """Terminate gateways whose agent is no longer in ``known_agent_ids``.
@@ -359,6 +364,7 @@ class LatchkeyGatewayManager(MutableModel):
 
         port = _allocate_free_port(self.listen_host)
         log_path = gateway_log_path(data_dir, agent_id)
+        permissions_path = permissions_path_for_agent(data_dir, agent_id)
 
         with log_span(
             "Starting Latchkey gateway for agent {} on {}:{}",
@@ -373,6 +379,7 @@ class LatchkeyGatewayManager(MutableModel):
                     listen_port=port,
                     log_path=log_path,
                     latchkey_directory=self.latchkey_directory,
+                    permissions_config_path=permissions_path,
                 )
             except OSError as e:
                 raise LatchkeyGatewayError(f"Failed to spawn Latchkey gateway for agent {agent_id}: {e}") from e

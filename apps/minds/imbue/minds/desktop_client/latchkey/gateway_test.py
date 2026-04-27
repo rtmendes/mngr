@@ -271,6 +271,27 @@ def test_stop_gateway_for_agent_terminates_subprocess_and_removes_record(tmp_pat
         manager.stop()
 
 
+def test_stop_gateway_for_agent_deletes_permissions_file(tmp_path: Path) -> None:
+    fake_binary = _make_fake_latchkey_binary(tmp_path)
+    manager = LatchkeyGatewayManager(latchkey_binary=str(fake_binary))
+    manager.start(data_dir=tmp_path)
+    try:
+        agent_id = AgentId()
+        info = manager.ensure_gateway_started(agent_id)
+        assert _wait_for_listening(info.host, info.port)
+
+        permissions_path = tmp_path / "agents" / str(agent_id) / "permissions.json"
+        permissions_path.parent.mkdir(parents=True, exist_ok=True)
+        permissions_path.write_text('{"rules": []}')
+
+        manager.stop_gateway_for_agent(agent_id)
+
+        assert not permissions_path.exists()
+        assert _wait_for_process_exit(info.pid)
+    finally:
+        manager.stop()
+
+
 def test_stop_gateway_for_agent_is_no_op_when_not_running(tmp_path: Path) -> None:
     manager = LatchkeyGatewayManager()
     manager.start(data_dir=tmp_path)
