@@ -351,9 +351,12 @@ def test_broadcast_session_events_does_not_populate_replay_buffer() -> None:
 
     _broadcast_session_events(event_queues, "agent-1", events)
 
-    # Buffer must remain empty: a late-joining subscriber would otherwise
-    # receive a replay of every session event for the entire agent lifetime.
-    assert event_queues._event_buffers.get("agent-1", []) == []
+    # A subscriber that registers AFTER the broadcast must not receive a
+    # replay -- otherwise the buffer is growing unboundedly. Verifying via
+    # the public replay-on-register contract avoids coupling the test to
+    # AgentEventQueues' private _event_buffers attribute.
+    late_subscriber_queue = event_queues.register("agent-1")
+    assert late_subscriber_queue.empty()
 
 
 def test_broadcast_session_events_delivers_to_live_subscribers() -> None:
