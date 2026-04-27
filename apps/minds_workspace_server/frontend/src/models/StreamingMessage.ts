@@ -91,7 +91,13 @@ async function reconnectWithSnapshot(agentId: string): Promise<void> {
   } finally {
     const buffered = inFlightSnapshotBuffersByAgent.get(agentId) ?? [];
     inFlightSnapshotBuffersByAgent.delete(agentId);
-    if (buffered.length > 0) {
+    // If the agent was explicitly disconnected (e.g. its panel was
+    // unmounted) while the snapshot fetch was in flight, do not drain
+    // buffered deltas into the global event store -- the user has moved
+    // on and applying them would mutate state for a torn-down view.
+    // Mirrors the guard that the onerror reconnect timeout already
+    // applies before reviving a stream.
+    if (buffered.length > 0 && !explicitlyDisconnectedAgents.has(agentId)) {
       appendEvents(agentId, buffered);
     }
   }
