@@ -625,9 +625,12 @@ async def _run_ws_broadcast_loop(
     except asyncio.TimeoutError:
         # The underlying TCP send hung. Stop trying to talk to this client; the
         # finally block unregisters its queue so broadcasts no longer pile up.
+        # Bound the close itself with the same timeout: ``WebSocket.close``
+        # writes a close frame through the same ASGI send channel that just
+        # hung, so it can hang too on a genuinely dead connection.
         logger.warning("WebSocket send timed out; closing connection")
         try:
-            await websocket.close(code=1011)
+            await asyncio.wait_for(websocket.close(code=1011), timeout=send_timeout_seconds)
         except (RuntimeError, asyncio.TimeoutError):
             pass
     finally:

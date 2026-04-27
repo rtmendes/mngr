@@ -150,7 +150,8 @@ def test_prevent_trailing_comments() -> None:
     # duck-typed fake websocket. Pyright's strict mode requires the
     # suppression to live on the offending line; cast() is forbidden by the
     # cast ratchet.
-    rc.check_trailing_comments(_DIR, snapshot(6))
+    # +1 for the same suppression in the close-hangs variant of that test.
+    rc.check_trailing_comments(_DIR, snapshot(7))
 
 
 def test_prevent_init_docstrings() -> None:
