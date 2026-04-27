@@ -539,7 +539,7 @@ class TodoNotificationService(MutableModel):
             ) from e
 ```
 
-Be very conservative with what exceptions are caught. Prefer to crash instead of catching errors. In particular, when anything is wrong with a user-authored config or settings file (e.g. `settings.toml`, `minds.toml`) -- parse error, permission denied, missing section, malformed value -- raise rather than fall back to defaults; otherwise the program runs with configuration the user did not ask for and they have no way to know.
+Be very conservative with what exceptions are caught. Prefer to crash instead of catching errors.
 
 ## Timeouts
 
@@ -1442,6 +1442,8 @@ NEVER use .yaml files.
 Avoid .json files for configuration--prefer .toml instead
 
 Always place .toml config files in `~/.app_name/config.toml`
+
+When anything is wrong with a user-authored config or settings file -- parse error, permission denied, missing section, malformed value -- raise rather than fall back to defaults; otherwise the program runs with configuration the user did not ask for and they have no way to know.
 
 Always parse configuration into a structured, fully typed, frozen object
 
