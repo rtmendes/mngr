@@ -178,10 +178,11 @@ def create(
                 agent_options.target_path if agent_options.target_path is not None else source_location.path
             )
 
-        # If anything below fails, the work_dir (and any branch we created for
-        # it) is orphaned. Clean up the branch on our way out so we don't leak
-        # it into the source repo. The destroy path handles work_dir cleanup
-        # via GC; we just need to mirror its safe branch-deletion logic here.
+        # If anything below fails, the worktree (and any branch we created for
+        # it) is orphaned. On failure, remove the worktree and delete the branch
+        # we created so neither leaks into the source repo. Gated on
+        # created_branch_name so pre-existing branches the user attached to are
+        # left alone (mirrors the destroy-path safety check).
         is_success = False
         try:
             if create_work_dir:
