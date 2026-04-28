@@ -123,15 +123,20 @@ def fail_on_unexpected_loguru_warnings(
         if pushed_frame:
             WARNINGS_ALLOWED_STACK.pop()
 
-        if _unexpected_warnings:
-            captured = list(_unexpected_warnings)
-            _unexpected_warnings.clear()
-            joined = "\n".join(f"  - {msg}" for msg in captured)
-            pytest.fail(
-                f"Test emitted {len(captured)} unexpected loguru WARNING-or-higher "
-                f"record(s):\n{joined}\n"
-                "Wrap the emitting code in `with allow_warnings():` (from "
-                "imbue.mngr.utils.testing) or mark the test with "
-                "@pytest.mark.allow_warnings if the warnings are expected.",
-                pytrace=False,
-            )
+    # Reached only when the test did not raise: a propagating exception from
+    # ``yield`` would have run the finally above and then re-raised before
+    # this point. Checking warnings here (rather than inside the finally)
+    # avoids shadowing the test's own exception with our pytest.fail when a
+    # test fails with both an exception and incidental unexpected warnings.
+    if _unexpected_warnings:
+        captured = list(_unexpected_warnings)
+        _unexpected_warnings.clear()
+        joined = "\n".join(f"  - {msg}" for msg in captured)
+        pytest.fail(
+            f"Test emitted {len(captured)} unexpected loguru WARNING-or-higher "
+            f"record(s):\n{joined}\n"
+            "Wrap the emitting code in `with allow_warnings():` (from "
+            "imbue.mngr.utils.testing) or mark the test with "
+            "@pytest.mark.allow_warnings if the warnings are expected.",
+            pytrace=False,
+        )
