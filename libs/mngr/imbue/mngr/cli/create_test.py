@@ -11,6 +11,7 @@ import pytest
 import tomlkit
 from click.testing import CliRunner
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.model_update import to_update
 from imbue.mngr.api.agent_addr import AgentAddress
 from imbue.mngr.api.agent_addr import parse_agent_address
@@ -520,6 +521,7 @@ def test_parse_project_name_returns_explicit_project(
     default_create_cli_opts: CreateCliOptions,
     local_provider: LocalProviderInstance,
     temp_work_dir: Path,
+    cg: ConcurrencyGroup,
 ) -> None:
     """When --project is specified, return it directly."""
     local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
@@ -528,15 +530,41 @@ def test_parse_project_name_returns_explicit_project(
         to_update(default_create_cli_opts.field_ref().project, "explicit-project"),
     )
 
-    result = _parse_project_name(resolved, opts, remote_url=None)
+    result = _parse_project_name(resolved, opts, remote_url=None, cg=cg)
 
     assert result == "explicit-project"
+
+
+def test_parse_project_name_expands_dot_to_current_project(
+    default_create_cli_opts: CreateCliOptions,
+    local_provider: LocalProviderInstance,
+    tmp_path: Path,
+    cg: ConcurrencyGroup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When --project is '.', expand it to the cwd-derived project name."""
+    cwd_project = tmp_path / "cwd-project"
+    cwd_project.mkdir()
+    monkeypatch.chdir(cwd_project)
+    # Source path is intentionally different from cwd to verify '.' resolves to cwd, not source.
+    other_dir = tmp_path / "other-source"
+    other_dir.mkdir()
+    local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
+    resolved = ResolvedSource(location=HostLocation(host=local_host, path=other_dir))
+    opts = default_create_cli_opts.model_copy_update(
+        to_update(default_create_cli_opts.field_ref().project, "."),
+    )
+
+    result = _parse_project_name(resolved, opts, remote_url=None, cg=cg)
+
+    assert result == "cwd-project"
 
 
 def test_parse_project_name_inherits_from_source_agent(
     default_create_cli_opts: CreateCliOptions,
     local_provider: LocalProviderInstance,
     tmp_path: Path,
+    cg: ConcurrencyGroup,
 ) -> None:
     """When source agent has a project label, inherit it."""
     some_dir = tmp_path / "local-folder"
@@ -553,7 +581,7 @@ def test_parse_project_name_inherits_from_source_agent(
         ),
     )
 
-    result = _parse_project_name(resolved, default_create_cli_opts, remote_url=None)
+    result = _parse_project_name(resolved, default_create_cli_opts, remote_url=None, cg=cg)
 
     assert result == "inherited-project"
 
@@ -562,6 +590,7 @@ def test_parse_project_name_derives_from_remote_url(
     default_create_cli_opts: CreateCliOptions,
     local_provider: LocalProviderInstance,
     tmp_path: Path,
+    cg: ConcurrencyGroup,
 ) -> None:
     """When remote URL is available, derive project name from it."""
     some_dir = tmp_path / "local-folder"
@@ -569,7 +598,9 @@ def test_parse_project_name_derives_from_remote_url(
     local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     resolved = ResolvedSource(location=HostLocation(host=local_host, path=some_dir))
 
-    result = _parse_project_name(resolved, default_create_cli_opts, remote_url="https://github.com/owner/my-repo.git")
+    result = _parse_project_name(
+        resolved, default_create_cli_opts, remote_url="https://github.com/owner/my-repo.git", cg=cg
+    )
 
     assert result == "my-repo"
 
@@ -578,6 +609,7 @@ def test_parse_project_name_falls_back_to_folder_name(
     default_create_cli_opts: CreateCliOptions,
     local_provider: LocalProviderInstance,
     tmp_path: Path,
+    cg: ConcurrencyGroup,
 ) -> None:
     """When no remote URL, fall back to the source directory name."""
     some_dir = tmp_path / "some-project"
@@ -585,7 +617,7 @@ def test_parse_project_name_falls_back_to_folder_name(
     local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
     resolved = ResolvedSource(location=HostLocation(host=local_host, path=some_dir))
 
-    result = _parse_project_name(resolved, default_create_cli_opts, remote_url=None)
+    result = _parse_project_name(resolved, default_create_cli_opts, remote_url=None, cg=cg)
 
     assert result == "some-project"
 

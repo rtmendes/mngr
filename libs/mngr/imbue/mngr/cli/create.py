@@ -96,6 +96,7 @@ from imbue.mngr.primitives import TransferMode
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.utils.duration import parse_duration_to_seconds
 from imbue.mngr.utils.editor import EditorSession
+from imbue.mngr.utils.git_utils import derive_project_name_from_path
 from imbue.mngr.utils.git_utils import find_git_worktree_root
 from imbue.mngr.utils.git_utils import get_current_git_branch
 from imbue.mngr.utils.git_utils import parse_project_name_from_url
@@ -438,7 +439,7 @@ class _CreateCommand(click.Command):
 @optgroup.option("--label", multiple=True, help="Agent label KEY=VALUE [repeatable] [experimental]")
 @optgroup.option(
     "--project",
-    help="Project name for the agent (sets the 'project' label) [default: derived from git remote origin or folder name]",
+    help="Project name for the agent (sets the 'project' label; '.' expands to the current project) [default: derived from git remote origin or folder name]",
 )
 @optgroup.group("Host Options")
 @optgroup.option(
@@ -814,7 +815,7 @@ def _setup_create(
     # derive auto-labels from the source location
     remote_url = _get_source_remote_url(resolved_source.location)
     auto_labels = _AutoLabels(
-        project=_parse_project_name(resolved_source, opts, remote_url),
+        project=_parse_project_name(resolved_source, opts, remote_url, mngr_ctx.concurrency_group),
         remote=remote_url,
     )
 
@@ -1158,11 +1159,15 @@ def _parse_project_name(
     resolved_source: ResolvedSource,
     opts: CreateCliOptions,
     remote_url: str | None,
+    cg: ConcurrencyGroup,
 ) -> str:
     """Determine the project name for a new agent.
 
     Priority: explicit --project flag > source agent's project label > git remote > folder name.
+    The literal "." for --project is expanded to the current project (derived from cwd).
     """
+    if opts.project == ".":
+        return derive_project_name_from_path(Path.cwd(), cg)
     if opts.project:
         return opts.project
 
