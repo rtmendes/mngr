@@ -270,6 +270,9 @@ def test_raise_no_output_error_surfaces_pane_content_when_files_exist_but_empty(
 # =============================================================================
 
 
+@pytest.mark.allow_warnings(
+    match=r"Ignoring initial_message for agent type .*: this agent does not override stage_initial_message"
+)
 def test_default_stage_initial_message_logs_warning(
     local_host: Host,
     temp_mngr_ctx: MngrContext,

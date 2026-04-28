@@ -1544,7 +1544,7 @@ class _GetHostErrorProvider(MockProviderInstance):
         raise MngrError("simulated get_host failure from test")
 
 
-@pytest.mark.allow_warnings(match=r"^simulated\ get_host\ failure\ from\ test")
+@pytest.mark.allow_warnings(match=r"Failed to check/destroy host .*: simulated get_host failure from test")
 def test_gc_machines_handles_mngr_error_with_continue(temp_host_dir: Path, temp_mngr_ctx: MngrContext) -> None:
     """gc_machines catches MngrError per-host when ErrorBehavior.CONTINUE is set."""
     host = _make_offline_host(
@@ -1619,7 +1619,9 @@ class _ListSnapshotsErrorProvider(MockProviderInstance):
         raise MngrError("simulated list_snapshots failure from test")
 
 
-@pytest.mark.allow_warnings(match=r"^simulated\ list_snapshots\ failure\ from\ test")
+@pytest.mark.allow_warnings(
+    match=r"Failed to cleanup snapshots for host .*: simulated list_snapshots failure from test"
+)
 def test_gc_snapshots_handles_inner_mngr_error_with_continue(temp_host_dir: Path, temp_mngr_ctx: MngrContext) -> None:
     """gc_snapshots records inner MngrError per-host and continues when CONTINUE behavior."""
     host = _make_offline_host(
@@ -1794,7 +1796,7 @@ class _DeleteVolumeErrorProvider(MockProviderInstance):
         raise MngrError(f"simulated delete_volume failure from test: {volume_id}")
 
 
-@pytest.mark.allow_warnings(match=r"^simulated\ delete_volume\ failure\ from\ test")
+@pytest.mark.allow_warnings(match=r"Failed to delete volume .*: simulated delete_volume failure from test")
 def test_gc_volumes_handles_delete_error_with_continue(temp_host_dir: Path, temp_mngr_ctx: MngrContext) -> None:
     """gc_volumes records MngrError from delete_volume and continues."""
     vol = VolumeInfo(
@@ -1886,7 +1888,9 @@ def test_gc_volumes_skips_provider_when_unavailable(temp_host_dir: Path, temp_mn
     assert len(result.errors) == 0
 
 
-@pytest.mark.allow_warnings(match=r"^simulated\ list_volumes\ failure\ from\ test")
+@pytest.mark.allow_warnings(
+    match=r"Failed to process volumes for provider .*: simulated list_volumes failure from test"
+)
 def test_gc_volumes_handles_list_volumes_mngr_error_with_continue(
     temp_host_dir: Path, temp_mngr_ctx: MngrContext
 ) -> None:
@@ -2166,6 +2170,7 @@ def test_get_orphaned_source_dirs_keeps_clone_with_unpushed_branch(
     assert [info.path for info in kept] == [clone]
 
 
+@pytest.mark.allow_warnings(match=r"Failed to list local branches in .*; treating as possibly-unpushed")
 def test_local_branches_not_on_any_remote_treats_failure_as_unpushed(local_host: Host, tmp_path: Path) -> None:
     """If git for-each-ref fails (e.g. path is not a git repo), report non-empty so
     the caller keeps the repo rather than deleting it. This guards against data loss
