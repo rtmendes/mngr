@@ -470,8 +470,7 @@ def test_mngr_create_with_default_dockerfile_on_modal(
     Assertions here are weak: ``mngr create`` returns as soon as the agent is launched
     in its detached tmux session, so the agent's own command never gates the test.
     A stronger check would add a synchronous ``mngr exec`` after create to verify
-    image contents (e.g. ``which uv && which claude``). Deferred to a follow-up that
-    also fixes the repo-root-relative path resolution so the test runs locally.
+    image contents (e.g. ``which uv && which claude``).
 
     This test is marked as release since it takes longer due to the image build.
     """
@@ -480,23 +479,31 @@ def test_mngr_create_with_default_dockerfile_on_modal(
     dockerfile_path = _get_mngr_default_dockerfile_path()
     assert dockerfile_path.exists(), f"Default Dockerfile not found at {dockerfile_path}"
 
+    # Resolve repo root from this test file's location so the test does not
+    # depend on the pytest cwd (offload sandboxes run pytest from a different
+    # cwd than /code/mngr, which is where .mngr/image_commit_hash and the
+    # make_tar_of_repo.sh script live).
+    repo_root = Path(__file__).resolve().parents[4]
+
     tar_dir = tmp_path / "tar_output"
     tar_dir.mkdir()
     temp_dir_with_tar = str(tar_dir)
-    commit_hash = os.environ.get("GITHUB_SHA", "") or Path(".mngr/image_commit_hash").read_text().strip()
+    commit_hash = os.environ.get("GITHUB_SHA", "") or (repo_root / ".mngr/image_commit_hash").read_text().strip()
 
     # go make the tar
     subprocess.run(
         [
             "bash",
-            "-c",
-            f"./scripts/make_tar_of_repo.sh {commit_hash} {temp_dir_with_tar}",
+            str(repo_root / "scripts" / "make_tar_of_repo.sh"),
+            commit_hash,
+            temp_dir_with_tar,
         ],
         capture_output=True,
         text=True,
         check=True,
         timeout=600,
         env=modal_subprocess_env.env,
+        cwd=repo_root,
     )
     # now we can try making the agent
     result = subprocess.run(
