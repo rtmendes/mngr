@@ -1162,8 +1162,9 @@ def _parse_project_name(
 ) -> str:
     """Determine the project name for a new agent.
 
-    Priority: explicit --project flag > source agent's project label > git remote > folder name.
-    The literal "." (the default for --project) triggers the default derivation chain.
+    Priority: --project flag (when not the literal "." sentinel) > source agent's
+    project label > git remote > folder name. "." is the click default and triggers
+    the derivation chain (it is not used as a literal project name).
     """
     if opts.project and opts.project != ".":
         return opts.project
