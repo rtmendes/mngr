@@ -134,6 +134,7 @@ def _key_value_filter(specs: tuple[str, ...], cel_prefix: str, flag_name: str, e
 def build_agent_filter_cel(
     opts: AgentFilterCliOptions,
     cg: ConcurrencyGroup,
+    *,
     project_root: Path | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Translate parsed filter flags into ``(include_filters, exclude_filters)`` CEL tuples.
