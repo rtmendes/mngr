@@ -225,9 +225,7 @@ def test_parse_providers_raises_on_unknown_fields() -> None:
         _parse_providers(raw, disabled_plugins=frozenset())
 
 
-@pytest.mark.allow_warnings(
-    match=r"^Unknown\ fields\ in\ providers\.my\-local:\ \['typo_field'\]\.\ Valid\ fields:\ \['backend',\ 'destroyed_host_persisted_seconds',\ 'host_dir',\ 'is_enabled',\ 'min_online_host_age_seconds',\ 'plugin'\]"
-)
+@pytest.mark.allow_warnings(match=r"Unknown fields in providers\.my-local.*typo_field")
 def test_parse_providers_warns_on_unknown_fields_when_not_strict(log_warnings: list[str]) -> None:
     """_parse_providers with strict=False should warn about unknown fields and strip them."""
     raw = {"my-local": {"backend": "local", "typo_field": "value"}}
@@ -331,9 +329,7 @@ def test_parse_agent_types_raises_on_unknown_fields() -> None:
         _parse_agent_types(raw, disabled_plugins=frozenset())
 
 
-@pytest.mark.allow_warnings(
-    match=r"^Unknown\ fields\ in\ agent_types\.claude:\ \['bogus_option'\]\.\ Valid\ fields:\ \['auto_allow_permissions',\ 'auto_dismiss_dialogs',\ 'check_installation',\ 'cli_args',\ 'command',\ 'convert_macos_credentials',\ 'create_directory',\ 'emit_common_transcript',\ 'env',\ 'env_file',\ 'extra_provision_command',\ 'override_settings_folder',\ 'parent_type',\ 'permissions',\ 'plugin',\ 'preserve_sessions_on_destroy',\ 'settings_overrides',\ 'symlink_user_resources',\ 'sync_claude_credentials',\ 'sync_claude_json',\ 'sync_credentials_on_login',\ 'sync_home_settings',\ 'sync_repo_settings',\ 'upload_file',\ 'version'\]"
-)
+@pytest.mark.allow_warnings(match=r"Unknown fields in agent_types\.claude.*bogus_option")
 def test_parse_agent_types_warns_on_unknown_fields_when_not_strict(log_warnings: list[str]) -> None:
     """_parse_agent_types with strict=False should warn about unknown fields and strip them."""
     raw = {"claude": {"cli_args": "--verbose", "bogus_option": True}}
@@ -461,9 +457,7 @@ def test_parse_plugins_raises_on_unknown_fields() -> None:
         _parse_plugins(raw)
 
 
-@pytest.mark.allow_warnings(
-    match=r"^Unknown\ fields\ in\ plugins\.my\-plugin:\ \['nonexistent_setting'\]\.\ Valid\ fields:\ \['enabled'\]"
-)
+@pytest.mark.allow_warnings(match=r"Unknown fields in plugins\.my-plugin.*nonexistent_setting")
 def test_parse_plugins_warns_on_unknown_fields_when_not_strict(log_warnings: list[str]) -> None:
     """_parse_plugins with strict=False should warn about unknown fields and strip them."""
     raw = {"my-plugin": {"enabled": True, "nonexistent_setting": "abc"}}
@@ -559,9 +553,7 @@ def test_parse_logging_config_raises_on_unknown_fields() -> None:
         _parse_logging_config(raw)
 
 
-@pytest.mark.allow_warnings(
-    match=r"^Unknown\ fields\ in\ logging:\ \['unknown_log_option'\]\.\ Valid\ fields:\ \['console_level',\ 'event_source',\ 'event_type',\ 'file_level',\ 'is_logging_command_output',\ 'is_logging_commands',\ 'is_logging_env_vars',\ 'log_dir',\ 'log_file_path',\ 'max_log_size_mb'\]"
-)
+@pytest.mark.allow_warnings(match=r"Unknown fields in logging.*unknown_log_option")
 def test_parse_logging_config_warns_on_unknown_fields_when_not_strict(log_warnings: list[str]) -> None:
     """_parse_logging_config with strict=False should warn about unknown fields and strip them."""
     raw = {"file_level": "DEBUG", "unknown_log_option": 42}
@@ -702,9 +694,7 @@ def test_parse_config_raises_on_unknown_nested_field() -> None:
         parse_config(raw, disabled_plugins=frozenset())
 
 
-@pytest.mark.allow_warnings(
-    match=r"^Unknown\ fields\ in\ logging:\ \['bad_field'\]\.\ Valid\ fields:\ \['console_level',\ 'event_source',\ 'event_type',\ 'file_level',\ 'is_logging_command_output',\ 'is_logging_commands',\ 'is_logging_env_vars',\ 'log_dir',\ 'log_file_path',\ 'max_log_size_mb'\]"
-)
+@pytest.mark.allow_warnings(match=r"Unknown fields in logging.*bad_field")
 def test_parse_config_warns_on_unknown_nested_field_when_not_strict(log_warnings: list[str]) -> None:
     """parse_config with strict=False should warn about unknown nested fields."""
     raw = {
