@@ -31,14 +31,14 @@ mngr list [OPTIONS]
 | `--exclude` | text | Exclude agents matching CEL expression (repeatable) | None |
 | `--running` | boolean | Show only running agents (alias for --include 'state == "RUNNING"') | `False` |
 | `--stopped` | boolean | Show only stopped agents (alias for --include 'state == "STOPPED"') | `False` |
-| `--archived` | boolean | Show only stopped agents (alias for --include 'has(labels.archived_at)') | `False` |
-| `--active` | boolean | Show only stopped agents (anything not archived/destroyed/crashed/failed) | `False` |
+| `--archived` | boolean | Show only archived agents (alias for --include 'has(labels.archived_at)') | `False` |
+| `--active` | boolean | Show only active agents (anything not archived/destroyed/crashed/failed) | `False` |
 | `--local` | boolean | Show only local agents (alias for --include 'host.provider == "local"') | `False` |
 | `--remote` | boolean | Show only remote agents (alias for --exclude 'host.provider == "local"') | `False` |
-| `--provider` | text | Show only agents using specified provider (repeatable) | None |
 | `--project` | text | Show only agents with this project label (repeatable) | None |
 | `--label` | text | Show only agents with this label (format: KEY=VALUE, repeatable) [experimental] | None |
 | `--host-label` | text | Show only agents on hosts with this host label (format: KEY=VALUE, repeatable) | None |
+| `--provider` | text | Show only agents using specified provider (repeatable) | None |
 | `--stdin` | boolean | Read agent and host IDs or names from stdin (one per line) | `False` |
 
 ## Output Format
@@ -51,12 +51,6 @@ mngr list [OPTIONS]
 | `--header` | text | Override column header label (format: FIELD=LABEL, repeatable) | None |
 | `--sort` | text | Sort by CEL expression(s) with optional direction, e.g. 'name asc, create_time desc'; enables sorted (non-streaming) output [default: create_time] | `create_time` |
 | `--limit` | integer | Limit number of results (applied after fetching from all providers) | None |
-
-## Watch Mode
-
-| Name | Type | Description | Default |
-| ---- | ---- | ----------- | ------- |
-| `-w`, `--watch` | integer | Continuously watch and update status at specified interval (seconds) | None |
 
 ## Error Handling
 
