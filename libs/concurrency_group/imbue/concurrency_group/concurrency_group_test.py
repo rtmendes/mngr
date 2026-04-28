@@ -235,12 +235,18 @@ def test_do_not_allow_starting_new_strands_if_the_previous_failed(tmp_path: Path
 # _IntentionalTestError) are deterministic; only the teardown check races.
 @pytest.mark.flaky
 def test_all_failure_modes_get_combined(tmp_path: Path) -> None:
+    long_running_process: RunningProcess | None = None
     with pytest.raises(ConcurrencyExceptionGroup) as exception_info:
         with ConcurrencyGroup(name="outer", exit_timeout_seconds=SMALL_SLEEP) as cg:
-            cg.run_process_in_background(LONG_RUNNING_COMMAND, is_checked_by_group=True)
+            long_running_process = cg.run_process_in_background(LONG_RUNNING_COMMAND, is_checked_by_group=True)
             process2 = cg.run_process_in_background(["bash", "-c", "exit 1"], is_checked_by_group=True)
             assert poll_until(lambda: process2.poll() is not None, timeout=5.0)
             raise _IntentionalTestError("intentional test failure")
+    # The CG's timeout path uses force_kill_seconds=0.0 (fire-and-forget), so
+    # the lingering sleep may not yet be reaped when the test returns. Wait for
+    # it explicitly so the next test's session_cleanup doesn't see a leaked PID.
+    if long_running_process is not None:
+        poll_until(lambda: long_running_process.poll() is not None, timeout=5.0)
     assert len(exception_info.value.exceptions) == 3
     assert any(isinstance(e, ProcessError) for e in exception_info.value.exceptions)
     assert any(isinstance(e, _IntentionalTestError) for e in exception_info.value.exceptions)
