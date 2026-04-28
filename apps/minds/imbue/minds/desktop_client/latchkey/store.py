@@ -5,11 +5,12 @@ Two kinds of per-agent files live here:
 * ``LatchkeyGatewayInfo`` -- metadata identifying the running ``latchkey
   gateway`` subprocess for an agent (host, port, pid, started_at). Used so
   the next desktop-client launch can adopt or drop existing gateways.
-* ``PermissionsConfig`` -- the contents of latchkey's permissions config
-  file for an agent, in detent's rule format. Stored on disk as
+* ``LatchkeyPermissionsConfig`` -- the contents of latchkey's permissions
+  config for an agent, in detent's rule format. Stored on disk as
   ``latchkey_permissions.json``. Latchkey reads this file at every
   request via ``LATCHKEY_PERMISSIONS_CONFIG``; minds rewrites it
-  whenever the user grants or revokes permissions.
+  whenever the user grants or revokes permissions. Only the subset of
+  detent's file schema that minds actually produces is modeled.
 
 Both share the ``{data_dir}/agents/{agent_id}/...`` layout and the same
 atomic-write pattern (write to ``.tmp``, chmod, rename).
@@ -142,12 +143,18 @@ class MalformedPermissionsConfigError(LatchkeyStoreError, ValueError):
     """Raised when an existing ``latchkey_permissions.json`` cannot be parsed."""
 
 
-class PermissionsConfig(FrozenModel):
+class LatchkeyPermissionsConfig(FrozenModel):
     """In-memory representation of a Latchkey/Detent permissions config file.
 
-    ``rules`` is the only field minds actively edits. ``schemas`` and
-    ``include`` are preserved verbatim on round-trip so users can still
-    hand-edit advanced configs without minds clobbering them.
+    Minds manages this file programmatically, so we model only the subset
+    of detent's full schema that we ever produce or consume:
+
+    * ``rules`` -- the list of rules minds writes when granting/revoking;
+    * ``schemas`` -- preserved verbatim on round-trip so users can still
+      hand-author custom request schemas alongside the rules minds writes.
+
+    Detent's ``include`` directive is intentionally not modeled. Hand-edited
+    ``include`` entries are silently dropped on the next minds-driven save.
     """
 
     # Each rule is a single-key dict mapping a scope schema name to a list
@@ -162,10 +169,6 @@ class PermissionsConfig(FrozenModel):
         default=None,
         description="Optional user-defined schemas, preserved verbatim.",
     )
-    include: tuple[str, ...] | None = Field(
-        default=None,
-        description="Optional list of additional permission config files to include, preserved verbatim.",
-    )
 
 
 def permissions_path_for_agent(data_dir: Path, agent_id: AgentId) -> Path:
@@ -173,7 +176,7 @@ def permissions_path_for_agent(data_dir: Path, agent_id: AgentId) -> Path:
     return data_dir / _AGENTS_DIR_NAME / str(agent_id) / _PERMISSIONS_FILENAME
 
 
-def load_permissions(path: Path) -> PermissionsConfig:
+def load_permissions(path: Path) -> LatchkeyPermissionsConfig:
     """Load a permissions config from disk.
 
     Returns an empty config if the file is absent. Raises
@@ -181,7 +184,7 @@ def load_permissions(path: Path) -> PermissionsConfig:
     parsed as the expected shape.
     """
     if not path.is_file():
-        return PermissionsConfig()
+        return LatchkeyPermissionsConfig()
 
     try:
         raw = path.read_text()
@@ -218,31 +221,24 @@ def load_permissions(path: Path) -> PermissionsConfig:
     if schemas is not None and not isinstance(schemas, dict):
         raise MalformedPermissionsConfigError(f"Expected 'schemas' to be an object in {path}")
 
-    include = data.get("include")
-    include_tuple: tuple[str, ...] | None
-    if include is None:
-        include_tuple = None
-    elif isinstance(include, list) and all(isinstance(p, str) for p in include):
-        include_tuple = tuple(include)
-    else:
-        raise MalformedPermissionsConfigError(f"Expected 'include' to be a list of strings in {path}")
+    # ``include`` is intentionally not modeled: minds manages this file
+    # programmatically and only reads/writes the subset of detent's
+    # schema we actually produce. Any hand-edited ``include`` entry is
+    # dropped on the next save.
 
-    return PermissionsConfig(
+    return LatchkeyPermissionsConfig(
         rules=tuple(rules),
         schemas=schemas,
-        include=include_tuple,
     )
 
 
-def save_permissions(path: Path, config: PermissionsConfig) -> None:
+def save_permissions(path: Path, config: LatchkeyPermissionsConfig) -> None:
     """Atomically write the permissions config to disk with mode 0o600."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
     serialized: dict[str, Any] = {"rules": [dict(rule) for rule in config.rules]}
     if config.schemas is not None:
         serialized["schemas"] = config.schemas
-    if config.include is not None:
-        serialized["include"] = list(config.include)
 
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(serialized, indent=2))
@@ -252,7 +248,7 @@ def save_permissions(path: Path, config: PermissionsConfig) -> None:
 
 
 def granted_permissions_for_service(
-    config: PermissionsConfig,
+    config: LatchkeyPermissionsConfig,
     scope_schemas: Sequence[str],
 ) -> dict[str, tuple[str, ...]]:
     """Return the currently-granted permissions for each of the given scope schemas.
@@ -269,10 +265,10 @@ def granted_permissions_for_service(
 
 
 def set_permissions_for_service(
-    config: PermissionsConfig,
+    config: LatchkeyPermissionsConfig,
     scope_schemas: Sequence[str],
     granted_permissions: Sequence[str],
-) -> PermissionsConfig:
+) -> LatchkeyPermissionsConfig:
     """Return a new config with one rule per scope schema mapping to ``granted_permissions``.
 
     Replaces any existing rules whose key is one of ``scope_schemas`` and

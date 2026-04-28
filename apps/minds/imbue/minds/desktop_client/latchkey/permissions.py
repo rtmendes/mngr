@@ -35,8 +35,8 @@ from imbue.minds.desktop_client.latchkey.core import Latchkey
 from imbue.minds.desktop_client.latchkey.services_catalog import IMPLICIT_DEFAULT_PERMISSIONS
 from imbue.minds.desktop_client.latchkey.services_catalog import ServicePermissionInfo
 from imbue.minds.desktop_client.latchkey.services_catalog import get_service_info
+from imbue.minds.desktop_client.latchkey.store import LatchkeyPermissionsConfig
 from imbue.minds.desktop_client.latchkey.store import LatchkeyStoreError
-from imbue.minds.desktop_client.latchkey.store import PermissionsConfig
 from imbue.minds.desktop_client.latchkey.store import granted_permissions_for_service
 from imbue.minds.desktop_client.latchkey.store import load_permissions
 from imbue.minds.desktop_client.latchkey.store import permissions_path_for_agent
@@ -434,7 +434,7 @@ class LatchkeyPermissionGrantHandler(MutableModel):
                 path,
                 e,
             )
-            existing = PermissionsConfig()
+            existing = LatchkeyPermissionsConfig()
 
         updated = set_permissions_for_service(
             existing,

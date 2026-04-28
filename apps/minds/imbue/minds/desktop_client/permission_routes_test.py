@@ -23,7 +23,7 @@ from imbue.minds.desktop_client.latchkey.permissions import LatchkeyPermissionGr
 from imbue.minds.desktop_client.latchkey.permissions import MngrMessageSender
 from imbue.minds.desktop_client.latchkey.services_catalog import ServicePermissionInfo
 from imbue.minds.desktop_client.latchkey.services_catalog import load_services_catalog
-from imbue.minds.desktop_client.latchkey.store import PermissionsConfig
+from imbue.minds.desktop_client.latchkey.store import LatchkeyPermissionsConfig
 from imbue.minds.desktop_client.latchkey.store import permissions_path_for_agent
 from imbue.minds.desktop_client.latchkey.store import save_permissions
 from imbue.minds.desktop_client.request_events import RequestInbox
@@ -290,7 +290,7 @@ def test_get_permission_request_page_pre_checks_existing_grants(tmp_path: Path) 
     # Pre-populate latchkey_permissions.json so the dialog should pre-check those.
     save_permissions(
         permissions_path_for_agent(tmp_path, agent_id),
-        PermissionsConfig(rules=({"slack-api": ["slack-chat-read"]},)),
+        LatchkeyPermissionsConfig(rules=({"slack-api": ["slack-chat-read"]},)),
     )
     request = create_latchkey_permission_request_event(
         agent_id=str(agent_id),
