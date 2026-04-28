@@ -11,6 +11,12 @@ markdown table listing EVERY test with:
   - its final status across all runs
   - whether the test is marked `@pytest.mark.flaky`
 
+Above the table, failed/errored attempts are surfaced inline under a
+`## Failures` heading as collapsed `<details>` blocks. Each block shows the
+test id, attempt label (when the test ran more than once), failure kind, and
+the captured traceback so a reader on the PR-checks page can see the actual
+error without clicking through to the workflow run.
+
 Flaky-mark detection reads per-sandbox manifest files written by the
 `_write_flaky_manifest` conftest hook. Offload downloads `.test_output/**`
 from each sandbox, so the union of all `flaky_tests_*.txt` files under
