@@ -536,9 +536,13 @@ def test_parse_project_name_returns_explicit_project(
 
 def test_project_dot_means_default_callback_normalizes_dot_to_none() -> None:
     """The --project click callback rewrites '.' to None so the default chain runs in the impl."""
-    assert _project_dot_means_default(None, None, ".") is None  # type: ignore[arg-type]
-    assert _project_dot_means_default(None, None, "explicit") == "explicit"  # type: ignore[arg-type]
-    assert _project_dot_means_default(None, None, None) is None  # type: ignore[arg-type]
+    # ctx/param are unused by the callback; cast keeps the type system happy without trailing
+    # type: ignore comments (which the trailing-comments ratchet rejects).
+    ctx = cast(click.Context, None)
+    param = cast(click.Parameter, None)
+    assert _project_dot_means_default(ctx, param, ".") is None
+    assert _project_dot_means_default(ctx, param, "explicit") == "explicit"
+    assert _project_dot_means_default(ctx, param, None) is None
 
 
 def test_parse_project_name_inherits_from_source_agent(
