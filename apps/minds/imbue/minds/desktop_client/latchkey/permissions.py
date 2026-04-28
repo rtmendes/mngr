@@ -42,6 +42,7 @@ from imbue.minds.desktop_client.latchkey.store import load_permissions
 from imbue.minds.desktop_client.latchkey.store import permissions_path_for_agent
 from imbue.minds.desktop_client.latchkey.store import save_permissions
 from imbue.minds.desktop_client.latchkey.store import set_permissions_for_service
+from imbue.minds.desktop_client.latchkey.templates import render_latchkey_permission_dialog
 from imbue.minds.desktop_client.request_events import LatchkeyPermissionRequestEvent
 from imbue.minds.desktop_client.request_events import RequestInbox
 from imbue.minds.desktop_client.request_events import RequestResponseEvent
@@ -49,7 +50,6 @@ from imbue.minds.desktop_client.request_events import RequestStatus
 from imbue.minds.desktop_client.request_events import RequestType
 from imbue.minds.desktop_client.request_events import append_response_event
 from imbue.minds.desktop_client.request_events import create_request_response_event
-from imbue.minds.desktop_client.templates import render_permission_dialog
 from imbue.mngr.primitives import AgentId
 
 _MNGR_MESSAGE_TIMEOUT_SECONDS: Final[float] = 30.0
@@ -290,7 +290,7 @@ class LatchkeyPermissionGrantHandler(MutableModel):
         ws_name = _resolve_workspace_name(backend_resolver, parsed_id, fallback=req_event.agent_id)
         pre_checked = self._initial_checked_permissions(parsed_id, service_info)
 
-        rendered = render_permission_dialog(
+        rendered = render_latchkey_permission_dialog(
             agent_id=req_event.agent_id,
             request_id=str(req_event.event_id),
             ws_name=ws_name,

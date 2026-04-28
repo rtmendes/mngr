@@ -166,7 +166,7 @@ def test_get_permission_request_page_renders_dialog_with_default_checks(tmp_path
     assert 'value="slack-read-all"' in body
     assert "checked" in body
     # Approve must be disabled in initial markup.
-    assert 'id="latchkey-approve-btn"' in body
+    assert 'id="permissions-approve-btn"' in body
     assert "disabled" in body
 
 
