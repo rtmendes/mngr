@@ -402,19 +402,6 @@ class _CreateCommand(click.Command):
         return result
 
 
-def _project_dot_means_default(ctx: Any, param: Any, value: str | None) -> str | None:
-    """Normalize the --project sentinel "." to None so the default-derivation chain runs.
-
-    "." is accepted for cross-command UX consistency with mngr list / mngr kanpan, where
-    "." resolves to the cwd-derived project. In mngr create the natural default is the
-    *source's* project (which may differ from cwd when --from is set), so "." here just
-    means "use the default" rather than naming a literal project.
-    """
-    if value == ".":
-        return None
-    return value
-
-
 @click.command(cls=_CreateCommand)
 @click.argument("positional_name", default=None, required=False)
 @click.argument("positional_agent_type", default=None, required=False)
@@ -451,8 +438,8 @@ def _project_dot_means_default(ctx: Any, param: Any, value: str | None) -> str |
 @optgroup.option("--label", multiple=True, help="Agent label KEY=VALUE [repeatable] [experimental]")
 @optgroup.option(
     "--project",
-    callback=_project_dot_means_default,
-    help="Project name for the agent (sets the 'project' label; '.' means derived from git remote origin or folder name) [default: .]",
+    default=".",
+    help="Project name for the agent (sets the 'project' label; '.' means derived from git remote origin or folder name)",
 )
 @optgroup.group("Host Options")
 @optgroup.option(
@@ -1176,8 +1163,9 @@ def _parse_project_name(
     """Determine the project name for a new agent.
 
     Priority: explicit --project flag > source agent's project label > git remote > folder name.
+    The literal "." (the default for --project) triggers the default derivation chain.
     """
-    if opts.project:
+    if opts.project and opts.project != ".":
         return opts.project
     source_project_label = resolved_source.agent.labels.get("project") if resolved_source.agent is not None else None
     return derive_project_name_for_source(
