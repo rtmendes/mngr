@@ -3,6 +3,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from scripts.junit_test_summary import AttemptsRecord
+from scripts.junit_test_summary import FailureDetail
 from scripts.junit_test_summary import RunStatus
 from scripts.junit_test_summary import _load_flaky_manifest
 from scripts.junit_test_summary import _parse_junit
@@ -30,7 +31,7 @@ def test_parse_junit_counts_attempts(tmp_path: Path) -> None:
             """
         ),
     )
-    per_test = _parse_junit(junit)
+    per_test, failures = _parse_junit(junit)
     assert per_test["pkg/test_x.py::test_a"].attempts == 2
     assert per_test["pkg/test_x.py::test_a"].passed == 2
     assert per_test["pkg/test_x.py::test_a"].final_status is RunStatus.PASSED
@@ -38,6 +39,9 @@ def test_parse_junit_counts_attempts(tmp_path: Path) -> None:
     assert per_test["pkg/test_x.py::test_b"].failed == 1
     assert per_test["pkg/test_x.py::test_b"].passed == 1
     assert per_test["pkg/test_x.py::test_b"].final_status is RunStatus.FLAKY_RECOVERED
+    assert [(f.name, f.kind, f.message) for f in failures] == [
+        ("pkg/test_x.py::test_b", "failure", "boom"),
+    ]
 
 
 def test_testcase_outcome_prefers_failure_over_skip() -> None:
@@ -87,6 +91,7 @@ def test_render_markdown_shows_every_test_with_runs_and_flaky() -> None:
 
     md = _render_markdown(
         per_test=per_test,
+        failures=[],
         flaky_ids={"pkg/test_x.py::test_a"},
         heading="H",
         max_chars=10_000,
@@ -121,7 +126,7 @@ def test_render_markdown_truncates_over_max_chars() -> None:
         r.record(outcome=RunStatus.PASSED)
         per_test[name] = r
 
-    md = _render_markdown(per_test=per_test, flaky_ids=set(), heading="H", max_chars=1000)
+    md = _render_markdown(per_test=per_test, failures=[], flaky_ids=set(), heading="H", max_chars=1000)
     assert len(md) <= 1000
     assert "additional test row(s) omitted" in md
     # Still surfaces the stats section even when the table is truncated.
@@ -143,11 +148,11 @@ def test_render_markdown_keeps_all_rows_when_body_fits_without_footer() -> None:
         per_test[name] = r
 
     # Render without a cap so we know the unconstrained size.
-    full = _render_markdown(per_test=per_test, flaky_ids=set(), heading="H", max_chars=10_000)
+    full = _render_markdown(per_test=per_test, failures=[], flaky_ids=set(), heading="H", max_chars=10_000)
     # Pick a max_chars that fits the full output exactly but is below the
-    # old (body + 160-char footer headroom) budget, so the previous
-    # implementation would have truncated.
-    tight = _render_markdown(per_test=per_test, flaky_ids=set(), heading="H", max_chars=len(full))
+    # old (body + footer-headroom) budget, so the previous implementation
+    # would have truncated.
+    tight = _render_markdown(per_test=per_test, failures=[], flaky_ids=set(), heading="H", max_chars=len(full))
     assert tight == full
     assert "additional test row(s) omitted" not in tight
     # Every test row must still be present.
@@ -156,5 +161,87 @@ def test_render_markdown_keeps_all_rows_when_body_fits_without_footer() -> None:
 
 
 def test_render_markdown_empty_run() -> None:
-    md = _render_markdown(per_test={}, flaky_ids=set(), heading="H", max_chars=10_000)
+    md = _render_markdown(per_test={}, failures=[], flaky_ids=set(), heading="H", max_chars=10_000)
     assert "No tests recorded" in md
+
+
+def test_render_markdown_includes_failure_details_section() -> None:
+    """Failed/errored attempts must surface their captured traceback inline.
+
+    The check-run summary on the PR-checks page is the only place a reader
+    sees the failure body without clicking through to the workflow run, so
+    a failure section with the actual error text is part of the contract.
+    """
+    a = AttemptsRecord(name="pkg/test_x.py::test_a")
+    a.record(outcome=RunStatus.FAILED)
+    a.record(outcome=RunStatus.PASSED)
+    failures = [
+        FailureDetail(
+            name="pkg/test_x.py::test_a",
+            kind="failure",
+            message="AssertionError: expected 1 got 2",
+            body="Traceback (most recent call last):\n  File 'x', line 1\n    assert 1 == 2\nAssertionError",
+        ),
+    ]
+
+    md = _render_markdown(
+        per_test={a.name: a},
+        failures=failures,
+        flaky_ids=set(),
+        heading="H",
+        max_chars=10_000,
+    )
+    assert "## Failures" in md
+    assert "<details><summary>" in md
+    assert "pkg/test_x.py::test_a" in md
+    # First line of the failure message appears in the collapsed summary.
+    assert "AssertionError: expected 1 got 2" in md
+    # The captured body text is rendered inside the details block.
+    assert "assert 1 == 2" in md
+    # Failures section comes before the table so readers see errors first.
+    assert md.index("## Failures") < md.index("| Test |")
+
+
+def test_render_markdown_caps_long_failure_body() -> None:
+    """A single huge traceback must not crowd out the rest of the summary."""
+    a = AttemptsRecord(name="pkg/test_x.py::test_a")
+    a.record(outcome=RunStatus.FAILED)
+    huge = "X" * 50_000
+    failures = [FailureDetail(name=a.name, kind="failure", message="boom", body=huge)]
+
+    md = _render_markdown(
+        per_test={a.name: a},
+        failures=failures,
+        flaky_ids=set(),
+        heading="H",
+        max_chars=20_000,
+    )
+    assert "[truncated to" in md
+    # The capped body is much smaller than the original 50k chars.
+    assert md.count("X") < 5_000
+
+
+def test_render_markdown_escapes_html_in_failure_summary() -> None:
+    """Failure message/name in <summary> must be HTML-escaped so it renders literally."""
+    a = AttemptsRecord(name="pkg/<weird>::test_a")
+    a.record(outcome=RunStatus.FAILED)
+    failures = [
+        FailureDetail(
+            name=a.name,
+            kind="failure",
+            message="ValueError: <not a tag> & co",
+            body="trace",
+        ),
+    ]
+    md = _render_markdown(
+        per_test={a.name: a},
+        failures=failures,
+        flaky_ids=set(),
+        heading="H",
+        max_chars=10_000,
+    )
+    # Angle brackets in the message line and the name must be escaped so
+    # they render as text instead of being parsed as HTML by GitHub.
+    assert "&lt;not a tag&gt;" in md
+    assert "&amp; co" in md
+    assert "pkg/&lt;weird&gt;::test_a" in md

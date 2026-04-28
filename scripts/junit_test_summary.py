@@ -19,11 +19,13 @@ from each sandbox, so the union of all `flaky_tests_*.txt` files under
 
 import argparse
 import glob
+import html
 import sys
 import xml.etree.ElementTree as ET
 from collections.abc import Mapping
 from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
@@ -60,6 +62,30 @@ _STATUS_ORDER: Final[dict[RunStatus, int]] = {
 # under that limit. Callers that target $GITHUB_STEP_SUMMARY (1 MiB limit)
 # can pass a larger cap.
 _DEFAULT_MAX_CHARS: Final[int] = 60_000
+
+# Per-failure body cap so a single huge traceback can't crowd out everything
+# else in the summary. The full body is still available on the workflow run
+# page; this just keeps the PR-checks render readable.
+_PER_FAILURE_BODY_CAP: Final[int] = 2_000
+
+# Cap on the inline summary line for a failure (the first line of the
+# failure message attribute, surfaced in the <details>/<summary> header).
+_FAILURE_MESSAGE_LINE_CAP: Final[int] = 200
+
+
+@dataclass(frozen=True)
+class FailureDetail:
+    """A single failed/errored testcase attempt and its captured body.
+
+    `body` is the inner text of the `<failure>`/`<error>` element (typically
+    the pytest traceback). `message` is the element's `message` attribute
+    (typically the exception's repr). `kind` is "failure" or "error".
+    """
+
+    name: str
+    kind: str
+    message: str
+    body: str
 
 
 class AttemptsRecord:
@@ -141,9 +167,10 @@ def main() -> int:
         return 1
 
     flaky_ids = _load_flaky_manifest(args.flaky_manifest_glob)
-    per_test = _parse_junit(args.junit)
+    per_test, failures = _parse_junit(args.junit)
     markdown = _render_markdown(
         per_test=per_test,
+        failures=failures,
         flaky_ids=flaky_ids,
         heading=args.heading,
         max_chars=args.max_chars,
@@ -171,9 +198,17 @@ def _load_flaky_manifest(glob_pattern: str) -> set[str]:
     return ids
 
 
-def _parse_junit(path: Path) -> dict[str, AttemptsRecord]:
+def _parse_junit(path: Path) -> tuple[dict[str, AttemptsRecord], list[FailureDetail]]:
+    """Parse junit.xml into per-test attempts and per-attempt failure detail.
+
+    A failed/errored attempt contributes both an `AttemptsRecord` count and a
+    `FailureDetail` carrying the captured traceback so the renderer can show
+    the actual error inline. A single testcase can carry both `<failure>` and
+    `<error>` children; we record each so nothing is silently dropped.
+    """
     # Preserve first-seen order so the output is deterministic.
     per_test: dict[str, AttemptsRecord] = {}
+    failures: list[FailureDetail] = []
     tree = ET.parse(path)
     for testcase in tree.iter("testcase"):
         name = testcase.get("name")
@@ -185,7 +220,17 @@ def _parse_junit(path: Path) -> dict[str, AttemptsRecord]:
             entry = AttemptsRecord(name=name)
             per_test[name] = entry
         entry.record(outcome=outcome)
-    return per_test
+        for child in testcase:
+            if child.tag in ("failure", "error"):
+                failures.append(
+                    FailureDetail(
+                        name=name,
+                        kind=child.tag,
+                        message=child.get("message") or "",
+                        body=(child.text or "").strip(),
+                    )
+                )
+    return per_test, failures
 
 
 def _testcase_outcome(testcase: ET.Element) -> RunStatus:
@@ -224,6 +269,7 @@ def _final_status_cell(t: AttemptsRecord) -> str:
 
 def _render_markdown(
     per_test: Mapping[str, AttemptsRecord],
+    failures: Sequence[FailureDetail],
     flaky_ids: AbstractSet[str],
     heading: str,
     max_chars: int,
@@ -261,60 +307,115 @@ def _render_markdown(
         marked = "yes" if t.name in flaky_ids else "no"
         rows.append(f"| `{t.name}` | {t.attempts} | {_final_status_cell(t)} | {marked} |")
 
+    failure_blocks = [_render_failure_block(f) for f in failures]
+
     return _assemble_with_truncation(
         header_lines=header_lines,
+        failure_blocks=failure_blocks,
         table_header=table_header,
         rows=rows,
         max_chars=max_chars,
     )
 
 
+def _render_failure_block(failure: FailureDetail) -> str:
+    """Render one failed/errored attempt as a collapsed `<details>` block.
+
+    Shows the test id, kind (failure/error), and the first line of the
+    failure message in the summary header so the reader can scan without
+    expanding. The body is the captured traceback, capped at
+    `_PER_FAILURE_BODY_CAP` characters so a single huge traceback can't
+    crowd out everything else.
+    """
+    body = failure.body
+    if len(body) > _PER_FAILURE_BODY_CAP:
+        body = body[:_PER_FAILURE_BODY_CAP] + f"\n... [truncated to {_PER_FAILURE_BODY_CAP} chars]"
+    first_line = failure.message.splitlines()[0] if failure.message else ""
+    if len(first_line) > _FAILURE_MESSAGE_LINE_CAP:
+        first_line = first_line[:_FAILURE_MESSAGE_LINE_CAP] + "..."
+    summary = f"<code>{html.escape(failure.name)}</code> &mdash; {failure.kind}"
+    if first_line:
+        summary += f": {html.escape(first_line)}"
+    # The blank line after <summary> is required by GitHub-flavored markdown
+    # for the fenced code block inside <details> to render as code.
+    return f"<details><summary>{summary}</summary>\n\n```\n{body}\n```\n\n</details>"
+
+
 def _assemble_with_truncation(
     header_lines: Sequence[str],
+    failure_blocks: Sequence[str],
     table_header: Sequence[str],
     rows: Sequence[str],
     max_chars: int,
 ) -> str:
-    """Join header + table, dropping trailing rows if the total exceeds max_chars.
+    """Join header + failure detail blocks + table, dropping trailing items if needed.
 
-    When truncation kicks in, appends a footer disclosing how many rows were
-    omitted so the reader knows the table is not complete. If every row fits
-    within max_chars without a footer, all rows are kept and no footer is added.
+    Layout: stats header, then the per-failure `<details>` blocks (so readers
+    see actual error output first), then the per-test runs/retries table.
+
+    Failures take priority over table rows: if everything won't fit under
+    `max_chars`, we keep as many failure blocks as fit and then fill the
+    remainder with table rows. A footer discloses how many of each were
+    omitted. If the full body fits, no footer is emitted.
     """
-    fixed = "\n".join([*header_lines, *table_header]) + "\n"
-    # +1 per row for the newline that separates/terminates it in the body.
-    full_body_size = sum(len(row) + 1 for row in rows)
+    stats = "\n".join(header_lines) + "\n"
+    failures_heading = "## Failures\n\n" if failure_blocks else ""
+    table_head = "\n".join(table_header) + "\n"
 
-    # Fast path: the full body fits under max_chars without any footer.
-    if len(fixed) + full_body_size <= max_chars:
-        body = "\n".join(rows) + ("\n" if rows else "")
-        return fixed + body
+    # +2 between failure blocks for the blank line separator; +1 per row for
+    # its terminating newline.
+    failure_size = sum(len(b) + 2 for b in failure_blocks)
+    rows_size = sum(len(r) + 1 for r in rows)
+    fixed_size = len(stats) + len(failures_heading) + len(table_head)
 
-    # Truncation path: reserve headroom for the footer so we do not emit rows
-    # we will later have to drop again once the footer is appended. `max(0, ...)`
-    # keeps the bound non-negative so the loop is well-defined when `max_chars`
-    # is smaller than the fixed header + footer overhead. In that degenerate
-    # case no rows are kept; the caller still gets the stats header + footer,
-    # which may slightly exceed `max_chars` -- but there is nothing further we
-    # can drop without losing the stats themselves.
-    footer_headroom = 160
-    budget = max(0, max_chars - len(fixed) - footer_headroom)
-    kept_rows: list[str] = []
+    # Fast path: the whole document fits under max_chars without a footer.
+    if fixed_size + failure_size + rows_size <= max_chars:
+        failures_body = ("\n\n".join(failure_blocks) + "\n\n") if failure_blocks else ""
+        rows_body = ("\n".join(rows) + "\n") if rows else ""
+        return stats + failures_heading + failures_body + table_head + rows_body
+
+    # Truncation path. Reserve headroom for the footer so we do not emit
+    # items we will later have to drop again once the footer is appended.
+    # `max(0, ...)` keeps the bound non-negative if the fixed overhead alone
+    # already exceeds max_chars; in that degenerate case we keep nothing
+    # droppable and the result may slightly exceed max_chars (the stats
+    # header + footer is what we owe the caller -- there is nothing else
+    # we can cut without losing the stats themselves).
+    footer_headroom = 240
+    budget = max(0, max_chars - fixed_size - footer_headroom)
+
+    kept_failures: list[str] = []
     used = 0
+    for block in failure_blocks:
+        cost = len(block) + 2
+        if used + cost > budget:
+            break
+        kept_failures.append(block)
+        used += cost
+
+    kept_rows: list[str] = []
     for row in rows:
-        row_len = len(row) + 1  # +1 for newline
-        if used + row_len > budget:
+        cost = len(row) + 1
+        if used + cost > budget:
             break
         kept_rows.append(row)
-        used += row_len
+        used += cost
 
-    body = "\n".join(kept_rows) + ("\n" if kept_rows else "")
-    omitted = len(rows) - len(kept_rows)
+    failures_body = ("\n\n".join(kept_failures) + "\n\n") if kept_failures else ""
+    rows_body = ("\n".join(kept_rows) + "\n") if kept_rows else ""
+
+    omitted_failures = len(failure_blocks) - len(kept_failures)
+    omitted_rows = len(rows) - len(kept_rows)
+    notes: list[str] = []
+    if omitted_failures:
+        notes.append(f"{omitted_failures} failure detail block(s) omitted")
+    if omitted_rows:
+        notes.append(f"{omitted_rows} additional test row(s) omitted")
     footer = (
-        f"\n_... {omitted} additional test row(s) omitted to keep the summary under "
+        f"\n_... {' and '.join(notes)} to keep the summary under "
         f"{max_chars} characters. See the workflow run page for the full list._\n"
     )
-    return fixed + body + footer
+    return stats + failures_heading + failures_body + table_head + rows_body + footer
 
 
 if __name__ == "__main__":
