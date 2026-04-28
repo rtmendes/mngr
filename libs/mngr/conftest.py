@@ -108,11 +108,12 @@ def fail_on_unexpected_loguru_warnings(
     finally:
         # Some tests call setup_logging() which invokes logger.remove() (no arg)
         # and removes all handlers including ours. In that case our sink is
-        # already gone, so swallow the resulting ValueError.
+        # already gone, so the resulting ValueError is expected; we still log
+        # at trace level so it is observable when debugging.
         try:
             logger.remove(sink_id)
-        except ValueError:
-            pass
+        except ValueError as exc:
+            logger.trace("Warning-detection sink {} was already removed: {}", sink_id, exc)
         if pushed_frame:
             WARNINGS_ALLOWED_STACK.pop()
 
