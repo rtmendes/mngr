@@ -8,6 +8,7 @@ import pytest
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.errors import MngrError
 from imbue.mngr.utils.git_utils import GIT_MIRROR_PUSH_REFSPECS
+from imbue.mngr.utils.git_utils import build_project_filter_clause
 from imbue.mngr.utils.git_utils import derive_project_name_for_source
 from imbue.mngr.utils.git_utils import derive_project_name_from_path
 from imbue.mngr.utils.git_utils import find_git_common_dir
@@ -97,6 +98,32 @@ def test_resolve_project_filter_values_expands_dot_to_current_project(
 def test_resolve_project_filter_values_handles_empty(cg: ConcurrencyGroup) -> None:
     """Empty input returns empty output without resolving the project."""
     assert resolve_project_filter_values((), cg) == ()
+
+
+def test_build_project_filter_clause_returns_none_for_empty(cg: ConcurrencyGroup) -> None:
+    """Empty input returns None so callers can skip appending a filter."""
+    assert build_project_filter_clause((), cg) is None
+
+
+def test_build_project_filter_clause_single_value(cg: ConcurrencyGroup) -> None:
+    """A single project name produces a single CEL equality clause."""
+    assert build_project_filter_clause(("foo",), cg) == 'labels.project == "foo"'
+
+
+def test_build_project_filter_clause_multiple_values_or_joined(cg: ConcurrencyGroup) -> None:
+    """Multiple project names are OR-joined in a single clause."""
+    assert build_project_filter_clause(("foo", "bar"), cg) == 'labels.project == "foo" || labels.project == "bar"'
+
+
+def test_build_project_filter_clause_expands_dot(
+    tmp_path: Path, cg: ConcurrencyGroup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The literal '.' is expanded to the cwd-derived project name in the resulting clause."""
+    project_dir = tmp_path / "my-project"
+    project_dir.mkdir()
+    monkeypatch.chdir(project_dir)
+
+    assert build_project_filter_clause((".",), cg) == 'labels.project == "my-project"'
 
 
 def test_derive_project_name_for_source_prefers_label(tmp_path: Path) -> None:

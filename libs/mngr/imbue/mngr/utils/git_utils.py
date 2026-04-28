@@ -97,6 +97,20 @@ def resolve_project_filter_values(values: tuple[str, ...], cg: ConcurrencyGroup)
     return tuple(resolved)
 
 
+def build_project_filter_clause(values: tuple[str, ...], cg: ConcurrencyGroup) -> str | None:
+    """Build a CEL include clause for filtering agents by project label.
+
+    Returns ``None`` when ``values`` is empty, so callers can simply skip the
+    filter append. Otherwise expands "." sentinels via
+    ``resolve_project_filter_values`` and returns an OR-joined CEL clause like
+    ``labels.project == "foo" || labels.project == "bar"``.
+    """
+    if not values:
+        return None
+    project_names = resolve_project_filter_values(values, cg)
+    return " || ".join(f'labels.project == "{p}"' for p in project_names)
+
+
 def derive_project_name_for_source(
     path: Path,
     *,
