@@ -2587,6 +2587,11 @@ def test_host_collect_agent_env_vars_includes_mngr_variables(
     assert "MNGR_AGENT_STATE_DIR" in env
     assert "LLM_USER_PATH" in env
     assert "MNGR_GIT_BASE_BRANCH" in env
+    # CODE_GUARDIAN_STOP_HOOK__BASE_BRANCH is a parallel export the
+    # imbue-code-guardian plugin's stop hook reads; it must always be set
+    # alongside MNGR_GIT_BASE_BRANCH and must hold the same value.
+    assert "CODE_GUARDIAN_STOP_HOOK__BASE_BRANCH" in env
+    assert env["CODE_GUARDIAN_STOP_HOOK__BASE_BRANCH"] == env["MNGR_GIT_BASE_BRANCH"]
 
 
 def test_host_collect_agent_env_vars_with_env_file(
