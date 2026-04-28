@@ -439,7 +439,7 @@ class _CreateCommand(click.Command):
 @optgroup.option(
     "--project",
     default=".",
-    help="Project name for the agent (sets the 'project' label; '.' inherits from --from if set, else uses git remote origin, else folder name) [default: .]",
+    help="Project name for the agent (sets the 'project' label; '.' inherits from source agent's project label when --from references an agent, else uses the source's git remote origin, else the source's folder name) [default: .]",
 )
 @optgroup.group("Host Options")
 @optgroup.option(
