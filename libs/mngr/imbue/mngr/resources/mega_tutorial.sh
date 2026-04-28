@@ -806,8 +806,9 @@ mngr create my-task --project other-project
 mngr list --include 'project == "my-project"'
 
 # the literal "." is expanded to the current project (derived from your git worktree
-# root's remote origin or folder name, so it stays correct from any subdirectory), so
-# this lists agents for the project you're currently in:
+# root's remote origin, falling back to its source-repo dir name (for worktrees) or
+# folder name, so it stays correct from any subdirectory), so this lists agents for
+# the project you're currently in:
 mngr list --project .
 # this also works for "mngr kanpan --project ."
 
