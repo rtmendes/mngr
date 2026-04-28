@@ -3,7 +3,6 @@ import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable
 from collections.abc import Generator
 from collections.abc import Iterator
 from pathlib import Path
@@ -23,8 +22,8 @@ from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
 #
 # pytest-playwright (installed as a plugin) ships these fixtures at SESSION
 # scope: `playwright` (the sync_playwright handle, which spawns the node
-# driver subprocess), `browser_type`, `browser_type_launch_args`, `connect_options`,
-# `launch_browser`, and `browser` (the actual chromium/firefox process).
+# driver subprocess), `browser_type`, `browser_type_launch_args`,
+# `connect_options`, and `browser` (the actual chromium/firefox process).
 # Session-scope means teardown runs at pytest session end -- AFTER mngr's
 # autouse `session_cleanup` fixture (libs/mngr/imbue/mngr/conftest.py) has
 # already checked for leaked child processes. In offload release batches
@@ -39,10 +38,10 @@ from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
 # teardown. Cost: a second or so per test to re-spawn the driver+browser;
 # trivial for the tiny e2e suite here.
 #
-# All five session-scoped fixtures must be overridden together because
+# All four session-scoped fixtures must be overridden together because
 # pytest forbids a session-scope fixture from depending on a function-scope
 # one ("ScopeMismatch"). Overriding `browser` alone would leave
-# `launch_browser` at session scope and trip that check.
+# `browser_type` at session scope and trip that check.
 
 
 @pytest.fixture
@@ -90,21 +89,11 @@ def connect_options() -> dict[str, Any] | None:
 
 
 def _launch_playwright_browser(
-    *,
     browser_type_launch_args: dict[str, Any],
     browser_type: BrowserType,
     connect_options: dict[str, Any] | None,
-    **kwargs: Any,
 ) -> Browser:
-    """Launch or connect to a playwright browser.
-
-    Extracted as a top-level helper (rather than an inline closure inside
-    :func:`launch_browser`) so the file satisfies the PREVENT_INLINE_FUNCTIONS
-    ratchet. The fixture below wraps this with a lambda to bake in the
-    fixture-provided arguments while still exposing a ``(**kwargs)`` entry
-    point to callers, matching pytest-playwright's upstream API.
-    """
-    launch_options = {**browser_type_launch_args, **kwargs}
+    """Launch or connect to a playwright browser using the fixture-provided args."""
     if connect_options:
         # Copied verbatim from pytest-playwright's upstream launch_browser
         # fixture. ty cannot verify the dynamic **connect_options spread
@@ -116,29 +105,12 @@ def _launch_playwright_browser(
             **{  # ty: ignore[invalid-argument-type]
                 **connect_options,
                 "headers": {
-                    "x-playwright-launch-options": json.dumps(launch_options),
+                    "x-playwright-launch-options": json.dumps(browser_type_launch_args),
                     **(connect_options.get("headers") or {}),
                 },
             }
         )
-    return browser_type.launch(**launch_options)
-
-
-@pytest.fixture
-def launch_browser(
-    browser_type_launch_args: dict[str, Any],
-    browser_type: BrowserType,
-    connect_options: dict[str, Any] | None,
-) -> Callable[..., Browser]:
-    # A lambda is the idiomatic way to bind the fixture values into a
-    # callable here without tripping either the inline-functions ratchet
-    # (which flags nested def statements) or the partial-function ratchet.
-    return lambda **kwargs: _launch_playwright_browser(
-        browser_type_launch_args=browser_type_launch_args,
-        browser_type=browser_type,
-        connect_options=connect_options,
-        **kwargs,
-    )
+    return browser_type.launch(**browser_type_launch_args)
 
 
 @pytest.fixture
@@ -166,8 +138,16 @@ def browser_context_args(
 
 
 @pytest.fixture
-def browser(launch_browser: Callable[..., Browser]) -> Generator[Browser, None, None]:
-    browser_instance = launch_browser()
+def browser(
+    browser_type_launch_args: dict[str, Any],
+    browser_type: BrowserType,
+    connect_options: dict[str, Any] | None,
+) -> Generator[Browser, None, None]:
+    browser_instance = _launch_playwright_browser(
+        browser_type_launch_args=browser_type_launch_args,
+        browser_type=browser_type,
+        connect_options=connect_options,
+    )
     try:
         yield browser_instance
     finally:
