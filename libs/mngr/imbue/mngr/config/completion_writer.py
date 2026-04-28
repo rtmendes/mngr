@@ -39,6 +39,7 @@ _POSITIONAL_COMPLETION_SPEC: Final[dict[str, list[list[str]]]] = {
     "rename": [["agent_names"], []],
     "start": [["agent_names"]],
     "stop": [["agent_names"]],
+    "transcript": [["agent_names"]],
 }
 
 # Per-position positional completion spec for group subcommands.
