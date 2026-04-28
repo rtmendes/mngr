@@ -630,7 +630,7 @@ def test_execute_cleanup_stop_unknown_provider_with_abort_stops_processing(
 
 
 @pytest.mark.allow_warnings(
-    match=r"^Post\-cleanup\ garbage\ collection\ failed:\ Unknown\ provider\ backend:\ nonexistent\-gc\-backend\.\ Registered\ backends:\ local,\ ssh"
+    match=r"^Post-cleanup garbage collection failed: Unknown provider backend: nonexistent-gc-backend"
 )
 def test_run_post_cleanup_gc_provider_error_is_recorded_in_result(
     temp_mngr_ctx: MngrContext,
