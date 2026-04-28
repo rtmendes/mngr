@@ -99,14 +99,13 @@ def test_resolve_project_filter_values_handles_empty(cg: ConcurrencyGroup) -> No
     assert resolve_project_filter_values((), cg) == ()
 
 
-def test_derive_project_name_for_source_prefers_label(tmp_path: Path, cg: ConcurrencyGroup) -> None:
+def test_derive_project_name_for_source_prefers_label(tmp_path: Path) -> None:
     """source_project_label wins over remote_url and path."""
     project_dir = tmp_path / "path-name"
     project_dir.mkdir()
 
     result = derive_project_name_for_source(
         project_dir,
-        cg,
         remote_url="https://github.com/owner/url-name.git",
         source_project_label="label-name",
     )
@@ -114,26 +113,25 @@ def test_derive_project_name_for_source_prefers_label(tmp_path: Path, cg: Concur
     assert result == "label-name"
 
 
-def test_derive_project_name_for_source_uses_remote_url(tmp_path: Path, cg: ConcurrencyGroup) -> None:
+def test_derive_project_name_for_source_uses_remote_url(tmp_path: Path) -> None:
     """remote_url is used when no source_project_label is given."""
     project_dir = tmp_path / "path-name"
     project_dir.mkdir()
 
     result = derive_project_name_for_source(
         project_dir,
-        cg,
         remote_url="https://github.com/owner/url-name.git",
     )
 
     assert result == "url-name"
 
 
-def test_derive_project_name_for_source_falls_back_to_path(tmp_path: Path, cg: ConcurrencyGroup) -> None:
-    """With no hints, falls back to derive_project_name_from_path on the given path."""
+def test_derive_project_name_for_source_falls_back_to_path(tmp_path: Path) -> None:
+    """With no hints, falls back to the path's directory name."""
     project_dir = tmp_path / "path-name"
     project_dir.mkdir()
 
-    result = derive_project_name_for_source(project_dir, cg)
+    result = derive_project_name_for_source(project_dir)
 
     assert result == "path-name"
 

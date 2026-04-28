@@ -828,7 +828,7 @@ def _setup_create(
     # derive auto-labels from the source location
     remote_url = _get_source_remote_url(resolved_source.location)
     auto_labels = _AutoLabels(
-        project=_parse_project_name(resolved_source, opts, remote_url, mngr_ctx.concurrency_group),
+        project=_parse_project_name(resolved_source, opts, remote_url),
         remote=remote_url,
     )
 
@@ -1172,7 +1172,6 @@ def _parse_project_name(
     resolved_source: ResolvedSource,
     opts: CreateCliOptions,
     remote_url: str | None,
-    cg: ConcurrencyGroup,
 ) -> str:
     """Determine the project name for a new agent.
 
@@ -1183,7 +1182,6 @@ def _parse_project_name(
     source_project_label = resolved_source.agent.labels.get("project") if resolved_source.agent is not None else None
     return derive_project_name_for_source(
         resolved_source.location.path,
-        cg,
         remote_url=remote_url,
         source_project_label=source_project_label,
     )

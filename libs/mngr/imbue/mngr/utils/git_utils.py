@@ -99,7 +99,6 @@ def resolve_project_filter_values(values: tuple[str, ...], cg: ConcurrencyGroup)
 
 def derive_project_name_for_source(
     path: Path,
-    cg: ConcurrencyGroup,
     *,
     remote_url: str | None = None,
     source_project_label: str | None = None,
@@ -110,7 +109,13 @@ def derive_project_name_for_source(
     1. ``source_project_label`` -- e.g. inherited from a source agent's label.
     2. ``remote_url`` -- useful when the URL has already been fetched (which works
        for remote sources where shelling to a local git binary would not).
-    3. Fall back to :func:`derive_project_name_from_path` on ``path``.
+    3. Fall back to ``path``'s directory name (resolved to normalize symlinks /
+       ``..`` components).
+
+    The path fallback intentionally does *not* shell out to git: callers are
+    expected to have already fetched the remote URL via the source's own host
+    (which works for both local and remote sources). Re-running git locally
+    against a remote-source path would be either redundant or incorrect.
     """
     if source_project_label is not None:
         return source_project_label
@@ -118,7 +123,7 @@ def derive_project_name_for_source(
         from_url = parse_project_name_from_url(remote_url)
         if from_url is not None:
             return from_url
-    return derive_project_name_from_path(path, cg)
+    return path.resolve().name
 
 
 def derive_project_name_from_path(path: Path, cg: ConcurrencyGroup) -> str:
