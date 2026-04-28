@@ -89,10 +89,9 @@ def fail_on_unexpected_loguru_warnings(
       * ``with allow_warnings(): ...`` -- fine-grained opt-out within a test.
       * Use of ``capture_loguru`` -- implicitly opts out for the duration of
         its context (since such tests are inspecting warnings on purpose).
-      * Tests carrying an external-resource marker (docker, docker_sdk, tmux,
-        modal, acceptance, release) are implicitly opted out, since they
-        interact with real external systems and produce a high noise of
-        legitimate operational warnings.
+      * Tests carrying any marker in ``_AUTO_ALLOW_WARNINGS_MARKERS`` are
+        implicitly opted out, since they interact with real external systems
+        and produce a high noise of legitimate operational warnings.
     """
     marker = request.node.get_closest_marker("allow_warnings")
     pushed_frame = False
