@@ -94,8 +94,9 @@ def _cleanup_failed_worktree_create(
     attached to are left alone.
 
     For mirror mode (and other non-worktree work_dirs) `find_source_repo_of_worktree`
-    returns None, so this is a no-op -- the branch lives inside the work_dir's own
-    .git and is cleaned up alongside the work_dir by GC.
+    returns None, so this is a no-op. In those modes the branch lives inside the
+    work_dir's own .git rather than in a shared source repo, so failing to clean
+    it up here does not leak refs into anything the user owns.
 
     All errors are logged and swallowed so they cannot mask the original
     creation failure.
