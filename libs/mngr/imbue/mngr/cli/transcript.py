@@ -67,7 +67,7 @@ def _find_common_transcript_source(target: EventsTarget) -> str:
 def _parse_transcript_events(
     content: str,
     roles: tuple[str, ...],
-    source_description: str = "transcript",
+    source_description: str,
 ) -> list[dict[str, Any]]:
     """Parse JSONL content into transcript events, optionally filtering by role."""
     events: list[dict[str, Any]] = []

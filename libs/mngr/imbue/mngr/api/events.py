@@ -358,8 +358,7 @@ def _record_from_event_data(data: Mapping[str, Any], stripped_line: str, source_
             event_id,
         )
 
-    source = source_hint
-    corrected_data = {**data, "source": source}
+    corrected_data = {**data, "source": source_hint}
     # Re-serialize raw_line only when the JSON had a wrong source field;
     # backfilling a missing source doesn't require re-serializing because the
     # original line is still a faithful representation of the event.
@@ -372,7 +371,7 @@ def _record_from_event_data(data: Mapping[str, Any], stripped_line: str, source_
         raw_line=corrected_raw_line,
         timestamp=timestamp,
         event_id=event_id,
-        source=source,
+        source=source_hint,
         data=corrected_data,
         original_source=original_source,
     )

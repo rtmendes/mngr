@@ -103,7 +103,7 @@ def test_parse_transcript_events_parses_jsonl_lines() -> None:
         + json.dumps({"type": "assistant_message", "text": "hi"})
         + "\n"
     )
-    events = _parse_transcript_events(content, roles=())
+    events = _parse_transcript_events(content, roles=(), source_description="test transcript")
     assert len(events) == 2
     assert events[0]["type"] == "user_message"
     assert events[1]["type"] == "assistant_message"
@@ -118,7 +118,7 @@ def test_parse_transcript_events_filters_by_role() -> None:
         + json.dumps({"type": "tool_result", "tool_name": "Bash", "output": "ok"})
         + "\n"
     )
-    events = _parse_transcript_events(content, roles=("user",))
+    events = _parse_transcript_events(content, roles=("user",), source_description="test transcript")
     assert len(events) == 1
     assert events[0]["type"] == "user_message"
 
@@ -132,7 +132,7 @@ def test_parse_transcript_events_filters_multiple_roles() -> None:
         + json.dumps({"type": "tool_result", "tool_name": "Bash", "output": "ok"})
         + "\n"
     )
-    events = _parse_transcript_events(content, roles=("user", "tool"))
+    events = _parse_transcript_events(content, roles=("user", "tool"), source_description="test transcript")
     assert len(events) == 2
     assert events[0]["type"] == "user_message"
     assert events[1]["type"] == "tool_result"
@@ -140,7 +140,7 @@ def test_parse_transcript_events_filters_multiple_roles() -> None:
 
 def test_parse_transcript_events_skips_blank_lines() -> None:
     content = "\n\n" + json.dumps({"type": "user_message", "content": "hello"}) + "\n\n"
-    events = _parse_transcript_events(content, roles=())
+    events = _parse_transcript_events(content, roles=(), source_description="test transcript")
     assert len(events) == 1
 
 
@@ -149,7 +149,7 @@ def test_parse_transcript_events_skips_malformed_json() -> None:
     # Mid-file malformed lines now emit a logger.warning; absorb it so it doesn't
     # leak to uncaptured output. The dedicated mid-file warning test asserts on it.
     with capture_loguru(level="WARNING"):
-        events = _parse_transcript_events(content, roles=())
+        events = _parse_transcript_events(content, roles=(), source_description="test transcript")
     assert len(events) == 1
 
 
@@ -162,7 +162,7 @@ def test_parse_transcript_events_warns_on_mid_file_corruption() -> None:
         + "\n"
     )
     with capture_loguru(level="WARNING") as log_output:
-        events = _parse_transcript_events(content, roles=())
+        events = _parse_transcript_events(content, roles=(), source_description="test transcript")
     assert len(events) == 2
     assert "Skipped corrupt JSONL line" in log_output.getvalue()
 
@@ -170,7 +170,7 @@ def test_parse_transcript_events_warns_on_mid_file_corruption() -> None:
 def test_parse_transcript_events_silent_on_partial_last_line() -> None:
     content = json.dumps({"type": "user_message", "content": "hello"}) + "\nincomplete{"
     with capture_loguru(level="WARNING") as log_output:
-        events = _parse_transcript_events(content, roles=())
+        events = _parse_transcript_events(content, roles=(), source_description="test transcript")
     assert len(events) == 1
     assert log_output.getvalue() == ""
 
