@@ -2,33 +2,14 @@ from pathlib import Path
 
 import pytest
 
+from imbue.minds.desktop_client.latchkey.services_catalog import IMPLICIT_DEFAULT_PERMISSIONS
 from imbue.minds.desktop_client.latchkey.services_catalog import MalformedServicesCatalogError
-from imbue.minds.desktop_client.latchkey.services_catalog import _default_permissions_heuristic
 from imbue.minds.desktop_client.latchkey.services_catalog import get_service_info
 from imbue.minds.desktop_client.latchkey.services_catalog import load_services_catalog
 
 
-def test_default_permissions_heuristic_picks_read_all_and_write_all() -> None:
-    permissions = (
-        "slack-read-all",
-        "slack-write-all",
-        "slack-chat-read",
-        "slack-chat-write",
-    )
-    assert _default_permissions_heuristic(permissions) == (
-        "slack-read-all",
-        "slack-write-all",
-    )
-
-
-def test_default_permissions_heuristic_falls_back_to_full_list_when_no_all_suffix() -> None:
-    permissions = ("any",)
-    assert _default_permissions_heuristic(permissions) == ("any",)
-
-
-def test_default_permissions_heuristic_with_only_one_all_kind() -> None:
-    permissions = ("foo-read-all", "foo-bar")
-    assert _default_permissions_heuristic(permissions) == ("foo-read-all",)
+def test_implicit_default_permissions_is_just_any() -> None:
+    assert IMPLICIT_DEFAULT_PERMISSIONS == ("any",)
 
 
 def test_load_services_catalog_default_file_loads_all_known_services() -> None:
@@ -42,42 +23,34 @@ def test_load_services_catalog_default_file_loads_all_known_services() -> None:
     assert "aws" in catalog
 
 
-def test_load_services_catalog_slack_uses_read_all_write_all_defaults() -> None:
+def test_load_services_catalog_prepends_any_to_every_services_permission_schemas() -> None:
     catalog = load_services_catalog()
-    slack = catalog["slack"]
 
-    assert slack.scope_schemas == ("slack-api",)
-    assert "slack-read-all" in slack.permission_schemas
-    assert slack.default_permissions == ("slack-read-all", "slack-write-all")
-
-
-def test_load_services_catalog_aws_uses_explicit_override() -> None:
-    catalog = load_services_catalog()
-    aws = catalog["aws"]
-
-    # AWS schemas don't end in -read-all / -write-all so the heuristic
-    # would pick them all; the override pins it to read-only S3.
-    assert aws.default_permissions == ("aws-s3-read",)
+    for name, info in catalog.items():
+        assert info.permission_schemas[0] == "any", (
+            f"Service '{name}' must have 'any' as the first permission_schemas entry"
+        )
 
 
-def test_load_services_catalog_linear_uses_any_as_default() -> None:
+def test_load_services_catalog_does_not_duplicate_any_when_already_present() -> None:
+    # Linear's TOML entry intentionally has an empty permission_schemas list,
+    # so the auto-prepend produces a single ``any`` entry. Other services
+    # never list ``any`` themselves, but verify that if they did, it would
+    # be deduplicated rather than appearing twice.
     catalog = load_services_catalog()
     linear = catalog["linear"]
 
     assert linear.permission_schemas == ("any",)
-    assert linear.default_permissions == ("any",)
 
 
-def test_load_services_catalog_telegram_uses_explicit_default() -> None:
+def test_load_services_catalog_keeps_granular_permissions_after_any() -> None:
     catalog = load_services_catalog()
-    telegram = catalog["telegram"]
+    slack = catalog["slack"]
 
-    # Telegram has no -all suffix; explicit defaults must be respected.
-    assert telegram.default_permissions == (
-        "telegram-send-messages",
-        "telegram-updates",
-        "telegram-bot-info",
-    )
+    # ``any`` first, then the granular schemas in TOML order.
+    assert slack.permission_schemas[0] == "any"
+    assert "slack-read-all" in slack.permission_schemas
+    assert "slack-write-all" in slack.permission_schemas
 
 
 def test_get_service_info_returns_none_for_unknown_service() -> None:
@@ -108,16 +81,13 @@ def test_load_services_catalog_rejects_missing_services_section(tmp_path: Path) 
         load_services_catalog(path)
 
 
-def test_load_services_catalog_rejects_default_outside_permission_schemas(tmp_path: Path) -> None:
+def test_load_services_catalog_rejects_missing_display_name(tmp_path: Path) -> None:
     path = _write_toml(
         tmp_path,
         """
 [services.foo]
-display_name = "Foo"
-description = "A foo service."
 scope_schemas = ["foo-api"]
 permission_schemas = ["foo-read-all"]
-default_permissions = ["foo-write-all"]
 """,
     )
 
@@ -131,7 +101,6 @@ def test_load_services_catalog_rejects_empty_scope_schemas(tmp_path: Path) -> No
         """
 [services.foo]
 display_name = "Foo"
-description = "A foo service."
 scope_schemas = []
 permission_schemas = ["foo-read-all"]
 """,
@@ -141,54 +110,22 @@ permission_schemas = ["foo-read-all"]
         load_services_catalog(path)
 
 
-def test_load_services_catalog_rejects_empty_permission_schemas(tmp_path: Path) -> None:
+def test_load_services_catalog_accepts_empty_permission_schemas(tmp_path: Path) -> None:
+    # Empty granular permission list is allowed: the implicit ``any`` will
+    # be prepended automatically and end up as the only entry.
     path = _write_toml(
         tmp_path,
         """
 [services.foo]
 display_name = "Foo"
-description = "A foo service."
 scope_schemas = ["foo-api"]
 permission_schemas = []
 """,
     )
 
-    with pytest.raises(MalformedServicesCatalogError):
-        load_services_catalog(path)
-
-
-def test_load_services_catalog_applies_heuristic_when_default_omitted(tmp_path: Path) -> None:
-    path = _write_toml(
-        tmp_path,
-        """
-[services.foo]
-display_name = "Foo"
-description = "A foo service."
-scope_schemas = ["foo-api"]
-permission_schemas = ["foo-read-all", "foo-write-all", "foo-other"]
-""",
-    )
-
     catalog = load_services_catalog(path)
 
-    assert catalog["foo"].default_permissions == ("foo-read-all", "foo-write-all")
-
-
-def test_load_services_catalog_falls_back_to_all_permissions_with_no_all_suffix(tmp_path: Path) -> None:
-    path = _write_toml(
-        tmp_path,
-        """
-[services.foo]
-display_name = "Foo"
-description = "A foo service."
-scope_schemas = ["foo-api"]
-permission_schemas = ["foo-bar", "foo-baz"]
-""",
-    )
-
-    catalog = load_services_catalog(path)
-
-    assert catalog["foo"].default_permissions == ("foo-bar", "foo-baz")
+    assert catalog["foo"].permission_schemas == ("any",)
 
 
 def test_load_services_catalog_rejects_invalid_toml(tmp_path: Path) -> None:
@@ -196,15 +133,3 @@ def test_load_services_catalog_rejects_invalid_toml(tmp_path: Path) -> None:
 
     with pytest.raises(MalformedServicesCatalogError):
         load_services_catalog(path)
-
-
-def test_load_services_catalog_default_for_known_services_is_subset_of_permissions() -> None:
-    catalog = load_services_catalog()
-
-    for name, info in catalog.items():
-        for default in info.default_permissions:
-            assert default in info.permission_schemas, (
-                f"Service '{name}' has default '{default}' not in permission_schemas"
-            )
-
-

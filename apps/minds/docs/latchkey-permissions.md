@@ -28,10 +28,14 @@ and how the agent receives the answer.
    * The list of [Detent](https://github.com/imbue-ai/detent) permission
      schemas the user can grant for that service, sourced from
      [`apps/minds/imbue/minds/desktop_client/latchkey/services.toml`](../imbue/minds/desktop_client/latchkey/services.toml).
-   * The widest defaults (`-read-all` / `-write-all` by heuristic, or an
-     explicit override per service) are pre-checked.
-   * Already-granted permissions for that service replace the heuristic
-     pre-check, so the dialog also acts as a revocation UI.
+   * The detent ``any`` schema (matches every request inside the scope) is
+     prepended as the first checkbox and pre-checked: clicking Approve
+     without changing anything yields ``{<scope>: ["any"]}`` -- unrestricted
+     access for the chosen service.
+   * Granular permission schemas are listed below ``any`` and can be ticked
+     after un-ticking ``any`` if the user wants to scope down.
+   * Already-granted permissions for that service replace the implicit
+     ``any`` pre-check, so the dialog also acts as a revocation UI.
    * The Approve button stays disabled while zero boxes are checked.
 6. **User approves.** The desktop client:
    1. Runs `latchkey services info <svc>` to read `credentialStatus`.
@@ -68,21 +72,19 @@ The catalog lives at
 [`apps/minds/imbue/minds/desktop_client/latchkey/services.toml`](../imbue/minds/desktop_client/latchkey/services.toml)
 and lists every latchkey service together with:
 
-* `display_name`, `description` -- shown in the dialog header.
+* `display_name` -- human-readable label shown in the dialog header.
 * `scope_schemas` -- detent scope schemas the service owns; used as
   rule keys in `permissions.json`.
-* `permission_schemas` -- detent permission schemas the dialog offers as
-  checkboxes.
-* `default_permissions` -- optional override for which schemas are
-  pre-checked when the dialog opens. When omitted, the runtime heuristic
-  pre-checks any permission schema name ending in `-read-all` or
-  `-write-all`, falling back to the full list.
+* `permission_schemas` -- granular detent permission schemas the dialog
+  offers as checkboxes. The implicit ``any`` default is prepended at
+  runtime; do not list it here.
 
-To add a new service, copy an existing entry, swap in the schema names
+To add a new service, copy an existing entry and swap in the schema names
 listed for that service in detent's
-[`docs/builtin-schemas.md`](https://github.com/imbue-ai/detent/blob/main/docs/builtin-schemas.md),
-and pick a sensible default subset. Schemas must already exist in detent;
-minds does not register custom schemas.
+[`docs/builtin-schemas.md`](https://github.com/imbue-ai/detent/blob/main/docs/builtin-schemas.md).
+Schemas must already exist in detent; minds does not register custom
+schemas. ``permission_schemas`` may be empty (e.g. for services like
+Linear that have no granular schemas) -- the implicit ``any`` is enough.
 
 ## Agent-side responsibilities
 

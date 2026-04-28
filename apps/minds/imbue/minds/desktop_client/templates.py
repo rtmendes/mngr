@@ -286,8 +286,8 @@ def render_permission_dialog(
 
     ``service`` is a ``ServicePermissionInfo``; passed as ``object`` to keep
     this module free of a downstream dependency on the latchkey package.
-    The template only reads its ``display_name``, ``description``, and
-    ``permission_schemas`` attributes.
+    The template only reads its ``display_name`` and ``permission_schemas``
+    attributes.
     """
     return JINJA_ENV.get_template("permissions.html").render(
         agent_id=agent_id,

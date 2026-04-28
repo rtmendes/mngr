@@ -54,14 +54,13 @@ def _read_recording(report_path: Path) -> list[dict[str, list[str] | str]]:
 _SLACK_SERVICE_INFO = ServicePermissionInfo(
     name="slack",
     display_name="Slack",
-    description="Slack messaging.",
     scope_schemas=("slack-api",),
     permission_schemas=(
+        "any",
         "slack-read-all",
         "slack-write-all",
         "slack-chat-read",
     ),
-    default_permissions=("slack-read-all", "slack-write-all"),
 )
 
 

@@ -1,9 +1,14 @@
 """Loads the latchkey-service-to-detent-schema mapping shipped with minds.
 
 This catalog is desktop-only -- it tells the permission dialog which
-schemas to render for a given latchkey service name and which to
-pre-check by default. Agents do not see this file; they only emit the
-service name and a rationale.
+schemas to render for a given latchkey service name. Agents do not see
+this file; they only emit the service name and a rationale.
+
+Defaults are not maintained per-service: every service implicitly defaults
+to the detent ``any`` schema (matches every request inside the scope), so
+clicking Approve without changing anything yields ``{<scope>: ["any"]}`` --
+unrestricted access for the chosen service. The user can tighten this by
+unticking ``any`` and selecting specific permissions in the dialog.
 """
 
 import tomllib
@@ -15,12 +20,16 @@ from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.frozen_model import FrozenModel
-from imbue.imbue_common.pure import pure
 
 _DEFAULT_CATALOG_PATH: Final[Path] = Path(__file__).resolve().parent / "services.toml"
 
-_READ_ALL_SUFFIX: Final[str] = "-read-all"
-_WRITE_ALL_SUFFIX: Final[str] = "-write-all"
+# The detent ``any`` schema matches every request, so a rule like
+# ``{"slack-api": ["any"]}`` allows all Slack access. We prepend ``any``
+# to every service's permission list (deduplicated) so the dialog can
+# render it as a checkbox, and pre-check it as the implicit default.
+_IMPLICIT_DEFAULT_PERMISSION: Final[str] = "any"
+
+IMPLICIT_DEFAULT_PERMISSIONS: Final[tuple[str, ...]] = (_IMPLICIT_DEFAULT_PERMISSION,)
 
 
 class LatchkeyServicesCatalogError(Exception):
@@ -32,45 +41,19 @@ class MalformedServicesCatalogError(LatchkeyServicesCatalogError, ValueError):
 
 
 class ServicePermissionInfo(FrozenModel):
-    """Description of a single latchkey service's permission surface.
-
-    ``default_permissions`` is what the permission dialog pre-checks the
-    first time a service is requested. It is computed once at load time:
-    if the TOML provides an explicit override, that override is used
-    verbatim; otherwise the heuristic in ``_default_permissions_heuristic``
-    runs. ``permission_schemas`` is the full list of schemas the dialog
-    offers; the dialog itself enforces that any pre-checks are a subset.
-    """
+    """Description of a single latchkey service's permission surface."""
 
     name: str = Field(description="Latchkey service name (e.g. 'slack', 'google-gmail').")
     display_name: str = Field(description="Human-readable label shown in the dialog header.")
-    description: str = Field(description="One-sentence summary shown in the dialog header.")
     scope_schemas: tuple[str, ...] = Field(
         description="Detent scope schemas this service owns; used as keys in permissions.json rules.",
     )
     permission_schemas: tuple[str, ...] = Field(
-        description="Detent permission schemas the user can grant for this service.",
+        description=(
+            "Detent permission schemas the user can grant for this service. The implicit "
+            "``any`` default is always present at index 0."
+        ),
     )
-    default_permissions: tuple[str, ...] = Field(
-        description="Subset of permission_schemas that the dialog pre-checks on first open.",
-    )
-
-
-@pure
-def _default_permissions_heuristic(permission_schemas: tuple[str, ...]) -> tuple[str, ...]:
-    """Pick the ``-read-all`` / ``-write-all`` schemas as defaults.
-
-    Falls back to the full list when neither suffix appears (e.g. for
-    services like ``linear`` whose only permission schema is ``any``).
-    """
-    suffixed = tuple(
-        schema
-        for schema in permission_schemas
-        if schema.endswith(_READ_ALL_SUFFIX) or schema.endswith(_WRITE_ALL_SUFFIX)
-    )
-    if suffixed:
-        return suffixed
-    return permission_schemas
 
 
 def _build_service_info(name: str, raw: Mapping[str, object]) -> ServicePermissionInfo:
@@ -80,15 +63,11 @@ def _build_service_info(name: str, raw: Mapping[str, object]) -> ServicePermissi
     runtime fails fast at startup rather than at request time.
     """
     display_name = raw.get("display_name")
-    description = raw.get("description")
     scope_schemas_raw = raw.get("scope_schemas")
     permission_schemas_raw = raw.get("permission_schemas")
-    default_permissions_raw = raw.get("default_permissions")
 
     if not isinstance(display_name, str) or not display_name:
         raise MalformedServicesCatalogError(f"Service '{name}' must have a non-empty display_name")
-    if not isinstance(description, str):
-        raise MalformedServicesCatalogError(f"Service '{name}' must have a description (string)")
     if not isinstance(scope_schemas_raw, list) or not all(isinstance(s, str) for s in scope_schemas_raw):
         raise MalformedServicesCatalogError(f"Service '{name}' scope_schemas must be a list of strings")
     if not scope_schemas_raw:
@@ -97,35 +76,21 @@ def _build_service_info(name: str, raw: Mapping[str, object]) -> ServicePermissi
         raise MalformedServicesCatalogError(
             f"Service '{name}' permission_schemas must be a list of strings",
         )
-    if not permission_schemas_raw:
-        raise MalformedServicesCatalogError(f"Service '{name}' permission_schemas must be non-empty")
 
     scope_schemas: tuple[str, ...] = tuple(str(s) for s in scope_schemas_raw)
-    permission_schemas: tuple[str, ...] = tuple(str(s) for s in permission_schemas_raw)
 
-    if default_permissions_raw is None:
-        default_permissions: tuple[str, ...] = _default_permissions_heuristic(permission_schemas)
-    elif isinstance(default_permissions_raw, list) and all(isinstance(s, str) for s in default_permissions_raw):
-        default_permissions = tuple(str(s) for s in default_permissions_raw)
-    else:
-        raise MalformedServicesCatalogError(
-            f"Service '{name}' default_permissions must be a list of strings if specified",
-        )
-
-    # Validate that defaults are a subset of available permissions.
-    missing = [perm for perm in default_permissions if perm not in permission_schemas]
-    if missing:
-        raise MalformedServicesCatalogError(
-            f"Service '{name}' has default_permissions not in permission_schemas: {missing}",
-        )
+    # Always make ``any`` available as the first checkbox, deduplicating in
+    # case a service explicitly lists it (which is harmless but redundant).
+    granular_permissions: tuple[str, ...] = tuple(str(s) for s in permission_schemas_raw)
+    permission_schemas: tuple[str, ...] = (_IMPLICIT_DEFAULT_PERMISSION,) + tuple(
+        p for p in granular_permissions if p != _IMPLICIT_DEFAULT_PERMISSION
+    )
 
     return ServicePermissionInfo(
         name=name,
         display_name=display_name,
-        description=description,
         scope_schemas=scope_schemas,
         permission_schemas=permission_schemas,
-        default_permissions=default_permissions,
     )
 
 

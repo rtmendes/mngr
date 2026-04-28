@@ -51,6 +51,7 @@ from imbue.minds.desktop_client.cookie_manager import verify_session_cookie
 from imbue.minds.desktop_client.cookie_manager import verify_subdomain_auth_token
 from imbue.minds.desktop_client.deps import BackendResolverDep
 from imbue.minds.desktop_client.latchkey.core import Latchkey
+from imbue.minds.desktop_client.latchkey.services_catalog import IMPLICIT_DEFAULT_PERMISSIONS
 from imbue.minds.desktop_client.latchkey.services_catalog import ServicePermissionInfo
 from imbue.minds.desktop_client.latchkey.services_catalog import get_service_info
 from imbue.minds.desktop_client.latchkey.store import LatchkeyStoreError
@@ -1557,16 +1558,19 @@ def _initial_checked_permissions(
     """Pick the initial checkbox state for the latchkey permission dialog.
 
     If any permissions are already granted for this service, those are
-    used so the dialog doubles as a revoke UI; otherwise the catalog's
-    default (heuristic ``-read-all`` / ``-write-all`` or explicit override)
-    is used.
+    used so the dialog doubles as a revoke UI; otherwise the implicit
+    catch-all default (``any``) is pre-checked.
     """
     path = permissions_path_for_agent(data_dir, agent_id)
     try:
         config = load_permissions(path)
     except LatchkeyStoreError as e:
-        logger.warning("Could not load permissions for {}; using catalog defaults: {}", agent_id, e)
-        return service_info.default_permissions
+        logger.warning(
+            "Could not load permissions for {}; using implicit defaults: {}",
+            agent_id,
+            e,
+        )
+        return IMPLICIT_DEFAULT_PERMISSIONS
 
     granted_by_scope = granted_permissions_for_service(config, service_info.scope_schemas)
     granted: set[str] = set()
@@ -1575,7 +1579,7 @@ def _initial_checked_permissions(
     granted_in_catalog = tuple(p for p in service_info.permission_schemas if p in granted)
     if granted_in_catalog:
         return granted_in_catalog
-    return service_info.default_permissions
+    return IMPLICIT_DEFAULT_PERMISSIONS
 
 
 def _handle_sharing_page(
