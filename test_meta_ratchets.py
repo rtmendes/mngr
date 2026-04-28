@@ -423,7 +423,14 @@ def test_top_level_cov_flags_are_union_of_subproject_cov_flags() -> None:
     subproject_cov: set[str] = set()
     for project_dir in _get_all_project_dirs():
         pyproject = tomlkit.parse((project_dir / "pyproject.toml").read_text())
-        subproject_cov.update(_get_cov_packages(_get_addopts(pyproject)))
+        # Only consider --cov= flags that target the `imbue.<pkg>` namespace;
+        # the top-level pyproject.toml only exposes that shape via its `source =
+        # ["imbue"]`, so flat-layout projects (e.g. apps/modal_litellm with a
+        # bare `app.py` and `--cov=app`) cannot be expressed at the root and
+        # must own their own coverage in isolation.
+        for cov in _get_cov_packages(_get_addopts(pyproject)):
+            if cov.startswith("imbue."):
+                subproject_cov.add(cov)
 
     expected_top_cov = subproject_cov - fully_omitted
     missing = expected_top_cov - top_cov
