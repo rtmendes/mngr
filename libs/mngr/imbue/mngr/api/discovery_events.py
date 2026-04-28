@@ -636,12 +636,16 @@ def _discovery_stream_tail_events_file(
         try:
             if events_path.exists():
                 file_size = events_path.stat().st_size
-                # Handle file truncation (reset to start)
+                # Handle file truncation (reset to start). Drop any malformed
+                # line still buffered in the warner: it came from the
+                # pre-truncation file's tail, so treating it as mid-file
+                # corruption in the new content would be misleading.
                 if file_size < current_offset:
                     logger.debug(
                         "Discovery events file truncated (size {} < offset {}), resetting", file_size, current_offset
                     )
                     current_offset = 0
+                    warner.reset()
                 if file_size > current_offset:
                     with open(events_path) as f:
                         f.seek(current_offset)
