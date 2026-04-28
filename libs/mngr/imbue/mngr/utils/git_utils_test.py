@@ -120,6 +120,7 @@ def test_resolve_project_filter_values_uses_project_root_over_cwd(
     # Without project_root, the cwd-based derivation cannot find the remote and falls back to the
     # subdir name -- a wrong answer for "the current project". With project_root pointing at the
     # worktree root, the remote is found and the correct project name is returned.
+    assert resolve_project_filter_values((".",), cg) == ("subdir",)
     assert resolve_project_filter_values((".",), cg, project_root=project_dir) == ("remote-project",)
 
 
