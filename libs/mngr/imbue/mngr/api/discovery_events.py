@@ -41,6 +41,7 @@ from imbue.mngr.primitives import HostState
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SSHInfo
 from imbue.mngr.utils.jsonl_warn import MalformedJsonLineWarner
+from imbue.mngr.utils.jsonl_warn import split_complete_lines
 
 DISCOVERY_EVENT_SOURCE: Final[EventSource] = EventSource("mngr/discovery")
 
@@ -626,11 +627,11 @@ def _discovery_stream_tail_events_file(
     stop_event: threading.Event,
     emitted_event_ids: set[str],
     emit_lock: Lock,
+    warner: MalformedJsonLineWarner,
     on_line: Callable[[str], None] | None,
 ) -> None:
     """Poll the events file for new content written by other mngr processes."""
     current_offset = initial_offset
-    warner = MalformedJsonLineWarner(source_description=f"discovery events file '{events_path}'")
     while not stop_event.is_set():
         try:
             if events_path.exists():
@@ -646,8 +647,10 @@ def _discovery_stream_tail_events_file(
                     with open(events_path) as f:
                         f.seek(current_offset)
                         new_content = f.read()
-                        current_offset = f.tell()
-                    new_lines = new_content.splitlines()
+                    # Hold back any trailing partial line so a mid-flush write
+                    # doesn't get split across polls and silently lost.
+                    new_lines, bytes_consumed = split_complete_lines(new_content)
+                    current_offset += bytes_consumed
                     logger.debug(
                         "Discovery tail: read {} new bytes, {} lines from events file", bytes_new, len(new_lines)
                     )
@@ -658,6 +661,27 @@ def _discovery_stream_tail_events_file(
         except OSError as e:
             logger.trace("OSError while tailing discovery events file: {}", e)
         stop_event.wait(timeout=1.0)
+
+
+def _emit_lines_from_offset(
+    events_path: Path,
+    offset: int,
+    warner: MalformedJsonLineWarner,
+    emitted_event_ids: set[str],
+    emit_lock: Lock,
+    on_line: Callable[[str], None] | None,
+) -> None:
+    """Read the events file from `offset` to EOF and feed every line through the warner.
+
+    Used for the synchronous read phases of run_discovery_stream so that they
+    share a single warner instance with the tail thread, which lets a malformed
+    line buffered in one phase still surface a warning when the next phase or
+    the tail reads more data after it.
+    """
+    with open(events_path) as f:
+        f.seek(offset)
+        for line in f:
+            _discovery_stream_emit_line(line, warner, emitted_event_ids, emit_lock, on_line)
 
 
 def _write_unfiltered_full_snapshot(mngr_ctx: MngrContext, error_behavior: ErrorBehavior) -> None:
@@ -705,7 +729,10 @@ def run_discovery_stream(
     events_path = get_discovery_events_path(mngr_ctx.config)
     emitted_event_ids: set[str] = set()
     emit_lock = Lock()
-    phase_one_warner = MalformedJsonLineWarner(source_description=f"discovery events file '{events_path}' (initial)")
+    # One warner per file is shared across all phases (and the tail thread) so
+    # a malformed line buffered at the end of one phase still surfaces a
+    # warning when the next phase or the tail reads valid data after it.
+    warner = MalformedJsonLineWarner(source_description=f"discovery events file '{events_path}'")
 
     # Phase 1: emit from the latest cached snapshot on disk (fast path)
     has_cached_snapshot = False
@@ -713,10 +740,7 @@ def run_discovery_stream(
         snapshot_offset = find_latest_full_snapshot_offset(events_path)
         if snapshot_offset > 0:
             has_cached_snapshot = True
-            with open(events_path) as f:
-                f.seek(snapshot_offset)
-                for line in f:
-                    _discovery_stream_emit_line(line, phase_one_warner, emitted_event_ids, emit_lock, on_line)
+            _emit_lines_from_offset(events_path, snapshot_offset, warner, emitted_event_ids, emit_lock, on_line)
 
     # Record the current file position for tailing
     initial_offset = events_path.stat().st_size if events_path.exists() else 0
@@ -725,7 +749,7 @@ def run_discovery_stream(
     stop_event = threading.Event()
     tail = threading.Thread(
         target=_discovery_stream_tail_events_file,
-        args=(events_path, initial_offset, stop_event, emitted_event_ids, emit_lock, on_line),
+        args=(events_path, initial_offset, stop_event, emitted_event_ids, emit_lock, warner, on_line),
         daemon=True,
     )
     tail.start()
@@ -745,13 +769,7 @@ def run_discovery_stream(
         # Emit whatever the sync just wrote (the tail thread may not have picked it up yet)
         if events_path.exists():
             snapshot_offset = find_latest_full_snapshot_offset(events_path)
-            post_sync_warner = MalformedJsonLineWarner(
-                source_description=f"discovery events file '{events_path}' (post-sync)"
-            )
-            with open(events_path) as f:
-                f.seek(snapshot_offset)
-                for line in f:
-                    _discovery_stream_emit_line(line, post_sync_warner, emitted_event_ids, emit_lock, on_line)
+            _emit_lines_from_offset(events_path, snapshot_offset, warner, emitted_event_ids, emit_lock, on_line)
 
     # Phase 4: periodically re-poll (unfiltered) and write full snapshots
     try:

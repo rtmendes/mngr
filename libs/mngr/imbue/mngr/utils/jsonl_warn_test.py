@@ -1,6 +1,7 @@
 """Unit tests for the jsonl_warn module."""
 
 from imbue.mngr.utils.jsonl_warn import MalformedJsonLineWarner
+from imbue.mngr.utils.jsonl_warn import split_complete_lines
 from imbue.mngr.utils.testing import capture_loguru
 
 
@@ -112,3 +113,45 @@ def test_valid_lines_only_emit_no_warnings() -> None:
         assert warner.parse('{"b": 2}') is not None
         assert warner.parse('{"c": 3}') is not None
     assert log_output.getvalue() == ""
+
+
+# =============================================================================
+# split_complete_lines tests
+# =============================================================================
+
+
+def test_split_complete_lines_returns_complete_lines_and_consumed_bytes() -> None:
+    lines, consumed = split_complete_lines("line1\nline2\n")
+    assert lines == ["line1", "line2"]
+    assert consumed == len("line1\nline2\n".encode("utf-8"))
+
+
+def test_split_complete_lines_holds_back_partial_last_line() -> None:
+    lines, consumed = split_complete_lines("line1\npartial")
+    assert lines == ["line1"]
+    assert consumed == len("line1\n".encode("utf-8"))
+
+
+def test_split_complete_lines_returns_nothing_when_no_newline() -> None:
+    lines, consumed = split_complete_lines("partial-only")
+    assert lines == []
+    assert consumed == 0
+
+
+def test_split_complete_lines_returns_nothing_for_empty_input() -> None:
+    lines, consumed = split_complete_lines("")
+    assert lines == []
+    assert consumed == 0
+
+
+def test_split_complete_lines_handles_only_blank_lines() -> None:
+    lines, consumed = split_complete_lines("\n\n")
+    assert lines == ["", ""]
+    assert consumed == 2
+
+
+def test_split_complete_lines_byte_count_matches_for_multibyte_content() -> None:
+    # "café" is 5 bytes in UTF-8
+    lines, consumed = split_complete_lines("café\n")
+    assert lines == ["café"]
+    assert consumed == len("café\n".encode("utf-8"))

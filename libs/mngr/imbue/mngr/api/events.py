@@ -38,6 +38,7 @@ from imbue.mngr.primitives import HostId
 from imbue.mngr.providers.base_provider import BaseProviderInstance
 from imbue.mngr.utils.cel_utils import apply_cel_filters_to_context
 from imbue.mngr.utils.jsonl_warn import MalformedJsonLineWarner
+from imbue.mngr.utils.jsonl_warn import split_complete_lines
 
 FOLLOW_POLL_INTERVAL_SECONDS: Final[float] = 1.0
 SOURCE_SCAN_INTERVAL_SECONDS: Final[float] = 10.0
@@ -1039,7 +1040,11 @@ def _tail_source_thread_remote(
 
         if current_length > byte_offset:
             new_content = content_bytes[byte_offset:].decode("utf-8", errors="replace")
-            for line in new_content.split("\n"):
+            # Only consume up to the last newline; any trailing partial line is
+            # left in the file for the next poll so a mid-flush write doesn't
+            # cause the line to be split and silently lost.
+            lines, bytes_consumed = split_complete_lines(new_content)
+            for line in lines:
                 parsed = warner.parse(line)
                 if parsed is None:
                     continue
@@ -1050,7 +1055,7 @@ def _tail_source_thread_remote(
                 if not _event_passes_cel_filters(record, cel_include_filters, cel_exclude_filters):
                     continue
                 event_queue.put(record)
-            byte_offset = current_length
+            byte_offset += bytes_consumed
 
         stop_event.wait(timeout=FOLLOW_POLL_INTERVAL_SECONDS)
 

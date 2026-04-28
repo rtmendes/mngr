@@ -19,6 +19,7 @@ from imbue.mngr.api.discovery_events import _DISCOVERY_MAX_FILE_SIZE_BYTES
 from imbue.mngr.api.discovery_events import _build_ssh_info_from_host
 from imbue.mngr.api.discovery_events import _discovery_stream_emit_line
 from imbue.mngr.api.discovery_events import _discovery_stream_tail_events_file
+from imbue.mngr.api.discovery_events import _emit_lines_from_offset
 from imbue.mngr.api.discovery_events import _make_envelope_fields
 from imbue.mngr.api.discovery_events import _rotate_discovery_events_if_needed
 from imbue.mngr.api.discovery_events import append_discovery_event
@@ -791,11 +792,12 @@ def test_discovery_stream_tail_detects_new_content(temp_config: MngrConfig) -> N
     lock = Lock()
     stop_event = threading.Event()
     captured_lines: list[str] = []
+    warner = MalformedJsonLineWarner(source_description="test")
 
     # Start tail thread with on_line callback instead of manipulating sys.stdout
     tail = threading.Thread(
         target=_discovery_stream_tail_events_file,
-        args=(events_path, initial_offset, stop_event, emitted_ids, lock, captured_lines.append),
+        args=(events_path, initial_offset, stop_event, emitted_ids, lock, warner, captured_lines.append),
         daemon=True,
     )
     tail.start()
@@ -811,6 +813,102 @@ def test_discovery_stream_tail_detects_new_content(temp_config: MngrConfig) -> N
 
     # The tail should have picked up the new event
     assert len(captured_lines) == 1
+
+
+def test_discovery_stream_tail_preserves_partial_writes(tmp_path: Path) -> None:
+    """Regression test: the tail loop must not advance past a partial-write line.
+
+    Before the fix, a poll that ended in a mid-flush partial line would parse
+    the partial as malformed JSON and advance byte_offset past it; the rest of
+    that line, written later, was never re-read and was silently lost.
+    """
+    events_path = tmp_path / "events.jsonl"
+    events_path.touch()
+
+    captured_lines: list[str] = []
+    stop_event = threading.Event()
+    emitted_ids: set[str] = set()
+    lock = Lock()
+    warner = MalformedJsonLineWarner(source_description="test partial")
+
+    tail = threading.Thread(
+        target=_discovery_stream_tail_events_file,
+        args=(events_path, 0, stop_event, emitted_ids, lock, warner, captured_lines.append),
+        daemon=True,
+    )
+    tail.start()
+
+    event_1 = make_agent_discovery_event(make_test_discovered_agent())
+    event_2 = make_agent_discovery_event(make_test_discovered_agent())
+    line_1 = json.dumps(event_1.model_dump(mode="json")) + "\n"
+    line_2 = json.dumps(event_2.model_dump(mode="json")) + "\n"
+    split_at = len(line_2) // 2
+    partial_2 = line_2[:split_at]
+    rest_2 = line_2[split_at:]
+
+    try:
+        # First write: a complete line followed by half of the second line (no trailing newline).
+        with open(events_path, "w") as f:
+            f.write(line_1 + partial_2)
+
+        poll_until(lambda: len(captured_lines) >= 1, timeout=5.0)
+
+        # Now flush the rest of the second line.
+        with open(events_path, "a") as f:
+            f.write(rest_2)
+
+        poll_until(lambda: len(captured_lines) >= 2, timeout=5.0)
+    finally:
+        stop_event.set()
+        tail.join(timeout=5.0)
+
+    assert len(captured_lines) == 2
+    parsed_ids = {json.loads(line)["event_id"] for line in captured_lines}
+    assert parsed_ids == {str(event_1.event_id), str(event_2.event_id)}
+
+
+def test_emit_lines_from_offset_warns_on_corruption_across_calls(tmp_path: Path) -> None:
+    """Regression test: a single shared warner across phase reads must surface
+    mid-file corruption that straddles phase boundaries.
+
+    Before the fix, run_discovery_stream used a fresh MalformedJsonLineWarner
+    for each synchronous phase, so a malformed line at the end of phase 1's
+    read window was buffered, then silently discarded when phase 1 ended -- no
+    warning fired even when phase 3 (or the tail) later read valid data after it.
+    """
+    events_path = tmp_path / "events.jsonl"
+    valid_full = (
+        '{"timestamp":"2026-01-01T00:00:00Z","type":"DISCOVERY_FULL","event_id":"evt-x",'
+        '"source":"mngr/discovery","agents":[],"hosts":[]}'
+    )
+    valid_agent = (
+        '{"timestamp":"2026-01-02T00:00:00Z","type":"AGENT_DISCOVERED","event_id":"evt-y",'
+        '"source":"mngr/discovery","agent":{}}'
+    )
+    # Phase 1 input: valid snapshot then a malformed line at the end of the read window.
+    events_path.write_text(f"{valid_full}\nthis is not json {{{{\n")
+
+    warner = MalformedJsonLineWarner(source_description=f"discovery events file '{events_path}'")
+    emitted_ids: set[str] = set()
+    lock = Lock()
+    captured: list[str] = []
+
+    with capture_loguru(level="WARNING") as log_output:
+        # Phase 1: read from start to current EOF.
+        _emit_lines_from_offset(events_path, 0, warner, emitted_ids, lock, captured.append)
+        # The malformed line is buffered; nothing has flushed it yet.
+        assert "Skipped corrupt JSONL line" not in log_output.getvalue()
+
+        # Simulate data appended between phases (e.g. by the background sync).
+        with open(events_path, "a") as f:
+            f.write(f"{valid_agent}\n")
+
+        # Phase 3 re-reads from the same offset after the sync. With a shared
+        # warner, the buffered malformed line gets flushed when this read sees
+        # the new valid line.
+        _emit_lines_from_offset(events_path, 0, warner, emitted_ids, lock, captured.append)
+
+    assert "Skipped corrupt JSONL line" in log_output.getvalue()
 
 
 # === Discovery Event Rotation Tests ===
