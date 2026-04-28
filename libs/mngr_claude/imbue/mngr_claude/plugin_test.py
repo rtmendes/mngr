@@ -1,4 +1,5 @@
 import json
+import shlex
 import subprocess
 from contextlib import contextmanager
 from datetime import datetime
@@ -439,6 +440,22 @@ def test_claude_agent_assemble_command_sets_is_sandbox_for_remote_host(
     )
 
 
+def test_claude_agent_assemble_command_quotes_agent_args_with_shell_metacharacters(
+    local_provider: LocalProviderInstance, tmp_path: Path, temp_mngr_ctx: MngrContext
+) -> None:
+    """Agent args containing shell metacharacters must survive shell parsing as single tokens."""
+    agent, host = make_claude_agent(local_provider, tmp_path, temp_mngr_ctx)
+    prompt = "respond with only the word HELLO; echo pwned & rm -rf $HOME"
+
+    command = agent.assemble_command(host=host, agent_args=("--model", "opus", prompt), command_override=None)
+
+    # The command ends with "|| {create_cmd}" where create_cmd is the last shell statement.
+    # Split on "||" and shlex-parse the tail to confirm the prompt arrived intact.
+    create_cmd_segment = str(command).rsplit("||", 1)[1]
+    tokens = shlex.split(create_cmd_segment)
+    assert prompt in tokens, f"prompt should be a single token after shell parsing, got tokens={tokens!r}"
+
+
 # =============================================================================
 # Activity Updater Tests
 # =============================================================================
@@ -575,7 +592,7 @@ def test_build_readiness_hooks_config_has_session_start_hook() -> None:
 
     # Second hook: echoes the base branch for the agent's context
     assert hooks[1]["type"] == "command"
-    assert "GIT_BASE_BRANCH" in hooks[1]["command"]
+    assert "MNGR_GIT_BASE_BRANCH" in hooks[1]["command"]
 
     # Third hook: tracks current session ID for session replacement detection
     session_id_hook = hooks[2]["command"]
