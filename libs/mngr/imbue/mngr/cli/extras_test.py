@@ -197,6 +197,7 @@ def test_extras_claude_plugin_yes_flag(cli_runner: CliRunner) -> None:
     assert result.exit_code == 0
 
 
+@pytest.mark.allow_warnings(match=r"^Aborted: ")
 def test_extras_plugins_subcommand(cli_runner: CliRunner) -> None:
     """The 'extras plugins' subcommand should work."""
     result = cli_runner.invoke(extras, ["plugins"])

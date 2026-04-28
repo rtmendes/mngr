@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import selectors
 import shlex
 import shutil
@@ -761,27 +762,33 @@ def get_short_random_string() -> str:
     return uuid4().hex[:8]
 
 
-# Per-process depth counter for the autouse "no unexpected loguru warnings"
-# check. Wrapped in a one-element list so contextmanagers can rebind without
-# `global`. The autouse sink in conftest.py only records WARNING-or-higher
-# records when this is 0; capture_loguru and allow_warnings increment it.
-_WARNINGS_ALLOWED_DEPTH: list[int] = [0]
+# Stack of opt-out frames for the autouse "no unexpected loguru warnings"
+# check. Each frame is either None (allow any warning) or a compiled regex
+# (allow only warnings whose message matches it; non-matching ones still fail
+# the test). The top frame governs. capture_loguru and allow_warnings push
+# frames; the autouse fixture in conftest.py pushes a frame when the test
+# carries ``@pytest.mark.allow_warnings``.
+_WARNINGS_ALLOWED_STACK: list[re.Pattern[str] | None] = []
 
 
 @contextmanager
-def allow_warnings() -> Generator[None, None, None]:
+def allow_warnings(match: str | None = None) -> Generator[None, None, None]:
     """Suppress the autouse "no unexpected loguru warnings" check inside this scope.
 
     The autouse fixture in libs/mngr/conftest.py fails any test that emits a
     loguru WARNING-level (or higher) record. Wrap code that intentionally emits
     such records in this context manager. For whole-test opt-out use
-    ``@pytest.mark.allow_warnings`` instead.
+    ``@pytest.mark.allow_warnings`` (optionally ``@pytest.mark.allow_warnings(match=...)``).
+
+    If ``match`` is given, only warning messages whose text matches the regex
+    (via ``re.search``) are allowed; non-matching warnings still fail the test.
     """
-    _WARNINGS_ALLOWED_DEPTH[0] += 1
+    pattern = re.compile(match) if match is not None else None
+    _WARNINGS_ALLOWED_STACK.append(pattern)
     try:
         yield
     finally:
-        _WARNINGS_ALLOWED_DEPTH[0] -= 1
+        _WARNINGS_ALLOWED_STACK.pop()
 
 
 @contextmanager
