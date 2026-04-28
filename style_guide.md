@@ -1443,6 +1443,8 @@ Avoid .json files for configuration--prefer .toml instead
 
 Always place .toml config files in `~/.app_name/config.toml`
 
+When anything is wrong with a user-authored config or settings file -- parse error, permission denied, missing section, malformed value -- raise rather than fall back to defaults; otherwise the program silently runs with configuration the user did not ask for.
+
 Always parse configuration into a structured, fully typed, frozen object
 
 ```python
