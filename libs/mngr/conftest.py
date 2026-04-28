@@ -93,6 +93,12 @@ def fail_on_unexpected_loguru_warnings(
     marker = request.node.get_closest_marker("allow_warnings")
     pushed_frame = False
     if marker is not None:
+        if marker.args:
+            raise TypeError(
+                "@pytest.mark.allow_warnings takes only the 'match' keyword "
+                "argument; got positional argument(s). Use "
+                "@pytest.mark.allow_warnings(match=r'...') instead."
+            )
         match_arg = marker.kwargs.get("match")
         pattern = re.compile(match_arg) if match_arg is not None else None
         WARNINGS_ALLOWED_STACK.append(pattern)
