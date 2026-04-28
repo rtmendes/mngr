@@ -54,12 +54,10 @@ MODAL_NAME_MAX_LENGTH: Final[int] = 64
 
 
 def _has_modal_credentials() -> bool:
-    """Cheap check for whether Modal has usable credentials on this machine.
+    """Return True if a Modal token is configured.
 
-    Reads modal.config (already merged from ~/.modal.toml and MODAL_TOKEN_*
-    env vars at SDK import time). No network calls. Returning False lets the
-    backend skip eager Modal SDK setup so `mngr list` etc. don't abort on a
-    fresh install -- mirrors mngr_vultr's empty-api-key pattern.
+    Reads modal.config, which merged ~/.modal.toml and MODAL_TOKEN_* env vars
+    at SDK import time. No network calls.
     """
     return bool(modal.config.config.get("token_id") and modal.config.config.get("token_secret"))
 
@@ -502,9 +500,8 @@ Supported build arguments for the modal provider:
             logger.warning("Truncating Modal app name to {} characters: {}", max_app_name_length, app_name)
         app_name = truncate_modal_name(app_name, max_length=max_app_name_length)
 
-        # Skip eager Modal SDK setup when no credentials are configured. The instance
-        # is still constructed so listing/discovery don't abort the whole run; any
-        # operation needing the live Modal app will surface ModalAuthError.
+        # Without credentials, return an instance with modal_app=None: discovery
+        # short-circuits to empty and any other method raises ModalAuthError.
         if config.mode == ModalMode.DIRECT and not _has_modal_credentials():
             logger.info(
                 "Modal credentials not configured; provider '{}' will report no hosts. "

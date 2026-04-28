@@ -71,10 +71,9 @@ def test_get_files_for_deploy_includes_non_key_files(temp_mngr_ctx: MngrContext,
 def test_modal_provider_with_no_modal_app_returns_empty_discovery(
     temp_mngr_ctx: MngrContext, cg: ConcurrencyGroup
 ) -> None:
-    """A ModalProviderInstance built with modal_app=None reports no hosts instead
-    of raising. build_provider_instance constructs this state when no Modal
-    credentials are configured, so a fresh install can run `mngr list` without
-    aborting -- mirrors mngr_vultr's empty-api-key pattern.
+    """ModalProviderInstance with modal_app=None returns empty discovery and
+    is safe to reset/close. This is the state build_provider_instance produces
+    when no Modal credentials are configured.
     """
     instance = ModalProviderInstance(
         name=ProviderInstanceName("modal"),

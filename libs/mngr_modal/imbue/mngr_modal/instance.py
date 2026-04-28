@@ -402,10 +402,8 @@ class ModalProviderInstance(BaseProviderInstance):
     _cache_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     config: ModalProviderConfig = Field(frozen=True, description="Modal provider configuration")
-    # None when Modal credentials are not configured on this machine. The provider is
-    # still constructed (so `mngr list` and friends don't abort the whole run) but
-    # discovery returns empty and any operation needing the live Modal app raises
-    # ModalAuthError. Mirrors mngr_vultr's empty-api-key pattern.
+    # None when Modal credentials are not configured: discovery returns empty,
+    # other methods raise ModalAuthError via _required_modal_app.
     modal_app: ModalProviderApp | None = Field(default=None, frozen=True, description="Modal app manager")
 
     @property
