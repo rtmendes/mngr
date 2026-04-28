@@ -11,7 +11,7 @@ and how the agent receives the answer.
    `latchkey gateway` (or to `latchkey curl` directly).
 2. **Gateway responds with success, no-credentials, or not-permitted.**
    * 200: success, nothing to do.
-   * 400 with `Error: No credentials found for <svc>` (or `... are expired`):
+   * 400 with `Error: No credentials found for <service>` (or `... are expired`):
      the user has not yet authenticated to the service.
    * 403 with `Error: Request not permitted by the user.`: the user has
      authenticated but has not allowed this kind of request.
@@ -38,8 +38,8 @@ and how the agent receives the answer.
      ``any`` pre-check, so the dialog also acts as a revocation UI.
    * The Approve button stays disabled while zero boxes are checked.
 6. **User approves.** The desktop client:
-   1. Runs `latchkey services info <svc>` to read `credentialStatus`.
-   2. If `missing` / `invalid` / `unknown`, runs `latchkey auth browser <svc>`
+   1. Runs `latchkey services info <service>` to read `credentialStatus`.
+   2. If `missing` / `invalid` / `unknown`, runs `latchkey auth browser <service>`
       synchronously; cancellation/failure produces an `AUTH_FAILED` outcome.
    3. Atomically rewrites the agent's `latchkey_permissions.json` so the gateway
       enforces the chosen schemas on the next request.
@@ -60,12 +60,8 @@ environment variable. The desktop client materializes this file with empty
 deny-all state -- the implicit `allow all` that latchkey applies when the
 file is missing must never be observable by an agent.
 
-When an agent is destroyed, its `latchkey_permissions.json` is also removed so a
-future agent reusing the same id starts with a clean slate.
-
 `LATCHKEY_DIRECTORY` -- where credentials live -- stays shared across all
-agents on the same machine for now. Per-account isolation is a possible
-future extension.
+agents on the same machine for now.
 
 ## Service catalog
 
