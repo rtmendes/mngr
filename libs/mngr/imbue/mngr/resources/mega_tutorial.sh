@@ -293,12 +293,19 @@ mngr list --archived
 mngr list --active
 
 # you can make any of those filters the default for "mngr list" by setting it in your config.
-# for example, to make "mngr list" only show active agents by default:
+# for example, to hide agents from dead/destroyed hosts by default:
 mngr config set commands.list.active true
 # or equivalently in your config file:
-#   [commands.list.defaults]
+#   [commands.list]
 #   active = true
 # you can still see everything with "mngr list --no-active" when you need to.
+
+# note: --active only excludes hosts in CRASHED/FAILED/DESTROYED state and archived agents,
+# *not* STOPPED or DONE agents. if you want to also hide STOPPED and DONE agents from the default,
+# use an exclude filter instead:
+#   [commands.list]
+#   exclude = ['state == "STOPPED"', 'state == "DONE"']
+# (you'd then use "mngr list --exclude=" or "mngr list --include 'true'" to opt out for a single call.)
 
 # show only agents running locally
 mngr list --local
@@ -497,8 +504,10 @@ mngr archive my-task
 # stop all running agents
 mngr list --ids | mngr stop -
 
-# destroy all stopped agents (handy for cleaning up after a batch of finished work)
-mngr list --stopped --ids | mngr rm -
+# archive all stopped agents (handy for cleaning up "mngr list" after a batch of finished work).
+# we use archive (not destroy) here so the agents remain inspectable -- they just get hidden from
+# default listings via the "archived_at" label. you can always destroy them later with --archived.
+mngr list --stopped --ids | mngr archive -
 
 # dry-run to see what would be stopped
 mngr list --ids | mngr stop - --dry-run
@@ -802,12 +811,16 @@ mngr create my-task --project other-project
 # filter agents by project using CEL expressions
 mngr list --include 'project == "my-project"'
 
-# you can make "mngr list" auto-filter to a given project by default by setting it in that
-# project's scoped config (.mngr/settings.toml) -- since project-scoped config only applies
-# when run from inside that project, you get a per-project default for free:
+# the literal "." is expanded to the current project (derived from the cwd's git remote
+# origin or folder name), so this lists agents for the project you're currently in:
+mngr list --project .
+# this also works for "mngr kanpan --project ."
+
+# to make this the default, set it in the project-scoped config (.mngr/settings.toml).
+# project-scoped config only applies when run from inside that project, so you get a
+# per-project default for free:
 #   [commands.list]
-#   include = ['labels.project == "my-project"']
-# (mngr list does not currently support a sentinel like --project=. for "the current project")
+#   project = ["."]
 
 # see which projects have agents by looking at the project field
 mngr list --fields "name,project,state"
@@ -1179,6 +1192,16 @@ done
 #   These options are typically less commonly used or more advanced
 ##############################################################################
 
+# MNGR_HOST_DIR / default_host_dir: by default mngr stores its state (agent metadata, events,
+# discovery cache, etc.) under ~/.mngr. if you'd rather scope state per-project, point it at a
+# project-local directory. note that this completely isolates state per-project (you won't see
+# agents from other projects), so it's most useful for sandboxes or clean per-project setups.
+# the cleanest way to do this is with direnv -- add a .envrc to your project:
+#   export MNGR_HOST_DIR="$PWD/.mngr-state"
+# and then "direnv allow". you can also set it as an absolute path in config:
+#   default_host_dir = "/abs/path/to/project/.mngr-state"
+# but env-var-via-direnv is more portable across machines.
+
 # work_dir_extra_paths: include extra files (outside of git) in each new agent work directory.
 # useful for things like .env files, .venv, build caches, or local config that aren't tracked in git.
 # add this to .mngr/settings.toml (or settings.local.toml):
@@ -1189,6 +1212,13 @@ done
 # "COPY" makes an independent copy via rsync (good for branch-dependent paths like .venv).
 # "SHARE" symlinks to the source on the same host (good for shared config like settings.local.toml).
 # "SHARE" automatically falls back to a copy when transferring to a different host.
+#
+# the SHARE example for ".mngr/settings.local.toml" is especially handy if you want to be able to
+# tweak settings for *all* of your local agents by editing one file -- with SHARE, every agent's
+# work dir symlinks back to the same settings.local.toml at the project root, so an edit there
+# immediately applies to every (local) agent. without this, each agent would get its own frozen
+# copy at create time and you'd have to re-create the agent (or edit each work dir's copy) to
+# change settings.
 
 ##############################################################################
 # OUTPUT FORMATS AND MACHINE-READABLE OUTPUT
