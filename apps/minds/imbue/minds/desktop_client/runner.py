@@ -38,6 +38,7 @@ from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.request_events import RequestInbox
 from imbue.minds.desktop_client.request_events import load_response_events
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
+from imbue.minds.desktop_client.sharing_handler import SharingRequestHandler
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
@@ -165,6 +166,7 @@ def start_desktop_client(
         data_dir=data_directory,
         auth_backend_client=auth_backend_client,
     )
+    sharing_request_handler = SharingRequestHandler(session_store=session_store)
 
     # Initialize request inbox from stored response events
     response_events = load_response_events(data_directory)
@@ -245,7 +247,7 @@ def start_desktop_client(
         auth_backend_client=auth_backend_client,
         minds_config=minds_config,
         request_inbox=request_inbox,
-        latchkey_permission_handler=latchkey_permission_handler,
+        request_event_handlers=(latchkey_permission_handler, sharing_request_handler),
         server_port=port,
         output_format=output_format,
     )

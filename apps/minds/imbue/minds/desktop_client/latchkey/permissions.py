@@ -44,12 +44,14 @@ from imbue.minds.desktop_client.latchkey.store import save_permissions
 from imbue.minds.desktop_client.latchkey.store import set_permissions_for_scope
 from imbue.minds.desktop_client.latchkey.templates import render_latchkey_permission_dialog
 from imbue.minds.desktop_client.request_events import LatchkeyPermissionRequestEvent
+from imbue.minds.desktop_client.request_events import RequestEvent
 from imbue.minds.desktop_client.request_events import RequestInbox
 from imbue.minds.desktop_client.request_events import RequestResponseEvent
 from imbue.minds.desktop_client.request_events import RequestStatus
 from imbue.minds.desktop_client.request_events import RequestType
 from imbue.minds.desktop_client.request_events import append_response_event
 from imbue.minds.desktop_client.request_events import create_request_response_event
+from imbue.minds.desktop_client.request_handler import RequestEventHandler
 from imbue.mngr.primitives import AgentId
 
 _MNGR_MESSAGE_TIMEOUT_SECONDS: Final[float] = 30.0
@@ -137,20 +139,20 @@ def _render_unknown_service_page(request_id: str, service_name: str) -> Response
         f"<p>The agent requested permission for <code>{html_module.escape(service_name)}</code>, "
         "but this service is not in the minds permission catalog. The request can only be denied "
         "from here.</p>"
-        f'<form method="POST" action="/requests/{html_module.escape(request_id, quote=True)}/permission/deny">'
+        f'<form method="POST" action="/requests/{html_module.escape(request_id, quote=True)}/deny">'
         '<button type="submit">Deny</button></form>'
         "</body></html>"
     )
     return HTMLResponse(content=body, status_code=200)
 
 
-class LatchkeyPermissionGrantHandler(MutableModel):
+class LatchkeyPermissionGrantHandler(RequestEventHandler):
     """Top-level orchestrator for ``LatchkeyPermissionRequestEvent`` handling.
 
     Owns the latchkey services catalog and exposes both pure-logic methods
-    (``grant`` / ``deny``, easy to unit-test) and HTTP-aware entry points
-    (``render_request_page`` / ``apply_grant_request`` / ``apply_deny_request``)
-    that the route dispatcher in ``app.py`` calls into.
+    (``grant`` / ``deny``, easy to unit-test) and the HTTP-aware
+    :class:`RequestEventHandler` entry points the route dispatcher in
+    ``app.py`` calls into.
 
     Hold-time invariants when ``grant`` returns ``(True, message)``:
 
@@ -172,8 +174,7 @@ class LatchkeyPermissionGrantHandler(MutableModel):
     latchkey: Latchkey = Field(description="Latchkey wrapper used to probe credentials and run sign-in flows.")
     services_catalog: Mapping[str, ServicePermissionInfo] = Field(
         description=(
-            "Catalog mapping latchkey service names to detent permission info. "
-            "Empty if loading failed at startup."
+            "Catalog mapping latchkey service names to detent permission info. Empty if loading failed at startup."
         ),
     )
     mngr_message_sender: MngrMessageSender = Field(description="Sends mngr message to the waiting agent.")
@@ -267,11 +268,29 @@ class LatchkeyPermissionGrantHandler(MutableModel):
         )
         return message, response_event
 
-    # -- HTTP-aware entry points ---------------------------------------------
+    # -- RequestEventHandler interface ---------------------------------------
+
+    def handles_request_type(self) -> str:
+        return str(RequestType.LATCHKEY_PERMISSION)
+
+    def kind_label(self) -> str:
+        return "permission"
+
+    def display_name_for_event(self, req_event: RequestEvent) -> str:
+        """Friendly service name for the requests-panel card.
+
+        Falls back to the raw service name when the service isn't in
+        the loaded catalog (or when the event is somehow not a latchkey
+        permission request, which shouldn't happen given the dispatcher).
+        """
+        if not isinstance(req_event, LatchkeyPermissionRequestEvent):
+            return ""
+        info = get_service_info(self.services_catalog, req_event.service_name)
+        return info.display_name if info is not None else req_event.service_name
 
     def render_request_page(
         self,
-        req_event: LatchkeyPermissionRequestEvent,
+        req_event: RequestEvent,
         backend_resolver: BackendResolverInterface,
     ) -> Response:
         """Render the dialog HTML for a latchkey permission request.
@@ -279,6 +298,8 @@ class LatchkeyPermissionGrantHandler(MutableModel):
         Falls back to a deny-only page when the requested service is not
         in the catalog, since there are no permissions to offer.
         """
+        if not isinstance(req_event, LatchkeyPermissionRequestEvent):
+            return HTMLResponse(content="<p>Unsupported request type</p>", status_code=500)
         service_info = get_service_info(self.services_catalog, req_event.service_name)
         if service_info is None:
             return _render_unknown_service_page(
@@ -303,9 +324,11 @@ class LatchkeyPermissionGrantHandler(MutableModel):
     async def apply_grant_request(
         self,
         request: Request,
-        req_event: LatchkeyPermissionRequestEvent,
+        req_event: RequestEvent,
     ) -> Response:
         """Drive the grant flow from the dialog form submission."""
+        if not isinstance(req_event, LatchkeyPermissionRequestEvent):
+            return _json_error("Unsupported request type", status_code=500)
         service_info = get_service_info(self.services_catalog, req_event.service_name)
         if service_info is None:
             return _json_error(
@@ -355,9 +378,11 @@ class LatchkeyPermissionGrantHandler(MutableModel):
     async def apply_deny_request(
         self,
         request: Request,
-        req_event: LatchkeyPermissionRequestEvent,
+        req_event: RequestEvent,
     ) -> Response:
         """Drive the deny flow from the dialog form submission."""
+        if not isinstance(req_event, LatchkeyPermissionRequestEvent):
+            return _json_error("Unsupported request type", status_code=500)
         service_info = get_service_info(self.services_catalog, req_event.service_name)
         if service_info is None:
             return _json_error(
@@ -380,11 +405,6 @@ class LatchkeyPermissionGrantHandler(MutableModel):
             content=json.dumps({"outcome": "DENIED"}),
             media_type="application/json",
         )
-
-    def display_name_for_event(self, req_event: LatchkeyPermissionRequestEvent) -> str:
-        """Friendly service name for the requests-panel card. Falls back to the raw service name."""
-        info = get_service_info(self.services_catalog, req_event.service_name)
-        return info.display_name if info is not None else req_event.service_name
 
     # -- Internals -----------------------------------------------------------
 
@@ -483,6 +503,3 @@ class LatchkeyPermissionGrantHandler(MutableModel):
         if inbox is None:
             return
         request.app.state.request_inbox = inbox.add_response(response_event)
-
-
-

@@ -54,7 +54,7 @@
     {% endcall %}
 
     <form id="permissions-form" method="POST"
-          action="/requests/{{ request_id }}/permission/grant"
+          action="/requests/{{ request_id }}/grant"
           class="mt-6">
       {% block permissions_form_body %}{% endblock %}
 
@@ -142,7 +142,7 @@
     window.submitPermissionDeny = async function () {
       approveBtn.disabled = true;
       try {
-        await fetch("/requests/{{ request_id }}/permission/deny", {
+        await fetch("/requests/{{ request_id }}/deny", {
           method: "POST",
           credentials: "same-origin",
         });
