@@ -1649,30 +1649,6 @@ def _handle_sharing_status_api(
     )
 
 
-async def _handle_request_grant(
-    request_id: str,
-    request: Request,
-    auth_store: AuthStoreDep,
-    backend_resolver: BackendResolverDep,
-) -> Response:
-    """Grant a request by redirecting to the sharing enable handler."""
-    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
-        return Response(status_code=403, content="Not authenticated")
-    inbox: RequestInbox | None = request.app.state.request_inbox
-    if inbox is None:
-        return HTMLResponse(content="Request inbox not available", status_code=500)
-    req_event = inbox.get_request_by_id(request_id)
-    if req_event is None:
-        return HTMLResponse(content="Request not found", status_code=404)
-
-    if isinstance(req_event, SharingRequestEvent):
-        return await _handle_sharing_enable(
-            req_event.agent_id, req_event.service_name, request, auth_store, backend_resolver
-        )
-
-    return Response(status_code=303, headers={"Location": "/"})
-
-
 async def _handle_permission_grant(
     request_id: str,
     request: Request,
@@ -2038,7 +2014,6 @@ def create_desktop_client(
     app.get("/_chrome/requests-panel")(_handle_requests_panel)
     app.post("/_chrome/requests-auto-open")(_handle_requests_auto_open)
     app.get("/requests/{request_id}")(_handle_request_page)
-    app.post("/requests/{request_id}/grant")(_handle_request_grant)
     app.post("/requests/{request_id}/deny")(_handle_request_deny)
     app.post("/requests/{request_id}/permission/grant")(_handle_permission_grant)
     app.post("/requests/{request_id}/permission/deny")(_handle_permission_deny)
