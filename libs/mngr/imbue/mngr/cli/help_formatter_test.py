@@ -575,7 +575,6 @@ _SYNOPSIS_OPTOUT_FLAGS: dict[str, frozenset[str]] = {
             "--include-unclean",
             "--include-gitignored",
             "--worktree-base-folder",
-            "--pass-env",
             "--host-env",
             "--host-env-file",
             "--pass-host-env",
@@ -583,16 +582,15 @@ _SYNOPSIS_OPTOUT_FLAGS: dict[str, frozenset[str]] = {
             "--reconnect",
             "--attach-command",
             "--connect-command",
-            "--yes",
         }
     ),
     "start": frozenset({"--connect-command"}),
     "stop": frozenset({"--graceful-timeout"}),
-    "destroy": frozenset({"--allow-worktree-removal", "--gc"}),
-    "message": frozenset({"--on-error", "--provider", "--start"}),
-    "exec": frozenset({"--start"}),
-    "provision": frozenset({"--bootstrap", "--destroy-on-fail", "--env-file", "--host", "--pass-env", "--restart"}),
-    "cleanup": frozenset({"--action", "--exclude", "--include", "--snapshot-before"}),
+    "destroy": frozenset(),
+    "message": frozenset({"--provider"}),
+    "exec": frozenset(),
+    "provision": frozenset({"--bootstrap", "--destroy-on-fail", "--host", "--pass-env"}),
+    "cleanup": frozenset({"--action", "--snapshot-before"}),
     "limit": frozenset(
         {
             "--activity-sources",
@@ -601,7 +599,6 @@ _SYNOPSIS_OPTOUT_FLAGS: dict[str, frozenset[str]] = {
             "--refresh-ssh-keys",
             "--remove-activity-source",
             "--remove-ssh-key",
-            "--start-on-boot",
         }
     ),
     "pull": frozenset(
@@ -652,10 +649,7 @@ _SYNOPSIS_OPTOUT_FLAGS: dict[str, frozenset[str]] = {
     ),
     "pair": frozenset(
         {
-            "--exclude",
-            "--include",
             "--require-git",
-            "--source",
             "--source-agent",
             "--source-host",
             "--source-path",
