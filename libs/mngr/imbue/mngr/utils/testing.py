@@ -767,8 +767,9 @@ def get_short_random_string() -> str:
 # (allow only warnings whose message matches it; non-matching ones still fail
 # the test). The top frame governs. capture_loguru and allow_warnings push
 # frames; the autouse fixture in conftest.py pushes a frame when the test
-# carries ``@pytest.mark.allow_warnings``.
-_WARNINGS_ALLOWED_STACK: list[re.Pattern[str] | None] = []
+# carries ``@pytest.mark.allow_warnings``. This name is public because the
+# project conftest reads/mutates it as well as this module.
+WARNINGS_ALLOWED_STACK: list[re.Pattern[str] | None] = []
 
 
 @contextmanager
@@ -784,11 +785,11 @@ def allow_warnings(match: str | None = None) -> Generator[None, None, None]:
     (via ``re.search``) are allowed; non-matching warnings still fail the test.
     """
     pattern = re.compile(match) if match is not None else None
-    _WARNINGS_ALLOWED_STACK.append(pattern)
+    WARNINGS_ALLOWED_STACK.append(pattern)
     try:
         yield
     finally:
-        _WARNINGS_ALLOWED_STACK.pop()
+        WARNINGS_ALLOWED_STACK.pop()
 
 
 @contextmanager
