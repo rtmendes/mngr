@@ -41,6 +41,7 @@ from imbue.mngr_schedule.implementations.modal.deploy import resolve_commit_hash
 from imbue.mngr_schedule.implementations.modal.deploy import resolve_mngr_install_mode
 from imbue.mngr_schedule.implementations.modal.deploy import stage_deploy_files
 from imbue.mngr_schedule.implementations.modal.deploy import try_get_repo_root
+from imbue.mngr_schedule.implementations.modal.deploy import unpack_current_tarball_in_place
 
 
 def test_get_modal_app_name_prefixes_with_mngr_schedule() -> None:
@@ -1199,3 +1200,38 @@ def test_package_directory_as_tarball_creates_dest_dir(tmp_path: Path) -> None:
 
     assert dest_dir.exists()
     assert (dest_dir / "current.tar.gz").exists()
+
+
+# =============================================================================
+# unpack_current_tarball_in_place Tests
+# =============================================================================
+
+
+def test_unpack_current_tarball_in_place_extracts_and_cleans_up(tmp_path: Path) -> None:
+    """unpack_current_tarball_in_place extracts current.tar.gz and removes tarball + checkpoint markers."""
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "hello.txt").write_text("hi")
+    (source_dir / "sub").mkdir()
+    (source_dir / "sub" / "nested.txt").write_text("nested")
+
+    dest_dir = tmp_path / "dest"
+    package_directory_as_tarball(source_dir, dest_dir)
+    (dest_dir / "abc123.checkpoint").touch()
+    (dest_dir / "def456.checkpoint").touch()
+
+    unpack_current_tarball_in_place(dest_dir)
+
+    # Tarball + checkpoint markers gone, contents extracted in place.
+    assert not (dest_dir / "current.tar.gz").exists()
+    assert not list(dest_dir.glob("*.checkpoint"))
+    assert (dest_dir / "hello.txt").read_text() == "hi"
+    assert (dest_dir / "sub" / "nested.txt").read_text() == "nested"
+
+
+def test_unpack_current_tarball_in_place_raises_when_tarball_missing(tmp_path: Path) -> None:
+    """unpack_current_tarball_in_place raises ScheduleDeployError when current.tar.gz is absent."""
+    dest_dir = tmp_path / "dest"
+    dest_dir.mkdir()
+    with pytest.raises(ScheduleDeployError, match="Expected tarball at"):
+        unpack_current_tarball_in_place(dest_dir)

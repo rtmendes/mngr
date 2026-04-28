@@ -7,6 +7,7 @@ import platform
 import shlex
 import shutil
 import sys
+import tarfile
 from collections.abc import Sequence
 from datetime import datetime
 from datetime import timezone
@@ -196,6 +197,24 @@ def package_directory_as_tarball(source_dir: Path, dest_dir: Path) -> None:
         raise ScheduleDeployError(
             f"Failed to package directory {source_dir}: {(result.stdout + result.stderr).strip()}"
         ) from None
+
+
+def unpack_current_tarball_in_place(dest_dir: Path) -> None:
+    """Extract <dest_dir>/current.tar.gz into <dest_dir>, then delete the tarball + checkpoint markers.
+
+    Producer-side extraction so the resulting directory is a real source tree:
+    consumers (the shared mngr Dockerfile, offload, local docker builds) all see
+    the same "context_dir is a real source tree" contract instead of needing a
+    special-case extract block at the consumer end.
+    """
+    tarball = dest_dir / "current.tar.gz"
+    if not tarball.exists():
+        raise ScheduleDeployError(f"Expected tarball at {tarball}, but it was not found") from None
+    with tarfile.open(tarball, "r:gz") as tf:
+        tf.extractall(dest_dir, filter="data")
+    tarball.unlink()
+    for marker in dest_dir.glob("*.checkpoint"):
+        marker.unlink()
 
 
 def detect_mngr_install_mode() -> MngrInstallMode:
@@ -896,16 +915,16 @@ def deploy_schedule(
             effective_dockerfile_path = mngr_dockerfile_path
             mngr_build_dir = target_repo_dir
             target_repo_dir = None
+            # The shared mngr Dockerfile expects context_dir to be a real source
+            # tree. package_repo_at_commit produced current.tar.gz; unpack here
+            # so the consumer side stays uniform with offload + local docker.
+            unpack_current_tarball_in_place(mngr_build_dir)
         case MngrInstallMode.EDITABLE:
             mngr_repo_root = _get_mngr_repo_root()
             mngr_head_commit = resolve_git_ref("HEAD", cwd=mngr_repo_root)
             with log_span("Packaging mngr monorepo at commit {}", mngr_head_commit):
                 package_repo_at_commit(mngr_head_commit, mngr_build_dir, mngr_repo_root)
-            mngr_tarball = mngr_build_dir / "current.tar.gz"
-            if not mngr_tarball.exists():
-                raise ScheduleDeployError(
-                    f"Expected tarball at {mngr_tarball} after packaging mngr monorepo, but it was not found"
-                ) from None
+            unpack_current_tarball_in_place(mngr_build_dir)
             effective_dockerfile_path = mngr_dockerfile_path
         case MngrInstallMode.PACKAGE:
             # Generate a modified Dockerfile that installs mngr from PyPI
