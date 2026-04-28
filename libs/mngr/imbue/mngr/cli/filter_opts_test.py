@@ -5,6 +5,7 @@ import pytest
 
 from imbue.mngr.cli.filter_opts import AgentFilterCliOptions
 from imbue.mngr.cli.filter_opts import build_agent_filter_cel
+from imbue.mngr.errors import MngrError
 
 
 def test_empty_options_produces_empty_filters() -> None:
@@ -87,6 +88,16 @@ def test_label_without_equals_raises() -> None:
 def test_host_label_without_equals_raises() -> None:
     with pytest.raises(click.BadParameter):
         build_agent_filter_cel(AgentFilterCliOptions(host_label=("noequals",)))
+
+
+def test_invalid_cel_in_include_fails_fast() -> None:
+    with pytest.raises(MngrError):
+        build_agent_filter_cel(AgentFilterCliOptions(include=("invalid(",)))
+
+
+def test_invalid_cel_in_exclude_fails_fast() -> None:
+    with pytest.raises(MngrError):
+        build_agent_filter_cel(AgentFilterCliOptions(exclude=("invalid(",)))
 
 
 def test_combined_aliases_compose() -> None:

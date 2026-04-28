@@ -28,6 +28,7 @@ from click_option_group import optgroup
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.mngr.primitives import AgentLifecycleState
 from imbue.mngr.primitives import HostState
+from imbue.mngr.utils.cel_utils import compile_cel_filters
 
 TDecorated = TypeVar("TDecorated", bound=Callable[..., Any])
 
@@ -130,7 +131,12 @@ def _key_value_filter(specs: tuple[str, ...], cel_prefix: str, flag_name: str) -
 def build_agent_filter_cel(
     opts: AgentFilterCliOptions,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Translate parsed filter flags into ``(include_filters, exclude_filters)`` CEL tuples."""
+    """Translate parsed filter flags into ``(include_filters, exclude_filters)`` CEL tuples.
+
+    Compiles the result with ``compile_cel_filters`` to fail fast on syntactically
+    invalid ``--include``/``--exclude`` expressions before any consumer (list,
+    kanpan, ...) starts work.
+    """
     include: list[str] = list(opts.include)
     exclude: list[str] = list(opts.exclude)
 
@@ -156,4 +162,8 @@ def build_agent_filter_cel(
     if opts.host_label:
         include.append(_key_value_filter(opts.host_label, "host.tags", "--host-label"))
 
-    return tuple(include), tuple(exclude)
+    include_tuple = tuple(include)
+    exclude_tuple = tuple(exclude)
+    if include_tuple or exclude_tuple:
+        compile_cel_filters(include_tuple, exclude_tuple)
+    return include_tuple, exclude_tuple

@@ -20,8 +20,10 @@ including PR number, state (open/closed/merged), and CI check status.
 The display auto-refreshes every 10 minutes. Press 'r' to refresh manually,
 or 'q' to quit.
 
-Filtering shares the flag set used by `mngr list` (--include/--exclude/--running/
---stopped/--archived/--active/--local/--remote/--project/--label/--host-label).
+Supports CEL filtering via --include/--exclude plus alias flags (--running,
+--stopped, --archived, --active, --local, --remote, --project, --label,
+--host-label). See `mngr list --help` for the full filter reference; the same
+flags work identically here.
 
 Requires the gh CLI to be installed and authenticated for GitHub PR information.
 
@@ -66,7 +68,7 @@ mngr kanpan [OPTIONS]
 
 ## See Also
 
-- [mngr list](../primary/list.md) - List agents
+- [mngr list](../primary/list.md) - List agents (see its Filtering section for the full flag reference)
 
 ## Examples
 
@@ -86,4 +88,10 @@ $ mngr kanpan --project mngr
 
 ```bash
 $ mngr kanpan --running
+```
+
+**Show running agents with a specific label**
+
+```bash
+$ mngr kanpan --running --label env=prod
 ```
