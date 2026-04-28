@@ -203,11 +203,7 @@ def test_prevent_click_echo() -> None:
 
 
 def test_prevent_logger_exception() -> None:
-    # Five pre-existing logger.exception() usages live in
-    # imbue/mngr/api/discovery_events.py and imbue/mngr/api/list.py.
-    # These should be migrated to logger.opt(exception=...).error() and
-    # the count ratcheted back to 0.
-    rc.check_logger_exception(_DIR, snapshot(5))
+    rc.check_logger_exception(_DIR, snapshot(0))
 
 
 # --- Testing conventions ---
