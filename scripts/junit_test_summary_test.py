@@ -39,8 +39,8 @@ def test_parse_junit_counts_attempts(tmp_path: Path) -> None:
     assert per_test["pkg/test_x.py::test_b"].failed == 1
     assert per_test["pkg/test_x.py::test_b"].passed == 1
     assert per_test["pkg/test_x.py::test_b"].final_status is RunStatus.FLAKY_RECOVERED
-    assert [(f.name, f.kind, f.message) for f in failures] == [
-        ("pkg/test_x.py::test_b", "failure", "boom"),
+    assert [(f.name, f.kind, f.message, f.attempt) for f in failures] == [
+        ("pkg/test_x.py::test_b", "failure", "boom", 1),
     ]
 
 
@@ -181,6 +181,7 @@ def test_render_markdown_includes_failure_details_section() -> None:
             kind="failure",
             message="AssertionError: expected 1 got 2",
             body="Traceback (most recent call last):\n  File 'x', line 1\n    assert 1 == 2\nAssertionError",
+            attempt=1,
         ),
     ]
 
@@ -207,7 +208,7 @@ def test_render_markdown_caps_long_failure_body() -> None:
     a = AttemptsRecord(name="pkg/test_x.py::test_a")
     a.record(outcome=RunStatus.FAILED)
     huge = "X" * 50_000
-    failures = [FailureDetail(name=a.name, kind="failure", message="boom", body=huge)]
+    failures = [FailureDetail(name=a.name, kind="failure", message="boom", body=huge, attempt=1)]
 
     md = _render_markdown(
         per_test={a.name: a},
@@ -221,6 +222,52 @@ def test_render_markdown_caps_long_failure_body() -> None:
     assert md.count("X") < 5_000
 
 
+def test_render_markdown_labels_attempt_index_for_retried_tests() -> None:
+    """Failures of a retried test must be labelled `attempt N/M`.
+
+    A reader looking at a flaky-recovered test should be able to tell which
+    attempt the failure belonged to (likely a flake) without expanding the
+    block. Tests that ran once must NOT get the label, since "attempt 1/1"
+    is noise on a hard-failed test.
+    """
+    # Flaky-recovered: failed on attempt 1, passed on attempt 2.
+    flaky = AttemptsRecord(name="pkg/test_x.py::test_flaky")
+    flaky.record(outcome=RunStatus.FAILED)
+    flaky.record(outcome=RunStatus.PASSED)
+    # Hard failure: one attempt, failed.
+    hard = AttemptsRecord(name="pkg/test_y.py::test_hard")
+    hard.record(outcome=RunStatus.FAILED)
+
+    failures = [
+        FailureDetail(
+            name=flaky.name,
+            kind="failure",
+            message="TimeoutError: connection refused",
+            body="trace-1",
+            attempt=1,
+        ),
+        FailureDetail(
+            name=hard.name,
+            kind="failure",
+            message="AssertionError: nope",
+            body="trace-2",
+            attempt=1,
+        ),
+    ]
+    md = _render_markdown(
+        per_test={flaky.name: flaky, hard.name: hard},
+        failures=failures,
+        flaky_ids=set(),
+        heading="H",
+        max_chars=10_000,
+    )
+    # Retried test: attempt label appears in the <summary>.
+    assert "<code>pkg/test_x.py::test_flaky</code> (attempt 1/2) &mdash; failure" in md
+    # Single-attempt test: no attempt label.
+    assert "<code>pkg/test_y.py::test_hard</code> &mdash; failure" in md
+    assert "pkg/test_y.py::test_hard</code> (attempt" not in md
+
+
 def test_render_markdown_escapes_html_in_failure_summary() -> None:
     """Failure message/name in <summary> must be HTML-escaped so it renders literally."""
     a = AttemptsRecord(name="pkg/<weird>::test_a")
@@ -231,6 +278,7 @@ def test_render_markdown_escapes_html_in_failure_summary() -> None:
             kind="failure",
             message="ValueError: <not a tag> & co",
             body="trace",
+            attempt=1,
         ),
     ]
     md = _render_markdown(

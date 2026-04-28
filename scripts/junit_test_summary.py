@@ -80,12 +80,15 @@ class FailureDetail:
     `body` is the inner text of the `<failure>`/`<error>` element (typically
     the pytest traceback). `message` is the element's `message` attribute
     (typically the exception's repr). `kind` is "failure" or "error".
+    `attempt` is the 1-based index of this attempt within the test's run
+    sequence, used to label failures of retried tests as "attempt N/M".
     """
 
     name: str
     kind: str
     message: str
     body: str
+    attempt: int
 
 
 class AttemptsRecord:
@@ -220,6 +223,9 @@ def _parse_junit(path: Path) -> tuple[dict[str, AttemptsRecord], list[FailureDet
             entry = AttemptsRecord(name=name)
             per_test[name] = entry
         entry.record(outcome=outcome)
+        # `entry.attempts` was just incremented, so it is the 1-based index of
+        # this attempt within the test's run sequence.
+        attempt_index = entry.attempts
         for child in testcase:
             if child.tag in ("failure", "error"):
                 failures.append(
@@ -228,6 +234,7 @@ def _parse_junit(path: Path) -> tuple[dict[str, AttemptsRecord], list[FailureDet
                         kind=child.tag,
                         message=child.get("message") or "",
                         body=(child.text or "").strip(),
+                        attempt=attempt_index,
                     )
                 )
     return per_test, failures
@@ -307,7 +314,7 @@ def _render_markdown(
         marked = "yes" if t.name in flaky_ids else "no"
         rows.append(f"| `{t.name}` | {t.attempts} | {_final_status_cell(t)} | {marked} |")
 
-    failure_blocks = [_render_failure_block(f) for f in failures]
+    failure_blocks = [_render_failure_block(f, total_attempts=per_test[f.name].attempts) for f in failures]
 
     return _assemble_with_truncation(
         header_lines=header_lines,
@@ -318,14 +325,18 @@ def _render_markdown(
     )
 
 
-def _render_failure_block(failure: FailureDetail) -> str:
+def _render_failure_block(failure: FailureDetail, total_attempts: int) -> str:
     """Render one failed/errored attempt as a collapsed `<details>` block.
 
-    Shows the test id, kind (failure/error), and the first line of the
-    failure message in the summary header so the reader can scan without
-    expanding. The body is the captured traceback, capped at
-    `_PER_FAILURE_BODY_CAP` characters so a single huge traceback can't
-    crowd out everything else.
+    Shows the test id, attempt label (when the test ran more than once),
+    kind (failure/error), and the first line of the failure message in the
+    summary header so the reader can scan without expanding. The body is
+    the captured traceback, capped at `_PER_FAILURE_BODY_CAP` characters
+    so a single huge traceback can't crowd out everything else.
+
+    For tests that ran more than once (retries / flaky-recovered), each
+    failed attempt is labelled "attempt N/M" so a reader can tell whether
+    a test failed only on its first try (likely flake) vs every attempt.
     """
     body = failure.body
     if len(body) > _PER_FAILURE_BODY_CAP:
@@ -333,7 +344,8 @@ def _render_failure_block(failure: FailureDetail) -> str:
     first_line = failure.message.splitlines()[0] if failure.message else ""
     if len(first_line) > _FAILURE_MESSAGE_LINE_CAP:
         first_line = first_line[:_FAILURE_MESSAGE_LINE_CAP] + "..."
-    summary = f"<code>{html.escape(failure.name)}</code> &mdash; {failure.kind}"
+    attempt_label = f" (attempt {failure.attempt}/{total_attempts})" if total_attempts > 1 else ""
+    summary = f"<code>{html.escape(failure.name)}</code>{attempt_label} &mdash; {failure.kind}"
     if first_line:
         summary += f": {html.escape(first_line)}"
     # The blank line after <summary> is required by GitHub-flavored markdown
