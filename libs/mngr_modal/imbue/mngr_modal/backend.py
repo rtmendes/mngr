@@ -504,8 +504,6 @@ Supported build arguments for the modal provider:
         app_name = truncate_modal_name(app_name, max_length=max_app_name_length)
 
         # Without credentials, raise early to avoid Modal SDK side effects.
-        # The caller (get_all_provider_instances) catches this per-provider
-        # and skips Modal, allowing other providers to continue.
         if config.mode == ModalMode.DIRECT and not _has_modal_credentials():
             raise ModalAuthError()
 

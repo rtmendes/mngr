@@ -149,7 +149,7 @@ def get_all_provider_instances(
         try:
             providers.append(get_provider_instance(name, mngr_ctx))
         except MngrError as e:
-            logger.warning("Skipping provider {}: {}", name, e)
+            logger.warning(e)
 
     # Then, add default instances for backends not already configured (unless disabled)
     for backend_name in list_backends():
@@ -167,7 +167,7 @@ def get_all_provider_instances(
             try:
                 providers.append(get_provider_instance(provider_name, mngr_ctx))
             except MngrError as e:
-                logger.warning("Skipping provider {}: {}", provider_name, e)
+                logger.warning(e)
             seen_names.add(backend_name)
 
     if reset_caches:
