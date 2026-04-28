@@ -1049,7 +1049,7 @@ class _DiscoveryErrorProvider(MockProviderInstance):
 
 
 @pytest.mark.allow_warnings(
-    match=r"^Failed\ to\ discover\ hosts\ for\ provider\ error\-provider:\ simulated\ discovery\ failure\ from\ test"
+    match=r"^Failed to discover hosts for provider error-provider: simulated discovery failure from test"
 )
 def test_discover_hosts_for_gc_skips_provider_on_error(temp_host_dir: Path, temp_mngr_ctx: MngrContext) -> None:
     """_discover_hosts_for_gc skips a provider entirely when discovery raises MngrError.
@@ -1070,7 +1070,7 @@ def test_discover_hosts_for_gc_skips_provider_on_error(temp_host_dir: Path, temp
 
 
 @pytest.mark.allow_warnings(
-    match=r"^Failed\ to\ discover\ hosts\ for\ provider\ error\-provider:\ simulated\ discovery\ failure\ from\ test"
+    match=r"^Failed to discover hosts for provider error-provider: simulated discovery failure from test"
 )
 def test_discover_hosts_for_gc_continues_after_one_provider_fails(
     temp_host_dir: Path, temp_mngr_ctx: MngrContext
@@ -1336,7 +1336,7 @@ def test_clean_work_dir_removes_git_worktree(local_host: Host, temp_git_repo: Pa
 
 
 @pytest.mark.allow_warnings(
-    match=r"^git\ worktree\ remove\ failed,\ falling\ back\ to\ directory\ removal:\ fatal:\ not\ a\ git\ repository\ \(or\ any\ of\ the\ parent\ directories\):\ \.git"
+    match=r"^git worktree remove failed, falling back to directory removal: fatal: not a git repository \(or any of the parent directories\): \.git"
 )
 def test_remove_git_worktree_without_parseable_git_file_falls_back_to_rm(local_host: Host, tmp_path: Path) -> None:
     """_remove_git_worktree falls back to rm -rf when the .git file cannot be parsed."""
@@ -1353,7 +1353,7 @@ def test_remove_git_worktree_without_parseable_git_file_falls_back_to_rm(local_h
 
 
 @pytest.mark.allow_warnings(
-    match=r"^git\ worktree\ remove\ failed,\ falling\ back\ to\ directory\ removal:\ fatal:\ cannot\ change\ to\ '"
+    match=r"^git worktree remove failed, falling back to directory removal: fatal: cannot change to '"
 )
 def test_remove_git_worktree_falls_back_to_rm_when_git_not_in_main_repo(local_host: Host, tmp_path: Path) -> None:
     """_remove_git_worktree falls back to rm -rf when git worktree remove fails."""
@@ -2082,7 +2082,7 @@ def test_gc_work_dirs_skips_offline_host_not_online_interface(
 
 
 @pytest.mark.allow_warnings(
-    match=r"^git\ worktree\ remove\ failed,\ falling\ back\ to\ directory\ removal:\ fatal:\ not\ a\ git\ repository\ \(or\ any\ of\ the\ parent\ directories\):\ \.git"
+    match=r"^git worktree remove failed, falling back to directory removal: fatal: not a git repository \(or any of the parent directories\): \.git"
 )
 def test_remove_git_worktree_falls_back_when_git_file_absent(local_host: Host, tmp_path: Path) -> None:
     """_remove_git_worktree falls back to rm -rf when the .git file does not exist."""
@@ -2364,7 +2364,7 @@ def test_gc_machines_destroys_old_online_host_with_no_agents(
     assert provider.destroyed_hosts == [host.id]
 
 
-@pytest.mark.allow_warnings(match=r"^Failed\ to\ authenticate\ with\ host")
+@pytest.mark.allow_warnings(match=r"^Failed to authenticate with host")
 def test_gc_machines_skips_host_on_auth_error_during_discover(
     local_provider: LocalProviderInstance,
     temp_mngr_ctx: MngrContext,
@@ -2389,7 +2389,7 @@ def test_gc_machines_skips_host_on_auth_error_during_discover(
     assert provider.destroyed_hosts == []
 
 
-@pytest.mark.allow_warnings(match=r"^Failed\ to\ connect\ to\ host")
+@pytest.mark.allow_warnings(match=r"^Failed to connect to host")
 def test_gc_machines_skips_host_on_connection_error_during_discover(
     local_provider: LocalProviderInstance,
     temp_mngr_ctx: MngrContext,
@@ -2428,7 +2428,7 @@ def test_gc_machines_dry_run_identifies_but_does_not_destroy_old_online_host(
     assert provider.destroyed_hosts == []
 
 
-@pytest.mark.allow_warnings(match=r"^Cannot\ determine\ last\ activity\ of\ host")
+@pytest.mark.allow_warnings(match=r"^Cannot determine last activity of host")
 def test_gc_machines_skips_host_when_activity_time_unreadable(
     local_provider: LocalProviderInstance,
     temp_mngr_ctx: MngrContext,
@@ -2515,7 +2515,7 @@ def test_gc_machines_skips_old_running_host_with_no_activity(
     assert provider.destroyed_hosts == []
 
 
-@pytest.mark.allow_warnings(match=r"^Cannot\ determine\ state\ of\ host")
+@pytest.mark.allow_warnings(match=r"^Cannot determine state of host")
 def test_gc_machines_skips_host_when_get_state_unreadable(
     local_provider: LocalProviderInstance,
     temp_mngr_ctx: MngrContext,

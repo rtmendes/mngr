@@ -676,7 +676,7 @@ def test_parse_config_raises_on_unknown_top_level_field() -> None:
         parse_config(raw, disabled_plugins=frozenset())
 
 
-@pytest.mark.allow_warnings(match=r"^Unknown\ configuration\ fields:\ \['nonexistent_top_level'\]")
+@pytest.mark.allow_warnings(match=r"^Unknown configuration fields: \['nonexistent_top_level'\]")
 def test_parse_config_warns_on_unknown_top_level_field_when_not_strict(log_warnings: list[str]) -> None:
     """parse_config with strict=False should warn about unknown top-level fields."""
     raw = {"prefix": "test-", "nonexistent_top_level": "value"}
@@ -1180,7 +1180,7 @@ def test_load_config_rejects_unknown_fields_by_default(
         load_config(pm=pm, context_dir=tmp_path, concurrency_group=cg)
 
 
-@pytest.mark.allow_warnings(match=r"^Unknown\ configuration\ fields:\ \['future_field'\]")
+@pytest.mark.allow_warnings(match=r"^Unknown configuration fields: \['future_field'\]")
 def test_load_config_allows_unknown_fields_with_env_var(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
