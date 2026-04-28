@@ -8,6 +8,7 @@ from typing import ClassVar
 from typing import Final
 from typing import assert_never
 
+import modal.config
 from loguru import logger
 from pydantic import ConfigDict
 from pydantic import Field
@@ -50,6 +51,17 @@ from imbue.modal_proxy.testing import TestingModalInterface
 MODAL_BACKEND_NAME: Final[ProviderBackendName] = ProviderBackendName("modal")
 STATE_VOLUME_SUFFIX: Final[str] = "-state"
 MODAL_NAME_MAX_LENGTH: Final[int] = 64
+
+
+def _has_modal_credentials() -> bool:
+    """Cheap check for whether Modal has usable credentials on this machine.
+
+    Reads modal.config (already merged from ~/.modal.toml and MODAL_TOKEN_*
+    env vars at SDK import time). No network calls. Returning False lets the
+    backend skip eager Modal SDK setup so `mngr list` etc. don't abort on a
+    fresh install -- mirrors mngr_vultr's empty-api-key pattern.
+    """
+    return bool(modal.config.config.get("token_id") and modal.config.config.get("token_secret"))
 
 
 def truncate_modal_name(name: str, max_length: int) -> str:
@@ -489,6 +501,23 @@ Supported build arguments for the modal provider:
         if len(app_name) > max_app_name_length:
             logger.warning("Truncating Modal app name to {} characters: {}", max_app_name_length, app_name)
         app_name = truncate_modal_name(app_name, max_length=max_app_name_length)
+
+        # Skip eager Modal SDK setup when no credentials are configured. The instance
+        # is still constructed so listing/discovery don't abort the whole run; any
+        # operation needing the live Modal app will surface ModalAuthError.
+        if config.mode == ModalMode.DIRECT and not _has_modal_credentials():
+            logger.info(
+                "Modal credentials not configured; provider '{}' will report no hosts. "
+                "Run 'uvx modal token set' to enable.",
+                name,
+            )
+            return ModalProviderInstance(
+                name=name,
+                host_dir=host_dir,
+                mngr_ctx=mngr_ctx,
+                config=config,
+                modal_app=None,
+            )
 
         # Create the ModalProviderApp that manages the Modal app and its resources
         try:

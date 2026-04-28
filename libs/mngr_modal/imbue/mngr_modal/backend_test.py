@@ -1,7 +1,11 @@
 from pathlib import Path
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr_modal.backend import get_files_for_deploy
+from imbue.mngr_modal.config import ModalProviderConfig
+from imbue.mngr_modal.instance import ModalProviderInstance
 
 # =============================================================================
 # get_files_for_deploy Tests
@@ -57,3 +61,30 @@ def test_get_files_for_deploy_includes_non_key_files(temp_mngr_ctx: MngrContext,
     assert len(result) == 1
     matched_values = list(result.values())
     assert matched_values[0] == config_file
+
+
+# =============================================================================
+# ModalProviderInstance: behavior when Modal credentials are missing
+# =============================================================================
+
+
+def test_modal_provider_with_no_modal_app_returns_empty_discovery(
+    temp_mngr_ctx: MngrContext, cg: ConcurrencyGroup
+) -> None:
+    """A ModalProviderInstance built with modal_app=None reports no hosts instead
+    of raising. build_provider_instance constructs this state when no Modal
+    credentials are configured, so a fresh install can run `mngr list` without
+    aborting -- mirrors mngr_vultr's empty-api-key pattern.
+    """
+    instance = ModalProviderInstance(
+        name=ProviderInstanceName("modal"),
+        host_dir=Path("/mngr"),
+        mngr_ctx=temp_mngr_ctx,
+        config=ModalProviderConfig(),
+        modal_app=None,
+    )
+
+    assert instance.discover_hosts(cg=cg) == []
+    assert instance.discover_hosts_and_agents(cg=cg) == {}
+    instance.reset_caches()
+    instance.close()

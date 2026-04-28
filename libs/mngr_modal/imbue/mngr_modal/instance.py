@@ -402,7 +402,17 @@ class ModalProviderInstance(BaseProviderInstance):
     _cache_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     config: ModalProviderConfig = Field(frozen=True, description="Modal provider configuration")
-    modal_app: ModalProviderApp = Field(frozen=True, description="Modal app manager")
+    # None when Modal credentials are not configured on this machine. The provider is
+    # still constructed (so `mngr list` and friends don't abort the whole run) but
+    # discovery returns empty and any operation needing the live Modal app raises
+    # ModalAuthError. Mirrors mngr_vultr's empty-api-key pattern.
+    modal_app: ModalProviderApp | None = Field(default=None, frozen=True, description="Modal app manager")
+
+    @property
+    def _required_modal_app(self) -> ModalProviderApp:
+        if self.modal_app is None:
+            raise ModalAuthError()
+        return self.modal_app
 
     @property
     def supports_snapshots(self) -> bool:
@@ -423,17 +433,17 @@ class ModalProviderInstance(BaseProviderInstance):
     @property
     def app_name(self) -> str:
         """Get the Modal app name from the modal_app manager."""
-        return self.modal_app.app_name
+        return self._required_modal_app.app_name
 
     @property
     def environment_name(self) -> str:
         """Get the Modal environment name from the modal_app manager."""
-        return self.modal_app.environment_name
+        return self._required_modal_app.environment_name
 
     @property
     def _modal_interface(self) -> ModalInterface:
         """Get the Modal interface from the modal_app manager."""
-        return self.modal_app.modal_interface
+        return self._required_modal_app.modal_interface
 
     @property
     def _keys_dir(self) -> Path:
@@ -532,7 +542,7 @@ class ModalProviderInstance(BaseProviderInstance):
         mounted inside sandboxes and writable by untrusted code). The state
         volume is only accessed by mngr itself and contains trusted data.
         """
-        return ModalVolume.model_construct(modal_volume=self.modal_app.volume)
+        return ModalVolume.model_construct(modal_volume=self._required_modal_app.volume)
 
     def _get_host_record_path(self, host_id: HostId) -> str:
         """Get the path for a host record on the volume."""
@@ -1387,7 +1397,7 @@ log "=== Shutdown script completed ==="
 
         Raises ModalProxyAuthError if Modal credentials are not configured.
         """
-        return self.modal_app.app
+        return self._required_modal_app.app
 
     def get_captured_output(self) -> str:
         """Get all captured Modal output for this provider instance.
@@ -1398,7 +1408,7 @@ log "=== Shutdown script completed ==="
 
         Returns an empty string if no app has been created yet.
         """
-        return self.modal_app.get_captured_output()
+        return self._required_modal_app.get_captured_output()
 
     def _list_all_sandboxes_for_app(self, app: AppInterface) -> list[SandboxInterface]:
         """
@@ -2164,6 +2174,9 @@ log "=== Shutdown script completed ==="
         If a ConcurrencyGroup is provided, it will be used for parallel fetching of
         sandboxes and host records, which is safer for concurrent operations.
         """
+        if self.modal_app is None:
+            logger.warning("Modal credentials not configured, skipping Modal host discovery")
+            return []
 
         hosts: list[HostInterface] = []
         # Track the host state determined during discovery so we don't need to
@@ -2360,6 +2373,9 @@ log "=== Shutdown script completed ==="
         2. Read all host records from the state volume
         3. Read all agent data from the state volume (for all hosts)
         """
+        if self.modal_app is None:
+            logger.warning("Modal credentials not configured, skipping Modal host discovery")
+            return {}
         with log_span("Modal discover_hosts_and_agents for provider={}", self.name):
             try:
                 with log_span("Parallel fetch: sandbox IDs + host/agent records"):
@@ -3165,7 +3181,8 @@ log "=== Shutdown script completed ==="
         Exits the app.run() context manager if one was created for this app_name.
         This makes the app ephemeral and prevents accumulation.
         """
-        self.modal_app.close()
+        if self.modal_app is not None:
+            self.modal_app.close()
 
 
 def _build_modal_secrets_from_env(
