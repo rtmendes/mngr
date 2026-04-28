@@ -630,10 +630,11 @@ def test_authenticate_supertokens_raises_401_on_general_error(
 
 
 class _FakeLoginMethod:
-    """Stand-in for a SuperTokens LoginMethod -- only the ``email`` attribute is used."""
+    """Stand-in for a SuperTokens LoginMethod -- only ``email`` and ``verified`` are used."""
 
-    def __init__(self, email: str | None) -> None:
+    def __init__(self, email: str | None, verified: bool = True) -> None:
         self.email = email
+        self.verified = verified
 
 
 class _FakeStUser:
@@ -643,10 +644,37 @@ class _FakeStUser:
         self.login_methods = login_methods
 
 
-def test_default_email_getter_returns_first_non_empty_email() -> None:
-    """When the user has multiple login methods, the first one with a non-empty email is returned."""
+def test_default_email_getter_returns_first_verified_non_empty_email() -> None:
+    """The first login method with both a non-empty email and ``verified=True`` is returned."""
     user = _FakeStUser([_FakeLoginMethod(None), _FakeLoginMethod(""), _FakeLoginMethod("alice@example.com")])
     assert _default_email_getter("user-123", user_getter=lambda _user_id: user) == "alice@example.com"
+
+
+def test_default_email_getter_skips_unverified_emails() -> None:
+    """Unverified login methods are skipped; the first *verified* email is returned.
+
+    A user with both an unverified third-party login (``evil@gmail.com``) and a verified
+    emailpassword login (``alice@imbue.com``) must surface ``alice@imbue.com``, since the
+    paid-feature gate authorizes by domain ownership and only verified emails prove that.
+    """
+    user = _FakeStUser(
+        [
+            _FakeLoginMethod("evil@gmail.com", verified=False),
+            _FakeLoginMethod("alice@imbue.com", verified=True),
+        ]
+    )
+    assert _default_email_getter("user-123", user_getter=lambda _user_id: user) == "alice@imbue.com"
+
+
+def test_default_email_getter_returns_none_when_only_unverified_emails() -> None:
+    """When every login method is unverified, returns None even if emails are present."""
+    user = _FakeStUser(
+        [
+            _FakeLoginMethod("evil@gmail.com", verified=False),
+            _FakeLoginMethod("other@gmail.com", verified=False),
+        ]
+    )
+    assert _default_email_getter("user-123", user_getter=lambda _user_id: user) is None
 
 
 def test_default_email_getter_returns_none_when_no_login_method_has_email() -> None:

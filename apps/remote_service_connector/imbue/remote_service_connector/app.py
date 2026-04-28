@@ -1148,13 +1148,19 @@ def _default_email_getter(
     user_id: str,
     user_getter: Callable[[str], Any] = get_user,
 ) -> str | None:
-    """Return the first email registered for the given SuperTokens user_id.
+    """Return the first **verified** email registered for the given SuperTokens user_id.
 
     A SuperTokens user may have several login methods (email/password, OAuth
-    providers); the first one with a non-empty email is returned. Errors from
-    the SDK are swallowed so a transient SuperTokens core problem does not
-    block sign-in -- the caller will simply see ``email=None`` and the paid-
-    feature gate will deny access until the lookup succeeds again.
+    providers) with independent ``verified`` flags. Only login methods whose
+    ``verified`` flag is True are considered, since the paid-feature gate
+    authorizes by domain ownership and that requires the email to actually
+    have been verified. Returns the first matching email, or ``None`` if the
+    user has no verified email.
+
+    Errors from the SDK are swallowed so a transient SuperTokens core
+    problem does not block sign-in -- the caller will simply see
+    ``email=None`` and the paid-feature gate will deny access until the
+    lookup succeeds again.
 
     ``user_getter`` is exposed for tests so they can drive each branch
     (``None`` user, missing emails, SDK exception) without monkeypatching the
@@ -1168,7 +1174,7 @@ def _default_email_getter(
     if user is None:
         return None
     for login_method in user.login_methods:
-        if login_method.email:
+        if login_method.email and login_method.verified:
             return login_method.email
     return None
 
