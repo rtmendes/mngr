@@ -67,10 +67,7 @@ _MAX_OUTPUT_LENGTH = 2000
 # local-command caveats, etc.) with isMeta=true on the top-level event. We
 # use that flag to reclassify those messages as tool results so transcript
 # viewers show them under the tool role rather than the user role (no human
-# typed them). The prefix below is a best-effort label refinement -- if
-# Claude renames it, the message is still classified correctly under
-# tool_name="meta".
-_STOP_HOOK_PREFIX = "Stop hook feedback:"
+# typed them).
 
 
 def _extract_text_content(content):
@@ -231,11 +228,7 @@ def convert():
                     if is_meta:
                         # Framework-injected message (stop hook output, etc.) --
                         # reclassify as tool_result so it doesn't masquerade as user input.
-                        if text.startswith(_STOP_HOOK_PREFIX):
-                            tool_name = "stop_hook"
-                        else:
-                            tool_name = "meta"
-                        event_id = _make_event_id(uuid, tool_name)
+                        event_id = _make_event_id(uuid, "meta")
                         if event_id not in existing_ids and text:
                             output = text
                             if len(output) > _MAX_OUTPUT_LENGTH:
@@ -245,8 +238,8 @@ def convert():
                                 "type": "tool_result",
                                 "event_id": event_id,
                                 "source": "claude/common_transcript",
-                                "tool_call_id": f"{tool_name}-{uuid}",
-                                "tool_name": tool_name,
+                                "tool_call_id": f"meta-{uuid}",
+                                "tool_name": "meta",
                                 "output": output,
                                 "is_error": False,
                                 "message_uuid": uuid,

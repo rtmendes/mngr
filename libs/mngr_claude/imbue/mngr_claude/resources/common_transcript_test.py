@@ -514,13 +514,12 @@ def test_output_writes_to_correct_path(tmp_path: Path, stub_mngr_log_sh: str) ->
     assert len(expected_path.read_text().strip().splitlines()) == 1
 
 
-def test_meta_user_message_with_stop_hook_prefix_classified_as_stop_hook(
-    tmp_path: Path, stub_mngr_log_sh: str
-) -> None:
-    """isMeta=true messages whose text starts with the stop hook marker get tool_name='stop_hook'.
+def test_meta_user_message_classified_as_meta(tmp_path: Path, stub_mngr_log_sh: str) -> None:
+    """isMeta=true messages (stop hook output, local-command caveats, etc.) get tool_name='meta'.
 
-    Claude Code injects stop hook output into the user-message stream with isMeta=true.
-    Transcripts should show it under the tool role since no human typed it.
+    Claude Code injects framework-generated content into the user-message stream with
+    isMeta=true. Transcripts should show all such content under the tool role since no
+    human typed it.
     """
     runner = ScriptRunner(tmp_path, stub_mngr_log_sh)
     feedback = (
@@ -534,33 +533,11 @@ def test_meta_user_message_with_stop_hook_prefix_classified_as_stop_hook(
     events = runner.get_output_events()
     assert len(events) == 1
     assert events[0]["type"] == "tool_result"
-    assert events[0]["tool_name"] == "stop_hook"
-    assert events[0]["tool_call_id"] == "stop_hook-uuid-stop"
+    assert events[0]["tool_name"] == "meta"
+    assert events[0]["tool_call_id"] == "meta-uuid-stop"
     assert events[0]["output"] == feedback
     assert events[0]["is_error"] is False
-    assert events[0]["event_id"] == "uuid-stop-stop_hook"
-
-
-def test_meta_user_message_without_stop_hook_prefix_classified_as_meta(tmp_path: Path, stub_mngr_log_sh: str) -> None:
-    """isMeta=true messages that don't match the stop hook prefix get tool_name='meta'.
-
-    Claude Code uses isMeta=true for other framework-injected content too (e.g.
-    <local-command-caveat>). They still aren't user-typed, so they shouldn't show
-    under the user role -- but we don't pretend to know they are stop hook output.
-    """
-    runner = ScriptRunner(tmp_path, stub_mngr_log_sh)
-    text = "<local-command-caveat>Caveat: framework-generated note</local-command-caveat>"
-    runner.write_input([_make_meta_event("uuid-meta", "2026-01-01T00:00:00Z", text=text)])
-
-    result = runner.run_single_pass()
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-
-    events = runner.get_output_events()
-    assert len(events) == 1
-    assert events[0]["type"] == "tool_result"
-    assert events[0]["tool_name"] == "meta"
-    assert events[0]["tool_call_id"] == "meta-uuid-meta"
-    assert events[0]["event_id"] == "uuid-meta-meta"
+    assert events[0]["event_id"] == "uuid-stop-meta"
 
 
 def test_meta_user_message_truncates_long_output(tmp_path: Path, stub_mngr_log_sh: str) -> None:
@@ -600,16 +577,16 @@ def test_meta_user_message_with_list_content(tmp_path: Path, stub_mngr_log_sh: s
     events = runner.get_output_events()
     assert len(events) == 1
     assert events[0]["type"] == "tool_result"
-    assert events[0]["tool_name"] == "stop_hook"
+    assert events[0]["tool_name"] == "meta"
 
 
 def test_real_claude_stop_hook_entry_classified_correctly(tmp_path: Path, stub_mngr_log_sh: str) -> None:
     """Regression test pinned to a real Claude Code stop hook session entry.
 
-    If Claude Code changes either the isMeta flag or the 'Stop hook feedback:'
-    marker, this test fails loudly so the converter can be updated deliberately.
-    The fixture below was captured from an actual ~/.claude/projects/.../*.jsonl
-    line emitted by Claude Code; only the uuid and timestamp were sanitized.
+    If Claude Code drops the isMeta flag from these injected entries, this test
+    fails loudly so the converter can be updated deliberately. The fixture below
+    was captured from an actual ~/.claude/projects/.../*.jsonl line emitted by
+    Claude Code; only the uuid and timestamp were sanitized.
     """
     real_entry = (
         '{"type": "user", "uuid": "fixture-uuid", "timestamp": "2026-01-01T00:00:00.000Z",'
@@ -627,7 +604,7 @@ def test_real_claude_stop_hook_entry_classified_correctly(tmp_path: Path, stub_m
     events = runner.get_output_events()
     assert len(events) == 1
     assert events[0]["type"] == "tool_result"
-    assert events[0]["tool_name"] == "stop_hook"
+    assert events[0]["tool_name"] == "meta"
 
 
 def test_user_text_quoting_stop_hook_marker_without_is_meta_stays_user(tmp_path: Path, stub_mngr_log_sh: str) -> None:
