@@ -55,9 +55,10 @@ and how the agent receives the answer.
 
 Each spawned `latchkey gateway` subprocess receives its own
 `LATCHKEY_PERMISSIONS_CONFIG=~/.minds/agents/<agent_id>/latchkey_permissions.json`
-environment variable. The file is created lazily on the first grant; before
-that, latchkey treats the missing file as `allow all`, so the very first
-permission-blocked call for a service is always case (b) (no credentials).
+environment variable. The desktop client materializes this file with empty
+`rules` before spawning the gateway, so the gateway always starts in a
+deny-all state -- the implicit `allow all` that latchkey applies when the
+file is missing must never be observable by an agent.
 
 When an agent is destroyed, its `latchkey_permissions.json` is also removed so a
 future agent reusing the same id starts with a clean slate.

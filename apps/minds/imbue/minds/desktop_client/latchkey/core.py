@@ -46,12 +46,14 @@ from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
 from imbue.minds.desktop_client.latchkey._spawn import spawn_detached_latchkey_ensure_browser
 from imbue.minds.desktop_client.latchkey._spawn import spawn_detached_latchkey_gateway
 from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
+from imbue.minds.desktop_client.latchkey.store import LatchkeyPermissionsConfig
 from imbue.minds.desktop_client.latchkey.store import delete_gateway_info
 from imbue.minds.desktop_client.latchkey.store import ensure_browser_log_path
 from imbue.minds.desktop_client.latchkey.store import gateway_log_path
 from imbue.minds.desktop_client.latchkey.store import list_gateway_infos
 from imbue.minds.desktop_client.latchkey.store import permissions_path_for_agent
 from imbue.minds.desktop_client.latchkey.store import save_gateway_info
+from imbue.minds.desktop_client.latchkey.store import save_permissions
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
@@ -498,6 +500,15 @@ class Latchkey(MutableModel):
         port = _allocate_free_port(self.listen_host)
         log_path = gateway_log_path(data_dir, agent_id)
         permissions_path = permissions_path_for_agent(data_dir, agent_id)
+
+        # Latchkey treats a missing permissions file as ``allow all``, so
+        # we always materialize an empty-rules file before spawning the
+        # gateway. This guarantees the gateway starts in a deny-all state
+        # and only grants permissions the user has explicitly approved.
+        # Pre-existing files are left untouched so previously granted
+        # permissions survive desktop-client restarts.
+        if not permissions_path.is_file():
+            save_permissions(permissions_path, LatchkeyPermissionsConfig())
 
         with log_span(
             "Starting Latchkey gateway for agent {} on {}:{}",

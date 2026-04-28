@@ -44,9 +44,10 @@ def spawn_detached_latchkey_gateway(
     When ``permissions_config_path`` is supplied, ``LATCHKEY_PERMISSIONS_CONFIG``
     is set in the child's environment so this gateway enforces a
     per-agent permission ruleset. Latchkey treats a missing file as
-    ``allow all``, so the file does not need to exist when the gateway
-    starts -- it is created lazily by the desktop client on the first
-    grant.
+    ``allow all``, so callers are responsible for ensuring the file
+    exists (with empty rules at minimum) before this function is
+    invoked -- otherwise the gateway would start in an unsafe
+    permit-all state until the desktop client wrote its first grant.
 
     The returned ``Popen`` object is intentionally allowed to go out of
     scope. Python's ``subprocess`` module parks finished children on an

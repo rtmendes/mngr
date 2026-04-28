@@ -233,6 +233,51 @@ def test_stop_gateway_for_agent_terminates_subprocess_and_removes_record(tmp_pat
     assert _wait_for_process_exit(info.pid)
 
 
+def test_ensure_gateway_started_creates_empty_permissions_file_when_missing(tmp_path: Path) -> None:
+    """The permissions file must exist with empty rules before the gateway starts.
+
+    Latchkey treats a missing permissions file as ``allow all``, so we
+    materialize a deny-all baseline up front. Otherwise any service the
+    agent calls would be implicitly granted before the user sees a
+    prompt.
+    """
+    fake_binary = _make_fake_latchkey_binary(tmp_path)
+    manager = Latchkey(latchkey_binary=str(fake_binary))
+    manager.initialize(data_dir=tmp_path)
+    agent_id = AgentId()
+    permissions_path = tmp_path / "agents" / str(agent_id) / "latchkey_permissions.json"
+    assert not permissions_path.exists()
+    try:
+        info = manager.ensure_gateway_started(agent_id)
+        assert _wait_for_listening(info.host, info.port)
+        assert permissions_path.is_file()
+        assert json.loads(permissions_path.read_text()) == {"rules": []}
+    finally:
+        manager.stop_gateway_for_agent(agent_id)
+
+
+def test_ensure_gateway_started_preserves_existing_permissions_file(tmp_path: Path) -> None:
+    """An existing permissions file must not be overwritten on spawn.
+
+    Granted permissions need to survive desktop-client restarts, so the
+    spawn path must only seed an empty file when none is present.
+    """
+    fake_binary = _make_fake_latchkey_binary(tmp_path)
+    manager = Latchkey(latchkey_binary=str(fake_binary))
+    manager.initialize(data_dir=tmp_path)
+    agent_id = AgentId()
+    permissions_path = tmp_path / "agents" / str(agent_id) / "latchkey_permissions.json"
+    permissions_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = '{"rules": [{"slack": ["any"]}]}'
+    permissions_path.write_text(existing)
+    try:
+        info = manager.ensure_gateway_started(agent_id)
+        assert _wait_for_listening(info.host, info.port)
+        assert permissions_path.read_text() == existing
+    finally:
+        manager.stop_gateway_for_agent(agent_id)
+
+
 def test_stop_gateway_for_agent_preserves_permissions_file(tmp_path: Path) -> None:
     """Granted permissions must outlive the agent's gateway lifetime.
 
