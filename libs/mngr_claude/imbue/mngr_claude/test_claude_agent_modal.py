@@ -53,6 +53,12 @@ def _create_modal_agent(
             "--no-ensure-clean",
             "--source",
             str(source_dir),
+            # Plumb the test sandbox's ANTHROPIC_API_KEY into the agent env file
+            # so claude inside the Modal agent can authenticate. The agent runs
+            # in a separate Modal sandbox from this subprocess, so process-env
+            # inheritance does not reach it.
+            "--pass-env",
+            "ANTHROPIC_API_KEY",
             "--",
             "--dangerously-skip-permissions",
             "-p",
