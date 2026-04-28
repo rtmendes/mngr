@@ -8,6 +8,7 @@ from imbue.mngr.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
 
 
+@pytest.mark.rsync
 @pytest.mark.release
 @pytest.mark.tmux
 @pytest.mark.modal
@@ -72,6 +73,7 @@ def test_create_with_idle_mode_and_timeout(e2e: E2eSession) -> None:
     expect(result).to_succeed()
 
 
+@pytest.mark.rsync
 @pytest.mark.release
 @pytest.mark.tmux
 @pytest.mark.modal
@@ -106,6 +108,7 @@ def test_create_with_extra_tmux_windows(e2e: E2eSession) -> None:
     assert "extra" in window_names, f"Expected 'extra' window, got: {window_names}"
 
 
+@pytest.mark.rsync
 @pytest.mark.release
 @pytest.mark.tmux
 @pytest.mark.modal
@@ -133,6 +136,7 @@ def test_create_with_no_ensure_clean(e2e: E2eSession) -> None:
     assert "my-task" in agent_names
 
 
+@pytest.mark.rsync
 @pytest.mark.release
 @pytest.mark.tmux
 @pytest.mark.modal
@@ -163,6 +167,7 @@ def test_create_with_connect_command(e2e: E2eSession) -> None:
     assert len(matching) == 1
 
 
+@pytest.mark.rsync
 @pytest.mark.release
 @pytest.mark.tmux
 @pytest.mark.modal
