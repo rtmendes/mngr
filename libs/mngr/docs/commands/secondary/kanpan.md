@@ -68,7 +68,7 @@ mngr kanpan [OPTIONS]
 
 ## See Also
 
-- [mngr list](../primary/list.md) - List agents (see its Filtering section for the full flag reference)
+- [mngr list](../primary/list.md#filtering) - List agents (see its Filtering section for the full flag reference)
 
 ## Examples
 
@@ -90,8 +90,8 @@ $ mngr kanpan --project mngr
 $ mngr kanpan --running
 ```
 
-**Show running agents with a specific label**
+**Show stopped agents with a specific label**
 
 ```bash
-$ mngr kanpan --running --label env=prod
+$ mngr kanpan --stopped --label env=prod
 ```

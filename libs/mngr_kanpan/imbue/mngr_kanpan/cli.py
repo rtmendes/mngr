@@ -56,9 +56,9 @@ Requires the gh CLI to be installed and authenticated for GitHub PR information.
         ("Launch the kanpan board", "mngr kanpan"),
         ("Show only agents for a specific project", "mngr kanpan --project mngr"),
         ("Show only running agents", "mngr kanpan --running"),
-        ("Show running agents with a specific label", "mngr kanpan --running --label env=prod"),
+        ("Show stopped agents with a specific label", "mngr kanpan --stopped --label env=prod"),
     ),
-    see_also=(("list", "List agents (see its Filtering section for the full flag reference)"),),
+    see_also=(("list#filtering", "List agents (see its Filtering section for the full flag reference)"),),
 ).register()
 
 add_pager_help_option(kanpan)
