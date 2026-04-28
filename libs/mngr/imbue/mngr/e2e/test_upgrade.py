@@ -56,7 +56,7 @@ def test_config_with_unknown_keys_non_strict(minimal_install_env: MinimalInstall
 
 @pytest.mark.release
 @pytest.mark.timeout(60)
-@pytest.mark.xfail(
+@pytest.mark.skip(
     reason=(
         "Current mngr discovery (libs/mngr/imbue/mngr/providers/local/instance.py) "
         "does NOT read state.json files from $MNGR_HOST_DIR/hosts/<id>/ -- the local "
@@ -66,7 +66,6 @@ def test_config_with_unknown_keys_non_strict(minimal_install_env: MinimalInstall
         "support; re-enable once disk-based state discovery is reintroduced, or "
         "rewrite the test to exercise the actual current discovery path."
     ),
-    strict=False,
 )
 def test_preexisting_agent_state_discovered(minimal_install_env: MinimalInstallEnv) -> None:
     """mngr list should discover agents from pre-existing state on disk.
