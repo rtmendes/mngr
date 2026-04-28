@@ -139,7 +139,7 @@ def _extract_credentials_from_page(page: Page) -> TelegramUserCredentials:
             parsed_account = json.loads(account_data)
             first_name = parsed_account.get("firstName", "")
         except (json.JSONDecodeError, AttributeError):
-            logger.trace("Could not parse account1 data for first name")
+            logger.warning("Could not parse account1 data for first name")
 
     return TelegramUserCredentials(
         dc_id=dc_id,

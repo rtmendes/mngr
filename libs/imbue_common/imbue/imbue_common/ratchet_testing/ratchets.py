@@ -579,6 +579,7 @@ def find_bash_scripts_without_strict_mode(cwd: Path) -> list[str]:
 
 
 _DECODE_ERROR_NAMES: Final[frozenset[str]] = frozenset({"TOMLDecodeError", "JSONDecodeError"})
+_NON_SILENT_LOG_LEVELS: Final[frozenset[str]] = frozenset({"warning", "error", "exception"})
 
 
 @pure
@@ -602,11 +603,34 @@ def _handler_catches_decode_error(handler: ast.ExceptHandler) -> bool:
 
 
 @pure
-def _handler_re_raises(handler: ast.ExceptHandler) -> bool:
-    """Return True if the except handler's body contains any raise statement."""
+def _is_non_silent_log_call(node: ast.AST) -> bool:
+    """Return True if `node` is a `<x>.warning(...)` / `.error(...)` / `.exception(...)` call.
+
+    Matches loguru / stdlib logging conventions; the receiver is intentionally not
+    pinned (e.g. `logger.warning(...)` and `logger.opt(...).error(...)` both count).
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if not isinstance(func, ast.Attribute):
+        return False
+    return func.attr in _NON_SILENT_LOG_LEVELS
+
+
+@pure
+def _handler_is_non_silent(handler: ast.ExceptHandler) -> bool:
+    """Return True if the handler body re-raises OR logs at warning+ level.
+
+    Buffering the line and logging later is fine (e.g. MalformedJsonLineWarner does
+    this) but is invisible to the AST -- those sites have to live with the ratchet
+    count. The common cases are `raise SomeError(...) from e` (drops the count) and
+    `logger.warning("...", e)` (also drops the count).
+    """
     for stmt in handler.body:
         for inner in ast.walk(stmt):
             if isinstance(inner, ast.Raise):
+                return True
+            if _is_non_silent_log_call(inner):
                 return True
     return False
 
@@ -615,12 +639,17 @@ def find_silent_decode_error_catches(
     source_dir: Path,
     excluded_path_patterns: tuple[str, ...] = (),
 ) -> tuple[RatchetMatchChunk, ...]:
-    """Find except blocks catching TOMLDecodeError or JSONDecodeError that do not re-raise.
+    """Find except blocks catching TOMLDecodeError / JSONDecodeError that neither re-raise nor log.
 
-    Corrupt config/settings files must crash the process so the user knows to clean them up --
-    silently swallowing a decode error turns a loud problem into a silent misconfiguration.
-    Handlers that re-raise (optionally wrapping the original) are fine and do not count.
-    Test files are excluded so tests can simulate bad input without tripping the ratchet.
+    A corrupt config/settings file should crash the process so the user knows to fix it.
+    For other decode-error sources (internal state, JSONL streams, subprocess / API output,
+    CLI flag values), the parser may fall back, but it must at least surface the problem at
+    warning level -- silently swallowing a decode error turns a loud problem into a silent
+    misconfiguration. Handlers that re-raise (`raise ...` / `raise ... from e`) or that call
+    a `.warning(...)` / `.error(...)` / `.exception(...)` method on any receiver (loguru's
+    `logger.warning`, stdlib `logging.exception`, or chained forms like
+    `logger.opt(...).error(...)`) do not count. Test files are excluded so tests can simulate
+    bad input without tripping the ratchet.
     """
     file_paths = _get_non_ignored_files_with_extension(
         source_dir, FileExtension(".py"), TEST_FILE_PATTERNS + excluded_path_patterns
@@ -635,7 +664,7 @@ def find_silent_decode_error_catches(
             assert isinstance(node, ast.ExceptHandler)
             if not _handler_catches_decode_error(node):
                 continue
-            if _handler_re_raises(node):
+            if _handler_is_non_silent(node):
                 continue
 
             start_line = LineNumber(node.lineno)

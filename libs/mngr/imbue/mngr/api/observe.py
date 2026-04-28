@@ -414,7 +414,7 @@ class AgentObserver(MutableModel):
         try:
             event = parse_discovery_event_line(stripped)
         except (json.JSONDecodeError, ValueError) as e:
-            logger.trace("Failed to parse discovery event: {}", e)
+            logger.warning("Failed to parse discovery event from subprocess output: {}", e)
             return
 
         if isinstance(event, FullDiscoverySnapshotEvent):
