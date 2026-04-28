@@ -2586,7 +2586,7 @@ def test_host_collect_agent_env_vars_includes_mngr_variables(
     assert env["MNGR_AGENT_WORK_DIR"] == str(temp_work_dir)
     assert "MNGR_AGENT_STATE_DIR" in env
     assert "LLM_USER_PATH" in env
-    assert "GIT_BASE_BRANCH" in env
+    assert "MNGR_GIT_BASE_BRANCH" in env
 
 
 def test_host_collect_agent_env_vars_with_env_file(
