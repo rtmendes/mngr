@@ -91,7 +91,7 @@ mngr connect [OPTIONS] [AGENT]
 ## See Also
 
 - [mngr create](./create.md) - Create and connect to a new agent
-- [mngr list](./list.md#filtering) - List agents (see its Filtering section for the full flag reference)
+- [mngr list](./list.md) - List agents (full filter flag reference lives here)
 
 ## Examples
 

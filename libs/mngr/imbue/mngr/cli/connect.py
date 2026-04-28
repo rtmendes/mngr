@@ -472,7 +472,7 @@ reference; the same flags work identically here.""",
     ),
     see_also=(
         ("create", "Create and connect to a new agent"),
-        ("list#filtering", "List agents (see its Filtering section for the full flag reference)"),
+        ("list", "List agents (full filter flag reference lives here)"),
     ),
 ).register()
 
