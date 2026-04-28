@@ -1157,10 +1157,11 @@ def _default_email_getter(
     have been verified. Returns the first matching email, or ``None`` if the
     user has no verified email.
 
-    Errors from the SDK are swallowed so a transient SuperTokens core
-    problem does not block sign-in -- the caller will simply see
-    ``email=None`` and the paid-feature gate will deny access until the
-    lookup succeeds again.
+    Only the SuperTokens SDK's typed errors (``SuperTokensSessionError``,
+    ``SuperTokensGeneralError``) are caught and turned into ``None`` (with a
+    warning log); any other exception (e.g. transport-level network errors
+    that escape the SDK) is allowed to propagate, so that truly unexpected
+    failures surface loudly rather than silently denying paid-feature access.
 
     ``user_getter`` is exposed for tests so they can drive each branch
     (``None`` user, missing emails, SDK exception) without monkeypatching the
