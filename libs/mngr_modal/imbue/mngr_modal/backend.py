@@ -54,10 +54,12 @@ MODAL_NAME_MAX_LENGTH: Final[int] = 64
 
 
 def _has_modal_credentials() -> bool:
-    """Return True if a Modal token is configured.
+    """Return True iff the Modal SDK would find a usable token.
 
-    Reads modal.config, which merged ~/.modal.toml and MODAL_TOKEN_* env vars
-    at SDK import time. No network calls.
+    Goes through modal.config so the lookup matches what Modal itself uses:
+    MODAL_TOKEN_ID/MODAL_TOKEN_SECRET env vars (highest priority), then the
+    .modal.toml file at MODAL_CONFIG_PATH (default ~/.modal.toml) under the
+    active MODAL_PROFILE. No network calls.
     """
     return bool(modal.config.config.get("token_id") and modal.config.config.get("token_secret"))
 
