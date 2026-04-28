@@ -8,6 +8,7 @@ import pytest
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.errors import MngrError
 from imbue.mngr.utils.git_utils import GIT_MIRROR_PUSH_REFSPECS
+from imbue.mngr.utils.git_utils import derive_project_name_for_source
 from imbue.mngr.utils.git_utils import derive_project_name_from_path
 from imbue.mngr.utils.git_utils import find_git_common_dir
 from imbue.mngr.utils.git_utils import find_git_worktree_root
@@ -96,6 +97,45 @@ def test_resolve_project_filter_values_expands_dot_to_current_project(
 def test_resolve_project_filter_values_handles_empty(cg: ConcurrencyGroup) -> None:
     """Empty input returns empty output without resolving the project."""
     assert resolve_project_filter_values((), cg) == ()
+
+
+def test_derive_project_name_for_source_prefers_label(tmp_path: Path, cg: ConcurrencyGroup) -> None:
+    """source_project_label wins over remote_url and path."""
+    project_dir = tmp_path / "path-name"
+    project_dir.mkdir()
+
+    result = derive_project_name_for_source(
+        project_dir,
+        cg,
+        remote_url="https://github.com/owner/url-name.git",
+        source_project_label="label-name",
+    )
+
+    assert result == "label-name"
+
+
+def test_derive_project_name_for_source_uses_remote_url(tmp_path: Path, cg: ConcurrencyGroup) -> None:
+    """remote_url is used when no source_project_label is given."""
+    project_dir = tmp_path / "path-name"
+    project_dir.mkdir()
+
+    result = derive_project_name_for_source(
+        project_dir,
+        cg,
+        remote_url="https://github.com/owner/url-name.git",
+    )
+
+    assert result == "url-name"
+
+
+def test_derive_project_name_for_source_falls_back_to_path(tmp_path: Path, cg: ConcurrencyGroup) -> None:
+    """With no hints, falls back to derive_project_name_from_path on the given path."""
+    project_dir = tmp_path / "path-name"
+    project_dir.mkdir()
+
+    result = derive_project_name_for_source(project_dir, cg)
+
+    assert result == "path-name"
 
 
 def test_derive_from_folder_name_when_no_git(tmp_path: Path, cg: ConcurrencyGroup) -> None:

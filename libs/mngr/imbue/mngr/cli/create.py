@@ -96,10 +96,9 @@ from imbue.mngr.primitives import TransferMode
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.utils.duration import parse_duration_to_seconds
 from imbue.mngr.utils.editor import EditorSession
-from imbue.mngr.utils.git_utils import derive_project_name_from_path
+from imbue.mngr.utils.git_utils import derive_project_name_for_source
 from imbue.mngr.utils.git_utils import find_git_worktree_root
 from imbue.mngr.utils.git_utils import get_current_git_branch
-from imbue.mngr.utils.git_utils import parse_project_name_from_url
 from imbue.mngr.utils.logging import LoggingConfig
 from imbue.mngr.utils.logging import LoggingSuppressor
 from imbue.mngr.utils.name_generator import generate_agent_name
@@ -439,7 +438,7 @@ class _CreateCommand(click.Command):
 @optgroup.option("--label", multiple=True, help="Agent label KEY=VALUE [repeatable] [experimental]")
 @optgroup.option(
     "--project",
-    help="Project name for the agent (sets the 'project' label; '.' expands to the current project) [default: derived from git remote origin or folder name]",
+    help="Project name for the agent (sets the 'project' label; '.' is equivalent to omitting this flag) [default: derived from git remote origin or folder name]",
 )
 @optgroup.group("Host Options")
 @optgroup.option(
@@ -1164,27 +1163,18 @@ def _parse_project_name(
     """Determine the project name for a new agent.
 
     Priority: explicit --project flag > source agent's project label > git remote > folder name.
-    The literal "." for --project is expanded to the current project (derived from cwd).
+    The literal "." for --project is treated as if --project were omitted, i.e. it triggers the
+    default derivation from the source location (source agent label, then remote URL, then path).
     """
-    if opts.project == ".":
-        return derive_project_name_from_path(Path.cwd(), cg)
-    if opts.project:
+    if opts.project and opts.project != ".":
         return opts.project
-
-    # If creating from an existing agent, inherit its project label
-    if resolved_source.agent is not None:
-        source_project = resolved_source.agent.labels.get("project")
-        if source_project is not None:
-            return source_project
-
-    # Derive from the already-fetched remote URL (works for both local and remote hosts)
-    if remote_url is not None:
-        project_name = parse_project_name_from_url(remote_url)
-        if project_name is not None:
-            return project_name
-
-    # Fall back to the source directory name (resolve to normalize symlinks / '..' components)
-    return resolved_source.location.path.resolve().name
+    source_project_label = resolved_source.agent.labels.get("project") if resolved_source.agent is not None else None
+    return derive_project_name_for_source(
+        resolved_source.location.path,
+        cg,
+        remote_url=remote_url,
+        source_project_label=source_project_label,
+    )
 
 
 def _try_reuse_existing_agent(

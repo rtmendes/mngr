@@ -535,18 +535,17 @@ def test_parse_project_name_returns_explicit_project(
     assert result == "explicit-project"
 
 
-def test_parse_project_name_expands_dot_to_current_project(
+def test_parse_project_name_treats_dot_as_default_derivation(
     default_create_cli_opts: CreateCliOptions,
     local_provider: LocalProviderInstance,
     tmp_path: Path,
     cg: ConcurrencyGroup,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When --project is '.', expand it to the cwd-derived project name."""
+    """`--project .` is equivalent to omitting --project: derive from the source, not cwd."""
     cwd_project = tmp_path / "cwd-project"
     cwd_project.mkdir()
     monkeypatch.chdir(cwd_project)
-    # Source path is intentionally different from cwd to verify '.' resolves to cwd, not source.
     other_dir = tmp_path / "other-source"
     other_dir.mkdir()
     local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
@@ -557,7 +556,8 @@ def test_parse_project_name_expands_dot_to_current_project(
 
     result = _parse_project_name(resolved, opts, remote_url=None, cg=cg)
 
-    assert result == "cwd-project"
+    # Should match what the default derivation produces (source dir name), not cwd.
+    assert result == "other-source"
 
 
 def test_parse_project_name_inherits_from_source_agent(
