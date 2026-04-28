@@ -374,7 +374,7 @@ def test_list_all_host_records_returns_empty_when_volume_empty(
 ) -> None:
     """_list_all_host_records should return empty list when volume has no host records."""
     # Mock volume.listdir to return empty
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.listdir.return_value = []
 
     host_records = modal_provider._list_all_host_records(modal_provider.mngr_ctx.concurrency_group)
@@ -387,7 +387,7 @@ def test_list_all_host_records_returns_empty_when_hosts_dir_missing(
     modal_provider: ModalProviderInstance,
 ) -> None:
     """_list_all_host_records should return empty list when /hosts/ directory does not exist."""
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.listdir.side_effect = ModalProxyNotFoundError("Not found")
 
     host_records = modal_provider._list_all_host_records(modal_provider.mngr_ctx.concurrency_group)
@@ -406,7 +406,7 @@ def test_list_all_host_records_returns_records_from_volume(
     # Mock volume.listdir to return a file entry
     mock_entry = MagicMock()
     mock_entry.path = f"hosts/{host_id}.json"
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.listdir.return_value = [mock_entry]
 
     # Mock _read_host_record to return the host record
@@ -429,7 +429,7 @@ def test_list_all_host_records_skips_non_json_files(
     mock_entry_dir = MagicMock()
     mock_entry_dir.path = "hosts/subdir"
 
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.listdir.return_value = [mock_entry_json, mock_entry_txt, mock_entry_dir]
 
     # Mock _read_host_record - only called for .json files
@@ -1214,7 +1214,7 @@ def test_persist_agent_data_writes_to_volume(
     # Track what was written to the volume via write_files
     written_files: dict[str, bytes] = {}
 
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.write_files.side_effect = lambda files: written_files.update(files)
 
     modal_provider.persist_agent_data(host_id, agent_data)
@@ -1241,7 +1241,7 @@ def test_persist_agent_data_without_id_logs_warning_and_returns(
         "type": "test",
     }
 
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
 
     # Should not raise, just return early
     modal_provider.persist_agent_data(host_id, agent_data)
@@ -1257,7 +1257,7 @@ def test_remove_persisted_agent_data_removes_file(
     host_id = HostId.generate()
     agent_id = AgentId.generate()
 
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
 
     modal_provider.remove_persisted_agent_data(host_id, agent_id)
 
@@ -1272,7 +1272,7 @@ def test_remove_persisted_agent_data_handles_file_not_found(
     host_id = HostId.generate()
     agent_id = AgentId.generate()
 
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.remove_file.side_effect = FileNotFoundError("File not found")
 
     # Should not raise
@@ -1447,7 +1447,7 @@ def test_list_all_host_and_agent_records_returns_empty_when_volume_empty(
     modal_provider: ModalProviderInstance,
 ) -> None:
     """_list_all_host_and_agent_records returns empty results when volume has no entries."""
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.listdir.return_value = []
 
     host_records, agent_data = modal_provider._list_all_host_and_agent_records(
@@ -1470,7 +1470,7 @@ def test_list_all_host_and_agent_records_returns_host_records_and_agent_data(
 
     mock_entry = MagicMock()
     mock_entry.path = f"hosts/{host_id}.json"
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.listdir.return_value = [mock_entry]
 
     with (
@@ -1497,7 +1497,7 @@ def test_list_all_host_and_agent_records_skips_non_json_files(
     mock_entry_dir = MagicMock()
     mock_entry_dir.path = "hosts/some-directory"
 
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.listdir.return_value = [mock_entry_json, mock_entry_dir]
 
     with (
@@ -1518,7 +1518,7 @@ def test_list_all_host_and_agent_records_without_agents(
 
     mock_entry = MagicMock()
     mock_entry.path = f"hosts/{host_id}.json"
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.listdir.return_value = [mock_entry]
 
     with (
@@ -1542,7 +1542,7 @@ def test_list_all_host_and_agent_records_skips_none_host_records(
 
     mock_entry = MagicMock()
     mock_entry.path = f"hosts/{host_id}.json"
-    mock_volume = cast(Any, modal_provider.modal_app).volume
+    mock_volume = cast(Any, modal_provider.modal_app.volume)
     mock_volume.listdir.return_value = [mock_entry]
 
     with (
@@ -1565,7 +1565,7 @@ def test_list_running_host_ids_returns_empty_when_no_sandboxes(
     modal_provider: ModalProviderInstance,
 ) -> None:
     """_list_running_host_ids returns empty set when no sandboxes exist."""
-    mock_iface = cast(Any, modal_provider.modal_app).modal_interface
+    mock_iface = cast(Any, modal_provider.modal_app.modal_interface)
     mock_iface.sandbox_list.return_value = []
     result = modal_provider._list_running_host_ids(modal_provider.mngr_ctx.concurrency_group)
 
@@ -1584,7 +1584,7 @@ def test_list_running_host_ids_fetches_tags_in_parallel(
     sandbox_2 = MagicMock()
     sandbox_2.get_tags.return_value = {TAG_HOST_ID: str(host_id_2), TAG_HOST_NAME: "host-2"}
 
-    mock_iface = cast(Any, modal_provider.modal_app).modal_interface
+    mock_iface = cast(Any, modal_provider.modal_app.modal_interface)
     mock_iface.sandbox_list.return_value = [sandbox_1, sandbox_2]
     result = modal_provider._list_running_host_ids(modal_provider.mngr_ctx.concurrency_group)
 
@@ -1602,7 +1602,7 @@ def test_list_running_host_ids_skips_sandboxes_without_host_id_tag(
     sandbox_without_tag = MagicMock()
     sandbox_without_tag.get_tags.return_value = {"some_other_tag": "value"}
 
-    mock_iface = cast(Any, modal_provider.modal_app).modal_interface
+    mock_iface = cast(Any, modal_provider.modal_app.modal_interface)
     mock_iface.sandbox_list.return_value = [sandbox_with_tag, sandbox_without_tag]
     result = modal_provider._list_running_host_ids(modal_provider.mngr_ctx.concurrency_group)
 
