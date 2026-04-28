@@ -1144,7 +1144,10 @@ def _authenticate_agent(token: str, ops: CloudflareOps) -> AgentAuth:
 _USER_ID_PREFIX_LENGTH = 16
 
 
-def _default_email_getter(user_id: str) -> str | None:
+def _default_email_getter(
+    user_id: str,
+    user_getter: Callable[[str], Any] = get_user,
+) -> str | None:
     """Return the first email registered for the given SuperTokens user_id.
 
     A SuperTokens user may have several login methods (email/password, OAuth
@@ -1152,9 +1155,13 @@ def _default_email_getter(user_id: str) -> str | None:
     the SDK are swallowed so a transient SuperTokens core problem does not
     block sign-in -- the caller will simply see ``email=None`` and the paid-
     feature gate will deny access until the lookup succeeds again.
+
+    ``user_getter`` is exposed for tests so they can drive each branch
+    (``None`` user, missing emails, SDK exception) without monkeypatching the
+    SuperTokens SDK; production callers should rely on the default.
     """
     try:
-        user = get_user(user_id)
+        user = user_getter(user_id)
     except (SuperTokensSessionError, SuperTokensGeneralError) as exc:
         logger.warning("Failed to fetch SuperTokens user %s: %s", user_id[:8], exc)
         return None

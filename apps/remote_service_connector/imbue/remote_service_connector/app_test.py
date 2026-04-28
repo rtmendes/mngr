@@ -20,6 +20,7 @@ from imbue.remote_service_connector.app import TunnelComponentTooLongError
 from imbue.remote_service_connector.app import TunnelNotFoundError
 from imbue.remote_service_connector.app import TunnelOwnershipError
 from imbue.remote_service_connector.app import _authenticate_supertokens
+from imbue.remote_service_connector.app import _default_email_getter
 from imbue.remote_service_connector.app import cf_check
 from imbue.remote_service_connector.app import cf_list_all_pages
 from imbue.remote_service_connector.app import extract_service_name
@@ -623,6 +624,58 @@ def test_authenticate_supertokens_raises_401_on_general_error(
         _authenticate_supertokens("bad-token", session_getter=_raise)
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Invalid token"
+
+
+# -- _default_email_getter tests --
+
+
+class _FakeLoginMethod:
+    """Stand-in for a SuperTokens LoginMethod -- only the ``email`` attribute is used."""
+
+    def __init__(self, email: str | None) -> None:
+        self.email = email
+
+
+class _FakeStUser:
+    """Stand-in for a SuperTokens User -- only the ``login_methods`` attribute is used."""
+
+    def __init__(self, login_methods: list[_FakeLoginMethod]) -> None:
+        self.login_methods = login_methods
+
+
+def test_default_email_getter_returns_first_non_empty_email() -> None:
+    """When the user has multiple login methods, the first one with a non-empty email is returned."""
+    user = _FakeStUser([_FakeLoginMethod(None), _FakeLoginMethod(""), _FakeLoginMethod("alice@example.com")])
+    assert _default_email_getter("user-123", user_getter=lambda _user_id: user) == "alice@example.com"
+
+
+def test_default_email_getter_returns_none_when_no_login_method_has_email() -> None:
+    """When no login method has a non-empty email, returns None."""
+    user = _FakeStUser([_FakeLoginMethod(None), _FakeLoginMethod("")])
+    assert _default_email_getter("user-123", user_getter=lambda _user_id: user) is None
+
+
+def test_default_email_getter_returns_none_when_user_is_none() -> None:
+    """When the SDK reports no user for the id, returns None."""
+    assert _default_email_getter("user-123", user_getter=lambda _user_id: None) is None
+
+
+def test_default_email_getter_returns_none_on_general_error() -> None:
+    """When the SDK raises a GeneralError (e.g. transient core problem), it is swallowed and None is returned."""
+
+    def _raise(_user_id: str) -> None:
+        raise SuperTokensGeneralError("transient core problem")
+
+    assert _default_email_getter("user-123", user_getter=_raise) is None
+
+
+def test_default_email_getter_returns_none_on_session_error() -> None:
+    """When the SDK raises a SessionError, it is swallowed and None is returned."""
+
+    def _raise(_user_id: str) -> None:
+        raise SuperTokensSessionError("bad session")
+
+    assert _default_email_getter("user-123", user_getter=_raise) is None
 
 
 # -- Auth route tests --
