@@ -81,6 +81,42 @@ _AUTO_ALLOW_WARNINGS_MARKERS: frozenset[str] = frozenset(
 )
 
 
+def _compile_allow_warnings_pattern(marker: pytest.Mark) -> re.Pattern[str] | None:
+    """Validate an ``@pytest.mark.allow_warnings`` marker and return its compiled pattern.
+
+    Returns None when no ``match=`` kwarg was given (allow any warning). Raises
+    TypeError with a helpful message when the marker is misused.
+    """
+    if marker.args:
+        raise TypeError(
+            "@pytest.mark.allow_warnings takes only the 'match' keyword "
+            "argument; got positional argument(s). Use "
+            "@pytest.mark.allow_warnings(match=r'...') instead."
+        )
+    unknown_kwargs = sorted(set(marker.kwargs) - {"match"})
+    if unknown_kwargs:
+        raise TypeError(
+            f"@pytest.mark.allow_warnings got unexpected keyword "
+            f"argument(s): {unknown_kwargs}. The only supported keyword "
+            "argument is 'match'. Use "
+            "@pytest.mark.allow_warnings(match=r'...') instead."
+        )
+    match_arg = marker.kwargs.get("match")
+    if match_arg is None:
+        return None
+    if not isinstance(match_arg, str):
+        raise TypeError(
+            f"@pytest.mark.allow_warnings `match` must be a str regex pattern or None; "
+            f"got {type(match_arg).__name__}: {match_arg!r}"
+        )
+    try:
+        return re.compile(match_arg)
+    except re.error as exc:
+        raise TypeError(
+            f"@pytest.mark.allow_warnings was given an invalid regex for `match`: {match_arg!r} ({exc})"
+        ) from exc
+
+
 @pytest.fixture(autouse=True)
 def fail_on_unexpected_loguru_warnings(
     request: pytest.FixtureRequest,
@@ -101,35 +137,7 @@ def fail_on_unexpected_loguru_warnings(
     marker = request.node.get_closest_marker("allow_warnings")
     pushed_frame = False
     if marker is not None:
-        if marker.args:
-            raise TypeError(
-                "@pytest.mark.allow_warnings takes only the 'match' keyword "
-                "argument; got positional argument(s). Use "
-                "@pytest.mark.allow_warnings(match=r'...') instead."
-            )
-        unknown_kwargs = sorted(set(marker.kwargs) - {"match"})
-        if unknown_kwargs:
-            raise TypeError(
-                f"@pytest.mark.allow_warnings got unexpected keyword "
-                f"argument(s): {unknown_kwargs}. The only supported keyword "
-                "argument is 'match'. Use "
-                "@pytest.mark.allow_warnings(match=r'...') instead."
-            )
-        match_arg = marker.kwargs.get("match")
-        if match_arg is None:
-            pattern = None
-        else:
-            if not isinstance(match_arg, str):
-                raise TypeError(
-                    f"@pytest.mark.allow_warnings `match` must be a str regex pattern or None; "
-                    f"got {type(match_arg).__name__}: {match_arg!r}"
-                )
-            try:
-                pattern = re.compile(match_arg)
-            except re.error as exc:
-                raise TypeError(
-                    f"@pytest.mark.allow_warnings was given an invalid regex for `match`: {match_arg!r} ({exc})"
-                ) from exc
+        pattern = _compile_allow_warnings_pattern(marker)
         WARNINGS_ALLOWED_STACK.append(pattern)
         pushed_frame = True
     elif any(request.node.get_closest_marker(m) is not None for m in _AUTO_ALLOW_WARNINGS_MARKERS):
