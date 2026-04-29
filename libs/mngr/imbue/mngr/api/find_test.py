@@ -982,13 +982,11 @@ class _TimeoutCapturingAgent(BaseAgent):
 @pytest.mark.tmux
 def test_ensure_agent_started_uses_per_agent_ready_timeout(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
     """ensure_agent_started must use the agent's configured ready_timeout_seconds."""
     agent = create_test_agent(
         local_provider,
-        temp_host_dir,
         temp_work_dir,
         extra_data={"ready_timeout_seconds": 42.0},
         agent_class=_TimeoutCapturingAgent,
@@ -1004,7 +1002,6 @@ def test_ensure_agent_started_uses_per_agent_ready_timeout(
 @pytest.mark.tmux
 def test_ensure_agent_started_respects_env_var_when_data_unset(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1012,7 +1009,6 @@ def test_ensure_agent_started_respects_env_var_when_data_unset(
     monkeypatch.setenv("MNGR_AGENT_READY_TIMEOUT", "37.5")
     agent = create_test_agent(
         local_provider,
-        temp_host_dir,
         temp_work_dir,
         agent_class=_TimeoutCapturingAgent,
     )

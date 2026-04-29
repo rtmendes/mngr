@@ -9,7 +9,6 @@ from typing import Any
 
 from imbue.mngr.agents.base_agent import BaseAgent
 from imbue.mngr.config.data_types import AgentTypeConfig
-from imbue.mngr.hosts.host import Host
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import AgentTypeName
@@ -22,7 +21,6 @@ from imbue.mngr.utils.testing import get_short_random_string
 
 def create_test_agent(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
     agent_config: AgentTypeConfig | None = None,
     agent_type: AgentTypeName | None = None,
@@ -42,14 +40,8 @@ def create_test_agent(
     ``agent_class`` lets callers substitute a ``BaseAgent`` subclass (e.g. a
     test stub that records calls). ``extra_init_kwargs`` are forwarded to the
     constructor so subclasses with extra fields can be instantiated.
-
-    ``temp_host_dir`` is accepted for fixture-injection symmetry with the call
-    sites; the actual on-disk host directory used is ``local_provider.host_dir``,
-    which the ``local_provider`` fixture wires to ``temp_host_dir``.
     """
-    del temp_host_dir  # see docstring
     host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
-    assert isinstance(host, Host)
 
     agent_id = AgentId.generate()
     agent_name = AgentName(f"test-agent-{get_short_random_string()}")
