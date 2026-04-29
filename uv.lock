@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -1950,7 +1950,7 @@ requires-dist = [
 
 [[package]]
 name = "imbue-mngr-vps-docker"
-version = "0.2.1"
+version = "0.1.0"
 source = { editable = "libs/mngr_vps_docker" }
 dependencies = [
     { name = "imbue-mngr" },
@@ -1961,7 +1961,7 @@ requires-dist = [{ name = "imbue-mngr", editable = "libs/mngr" }]
 
 [[package]]
 name = "imbue-mngr-vultr"
-version = "0.2.1"
+version = "0.1.0"
 source = { editable = "libs/mngr_vultr" }
 dependencies = [
     { name = "imbue-mngr" },
