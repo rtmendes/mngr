@@ -591,7 +591,16 @@ def resolve_provider_names_for_identifiers(
         )
     except DiscoverySchemaChangedError as e:
         logger.warning("Discovery event schema mismatch; regenerating snapshot and retrying ({})", e)
-        _write_unfiltered_full_snapshot(mngr_ctx, ErrorBehavior.CONTINUE)
+        # The regenerate is best-effort: if it fails (e.g. transient I/O error
+        # or a provider raising a BaseMngrError that escapes list_agents'
+        # internal handling), fall back to a full scan rather than crashing
+        # the caller. This preserves the function's contract that resolution
+        # failures degrade gracefully to None.
+        try:
+            _write_unfiltered_full_snapshot(mngr_ctx, ErrorBehavior.CONTINUE)
+        except (OSError, BaseMngrError) as regen_e:
+            logger.warning("Failed to regenerate discovery snapshot during recovery: {}", regen_e)
+            return None
         # Retry once. A second schema-changed error is unrecoverable from
         # this layer: either the freshly-written snapshot itself fails to
         # parse (a real schema bug), or _write_unfiltered_full_snapshot ran
