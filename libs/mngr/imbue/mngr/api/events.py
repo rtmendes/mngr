@@ -627,7 +627,12 @@ def _read_events_from_file(
 ) -> tuple[list[EventRecord], int]:
     """Read and parse all events from a single JSONL file.
 
-    Returns (events, byte_length) where byte_length is the size of the raw content.
+    Returns (events, bytes_consumed) where bytes_consumed is the byte length of the
+    portion of the file ending in the final newline. Any trailing partial line (a
+    mid-flush write with no terminating newline) is intentionally held back so the
+    tail thread can re-read it once the writer flushes the rest, rather than letting
+    the partial be silently dropped here while the tail starts past it and sees only
+    the suffix as malformed JSON.
     """
     try:
         content = read_event_content(target, relative_file_path)
@@ -637,7 +642,8 @@ def _read_events_from_file(
 
     events: list[EventRecord] = []
     warner = MalformedJsonLineWarner(source_description=f"event file '{relative_file_path}'")
-    for line in content.split("\n"):
+    lines, bytes_consumed = split_complete_lines(content)
+    for line in lines:
         parsed = warner.parse(line)
         if parsed is None:
             continue
@@ -646,7 +652,7 @@ def _read_events_from_file(
         if record is not None:
             events.append(record)
 
-    return events, len(content.encode("utf-8"))
+    return events, bytes_consumed
 
 
 def read_all_historical_events(
