@@ -1,10 +1,14 @@
-"""Pre-publish verification for CI: check versions, graph, and pin consistency.
+"""Pre-publish helpers for CI: verify versions/graph/pins, and list package dirs.
 
-Called from the publish workflow before building packages. Verifies:
+Called from the publish workflow. In its default mode, verifies:
 1. Displays all package versions
 2. If --expected-mngr-version is given, checks mngr version matches (for tag/dispatch checks)
 3. The hard-coded package graph matches actual pyproject.toml declarations
 4. All internal dependency pins are consistent
+
+With --list-package-dirs, instead prints `libs/<dir_name>` for each publishable
+package (one per line) and exits without running any verification. This is used
+by the publish workflow to drive the per-package build loop.
 
 Usage:
     uv run scripts/verify_publish.py
