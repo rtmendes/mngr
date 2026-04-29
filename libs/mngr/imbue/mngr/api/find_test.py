@@ -1,13 +1,11 @@
-import json
 from collections.abc import Callable
-from datetime import datetime
-from datetime import timezone
 from pathlib import Path
-from typing import Any
 
 import pytest
+from pydantic import Field
 
 from imbue.mngr.agents.base_agent import BaseAgent
+from imbue.mngr.agents.testing import create_test_agent
 from imbue.mngr.api.find import AgentMatch
 from imbue.mngr.api.find import ParsedSourceLocation
 from imbue.mngr.api.find import determine_resolved_path
@@ -21,7 +19,6 @@ from imbue.mngr.api.find import group_agents_by_host
 from imbue.mngr.api.find import parse_source_string
 from imbue.mngr.api.find import resolve_agent_reference
 from imbue.mngr.api.find import resolve_host_reference
-from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import AgentNotFoundError
 from imbue.mngr.errors import UserInputError
@@ -37,7 +34,6 @@ from imbue.mngr.primitives import DiscoveredHost
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import ProviderInstanceName
-from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 
 
@@ -972,7 +968,7 @@ def test_find_all_matching_agents_filtered_by_host() -> None:
 class _TimeoutCapturingAgent(BaseAgent):
     """Test agent that records the timeout passed to wait_for_ready_signal."""
 
-    captured_timeouts: list[float | None] = []
+    captured_timeouts: list[float | None] = Field(default_factory=list)
 
     def wait_for_ready_signal(
         self,
@@ -983,56 +979,24 @@ class _TimeoutCapturingAgent(BaseAgent):
         self.captured_timeouts.append(timeout)
 
 
-def _make_stopped_agent_with_data(
-    local_provider: LocalProviderInstance,
-    temp_work_dir: Path,
-    extra_data: dict[str, Any],
-) -> tuple[_TimeoutCapturingAgent, Host]:
-    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
-    assert isinstance(host, Host)
-
-    agent_id = AgentId.generate()
-    agent_name = AgentName(f"timeout-test-{agent_id}")
-    create_time = datetime.now(timezone.utc)
-
-    agent_dir = local_provider.host_dir / "agents" / str(agent_id)
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    data: dict[str, Any] = {
-        "id": str(agent_id),
-        "name": str(agent_name),
-        "type": "test",
-        "command": "sleep 1000",
-        "work_dir": str(temp_work_dir),
-        "create_time": create_time.isoformat(),
-    }
-    data.update(extra_data)
-    (agent_dir / "data.json").write_text(json.dumps(data))
-
-    agent = _TimeoutCapturingAgent(
-        id=agent_id,
-        name=agent_name,
-        agent_type=AgentTypeName("test"),
-        work_dir=temp_work_dir,
-        create_time=create_time,
-        host_id=host.id,
-        host=host,
-        mngr_ctx=local_provider.mngr_ctx,
-        agent_config=AgentTypeConfig(command=CommandString("sleep 1000")),
-        captured_timeouts=[],
-    )
-    return agent, host
-
-
 @pytest.mark.tmux
 def test_ensure_agent_started_uses_per_agent_ready_timeout(
     local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
     """ensure_agent_started must use the agent's configured ready_timeout_seconds."""
-    agent, host = _make_stopped_agent_with_data(local_provider, temp_work_dir, {"ready_timeout_seconds": 42.0})
+    agent = create_test_agent(
+        local_provider,
+        temp_host_dir,
+        temp_work_dir,
+        extra_data={"ready_timeout_seconds": 42.0},
+        agent_class=_TimeoutCapturingAgent,
+    )
     assert agent.get_lifecycle_state() == AgentLifecycleState.STOPPED
 
-    ensure_agent_started(agent, host, is_start_desired=True)
+    assert isinstance(agent, _TimeoutCapturingAgent)
+    ensure_agent_started(agent, agent.host, is_start_desired=True)
 
     assert agent.captured_timeouts == [42.0]
 
@@ -1040,14 +1004,21 @@ def test_ensure_agent_started_uses_per_agent_ready_timeout(
 @pytest.mark.tmux
 def test_ensure_agent_started_respects_env_var_when_data_unset(
     local_provider: LocalProviderInstance,
+    temp_host_dir: Path,
     temp_work_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ensure_agent_started must honor MNGR_AGENT_READY_TIMEOUT when data.json has no override."""
     monkeypatch.setenv("MNGR_AGENT_READY_TIMEOUT", "37.5")
-    agent, host = _make_stopped_agent_with_data(local_provider, temp_work_dir, {})
+    agent = create_test_agent(
+        local_provider,
+        temp_host_dir,
+        temp_work_dir,
+        agent_class=_TimeoutCapturingAgent,
+    )
     assert agent.get_lifecycle_state() == AgentLifecycleState.STOPPED
 
-    ensure_agent_started(agent, host, is_start_desired=True)
+    assert isinstance(agent, _TimeoutCapturingAgent)
+    ensure_agent_started(agent, agent.host, is_start_desired=True)
 
     assert agent.captured_timeouts == [37.5]

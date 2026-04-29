@@ -11,11 +11,11 @@ import pytest
 from imbue.mngr.agents.base_agent import BaseAgent
 from imbue.mngr.agents.base_agent import _check_paste_content
 from imbue.mngr.agents.base_agent import _normalize_for_match
+from imbue.mngr.agents.testing import create_test_agent
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import SendMessageError
 from imbue.mngr.errors import UserInputError
-from imbue.mngr.hosts.host import Host
 from imbue.mngr.interfaces.data_types import CommandResult
 from imbue.mngr.interfaces.host import DEFAULT_AGENT_READY_TIMEOUT_SECONDS
 from imbue.mngr.primitives import ActivitySource
@@ -25,63 +25,11 @@ from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import AgentTypeName
 from imbue.mngr.primitives import CommandString
 from imbue.mngr.primitives import HostId
-from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import InvalidName
 from imbue.mngr.primitives import Permission
-from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr.utils.polling import wait_for
 from imbue.mngr.utils.testing import cleanup_tmux_session
-from imbue.mngr.utils.testing import get_short_random_string
-
-
-def create_test_agent(
-    local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
-    temp_work_dir: Path,
-    agent_config: AgentTypeConfig | None = None,
-    agent_type: AgentTypeName | None = None,
-) -> BaseAgent:
-    """Create a test agent backed by a real local host filesystem.
-
-    Accepts optional agent_config and agent_type overrides for tests that
-    need non-default configuration (e.g., assemble_command tests).
-    """
-    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
-    assert isinstance(host, Host)
-
-    agent_id = AgentId.generate()
-    agent_name = AgentName(f"test-agent-{get_short_random_string()}")
-    resolved_type = agent_type or AgentTypeName("test")
-    resolved_config = agent_config or AgentTypeConfig(command=CommandString("sleep 1000"))
-
-    agent_dir = local_provider.host_dir / "agents" / str(agent_id)
-    agent_dir.mkdir(parents=True, exist_ok=True)
-
-    data: dict = {
-        "id": str(agent_id),
-        "name": str(agent_name),
-        "type": str(resolved_type),
-        "work_dir": str(temp_work_dir),
-        "create_time": datetime.now(timezone.utc).isoformat(),
-        "start_on_boot": False,
-    }
-    if resolved_config.command is not None:
-        data["command"] = str(resolved_config.command)
-    data_path = agent_dir / "data.json"
-    data_path.write_text(json.dumps(data, indent=2))
-
-    return BaseAgent(
-        id=agent_id,
-        name=agent_name,
-        agent_type=resolved_type,
-        work_dir=temp_work_dir,
-        create_time=datetime.now(timezone.utc),
-        host_id=host.id,
-        host=host,
-        mngr_ctx=local_provider.mngr_ctx,
-        agent_config=resolved_config,
-    )
 
 
 @pytest.fixture
