@@ -39,6 +39,7 @@ from imbue.mngr.api.discovery_events import parse_discovery_event_line
 from imbue.mngr.api.discovery_events import resolve_provider_names_for_identifiers
 from imbue.mngr.api.discovery_events import write_full_discovery_snapshot
 from imbue.mngr.config.data_types import MngrConfig
+from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import DiscoverySchemaChangedError
 from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import AgentId
@@ -318,11 +319,16 @@ def test_parse_recognized_event_with_extra_field_raises_schema_changed() -> None
         parse_discovery_event_line(json.dumps(data))
 
 
-def test_resolve_provider_names_returns_none_on_schema_mismatch(temp_config: MngrConfig) -> None:
-    """If the events file has a stale-schema entry, resolution must return None
-    (so the caller can fall back to a full discovery scan) rather than silently
-    succeed with partial data."""
-    # Write one valid full snapshot, then append a stale-schema agent-discovery event.
+def test_resolve_provider_names_recovers_after_schema_mismatch(temp_mngr_ctx: MngrContext) -> None:
+    """A stale-schema event must trigger a regenerate (full scan) and a parse retry.
+
+    After the regenerate, the on-disk file has a fresh DISCOVERY_FULL snapshot in the
+    current schema; replaying from the new offset succeeds. The stub local-only
+    provider has no agents, so resolution returns None, but the key assertion is that
+    no exception escapes -- the recovery path ran and parsing succeeded on retry.
+    """
+    config = temp_mngr_ctx.config
+    # Seed with a valid full snapshot, then append a stale-schema agent-discovery event.
     agent = DiscoveredAgent(
         host_id=HostId.generate(),
         agent_id=AgentId.generate(),
@@ -330,9 +336,10 @@ def test_resolve_provider_names_returns_none_on_schema_mismatch(temp_config: Mng
         provider_name=ProviderInstanceName("local"),
         certified_data={},
     )
-    write_full_discovery_snapshot(temp_config, [agent], [])
+    write_full_discovery_snapshot(config, [agent], [])
 
-    events_path = get_discovery_events_path(temp_config)
+    events_path = get_discovery_events_path(config)
+    pre_recovery_size = events_path.stat().st_size
     with open(events_path, "a") as f:
         stale_line = json.dumps(
             {
@@ -345,7 +352,16 @@ def test_resolve_provider_names_returns_none_on_schema_mismatch(temp_config: Mng
         )
         f.write(stale_line + "\n")
 
-    result = resolve_provider_names_for_identifiers(temp_config, ["known-agent"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["known-agent"])
+
+    # The regenerate path appended a fresh DISCOVERY_FULL snapshot past the stale line.
+    final_lines = events_path.read_text().splitlines()
+    last_event = json.loads(final_lines[-1])
+    assert last_event["type"] == DiscoveryEventType.DISCOVERY_FULL
+    assert events_path.stat().st_size > pre_recovery_size
+    # The retry parsed against the fresh snapshot, which has no agents from the
+    # stub provider setup, so the seeded "known-agent" is not in the post-recovery
+    # state and resolution returns None.
     assert result is None
 
 
@@ -504,13 +520,13 @@ def test_parse_host_ssh_info_event_round_trips() -> None:
 # === resolve_provider_names_for_identifiers Tests ===
 
 
-def test_resolve_provider_names_returns_none_when_no_file(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_returns_none_when_no_file(temp_mngr_ctx: MngrContext) -> None:
     """Should return None when the events file does not exist."""
-    result = resolve_provider_names_for_identifiers(temp_config, ["my-agent"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["my-agent"])
     assert result is None
 
 
-def test_resolve_provider_names_resolves_by_agent_name(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_resolves_by_agent_name(temp_mngr_ctx: MngrContext) -> None:
     """Should resolve an agent name to its provider from a full snapshot."""
     agent = DiscoveredAgent(
         host_id=HostId.generate(),
@@ -524,13 +540,13 @@ def test_resolve_provider_names_resolves_by_agent_name(temp_config: MngrConfig) 
         host_name=HostName("docker-host"),
         provider_name=ProviderInstanceName("docker"),
     )
-    write_full_discovery_snapshot(temp_config, [agent], [host])
+    write_full_discovery_snapshot(temp_mngr_ctx.config, [agent], [host])
 
-    result = resolve_provider_names_for_identifiers(temp_config, ["my-agent"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["my-agent"])
     assert result == ("docker",)
 
 
-def test_resolve_provider_names_resolves_by_agent_id(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_resolves_by_agent_id(temp_mngr_ctx: MngrContext) -> None:
     """Should resolve an agent ID to its provider from a full snapshot."""
     agent_id = AgentId.generate()
     agent = DiscoveredAgent(
@@ -540,13 +556,13 @@ def test_resolve_provider_names_resolves_by_agent_id(temp_config: MngrConfig) ->
         provider_name=ProviderInstanceName("modal"),
         certified_data={},
     )
-    write_full_discovery_snapshot(temp_config, [agent], [])
+    write_full_discovery_snapshot(temp_mngr_ctx.config, [agent], [])
 
-    result = resolve_provider_names_for_identifiers(temp_config, [str(agent_id)])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, [str(agent_id)])
     assert result == ("modal",)
 
 
-def test_resolve_provider_names_returns_none_for_unknown_identifier(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_returns_none_for_unknown_identifier(temp_mngr_ctx: MngrContext) -> None:
     """Should return None when any identifier cannot be resolved."""
     agent = DiscoveredAgent(
         host_id=HostId.generate(),
@@ -555,13 +571,13 @@ def test_resolve_provider_names_returns_none_for_unknown_identifier(temp_config:
         provider_name=ProviderInstanceName("local"),
         certified_data={},
     )
-    write_full_discovery_snapshot(temp_config, [agent], [])
+    write_full_discovery_snapshot(temp_mngr_ctx.config, [agent], [])
 
-    result = resolve_provider_names_for_identifiers(temp_config, ["unknown-agent"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["unknown-agent"])
     assert result is None
 
 
-def test_resolve_provider_names_returns_none_when_any_identifier_missing(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_returns_none_when_any_identifier_missing(temp_mngr_ctx: MngrContext) -> None:
     """Should return None when even one identifier is unknown (partial match is not enough)."""
     agent = DiscoveredAgent(
         host_id=HostId.generate(),
@@ -570,13 +586,13 @@ def test_resolve_provider_names_returns_none_when_any_identifier_missing(temp_co
         provider_name=ProviderInstanceName("local"),
         certified_data={},
     )
-    write_full_discovery_snapshot(temp_config, [agent], [])
+    write_full_discovery_snapshot(temp_mngr_ctx.config, [agent], [])
 
-    result = resolve_provider_names_for_identifiers(temp_config, ["known-agent", "unknown-agent"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["known-agent", "unknown-agent"])
     assert result is None
 
 
-def test_resolve_provider_names_deduplicates_providers(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_deduplicates_providers(temp_mngr_ctx: MngrContext) -> None:
     """Should deduplicate provider names when multiple agents share a provider."""
     agent1 = DiscoveredAgent(
         host_id=HostId.generate(),
@@ -592,13 +608,13 @@ def test_resolve_provider_names_deduplicates_providers(temp_config: MngrConfig) 
         provider_name=ProviderInstanceName("docker"),
         certified_data={},
     )
-    write_full_discovery_snapshot(temp_config, [agent1, agent2], [])
+    write_full_discovery_snapshot(temp_mngr_ctx.config, [agent1, agent2], [])
 
-    result = resolve_provider_names_for_identifiers(temp_config, ["agent-a", "agent-b"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["agent-a", "agent-b"])
     assert result == ("docker",)
 
 
-def test_resolve_provider_names_unions_providers_for_multiple_agents(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_unions_providers_for_multiple_agents(temp_mngr_ctx: MngrContext) -> None:
     """Should return the union of providers when agents are on different providers."""
     agent1 = DiscoveredAgent(
         host_id=HostId.generate(),
@@ -614,14 +630,14 @@ def test_resolve_provider_names_unions_providers_for_multiple_agents(temp_config
         provider_name=ProviderInstanceName("docker"),
         certified_data={},
     )
-    write_full_discovery_snapshot(temp_config, [agent1, agent2], [])
+    write_full_discovery_snapshot(temp_mngr_ctx.config, [agent1, agent2], [])
 
-    result = resolve_provider_names_for_identifiers(temp_config, ["local-agent", "docker-agent"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["local-agent", "docker-agent"])
     assert result is not None
     assert set(result) == {"local", "docker"}
 
 
-def test_resolve_provider_names_handles_same_name_on_multiple_providers(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_handles_same_name_on_multiple_providers(temp_mngr_ctx: MngrContext) -> None:
     """When the same agent name exists on multiple providers, should return all of them."""
     agent1 = DiscoveredAgent(
         host_id=HostId.generate(),
@@ -637,14 +653,14 @@ def test_resolve_provider_names_handles_same_name_on_multiple_providers(temp_con
         provider_name=ProviderInstanceName("docker"),
         certified_data={},
     )
-    write_full_discovery_snapshot(temp_config, [agent1, agent2], [])
+    write_full_discovery_snapshot(temp_mngr_ctx.config, [agent1, agent2], [])
 
-    result = resolve_provider_names_for_identifiers(temp_config, ["shared-name"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["shared-name"])
     assert result is not None
     assert set(result) == {"local", "docker"}
 
 
-def test_resolve_provider_names_replays_incremental_events(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_replays_incremental_events(temp_mngr_ctx: MngrContext) -> None:
     """Should pick up agents added via incremental events after the snapshot."""
     # Start with a snapshot containing one agent
     agent1 = DiscoveredAgent(
@@ -654,7 +670,7 @@ def test_resolve_provider_names_replays_incremental_events(temp_config: MngrConf
         provider_name=ProviderInstanceName("local"),
         certified_data={},
     )
-    write_full_discovery_snapshot(temp_config, [agent1], [])
+    write_full_discovery_snapshot(temp_mngr_ctx.config, [agent1], [])
 
     # Add a new agent via an incremental event
     new_agent = DiscoveredAgent(
@@ -664,13 +680,13 @@ def test_resolve_provider_names_replays_incremental_events(temp_config: MngrConf
         provider_name=ProviderInstanceName("docker"),
         certified_data={},
     )
-    emit_agent_discovered(temp_config, new_agent)
+    emit_agent_discovered(temp_mngr_ctx.config, new_agent)
 
-    result = resolve_provider_names_for_identifiers(temp_config, ["new-agent"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["new-agent"])
     assert result == ("docker",)
 
 
-def test_resolve_provider_names_respects_destroy_events_by_id(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_respects_destroy_events_by_id(temp_mngr_ctx: MngrContext) -> None:
     """Should not resolve destroyed agents by ID."""
     agent_id = AgentId.generate()
     host_id = HostId.generate()
@@ -681,15 +697,15 @@ def test_resolve_provider_names_respects_destroy_events_by_id(temp_config: MngrC
         provider_name=ProviderInstanceName("local"),
         certified_data={},
     )
-    write_full_discovery_snapshot(temp_config, [agent], [])
-    emit_agent_destroyed(temp_config, agent_id, host_id)
+    write_full_discovery_snapshot(temp_mngr_ctx.config, [agent], [])
+    emit_agent_destroyed(temp_mngr_ctx.config, agent_id, host_id)
 
     # By ID should fail (destroyed)
-    result = resolve_provider_names_for_identifiers(temp_config, [str(agent_id)])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, [str(agent_id)])
     assert result is None
 
 
-def test_resolve_provider_names_respects_destroy_events_by_name(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_respects_destroy_events_by_name(temp_mngr_ctx: MngrContext) -> None:
     """Should not resolve destroyed agents by name."""
     agent_id = AgentId.generate()
     host_id = HostId.generate()
@@ -700,15 +716,15 @@ def test_resolve_provider_names_respects_destroy_events_by_name(temp_config: Mng
         provider_name=ProviderInstanceName("local"),
         certified_data={},
     )
-    write_full_discovery_snapshot(temp_config, [agent], [])
-    emit_agent_destroyed(temp_config, agent_id, host_id)
+    write_full_discovery_snapshot(temp_mngr_ctx.config, [agent], [])
+    emit_agent_destroyed(temp_mngr_ctx.config, agent_id, host_id)
 
     # By name should also fail (destroyed)
-    result = resolve_provider_names_for_identifiers(temp_config, ["destroyed-agent"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["destroyed-agent"])
     assert result is None
 
 
-def test_resolve_provider_names_with_no_snapshot_only_incremental(temp_config: MngrConfig) -> None:
+def test_resolve_provider_names_with_no_snapshot_only_incremental(temp_mngr_ctx: MngrContext) -> None:
     """Should work with only incremental events (no full snapshot)."""
     agent = DiscoveredAgent(
         host_id=HostId.generate(),
@@ -717,9 +733,9 @@ def test_resolve_provider_names_with_no_snapshot_only_incremental(temp_config: M
         provider_name=ProviderInstanceName("modal"),
         certified_data={},
     )
-    emit_agent_discovered(temp_config, agent)
+    emit_agent_discovered(temp_mngr_ctx.config, agent)
 
-    result = resolve_provider_names_for_identifiers(temp_config, ["incremental-agent"])
+    result = resolve_provider_names_for_identifiers(temp_mngr_ctx, ["incremental-agent"])
     assert result == ("modal",)
 
 

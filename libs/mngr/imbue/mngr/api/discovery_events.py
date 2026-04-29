@@ -519,8 +519,53 @@ def find_latest_full_snapshot_offset(events_path: Path) -> int:
     return last_full_offset
 
 
+def _replay_discovery_events_for_resolution(
+    events_path: Path,
+) -> tuple[dict[str, str], dict[str, str], set[str]]:
+    """Replay events from the latest full snapshot into resolution maps.
+
+    Returns ``(provider_by_agent_id, name_by_agent_id, destroyed_agent_ids)``.
+    Raises DiscoverySchemaChangedError if any event line in the file fails
+    schema validation (the caller is responsible for regenerating and retrying).
+    Raises OSError on file I/O failure.
+    """
+    offset = find_latest_full_snapshot_offset(events_path)
+    provider_by_agent_id: dict[str, str] = {}
+    name_by_agent_id: dict[str, str] = {}
+    destroyed_agent_ids: set[str] = set()
+
+    with open(events_path) as f:
+        f.seek(offset)
+        for line in f:
+            event = parse_discovery_event_line(line)
+            if event is None:
+                continue
+            if isinstance(event, FullDiscoverySnapshotEvent):
+                # Reset maps -- this snapshot supersedes everything before it
+                provider_by_agent_id.clear()
+                name_by_agent_id.clear()
+                destroyed_agent_ids.clear()
+                for agent in event.agents:
+                    id_str = str(agent.agent_id)
+                    provider_by_agent_id[id_str] = str(agent.provider_name)
+                    name_by_agent_id[id_str] = str(agent.agent_name)
+            elif isinstance(event, AgentDiscoveryEvent):
+                agent = event.agent
+                id_str = str(agent.agent_id)
+                provider_by_agent_id[id_str] = str(agent.provider_name)
+                name_by_agent_id[id_str] = str(agent.agent_name)
+                destroyed_agent_ids.discard(id_str)
+            elif isinstance(event, AgentDestroyedEvent):
+                destroyed_agent_ids.add(str(event.agent_id))
+            else:
+                # Host events and other types are not relevant for provider resolution
+                pass
+
+    return provider_by_agent_id, name_by_agent_id, destroyed_agent_ids
+
+
 def resolve_provider_names_for_identifiers(
-    config: MngrConfig,
+    mngr_ctx: MngrContext,
     identifiers: Sequence[str],
 ) -> tuple[str, ...] | None:
     """Resolve agent identifiers to the provider names that own them using the event stream.
@@ -530,52 +575,29 @@ def resolve_provider_names_for_identifiers(
 
     Returns the deduplicated union of provider names for all identifiers, or None if
     any identifier cannot be resolved (meaning a full scan is needed).
+
+    If the on-disk events are stale relative to the current model schema, this triggers
+    a full discovery scan (which appends fresh events in the current schema), then
+    retries parsing once. If parsing still fails, the schema mismatch reflects a real
+    bug rather than stale data, so DiscoverySchemaChangedError is re-raised.
     """
-    events_path = get_discovery_events_path(config)
+    events_path = get_discovery_events_path(mngr_ctx.config)
     if not events_path.exists():
         return None
 
-    # Find the latest full snapshot and replay from there
-    offset = find_latest_full_snapshot_offset(events_path)
-
-    # Maps for resolution: track per-agent-id data so destroyed agents can be fully removed
-    provider_by_agent_id: dict[str, str] = {}
-    name_by_agent_id: dict[str, str] = {}
-    destroyed_agent_ids: set[str] = set()
-
     try:
-        with open(events_path) as f:
-            f.seek(offset)
-            for line in f:
-                event = parse_discovery_event_line(line)
-                if event is None:
-                    continue
-                if isinstance(event, FullDiscoverySnapshotEvent):
-                    # Reset maps -- this snapshot supersedes everything before it
-                    provider_by_agent_id.clear()
-                    name_by_agent_id.clear()
-                    destroyed_agent_ids.clear()
-                    for agent in event.agents:
-                        id_str = str(agent.agent_id)
-                        provider_by_agent_id[id_str] = str(agent.provider_name)
-                        name_by_agent_id[id_str] = str(agent.agent_name)
-                elif isinstance(event, AgentDiscoveryEvent):
-                    agent = event.agent
-                    id_str = str(agent.agent_id)
-                    provider_by_agent_id[id_str] = str(agent.provider_name)
-                    name_by_agent_id[id_str] = str(agent.agent_name)
-                    destroyed_agent_ids.discard(id_str)
-                elif isinstance(event, AgentDestroyedEvent):
-                    destroyed_agent_ids.add(str(event.agent_id))
-                else:
-                    # Host events and other types are not relevant for provider resolution
-                    pass
+        provider_by_agent_id, name_by_agent_id, destroyed_agent_ids = _replay_discovery_events_for_resolution(
+            events_path
+        )
     except DiscoverySchemaChangedError as e:
-        # On-disk events are stale relative to current model schema. Returning None
-        # makes the caller fall back to a full discovery scan, which appends a fresh
-        # snapshot in the current schema and supersedes the stale data on next read.
-        logger.warning("Discovery event schema mismatch -- falling back to full scan: {}", e)
-        return None
+        logger.warning("Discovery event schema mismatch; regenerating snapshot and retrying ({})", e)
+        _write_unfiltered_full_snapshot(mngr_ctx, ErrorBehavior.CONTINUE)
+        # Retry once. A second schema-changed error means the freshly-written
+        # snapshot itself fails to parse, which indicates a real bug rather
+        # than stale data, so we let the exception propagate.
+        provider_by_agent_id, name_by_agent_id, destroyed_agent_ids = _replay_discovery_events_for_resolution(
+            events_path
+        )
     except OSError as e:
         logger.trace("Failed to read discovery events for provider resolution: {}", e)
         return None
