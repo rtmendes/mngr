@@ -313,22 +313,32 @@ def test_find_latest_full_snapshot_offset_returns_zero_when_no_full_events(temp_
 
 def test_find_latest_full_snapshot_offset_warns_on_mid_file_corruption(tmp_path: Path) -> None:
     events_path = tmp_path / "events.jsonl"
-    # A valid full snapshot, then a corrupt line, then a valid agent event.
-    # The corrupt line is followed by more data, so a warning should be emitted.
+    # A leading agent event, then a valid full snapshot, then a corrupt line,
+    # then a trailing agent event. The corrupt line is followed by more data,
+    # so a warning should be emitted. The leading event ensures the snapshot
+    # offset is non-zero, so the assertion distinguishes "snapshot located"
+    # from "no snapshot found, fallback to 0".
+    leading_agent = (
+        '{"timestamp":"2026-01-01T00:00:00Z","type":"AGENT_DISCOVERED","event_id":"evt-w",'
+        '"source":"mngr/discovery","agent":{}}'
+    )
     valid_full = (
-        '{"timestamp":"2026-01-01T00:00:00Z","type":"DISCOVERY_FULL","event_id":"evt-x",'
+        '{"timestamp":"2026-01-02T00:00:00Z","type":"DISCOVERY_FULL","event_id":"evt-x",'
         '"source":"mngr/discovery","agents":[],"hosts":[]}'
     )
     valid_agent = (
-        '{"timestamp":"2026-01-02T00:00:00Z","type":"AGENT_DISCOVERED","event_id":"evt-y",'
+        '{"timestamp":"2026-01-03T00:00:00Z","type":"AGENT_DISCOVERED","event_id":"evt-y",'
         '"source":"mngr/discovery","agent":{}}'
     )
-    events_path.write_text(f"{valid_full}\nthis is not json {{{{\n{valid_agent}\n")
+    leading_line = f"{leading_agent}\n"
+    events_path.write_text(f"{leading_line}{valid_full}\nthis is not json {{{{\n{valid_agent}\n")
 
     with capture_loguru(level="WARNING") as log_output:
         offset = find_latest_full_snapshot_offset(events_path)
 
-    assert offset == 0
+    # The snapshot starts immediately after the leading line, so its byte offset
+    # equals the byte length of the leading line.
+    assert offset == len(leading_line.encode("utf-8"))
     assert "Skipped corrupt JSONL line" in log_output.getvalue()
 
 
