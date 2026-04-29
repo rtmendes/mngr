@@ -3,6 +3,7 @@ from collections.abc import Callable
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -985,7 +986,7 @@ class _TimeoutCapturingAgent(BaseAgent):
 def _make_stopped_agent_with_data(
     local_provider: LocalProviderInstance,
     temp_work_dir: Path,
-    extra_data: dict,
+    extra_data: dict[str, Any],
 ) -> tuple[_TimeoutCapturingAgent, Host]:
     host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
     assert isinstance(host, Host)
@@ -996,7 +997,7 @@ def _make_stopped_agent_with_data(
 
     agent_dir = local_provider.host_dir / "agents" / str(agent_id)
     agent_dir.mkdir(parents=True, exist_ok=True)
-    data: dict = {
+    data: dict[str, Any] = {
         "id": str(agent_id),
         "name": str(agent_name),
         "type": "test",
