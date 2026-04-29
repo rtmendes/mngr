@@ -7,7 +7,6 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any
 from typing import Final
-from typing import Literal
 from typing import Mapping
 from typing import Sequence
 from urllib.parse import urlparse
@@ -47,6 +46,7 @@ from imbue.mngr.interfaces.volume import HostVolume
 from imbue.mngr.primitives import ActivitySource
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import DiscoveredHost
+from imbue.mngr.primitives import DockerBuilder
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import HostState
@@ -595,15 +595,15 @@ kill -TERM 1
         return env
 
     def _run_docker_creation_command(
-        self, args: list[str], timeout: float = 300, executable: Literal["docker", "depot"] = "docker"
+        self, args: list[str], timeout: float = 300, executable: DockerBuilder = DockerBuilder.DOCKER
     ) -> FinishedProcess:
         """Run a docker-compatible CLI command and return the result.
 
-        `executable` defaults to "docker"; pass "depot" to use the depot.dev
-        remote builder (only valid for build subcommands).
+        `executable` defaults to DOCKER; pass DEPOT to use the depot.dev remote
+        builder (only valid for build subcommands).
         """
         return self.mngr_ctx.concurrency_group.run_process_to_completion(
-            [executable] + args,
+            [executable.value.lower()] + args,
             timeout=timeout,
             env=self._docker_env(),
             on_output=self._log_docker_creation_command_output,
@@ -619,9 +619,9 @@ kill -TERM 1
         """Build a Docker image using the configured builder (docker or depot)."""
         builder = self.config.builder
         # depot requires --load to import the resulting image into the local daemon.
-        extra_args = ["--load"] if builder == "depot" else []
+        extra_args = ["--load"] if builder is DockerBuilder.DEPOT else []
         args = ["build", *extra_args, "-t", tag, *build_args]
-        with log_span("Running {} build with {} args", builder, len(build_args)):
+        with log_span("Running {} build with {} args", builder.value.lower(), len(build_args)):
             self._run_docker_creation_command(args, executable=builder)
         return tag
 
