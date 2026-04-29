@@ -464,7 +464,6 @@ def write_full_discovery_snapshot(
 # === Event Parsing ===
 
 
-@pure
 def parse_discovery_event_line(line: str) -> DiscoveryEvent | None:
     """Parse a single JSONL line into the appropriate discovery event type.
 
