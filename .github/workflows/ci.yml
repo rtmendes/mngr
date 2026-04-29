@@ -299,6 +299,9 @@ jobs:
     env:
       MNGR_USE_DEPOT: "1"
       DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+      # depot CLI looks for depot.json in the build context dir, not repo root.
+      # Tests build from /tmp/<tempdir>, so set the project ID via env instead.
+      DEPOT_PROJECT_ID: "fsjzltqvxq"
 
     steps:
       - uses: actions/checkout@v6
