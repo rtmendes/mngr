@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from loguru import logger as loguru_logger
 
 from imbue.mngr.primitives import DockerBuilder
 from imbue.mngr_vps_docker.docker_over_ssh import DockerOverSsh
@@ -283,12 +284,10 @@ def test_redact_secret_env_preserves_non_secret_env_and_substrings() -> None:
     assert _redact_secret_env(cmd2) == cmd2
 
 
-def test_run_ssh_trace_log_redacts_secret(docker_ssh: DockerOverSsh, caplog: pytest.LogCaptureFixture) -> None:
+def test_run_ssh_trace_log_redacts_secret(docker_ssh: DockerOverSsh) -> None:
     """The trace-level SSH log entry must not contain the DEPOT_TOKEN value."""
-    # Loguru integrates with caplog only when propagation is enabled. Use an
-    # explicit sink to capture trace messages.
-    from loguru import logger as loguru_logger
-
+    # Loguru does not integrate with pytest's caplog by default. Add a private
+    # sink at TRACE level so we can assert against the actual log output.
     captured: list[str] = []
     sink_id = loguru_logger.add(captured.append, level="TRACE", format="{message}")
     try:
