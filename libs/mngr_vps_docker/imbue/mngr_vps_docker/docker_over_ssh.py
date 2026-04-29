@@ -265,9 +265,10 @@ class DockerOverSsh(MutableModel):
         """Build a Docker image on the VPS from a remote build context. Returns the image tag.
 
         When `builder` is DEPOT, ensures the depot CLI is installed on the VPS,
-        forwards DEPOT_TOKEN and DEPOT_PROJECT_ID from the agent's environment,
-        and runs `depot build --load` (which imports the resulting image into
-        the local Docker daemon on the VPS so subsequent `docker run` works).
+        forwards DEPOT_TOKEN (required) from the agent's environment, optionally
+        forwards DEPOT_PROJECT_ID when set, and runs `depot build --load` (which
+        imports the resulting image into the local Docker daemon on the VPS so
+        subsequent `docker run` works).
         """
         if builder is DockerBuilder.DEPOT:
             depot_token = os.environ.get("DEPOT_TOKEN", "")

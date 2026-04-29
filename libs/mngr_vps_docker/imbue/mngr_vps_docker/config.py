@@ -74,7 +74,9 @@ class VpsDockerProviderConfig(ProviderInstanceConfig):
         description=(
             "Image builder used on the VPS. DOCKER runs native `docker build` over SSH. "
             "DEPOT runs `depot build --load` over SSH (auto-installs the depot CLI on the VPS "
-            "the first time and forwards DEPOT_TOKEN + DEPOT_PROJECT_ID from the agent's env). "
+            "the first time). DEPOT requires DEPOT_TOKEN in the agent's environment; "
+            "DEPOT_PROJECT_ID is optional and only forwarded when set "
+            "(needed when no depot.json is on the VPS). "
             "Default reads MNGR_USE_DEPOT env var: '1'/'true'/'yes' selects DEPOT, else DOCKER."
         ),
     )
