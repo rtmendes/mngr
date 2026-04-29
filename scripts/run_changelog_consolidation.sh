@@ -83,10 +83,13 @@ mkdir -p "$CLAUDE_LOGS_DIR"
 export CLAUDE_CODE_DEBUG_LOG_LEVEL=info
 export CLAUDE_CODE_DEBUG_LOGS_DIR="$CLAUDE_LOGS_DIR"
 
+# Capture claude's exit code without letting `set -e` abort the script: we need
+# to run the diagnostic block below (debug-log dump + structured status.json)
+# specifically when claude fails. The `&& rc=0 || rc=$?` idiom suppresses
+# errexit on the failure side while still recording the real exit code.
 SUMMARY=$(IS_SANDBOX=1 claude --print --dangerously-skip-permissions -p "Produce a concise, human-friendly summary of these changelog entries. Group related changes, use natural language, and keep it to a few bullet points. Output ONLY the markdown bullets, no preamble:
 
-$NEW_SECTION" 2>&1)
-CLAUDE_EXIT=$?
+$NEW_SECTION" 2>&1) && CLAUDE_EXIT=0 || CLAUDE_EXIT=$?
 echo "claude exit: $CLAUDE_EXIT"
 if [ -d "$CLAUDE_LOGS_DIR" ] && [ -n "$(ls -A "$CLAUDE_LOGS_DIR" 2>/dev/null)" ]; then
     echo "=== claude debug logs ==="
