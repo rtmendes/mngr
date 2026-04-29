@@ -77,8 +77,8 @@ jobs:
 
       - name: Configure git identity for image-cache note writes
         run: |
-          git config user.email "ci@imbue.ai"
-          git config user.name "imbue-ci"
+          git config user.email "dev@imbue.com"
+          git config user.name "imbue-dev"
 
       - name: Run tests via offload
         id: tests
@@ -270,8 +270,8 @@ jobs:
 
       - name: Configure git identity for image-cache note writes
         run: |
-          git config user.email "ci@imbue.ai"
-          git config user.name "imbue-ci"
+          git config user.email "dev@imbue.com"
+          git config user.name "imbue-dev"
 
       - name: Run acceptance tests via offload
         id: tests
