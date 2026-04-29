@@ -992,6 +992,7 @@ def test_ensure_agent_started_uses_per_agent_ready_timeout(
         extra_data={"ready_timeout_seconds": 42.0},
         agent_class=_TimeoutCapturingAgent,
     )
+    assert isinstance(agent, _TimeoutCapturingAgent)
     assert agent.get_lifecycle_state() == AgentLifecycleState.STOPPED
 
     ensure_agent_started(agent, agent.host, is_start_desired=True)
@@ -1012,6 +1013,7 @@ def test_ensure_agent_started_respects_env_var_when_data_unset(
         temp_work_dir,
         agent_class=_TimeoutCapturingAgent,
     )
+    assert isinstance(agent, _TimeoutCapturingAgent)
     assert agent.get_lifecycle_state() == AgentLifecycleState.STOPPED
 
     ensure_agent_started(agent, agent.host, is_start_desired=True)

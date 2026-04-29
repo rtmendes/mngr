@@ -4,8 +4,6 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from typing import Any
-from typing import TypeVar
-from typing import overload
 
 from imbue.mngr.agents.base_agent import BaseAgent
 from imbue.mngr.config.data_types import AgentTypeConfig
@@ -20,31 +18,6 @@ from imbue.mngr.primitives import HostName
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr.utils.testing import get_short_random_string
-
-AgentT = TypeVar("AgentT", bound=BaseAgent[AgentTypeConfig])
-
-
-@overload
-def create_test_agent(
-    local_provider: LocalProviderInstance,
-    temp_work_dir: Path,
-    agent_config: AgentTypeConfig | None = ...,
-    agent_type: AgentTypeName | None = ...,
-    *,
-    extra_data: Mapping[str, Any] | None = ...,
-) -> BaseAgent[AgentTypeConfig]: ...
-
-
-@overload
-def create_test_agent(
-    local_provider: LocalProviderInstance,
-    temp_work_dir: Path,
-    agent_config: AgentTypeConfig | None = ...,
-    agent_type: AgentTypeName | None = ...,
-    *,
-    extra_data: Mapping[str, Any] | None = ...,
-    agent_class: type[AgentT],
-) -> AgentT: ...
 
 
 def create_test_agent(
