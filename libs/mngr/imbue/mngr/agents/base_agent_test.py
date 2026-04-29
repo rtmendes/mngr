@@ -35,7 +35,6 @@ from imbue.mngr.utils.testing import cleanup_tmux_session
 @pytest.fixture
 def test_agent(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> BaseAgent:
     return create_test_agent(local_provider, temp_work_dir)
@@ -52,7 +51,6 @@ def test_lifecycle_state_stopped_when_no_tmux_session(
 
 def _create_running_agent(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
     # unique sleep duration to avoid collisions with other tests
     sleep_duration: int,
@@ -82,11 +80,10 @@ def _create_running_agent(
 @pytest.mark.tmux
 def test_lifecycle_state_running_when_expected_process_exists(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
     """Test that agent is RUNNING when tmux session exists with expected process and active file."""
-    test_agent, session_name = _create_running_agent(local_provider, temp_host_dir, temp_work_dir, 847291)
+    test_agent, session_name = _create_running_agent(local_provider, temp_work_dir, 847291)
 
     try:
         wait_for(
@@ -100,11 +97,10 @@ def test_lifecycle_state_running_when_expected_process_exists(
 @pytest.mark.tmux
 def test_is_running_true_when_tmux_session_running(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
     """Test that is_running returns True when tmux session exists with expected process and active file."""
-    test_agent, session_name = _create_running_agent(local_provider, temp_host_dir, temp_work_dir, 847293)
+    test_agent, session_name = _create_running_agent(local_provider, temp_work_dir, 847293)
 
     try:
         wait_for(
@@ -435,7 +431,6 @@ def test_send_enter_and_wait_for_signal_returns_false_on_timeout(
 
 def test_assemble_command_uses_command_override(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
     """Test that command_override takes highest priority."""
@@ -452,7 +447,6 @@ def test_assemble_command_uses_command_override(
 
 def test_assemble_command_uses_config_command_when_no_override(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
     """Test that agent_config.command is used when no command_override is given."""
@@ -469,7 +463,6 @@ def test_assemble_command_uses_config_command_when_no_override(
 
 def test_assemble_command_raises_when_no_base_and_no_args(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
     """Test that assemble_command raises when neither override, config command, nor agent_args provide a base."""
@@ -488,7 +481,6 @@ def test_assemble_command_raises_when_no_base_and_no_args(
 
 def test_assemble_command_appends_cli_args(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
     """Test that cli_args from config are appended to the command."""
@@ -505,7 +497,6 @@ def test_assemble_command_appends_cli_args(
 
 def test_assemble_command_appends_agent_args(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
     """Test that agent_args are appended to the command."""
@@ -522,7 +513,6 @@ def test_assemble_command_appends_agent_args(
 
 def test_assemble_command_appends_both_cli_and_agent_args(
     local_provider: LocalProviderInstance,
-    temp_host_dir: Path,
     temp_work_dir: Path,
 ) -> None:
     """Test that both cli_args and agent_args are appended in order."""
