@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-set -u
-set -o pipefail
+set -euo pipefail
 
 # Tell claude it's in a sandbox so --dangerously-skip-permissions is allowed
 # even as root.

@@ -102,7 +102,10 @@ _QUERY_PREFIX: Final[str] = (
     "response: mngr list --running --format json\n\n"
     #
     "user: How do I watch agent status in real time?\n"
-    "response: mngr list --watch 5\n\n"
+    "response: For a human-readable refreshing table, use the Unix watch(1) command:\n"
+    "    watch -n 5 mngr list\n"
+    "For a JSONL event stream (programmatic consumers), use:\n"
+    "    mngr observe --discovery-only\n\n"
     #
     "user: How do I list all agents that are running or waiting?\n"
     "response: Use a CEL filter on the `state` field:\n"
@@ -230,10 +233,7 @@ class ClaudeBackendInterface(MutableModel, ABC):
 
 
 # Extra claude CLI args for ask's stream-json tailing. The user prompt is
-# passed via initial_message (HeadlessClaude.stage_initial_message writes
-# it to .mngr-prompt under $MNGR_AGENT_STATE_DIR, and assemble_command
-# appends the cat reference), so this tuple only contains the ask-specific
-# flags and the system-prompt file reference.
+# passed via ``initial_message``, not included here.
 _HEADLESS_CLAUDE_ARGS: Final[tuple[str, ...]] = (
     "--system-prompt",
     '"$(cat "$MNGR_AGENT_WORK_DIR/.mngr-system-prompt")"',
@@ -260,8 +260,8 @@ class HeadlessClaudeBackend(ClaudeBackendInterface):
 
     def query(self, prompt: str, system_prompt: str) -> Iterator[str]:
         # `ask` always runs in a fresh throwaway directory -- nothing in the
-        # user's cwd should leak in, and our prompt files should not land in
-        # their repo.
+        # user's cwd should leak in, and our system-prompt file should not
+        # land in their repo.
         with (
             ephemeral_work_location(self.host) as work_location,
             headless_agent_output(

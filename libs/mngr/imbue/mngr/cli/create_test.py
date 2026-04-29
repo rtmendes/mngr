@@ -494,6 +494,33 @@ def test_resolve_source_location_with_auto_start_enabled(
     assert result.agent is None
 
 
+def test_resolve_source_location_clones_git_url(
+    default_create_cli_opts: CreateCliOptions,
+    temp_mngr_ctx: MngrContext,
+    temp_host_dir: Path,
+    temp_git_repo: Path,
+) -> None:
+    """A git URL --source is cloned to <host_dir>/clones/<name>-<hex>/ and resolved to that path."""
+    url = f"file://{temp_git_repo}"
+    opts = default_create_cli_opts.model_copy_update(
+        to_update(default_create_cli_opts.field_ref().source, url),
+        to_update(default_create_cli_opts.field_ref().positional_name, "clone-target"),
+    )
+
+    result = _resolve_source_location(
+        opts,
+        agent_and_host_loader=lambda: {},
+        mngr_ctx=temp_mngr_ctx,
+        is_start_desired=True,
+    )
+
+    assert isinstance(result.location.host, OnlineHostInterface)
+    assert result.location.path.parent == temp_host_dir / "clones"
+    assert result.location.path.name.startswith("clone-target-")
+    assert (result.location.path / ".git").exists()
+    assert result.agent is None
+
+
 def test_resolve_target_host_with_auto_start_enabled(
     temp_mngr_ctx: MngrContext,
 ) -> None:
@@ -957,6 +984,46 @@ def test_create_headless_rejects_multiple_incompatible_flags(
     assert "--start-on-boot" in result.output
 
 
+@pytest.mark.parametrize(
+    "no_form_flag",
+    [
+        "--no-reconnect",
+        "--no-reuse",
+        "--no-update",
+        "--no-start-on-boot",
+    ],
+)
+def test_create_headless_allows_no_forms_of_boolean_pair_flags(
+    cli_runner: CliRunner,
+    plugin_manager: pluggy.PluginManager,
+    no_form_flag: str,
+) -> None:
+    """The --no-* forms of boolean-pair flags are redundant with headless and should be allowed.
+
+    Matches the --no-connect treatment: headless already does not
+    connect/reconnect/reuse/update/start-on-boot, so the --no-* form is a
+    redundant-but-compatible assertion, not a conflict. Pairs each
+    allowed flag with --attach-command (still rejected) so the validator
+    runs and we can confirm the allowed flag is not in the error listing.
+    """
+    result = cli_runner.invoke(
+        create,
+        [
+            "--type",
+            "headless_command",
+            "--foreground",
+            no_form_flag,
+            "--attach-command",
+            "tmux attach",
+        ],
+        obj=plugin_manager,
+    )
+
+    assert result.exit_code != 0
+    assert "--attach-command" in result.output
+    assert no_form_flag not in result.output
+
+
 def test_create_headless_rejects_conflicting_positional_and_type_flag(
     cli_runner: CliRunner,
     plugin_manager: pluggy.PluginManager,
@@ -1129,8 +1196,9 @@ def test_apply_host_labels_raises_on_entries_without_equals(
 
     _parse_target_host raises UserInputError for missing '=' on the new-host
     branch. _apply_host_labels mirrors that validation so malformed entries
-    cannot slip through on the existing-host or headless-create paths --
-    silently dropping them would hide user mistakes.
+    cannot slip through on the existing-host or local-host paths, where
+    _parse_target_host returns early before its own label validator runs.
+    Silently dropping them would hide user mistakes.
     """
     local_host = cast(OnlineHostInterface, local_provider.get_host(HostName(LOCAL_HOST_NAME)))
 
