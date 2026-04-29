@@ -11,8 +11,26 @@ import uuid
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import Final
 
 from loguru import logger
+
+# Keys that the server always controls when writing a request event. Anything
+# the caller passes under one of these names is silently dropped so the agent
+# cannot spoof identity or routing metadata.
+_RESERVED_REQUEST_EVENT_KEYS: Final[frozenset[str]] = frozenset(
+    {"timestamp", "type", "event_id", "source", "agent_id", "request_type"}
+)
+
+# Mapping from RequestType (the string written to ``request_type``) to the
+# event-envelope ``type`` field. Mirrors the ``EventType(...)`` values used in
+# ``imbue.minds.desktop_client.request_events`` so the desktop client's parser
+# can dispatch on ``request_type``.
+_REQUEST_TYPE_TO_EVENT_TYPE: Final[dict[str, str]] = {
+    "SHARING": "sharing_request",
+    "PERMISSIONS": "permissions_request",
+    "LATCHKEY_PERMISSION": "latchkey_permission_request",
+}
 
 
 def _generate_event_id() -> str:
@@ -47,6 +65,55 @@ def _append_event_line(events_file: Path, event: dict[str, object]) -> None:
     line = json.dumps(event) + "\n"
     with events_file.open("a") as f:
         f.write(line)
+
+
+def _event_type_for_request_type(request_type: str) -> str:
+    """Return the event-envelope ``type`` for a given ``request_type``.
+
+    Falls back to ``<lowercase>_request`` for unknown request types so the
+    desktop client at least sees a coherent event-type string.
+    """
+    if request_type in _REQUEST_TYPE_TO_EVENT_TYPE:
+        return _REQUEST_TYPE_TO_EVENT_TYPE[request_type]
+    return f"{request_type.lower()}_request"
+
+
+def write_request_event(
+    request_type: str,
+    payload: dict[str, object],
+    is_user_requested: bool = True,
+) -> dict[str, object]:
+    """Append a generic request event to ``events/requests/events.jsonl``.
+
+    The ``payload`` is merged onto a metadata dict the server fills in
+    (``timestamp``, ``type``, ``event_id``, ``source``, ``agent_id``,
+    ``request_type``). Reserved metadata keys are stripped from ``payload`` so
+    the caller cannot spoof them. Returns the full event dict that was written.
+    """
+    if not request_type:
+        raise ValueError("request_type must be a non-empty string")
+
+    agent_id = os.environ.get("MNGR_AGENT_ID", "")
+    if not agent_id:
+        raise RuntimeError("MNGR_AGENT_ID environment variable is not set")
+
+    event: dict[str, object] = {
+        "timestamp": _now_iso(),
+        "type": _event_type_for_request_type(request_type),
+        "event_id": _generate_event_id(),
+        "source": "requests",
+        "agent_id": agent_id,
+        "request_type": request_type,
+        "is_user_requested": is_user_requested,
+    }
+    for key, value in payload.items():
+        if key in _RESERVED_REQUEST_EVENT_KEYS:
+            continue
+        event[key] = value
+
+    _append_event_line(_get_request_events_file(), event)
+    logger.info("Wrote {} request event for agent {}", request_type, agent_id)
+    return event
 
 
 def write_sharing_request(

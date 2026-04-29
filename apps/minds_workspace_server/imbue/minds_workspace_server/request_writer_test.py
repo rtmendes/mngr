@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from imbue.minds_workspace_server.request_writer import write_refresh_request
+from imbue.minds_workspace_server.request_writer import write_request_event
 from imbue.minds_workspace_server.request_writer import write_sharing_request
 
 
@@ -58,3 +59,94 @@ def test_write_sharing_request_still_works(tmp_path: Path, monkeypatch: pytest.M
     assert event["source"] == "requests"
     assert event["service_name"] == "web"
     assert event["is_user_requested"] is True
+
+
+def test_write_request_event_writes_latchkey_permission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("MNGR_AGENT_ID", "agent-42")
+
+    written = write_request_event(
+        request_type="LATCHKEY_PERMISSION",
+        payload={"service_name": "slack", "rationale": "need to post status updates"},
+    )
+
+    events_file = tmp_path / "events" / "requests" / "events.jsonl"
+    assert events_file.exists()
+    event = json.loads(events_file.read_text().splitlines()[0])
+    assert event == written
+    assert event["type"] == "latchkey_permission_request"
+    assert event["source"] == "requests"
+    assert event["agent_id"] == "agent-42"
+    assert event["request_type"] == "LATCHKEY_PERMISSION"
+    assert event["is_user_requested"] is True
+    assert event["service_name"] == "slack"
+    assert event["rationale"] == "need to post status updates"
+    assert event["event_id"].startswith("evt-")
+    assert "timestamp" in event
+
+
+def test_write_request_event_strips_reserved_metadata_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Caller cannot spoof identity fields by including them in the payload."""
+    monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("MNGR_AGENT_ID", "real-agent")
+
+    write_request_event(
+        request_type="LATCHKEY_PERMISSION",
+        payload={
+            "service_name": "github",
+            "rationale": "why",
+            "agent_id": "spoofed-agent",
+            "event_id": "evt-spoofed",
+            "source": "not-requests",
+            "type": "fake_type",
+            "timestamp": "1970-01-01T00:00:00.000000Z",
+            "request_type": "SHARING",
+        },
+    )
+
+    events_file = tmp_path / "events" / "requests" / "events.jsonl"
+    event = json.loads(events_file.read_text().splitlines()[0])
+    assert event["agent_id"] == "real-agent"
+    assert event["event_id"] != "evt-spoofed"
+    assert event["source"] == "requests"
+    assert event["type"] == "latchkey_permission_request"
+    assert event["timestamp"] != "1970-01-01T00:00:00.000000Z"
+    assert event["request_type"] == "LATCHKEY_PERMISSION"
+
+
+def test_write_request_event_unknown_request_type_falls_back_to_lowercase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("MNGR_AGENT_ID", "agent-1")
+
+    write_request_event(request_type="CUSTOM_THING", payload={"foo": "bar"})
+
+    events_file = tmp_path / "events" / "requests" / "events.jsonl"
+    event = json.loads(events_file.read_text().splitlines()[0])
+    assert event["type"] == "custom_thing_request"
+    assert event["foo"] == "bar"
+
+
+def test_write_request_event_requires_request_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("MNGR_AGENT_ID", "agent-1")
+
+    with pytest.raises(ValueError, match="request_type"):
+        write_request_event(request_type="", payload={})
+
+
+def test_write_request_event_requires_agent_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
+    monkeypatch.delenv("MNGR_AGENT_ID", raising=False)
+
+    with pytest.raises(RuntimeError, match="MNGR_AGENT_ID"):
+        write_request_event(request_type="LATCHKEY_PERMISSION", payload={})
