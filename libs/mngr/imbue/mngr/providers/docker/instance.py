@@ -609,10 +609,21 @@ kill -TERM 1
             logger.log(LogLevel.BUILD.value, "{}", line.rstrip(), source="docker")
 
     def _build_image(self, build_args: Sequence[str], tag: str) -> str:
-        """Build a Docker image using native docker build with passthrough args."""
-        cmd = ["build", "-t", tag] + list(build_args)
-        with log_span("Running docker build with {} args", len(build_args)):
-            self._run_docker_creation_command(cmd)
+        """Build a Docker image. Uses depot.dev when MNGR_USE_DEPOT=1, else native docker build."""
+        use_depot = os.environ.get("MNGR_USE_DEPOT") == "1"
+        if use_depot:
+            cmd = ["depot", "build", "--load", "-t", tag] + list(build_args)
+            builder_label = "depot"
+        else:
+            cmd = ["docker", "build", "-t", tag] + list(build_args)
+            builder_label = "docker"
+        with log_span("Running {} build with {} args", builder_label, len(build_args)):
+            self.mngr_ctx.concurrency_group.run_process_to_completion(
+                cmd,
+                timeout=300,
+                env=self._docker_env(),
+                on_output=self._log_docker_creation_command_output,
+            )
         return tag
 
     def _build_default_image(self, tag: str) -> str:

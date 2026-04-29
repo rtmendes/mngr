@@ -296,6 +296,9 @@ jobs:
   test-docker:
     if: github.ref != 'refs/heads/release'
     runs-on: ubuntu-latest
+    env:
+      MNGR_USE_DEPOT: "1"
+      DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
 
     steps:
       - uses: actions/checkout@v6
@@ -314,6 +317,9 @@ jobs:
         run: |
           echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
+
+      - name: Set up Depot CLI
+        uses: depot/setup-action@v1
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
