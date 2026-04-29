@@ -11,7 +11,7 @@ import pytest
 from imbue.mngr.agents.base_agent import BaseAgent
 from imbue.mngr.agents.base_agent import _check_paste_content
 from imbue.mngr.agents.base_agent import _normalize_for_match
-from imbue.mngr.agents.testing import create_test_agent
+from imbue.mngr.cli.testing import create_test_agent
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import SendMessageError

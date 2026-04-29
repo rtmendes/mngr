@@ -5,7 +5,6 @@ import pytest
 from pydantic import Field
 
 from imbue.mngr.agents.base_agent import BaseAgent
-from imbue.mngr.agents.testing import create_test_agent
 from imbue.mngr.api.find import AgentMatch
 from imbue.mngr.api.find import ParsedSourceLocation
 from imbue.mngr.api.find import determine_resolved_path
@@ -19,6 +18,7 @@ from imbue.mngr.api.find import group_agents_by_host
 from imbue.mngr.api.find import parse_source_string
 from imbue.mngr.api.find import resolve_agent_reference
 from imbue.mngr.api.find import resolve_host_reference
+from imbue.mngr.cli.testing import create_test_agent
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import AgentNotFoundError
