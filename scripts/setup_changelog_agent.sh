@@ -80,28 +80,39 @@ fi
 echo "Creating schedule '${TRIGGER_NAME}' (provider=$PROVIDER, verify=$VERIFY)..."
 
 # headless_claude with the orchestration spec staged from
-# scripts/changelog_consolidation_prompt.md.  --dangerously-skip-permissions
-# is required so claude can run python3 / git / gh as tools; IS_SANDBOX=1
-# (passed in via the agent env) lets it accept that flag as root.
+# scripts/changelog_consolidation_prompt.md.
 #
-# Note: --dangerously-skip-permissions is passed via `-S agent_types.
-# headless_claude.cli_args=...` rather than as `-- --dangerously-skip-
-# permissions` agent_args. cron_runner appends `--host-env-file
-# /staging/secrets/.env` to every create invocation; when our --args
-# end with a `--` passthrough section, the appended --host-env-file
-# lands inside the passthrough and gets handed to the claude binary
-# (which doesn't recognize it). cli_args go through the same path
-# without crossing the `--` boundary, so cron_runner's append stays in
-# the mngr-flag section and is consumed correctly.
+# cli_args explained (each is required for headless_claude on this path):
+#   --dangerously-skip-permissions
+#       so claude can run python3 / git / gh as tools; IS_SANDBOX=1
+#       (passed in via the agent env) lets it accept that flag as root.
+#   --output-format stream-json --verbose --include-partial-messages
+#       headless_claude's stream_output() parses JSONL events from
+#       stdout.jsonl (text deltas, assistant events, result events).
+#       Without --output-format=stream-json, claude --print emits plain
+#       text and the parser extracts zero events, so the framework
+#       raises "claude exited without producing output" even when
+#       claude succeeded. claude requires --verbose alongside
+#       --output-format stream-json with --print; --include-partial-
+#       messages gets us incremental deltas. Same pattern as
+#       _HEADLESS_CLAUDE_ARGS in libs/mngr/imbue/mngr/cli/ask.py.
 #
-# IMPORTANT: the `-S` value must be wrapped in single quotes. cron_runner
-# runs `shlex.split` on the stored args string before invoking
-# `mngr create`, and POSIX-mode shlex strips bare double quotes. Without
-# the surrounding single quotes the JSON `["--dangerously-skip-permissions"]`
-# gets reduced to `[--dangerously-skip-permissions]` (no quotes), which
-# fails JSON parsing inside `_parse_setting_value` and falls through to a
-# plain-string value. The single quotes survive shlex.split as part of the
-# token, so json.loads sees the original quoted JSON list.
+# Why cli_args via -S, not agent_args after `--`:
+#   cron_runner appends `--host-env-file /staging/secrets/.env` to every
+#   create invocation. When our --args end with a `--` passthrough
+#   section, the appended --host-env-file lands inside the passthrough
+#   and gets handed to the claude binary (which doesn't recognize it).
+#   cli_args go through the same code path on the claude side but don't
+#   require a `--` separator on the mngr CLI side, so cron_runner's
+#   append stays in the mngr-flag section.
+#
+# Why single quotes around the -S value:
+#   cron_runner runs `shlex.split` on the stored args string in POSIX
+#   mode. Bare double quotes get stripped, reducing the JSON list to
+#   bracketed bare tokens that fail json.loads inside
+#   _parse_setting_value, which then falls through to treating the
+#   value as a plain string. Single quotes survive shlex.split as part
+#   of one token so json.loads sees the original quoted JSON list.
 uv run mngr schedule add "$TRIGGER_NAME" \
     --command create \
     --schedule "$SCHEDULE" \
@@ -117,7 +128,7 @@ uv run mngr schedule add "$TRIGGER_NAME" \
     --pass-env IS_SANDBOX \
     --no-auto-fix-args \
     $DISABLE_PLUGIN_ARGS \
-    --args "--type headless_claude --foreground --branch ':mngr/changelog-consolidation-{DATE}' --message-file /code/project/scripts/changelog_consolidation_prompt.md -S 'agent_types.headless_claude.cli_args=[\"--dangerously-skip-permissions\"]'"
+    --args "--type headless_claude --foreground --branch ':mngr/changelog-consolidation-{DATE}' --message-file /code/project/scripts/changelog_consolidation_prompt.md -S 'agent_types.headless_claude.cli_args=[\"--dangerously-skip-permissions\",\"--output-format\",\"stream-json\",\"--verbose\",\"--include-partial-messages\"]'"
 
 echo "Schedule '${TRIGGER_NAME}' created successfully."
 echo ""
