@@ -64,14 +64,15 @@ logger = logging.getLogger(__name__)
 _SLACK_SOURCE = EventSource("slack")
 
 _T = TypeVar("_T")
+_K = TypeVar("_K")
 
 _CHANNEL_INFO_THREAD_TIMEOUT_SECONDS: Final[float] = 600.0
 
 
 def _diff_and_save(
     fresh_items: Sequence[_T],
-    existing_by_key: dict[str, _T],
-    get_key: Callable[[_T], str],
+    existing_by_key: dict[_K, _T],
+    get_key: Callable[[_T], _K],
     get_raw: Callable[[_T], dict[str, Any]],
     save_fn: Callable[[Path, StreamType, Sequence[_T]], None],
     output_dir: Path,
@@ -351,6 +352,11 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
     """Run the full export process: load state, resolve channels, fetch new messages, save."""
     existing_channel_by_id = load_existing_channels(settings.output_dir)
     state_by_channel_id, known_message_keys, existing_message_by_key = load_existing_message_state(settings.output_dir)
+    # Pre-bucket existing messages by channel so the refresh-window diff in each channel
+    # avoids re-scanning the full cross-channel dict.
+    existing_message_by_channel: dict[SlackChannelId, dict[SlackMessageTimestamp, MessageEvent]] = {}
+    for (existing_channel_id, existing_ts), event in existing_message_by_key.items():
+        existing_message_by_channel.setdefault(existing_channel_id, {})[existing_ts] = event
     existing_user_by_id = load_existing_users(settings.output_dir)
     known_reply_keys = load_existing_reply_keys(settings.output_dir)
     existing_reactions = load_existing_reactions(settings.output_dir)
@@ -489,7 +495,7 @@ def run_export(settings: ExporterSettings, api_caller: SlackApiCaller) -> None:
                 known_message_keys=known_message_keys,
                 known_reply_keys=known_reply_keys,
                 known_relevant_reply_keys=known_relevant_reply_keys,
-                existing_message_by_key=existing_message_by_key,
+                existing_messages_for_channel=existing_message_by_channel.get(channel_id, {}),
                 latest_reply_by_thread=latest_reply_by_thread,
                 channel_export_metadata=channel_export_metadata,
                 existing_reactions=existing_reactions,
@@ -519,7 +525,7 @@ def _export_single_channel(
     known_message_keys: set[tuple[SlackChannelId, SlackMessageTimestamp]],
     known_reply_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]],
     known_relevant_reply_keys: set[tuple[SlackChannelId, SlackMessageTimestamp, SlackMessageTimestamp]],
-    existing_message_by_key: dict[tuple[SlackChannelId, SlackMessageTimestamp], MessageEvent],
+    existing_messages_for_channel: dict[SlackMessageTimestamp, MessageEvent],
     latest_reply_by_thread: dict[tuple[SlackChannelId, SlackMessageTimestamp], SlackMessageTimestamp],
     channel_export_metadata: dict[SlackChannelId, SlackMessageTimestamp],
     existing_reactions: dict[str, ReactionEvent],
@@ -602,12 +608,8 @@ def _export_single_channel(
     if refresh_fetched:
         _diff_and_save(
             fresh_items=refresh_fetched,
-            existing_by_key={
-                _message_event_key(existing_channel_id, existing_ts): event
-                for (existing_channel_id, existing_ts), event in existing_message_by_key.items()
-                if existing_channel_id == channel_id
-            },
-            get_key=lambda m: _message_event_key(m.channel_id, m.message_ts),
+            existing_by_key=existing_messages_for_channel,
+            get_key=lambda m: m.message_ts,
             get_raw=lambda m: m.raw,
             save_fn=save_message_events,
             output_dir=settings.output_dir,
@@ -830,11 +832,6 @@ def _refresh_window_fetch(
         api_caller=api_caller,
         latest_ts=existing_state.latest_message_timestamp,
     )
-
-
-def _message_event_key(channel_id: SlackChannelId, message_ts: SlackMessageTimestamp) -> str:
-    """Stringify a (channel_id, message_ts) pair for use as a dict key in _diff_and_save."""
-    return f"{channel_id}:{message_ts}"
 
 
 def _fetch_all_messages_for_channel(
