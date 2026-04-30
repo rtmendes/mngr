@@ -61,12 +61,15 @@ step 11) and exit non-zero.
 
 10. Open a PR with `gh pr create --base main --title "Changelog
     consolidation <date>" --body "Automated changelog consolidation for
-    <date>."`. Capture the URL from stdout into `PR_URL`. **Do not** fold
-    stderr in via `2>&1` — `gh pr create` writes progress lines (e.g.
-    "Creating pull request for X into Y in Z") to stderr that would
-    corrupt `status.json` if mixed with the URL. If `gh pr create` exits
-    non-zero, write `status.json` with `status: failed` and the captured
-    stderr in `notes`, and exit non-zero.
+    <date>."`. Capture the URL from stdout into `PR_URL` while diverting
+    stderr to a temp file, e.g.
+    `PR_URL=$(gh pr create --base main --title "..." --body "..." 2>/tmp/gh_stderr)`.
+    **Do not** fold stderr in via `2>&1` — `gh pr create` writes progress
+    lines (e.g. "Creating pull request for X into Y in Z") to stderr
+    that would corrupt `status.json` if mixed with the URL. If `gh pr
+    create` exits non-zero, read `/tmp/gh_stderr` and write `status.json`
+    with `status: failed` and that stderr content in `notes`, then exit
+    non-zero.
 
 11. Write `status.json` to `$MNGR_AGENT_STATE_DIR/status.json` with this
     schema (all keys required):
