@@ -603,8 +603,9 @@ def _export_single_channel(
         _diff_and_save(
             fresh_items=refresh_fetched,
             existing_by_key={
-                _message_event_key(channel_id, ts): event
-                for (channel_id, ts), event in existing_message_by_key.items()
+                _message_event_key(existing_channel_id, existing_ts): event
+                for (existing_channel_id, existing_ts), event in existing_message_by_key.items()
+                if existing_channel_id == channel_id
             },
             get_key=lambda m: _message_event_key(m.channel_id, m.message_ts),
             get_raw=lambda m: m.raw,
