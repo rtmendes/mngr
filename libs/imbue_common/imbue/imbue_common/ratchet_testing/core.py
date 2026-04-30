@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from typing import Self
+from typing import TypeVar
 
 from pydantic import Field
 from pydantic import GetCoreSchemaHandler
@@ -189,6 +190,21 @@ def _get_ast_nodes_by_type(file_path: Path) -> dict[type, list[ast.AST]]:
             nodes_by_type[node_type] = []
         nodes_by_type[node_type].append(node)
     return nodes_by_type
+
+
+_AstNodeT = TypeVar("_AstNodeT", bound=ast.AST)
+
+
+def get_ast_nodes_of_type(file_path: Path, node_type: type[_AstNodeT]) -> list[_AstNodeT]:
+    """Return cached AST nodes of the given concrete type, with type narrowing.
+
+    The list comprehension's `isinstance` filter is what narrows the static type;
+    the runtime check is redundant because `_get_ast_nodes_by_type` already buckets
+    nodes by their exact runtime class, so every element passes. Cheaper than a
+    `cast` (no ratchet hit) and keeps callers free of `assert isinstance(...)`.
+    """
+    nodes = _get_ast_nodes_by_type(file_path).get(node_type, [])
+    return [n for n in nodes if isinstance(n, node_type)]
 
 
 @lru_cache(maxsize=None)

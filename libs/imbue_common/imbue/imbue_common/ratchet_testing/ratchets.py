@@ -16,8 +16,8 @@ from imbue.imbue_common.pure import pure
 from imbue.imbue_common.ratchet_testing.core import FileExtension
 from imbue.imbue_common.ratchet_testing.core import LineNumber
 from imbue.imbue_common.ratchet_testing.core import RatchetMatchChunk
-from imbue.imbue_common.ratchet_testing.core import _get_ast_nodes_by_type
 from imbue.imbue_common.ratchet_testing.core import _get_non_ignored_files_with_extension
+from imbue.imbue_common.ratchet_testing.core import get_ast_nodes_of_type
 
 TEST_FILE_PATTERNS: Final[tuple[str, ...]] = ("*_test.py", "test_*.py")
 
@@ -31,13 +31,11 @@ def find_if_elif_without_else(
     chunks: list[RatchetMatchChunk] = []
 
     for file_path in file_paths:
-        nodes_by_type = _get_ast_nodes_by_type(file_path)
-        if_nodes = nodes_by_type.get(ast.If, [])
+        if_nodes = get_ast_nodes_of_type(file_path, ast.If)
 
         visited_if_nodes: set[int] = set()
 
         for node in if_nodes:
-            assert isinstance(node, ast.If)
             if id(node) not in visited_if_nodes and _has_elif_without_else(node):
                 _mark_if_chain_as_visited(node, visited_if_nodes)
 
@@ -158,15 +156,13 @@ def find_init_methods_in_non_exception_classes(
     chunks: list[RatchetMatchChunk] = []
 
     for file_path in file_paths:
-        nodes_by_type = _get_ast_nodes_by_type(file_path)
-        class_def_nodes = nodes_by_type.get(ast.ClassDef, [])
+        class_def_nodes = get_ast_nodes_of_type(file_path, ast.ClassDef)
 
         # Build a map of class names to their base classes
         class_bases: dict[str, list[str]] = {}
         class_nodes: dict[str, ast.ClassDef] = {}
 
         for node in class_def_nodes:
-            assert isinstance(node, ast.ClassDef)
             bases = []
             for base in node.bases:
                 if isinstance(base, ast.Name):
@@ -237,11 +233,9 @@ def find_inline_functions(
     chunks: list[RatchetMatchChunk] = []
 
     for file_path in file_paths:
-        nodes_by_type = _get_ast_nodes_by_type(file_path)
-        func_def_nodes = nodes_by_type.get(ast.FunctionDef, [])
+        func_def_nodes = get_ast_nodes_of_type(file_path, ast.FunctionDef)
 
         for node in func_def_nodes:
-            assert isinstance(node, ast.FunctionDef)
             # Walk within each FunctionDef to find nested functions
             for inner_node in ast.walk(node):
                 if inner_node is not node and isinstance(inner_node, ast.FunctionDef):
@@ -275,12 +269,10 @@ def find_underscore_imports(
     chunks: list[RatchetMatchChunk] = []
 
     for file_path in file_paths:
-        nodes_by_type = _get_ast_nodes_by_type(file_path)
-        import_from_nodes = nodes_by_type.get(ast.ImportFrom, [])
-        import_nodes = nodes_by_type.get(ast.Import, [])
+        import_from_nodes = get_ast_nodes_of_type(file_path, ast.ImportFrom)
+        import_nodes = get_ast_nodes_of_type(file_path, ast.Import)
 
         for node in import_from_nodes:
-            assert isinstance(node, ast.ImportFrom)
             underscore_names: list[str] = []
             if node.names:
                 for alias in node.names:
@@ -300,7 +292,6 @@ def find_underscore_imports(
                 chunks.append(chunk)
 
         for node in import_nodes:
-            assert isinstance(node, ast.Import)
             underscore_names_import: list[str] = []
             for alias in node.names:
                 if alias.name.startswith("_"):
@@ -338,14 +329,12 @@ def find_cast_usages(
     chunks: list[RatchetMatchChunk] = []
 
     for file_path in file_paths:
-        nodes_by_type = _get_ast_nodes_by_type(file_path)
-        import_from_nodes = nodes_by_type.get(ast.ImportFrom, [])
+        import_from_nodes = get_ast_nodes_of_type(file_path, ast.ImportFrom)
 
         # Check if 'cast' is imported from typing
         has_cast_import = False
         cast_alias = "cast"
         for node in import_from_nodes:
-            assert isinstance(node, ast.ImportFrom)
             if node.module == "typing":
                 for alias in node.names:
                     if alias.name == "cast":
@@ -357,9 +346,8 @@ def find_cast_usages(
             continue
 
         # Find all calls to cast()
-        call_nodes = nodes_by_type.get(ast.Call, [])
+        call_nodes = get_ast_nodes_of_type(file_path, ast.Call)
         for node in call_nodes:
-            assert isinstance(node, ast.Call)
             if isinstance(node.func, ast.Name) and node.func.id == cast_alias:
                 start_line = LineNumber(node.lineno)
                 end_line = LineNumber(node.end_lineno if node.end_lineno else node.lineno)
@@ -393,12 +381,10 @@ def find_assert_isinstance_usages(
     chunks: list[RatchetMatchChunk] = []
 
     for file_path in file_paths:
-        nodes_by_type = _get_ast_nodes_by_type(file_path)
-        assert_nodes = nodes_by_type.get(ast.Assert, [])
+        assert_nodes = get_ast_nodes_of_type(file_path, ast.Assert)
 
         # Find all 'assert isinstance(...)' statements
         for node in assert_nodes:
-            assert isinstance(node, ast.Assert)
             # Check if the test is an isinstance() call
             if isinstance(node.test, ast.Call):
                 if isinstance(node.test.func, ast.Name) and node.test.func.id == "isinstance":
@@ -665,11 +651,9 @@ def find_silent_decode_error_catches(
     chunks: list[RatchetMatchChunk] = []
 
     for file_path in file_paths:
-        nodes_by_type = _get_ast_nodes_by_type(file_path)
-        handler_nodes = nodes_by_type.get(ast.ExceptHandler, [])
+        handler_nodes = get_ast_nodes_of_type(file_path, ast.ExceptHandler)
 
         for node in handler_nodes:
-            assert isinstance(node, ast.ExceptHandler)
             if not _handler_catches_decode_error(node):
                 continue
             if _handler_is_non_silent(node):
