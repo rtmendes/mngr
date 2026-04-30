@@ -550,25 +550,31 @@ def _make_recording_binary(tmp_path: Path, *, exit_code: int = 0, stderr: str = 
 def test_services_info_returns_valid_when_status_is_valid(tmp_path: Path) -> None:
     binary = _make_services_info_binary(tmp_path, credential_status="valid")
     latchkey = Latchkey(latchkey_binary=str(binary))
-    assert latchkey.services_info("slack") == CredentialStatus.VALID
+    info = latchkey.services_info("slack")
+    assert info.credential_status == CredentialStatus.VALID
+    assert info.auth_options == frozenset({"browser", "set"})
+    assert info.set_credentials_example == "..."
 
 
 def test_services_info_returns_missing_when_status_is_missing(tmp_path: Path) -> None:
     binary = _make_services_info_binary(tmp_path, credential_status="missing")
     latchkey = Latchkey(latchkey_binary=str(binary))
-    assert latchkey.services_info("slack") == CredentialStatus.MISSING
+    assert latchkey.services_info("slack").credential_status == CredentialStatus.MISSING
 
 
 def test_services_info_returns_invalid_when_status_is_invalid(tmp_path: Path) -> None:
     binary = _make_services_info_binary(tmp_path, credential_status="invalid")
     latchkey = Latchkey(latchkey_binary=str(binary))
-    assert latchkey.services_info("slack") == CredentialStatus.INVALID
+    assert latchkey.services_info("slack").credential_status == CredentialStatus.INVALID
 
 
 def test_services_info_returns_unknown_when_process_fails(tmp_path: Path) -> None:
     binary = _make_services_info_binary(tmp_path, exit_code=1)
     latchkey = Latchkey(latchkey_binary=str(binary))
-    assert latchkey.services_info("slack") == CredentialStatus.UNKNOWN
+    info = latchkey.services_info("slack")
+    assert info.credential_status == CredentialStatus.UNKNOWN
+    assert info.auth_options == frozenset()
+    assert info.set_credentials_example is None
 
 
 def test_services_info_returns_unknown_when_output_is_not_json(tmp_path: Path) -> None:
@@ -576,13 +582,65 @@ def test_services_info_returns_unknown_when_output_is_not_json(tmp_path: Path) -
     script.write_text("#!/usr/bin/env python3\nprint('not json')\n")
     script.chmod(0o755)
     latchkey = Latchkey(latchkey_binary=str(script))
-    assert latchkey.services_info("slack") == CredentialStatus.UNKNOWN
+    info = latchkey.services_info("slack")
+    assert info.credential_status == CredentialStatus.UNKNOWN
+    assert info.auth_options == frozenset()
+    assert info.set_credentials_example is None
 
 
 def test_services_info_returns_unknown_for_unrecognized_status(tmp_path: Path) -> None:
     binary = _make_services_info_binary(tmp_path, credential_status="totally-new")
     latchkey = Latchkey(latchkey_binary=str(binary))
-    assert latchkey.services_info("slack") == CredentialStatus.UNKNOWN
+    assert latchkey.services_info("slack").credential_status == CredentialStatus.UNKNOWN
+
+
+def test_services_info_returns_empty_auth_options_when_field_is_missing(tmp_path: Path) -> None:
+    script = tmp_path / "latchkey"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'credentialStatus': 'missing'}))\n"
+    )
+    script.chmod(0o755)
+    latchkey = Latchkey(latchkey_binary=str(script))
+    info = latchkey.services_info("coolify")
+    assert info.credential_status == CredentialStatus.MISSING
+    assert info.auth_options == frozenset()
+    assert info.set_credentials_example is None
+
+
+def test_services_info_returns_set_only_auth_options_for_set_only_service(tmp_path: Path) -> None:
+    script = tmp_path / "latchkey"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({\n"
+        "    'credentialStatus': 'missing',\n"
+        "    'authOptions': ['set'],\n"
+        "    'setCredentialsExample': 'latchkey auth set coolify -H \"Authorization: Bearer <token>\"',\n"
+        "}))\n"
+    )
+    script.chmod(0o755)
+    latchkey = Latchkey(latchkey_binary=str(script))
+    info = latchkey.services_info("coolify")
+    assert info.credential_status == CredentialStatus.MISSING
+    assert info.auth_options == frozenset({"set"})
+    assert info.set_credentials_example is not None
+    assert "latchkey auth set coolify" in info.set_credentials_example
+
+
+def test_services_info_skips_malformed_auth_options(tmp_path: Path) -> None:
+    script = tmp_path / "latchkey"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'credentialStatus': 'missing', 'authOptions': 'browser'}))\n"
+    )
+    script.chmod(0o755)
+    latchkey = Latchkey(latchkey_binary=str(script))
+    info = latchkey.services_info("slack")
+    assert info.credential_status == CredentialStatus.MISSING
+    assert info.auth_options == frozenset()
 
 
 def test_services_info_passes_latchkey_directory_through(tmp_path: Path) -> None:

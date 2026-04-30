@@ -38,14 +38,24 @@ and how the agent receives the answer.
      ``any`` pre-check, so the dialog also acts as a revocation UI.
    * The Approve button stays disabled while zero boxes are checked.
 6. **User approves.** The desktop client:
-   1. Runs `latchkey services info <service>` to read `credentialStatus`.
-   2. If `missing` / `invalid` / `unknown`, runs `latchkey auth browser <service>`
+   1. Runs `latchkey services info <service>` to read `credentialStatus`,
+      `authOptions`, and `setCredentialsExample`.
+   2. If credentials are not `valid` and the service advertises a
+      `browser` auth option (or latchkey reports no `authOptions` at all,
+      treated as the legacy fallback), runs `latchkey auth browser <service>`
       synchronously; cancellation/failure produces an `AUTH_FAILED` outcome.
-   3. Atomically rewrites the agent's `latchkey_permissions.json` so the gateway
+   3. If credentials are not `valid` and the service does not advertise a
+      `browser` auth option (e.g. Coolify, where `authOptions = ["set"]`),
+      the grant is **refused** and the request stays pending. The dialog
+      shows the `setCredentialsExample` returned by latchkey (or a
+      generic fallback) and asks the user to run it in a terminal. A
+      subsequent Approve click re-runs `latchkey services info` and
+      proceeds normally once credentials are valid.
+   4. Atomically rewrites the agent's `latchkey_permissions.json` so the gateway
       enforces the chosen schemas on the next request.
-   4. Appends a `GRANTED` (or `AUTH_FAILED`) response event to
+   5. Appends a `GRANTED` (or `AUTH_FAILED`) response event to
       `~/.minds/events/requests/events.jsonl`.
-   5. Sends the agent a plain-English `mngr message` describing the
+   6. Sends the agent a plain-English `mngr message` describing the
       decision; the agent wakes up and decides whether to retry.
 7. **User denies.** The desktop client appends a `DENIED` response event
    and sends the agent a plain-English denial message. `latchkey_permissions.json`

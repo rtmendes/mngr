@@ -75,6 +75,15 @@
 
     {% block permissions_progress %}{% endblock %}
 
+    <div id="permissions-manual-credentials" class="hidden mt-4">
+      {% call ui.notice(variant='info') %}
+        <p class="font-medium">Manual credential setup required</p>
+        <p id="permissions-manual-credentials-message" class="mt-1"></p>
+        <p class="mt-2 text-sm">Run this command in a terminal, then click Approve again:</p>
+        <pre class="mt-2 bg-zinc-900 text-zinc-100 rounded-md p-3 text-xs overflow-x-auto"><code id="permissions-manual-credentials-command"></code></pre>
+      {% endcall %}
+    </div>
+
     <div id="permissions-error" class="hidden mt-4">
       {% call ui.notice(variant='error') %}
         <p class="font-medium">Authorization failed</p>
@@ -108,6 +117,8 @@
       e.preventDefault();
       approveBtn.disabled = true;
       errorBox.classList.add("hidden");
+      const manualBox = document.getElementById("permissions-manual-credentials");
+      if (manualBox) manualBox.classList.add("hidden");
       const progress = document.getElementById("permissions-progress");
       if (progress) progress.classList.remove("hidden");
 
@@ -128,6 +139,17 @@
           return;
         }
         if (progress) progress.classList.add("hidden");
+        if (data.outcome === "NEEDS_MANUAL_CREDENTIALS") {
+          // The request stays pending: show the suggested command,
+          // re-enable Approve, and let the user retry after running it.
+          const cmdEl = document.getElementById("permissions-manual-credentials-command");
+          const msgEl = document.getElementById("permissions-manual-credentials-message");
+          if (cmdEl) cmdEl.textContent = data.set_credentials_example || "";
+          if (msgEl) msgEl.textContent = data.message || "";
+          if (manualBox) manualBox.classList.remove("hidden");
+          window.updateApproveState();
+          return;
+        }
         errorMsg.textContent = data.message || "Authorization failed.";
         errorBox.classList.remove("hidden");
         approveBtn.disabled = false;

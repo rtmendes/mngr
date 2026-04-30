@@ -25,6 +25,7 @@ import os
 import shutil
 import socket
 import threading
+from collections.abc import Mapping
 from datetime import datetime
 from datetime import timezone
 from enum import auto
@@ -111,6 +112,42 @@ _CREDENTIAL_STATUS_BY_LATCHKEY_VALUE: Final[dict[str, CredentialStatus]] = {
     "invalid": CredentialStatus.INVALID,
     "unknown": CredentialStatus.UNKNOWN,
 }
+
+# Latchkey's ``authOptions`` field lists the auth flows a service supports.
+# The two we currently react to are ``browser`` (interactive sign-in) and
+# ``set`` (user-supplied credentials via ``latchkey auth set``). Any unknown
+# values are preserved verbatim so callers can do their own forward-compat
+# checks without losing information.
+LATCHKEY_AUTH_OPTION_BROWSER: Final[str] = "browser"
+LATCHKEY_AUTH_OPTION_SET: Final[str] = "set"
+
+
+class LatchkeyServiceInfo(FrozenModel):
+    """Parsed output of ``latchkey services info <service>``."""
+
+    credential_status: CredentialStatus = Field(
+        description="Credential state reported by latchkey.",
+    )
+    auth_options: frozenset[str] = Field(
+        description=(
+            "Authentication option keywords latchkey says the service supports "
+            "(e.g. ``browser``, ``set``). Empty when latchkey did not report "
+            "any options or its output could not be parsed."
+        ),
+    )
+    set_credentials_example: str | None = Field(
+        description=(
+            "Example ``latchkey auth set`` invocation latchkey suggests for "
+            "manual credential setup, or ``None`` if latchkey did not provide one."
+        ),
+    )
+
+
+_UNKNOWN_LATCHKEY_SERVICE_INFO: Final[LatchkeyServiceInfo] = LatchkeyServiceInfo(
+    credential_status=CredentialStatus.UNKNOWN,
+    auth_options=frozenset(),
+    set_credentials_example=None,
+)
 
 
 def _allocate_free_port(host: str) -> int:
@@ -219,6 +256,56 @@ def _terminate_pid(pid: int) -> None:
         logger.debug("Could not terminate pid {}: {}", pid, e)
 
 
+def _parse_credential_status(payload: Mapping[str, object], service_name: str) -> CredentialStatus:
+    """Pull ``credentialStatus`` out of ``payload``, defaulting to UNKNOWN on any oddity."""
+    raw_status = payload.get("credentialStatus")
+    if not isinstance(raw_status, str):
+        logger.warning(
+            "'latchkey services info {}' did not include a credentialStatus string",
+            service_name,
+        )
+        return CredentialStatus.UNKNOWN
+    status = _CREDENTIAL_STATUS_BY_LATCHKEY_VALUE.get(raw_status)
+    if status is None:
+        logger.warning(
+            "Unrecognized credentialStatus {!r} from 'latchkey services info {}'",
+            raw_status,
+            service_name,
+        )
+        return CredentialStatus.UNKNOWN
+    return status
+
+
+def _parse_auth_options(payload: Mapping[str, object], service_name: str) -> frozenset[str]:
+    """Pull ``authOptions`` out of ``payload``; missing or malformed yields an empty set."""
+    raw_options = payload.get("authOptions")
+    if raw_options is None:
+        return frozenset()
+    if not isinstance(raw_options, list) or not all(isinstance(option, str) for option in raw_options):
+        logger.warning(
+            "'latchkey services info {}' authOptions was not a list of strings: {!r}",
+            service_name,
+            raw_options,
+        )
+        return frozenset()
+    return frozenset(option for option in raw_options if isinstance(option, str))
+
+
+def _parse_set_credentials_example(payload: Mapping[str, object], service_name: str) -> str | None:
+    """Pull ``setCredentialsExample`` out of ``payload``; missing/non-string yields ``None``."""
+    raw_example = payload.get("setCredentialsExample")
+    if raw_example is None:
+        return None
+    if not isinstance(raw_example, str):
+        logger.warning(
+            "'latchkey services info {}' setCredentialsExample was not a string: {!r}",
+            service_name,
+            raw_example,
+        )
+        return None
+    return raw_example
+
+
 def _build_env_with_latchkey_directory(latchkey_directory: Path | None) -> dict[str, str] | None:
     """Build an env override that pins ``LATCHKEY_DIRECTORY`` for a child process.
 
@@ -236,8 +323,8 @@ class Latchkey(MutableModel):
     """Wraps every interaction with the upstream ``latchkey`` CLI.
 
     Spawns, adopts, and tracks per-agent ``latchkey gateway`` subprocesses;
-    exposes ``services_info`` to query credential state; and ``auth_browser``
-    to launch the interactive sign-in flow. Gateways are spawned detached
+    exposes ``services_info`` to query credential state and supported auth
+    options; and ``auth_browser`` to launch the interactive sign-in flow. Gateways are spawned detached
     (``start_new_session=True`` inside :func:`spawn_detached_latchkey_gateway`)
     so they survive desktop-client restarts; lifecycle is reconciled against
     persisted records on ``start()``.
@@ -386,14 +473,15 @@ class Latchkey(MutableModel):
 
     # -- Service introspection -----------------------------------------------
 
-    def services_info(self, service_name: str) -> CredentialStatus:
-        """Run ``latchkey services info <service>`` and return the credential state.
+    def services_info(self, service_name: str) -> LatchkeyServiceInfo:
+        """Run ``latchkey services info <service>`` and return the parsed output.
 
         Latchkey emits pretty-printed JSON to stdout; we parse it and pull
-        out ``credentialStatus``. Any failure (process error, malformed
-        output, unrecognized status string) yields ``CredentialStatus.UNKNOWN``
-        so the caller falls back to launching the browser flow rather than
-        wrongly assuming credentials are valid.
+        out ``credentialStatus``, ``authOptions``, and ``setCredentialsExample``.
+        Any failure (process error, malformed output, unrecognized status
+        string) yields a service info with ``CredentialStatus.UNKNOWN`` and
+        empty ``auth_options``, so the caller can fall back to its legacy
+        behaviour rather than wrongly assuming credentials are valid.
         """
         env = _build_env_with_latchkey_directory(self.latchkey_directory)
         cg = ConcurrencyGroup(name="latchkey-services-info")
@@ -411,35 +499,23 @@ class Latchkey(MutableModel):
                 result.returncode,
                 result.stderr.strip(),
             )
-            return CredentialStatus.UNKNOWN
+            return _UNKNOWN_LATCHKEY_SERVICE_INFO
 
         try:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError as e:
             logger.warning("Could not parse 'latchkey services info {}' output as JSON: {}", service_name, e)
-            return CredentialStatus.UNKNOWN
+            return _UNKNOWN_LATCHKEY_SERVICE_INFO
 
         if not isinstance(payload, dict):
             logger.warning("'latchkey services info {}' returned non-object JSON", service_name)
-            return CredentialStatus.UNKNOWN
+            return _UNKNOWN_LATCHKEY_SERVICE_INFO
 
-        raw_status = payload.get("credentialStatus")
-        if not isinstance(raw_status, str):
-            logger.warning(
-                "'latchkey services info {}' did not include a credentialStatus string",
-                service_name,
-            )
-            return CredentialStatus.UNKNOWN
-
-        status = _CREDENTIAL_STATUS_BY_LATCHKEY_VALUE.get(raw_status)
-        if status is None:
-            logger.warning(
-                "Unrecognized credentialStatus {!r} from 'latchkey services info {}'",
-                raw_status,
-                service_name,
-            )
-            return CredentialStatus.UNKNOWN
-        return status
+        return LatchkeyServiceInfo(
+            credential_status=_parse_credential_status(payload, service_name),
+            auth_options=_parse_auth_options(payload, service_name),
+            set_credentials_example=_parse_set_credentials_example(payload, service_name),
+        )
 
     # -- Interactive auth ----------------------------------------------------
 

@@ -22,6 +22,8 @@ from imbue.minds.desktop_client.backend_resolver import StaticBackendResolver
 from imbue.minds.desktop_client.cookie_manager import SESSION_COOKIE_NAME
 from imbue.minds.desktop_client.cookie_manager import create_session_cookie
 from imbue.minds.desktop_client.latchkey.core import Latchkey
+from imbue.minds.desktop_client.latchkey.permissions import GrantOutcome
+from imbue.minds.desktop_client.latchkey.permissions import GrantResult
 from imbue.minds.desktop_client.latchkey.permissions import LatchkeyPermissionGrantHandler
 from imbue.minds.desktop_client.latchkey.permissions import MngrMessageSender
 from imbue.minds.desktop_client.latchkey.services_catalog import ServicePermissionInfo
@@ -48,8 +50,9 @@ class _RecordingHandler(LatchkeyPermissionGrantHandler):
     without polluting production code with a Protocol.
     """
 
-    was_granted_outcome: bool = Field(default=True)
+    grant_outcome: GrantOutcome = Field(default=GrantOutcome.GRANTED)
     grant_message: str = Field(default="granted")
+    grant_set_credentials_example: str | None = Field(default=None)
     deny_message: str = Field(default="denied")
     grant_calls: list[dict[str, object]] = Field(default_factory=list)
     deny_calls: list[dict[str, object]] = Field(default_factory=list)
@@ -60,7 +63,7 @@ class _RecordingHandler(LatchkeyPermissionGrantHandler):
         agent_id: AgentId,
         service_info: ServicePermissionInfo,
         granted_permissions: Sequence[str],
-    ) -> tuple[bool, str, RequestResponseEvent]:
+    ) -> GrantResult:
         self.grant_calls.append(
             {
                 "request_event_id": request_event_id,
@@ -69,7 +72,18 @@ class _RecordingHandler(LatchkeyPermissionGrantHandler):
                 "granted_permissions": tuple(granted_permissions),
             }
         )
-        status = RequestStatus.GRANTED if self.was_granted_outcome else RequestStatus.DENIED
+        # NEEDS_MANUAL_CREDENTIALS keeps the request pending and writes
+        # no response event; the other outcomes resolve it.
+        if self.grant_outcome == GrantOutcome.NEEDS_MANUAL_CREDENTIALS:
+            return GrantResult(
+                outcome=self.grant_outcome,
+                message=self.grant_message,
+                response_event=None,
+                set_credentials_example=self.grant_set_credentials_example,
+            )
+        status = (
+            RequestStatus.GRANTED if self.grant_outcome == GrantOutcome.GRANTED else RequestStatus.DENIED
+        )
         response_event = create_request_response_event(
             request_event_id=request_event_id,
             status=status,
@@ -77,7 +91,12 @@ class _RecordingHandler(LatchkeyPermissionGrantHandler):
             request_type=str(RequestType.LATCHKEY_PERMISSION),
             service_name=service_info.name,
         )
-        return self.was_granted_outcome, self.grant_message, response_event
+        return GrantResult(
+            outcome=self.grant_outcome,
+            message=self.grant_message,
+            response_event=response_event,
+            set_credentials_example=None,
+        )
 
     def deny(
         self,
@@ -113,8 +132,9 @@ def _get_app_request_inbox(client: TestClient) -> RequestInbox:
 
 def _make_recording_handler(
     tmp_path: Path,
-    was_granted_outcome: bool = True,
+    grant_outcome: GrantOutcome = GrantOutcome.GRANTED,
     grant_message: str = "granted",
+    grant_set_credentials_example: str | None = None,
 ) -> _RecordingHandler:
     """Build a ``_RecordingHandler`` with stub probes that won't be exercised in routing tests."""
     return _RecordingHandler(
@@ -122,8 +142,9 @@ def _make_recording_handler(
         latchkey=Latchkey(latchkey_binary="/nonexistent"),
         services_catalog=load_services_catalog(),
         mngr_message_sender=MngrMessageSender(mngr_binary="/nonexistent"),
-        was_granted_outcome=was_granted_outcome,
+        grant_outcome=grant_outcome,
         grant_message=grant_message,
+        grant_set_credentials_example=grant_set_credentials_example,
     )
 
 
@@ -233,7 +254,7 @@ def test_post_permission_grant_with_failed_signin_returns_denied_outcome(tmp_pat
     inbox = RequestInbox().add_request(request)
     handler = _make_recording_handler(
         tmp_path,
-        was_granted_outcome=False,
+        grant_outcome=GrantOutcome.DENIED,
         grant_message="Your sign-in flow did not finish. Reason: user cancelled.",
     )
     client = _build_authenticated_client(tmp_path, handler, inbox)
@@ -249,6 +270,39 @@ def test_post_permission_grant_with_failed_signin_returns_denied_outcome(tmp_pat
     # with a distinct message so the agent can tell the user what happened.
     assert payload["outcome"] == "DENIED"
     assert "user cancelled" in payload["message"]
+
+
+def test_post_permission_grant_with_manual_credentials_keeps_request_pending(tmp_path: Path) -> None:
+    """NEEDS_MANUAL_CREDENTIALS must echo the example command and not resolve the inbox."""
+    agent_id = AgentId()
+    request = create_latchkey_permission_request_event(
+        agent_id=str(agent_id),
+        service_name="slack",
+        rationale="reason",
+    )
+    inbox = RequestInbox().add_request(request)
+    expected_example = 'latchkey auth set slack -H "Authorization: Bearer xoxb-..."'
+    handler = _make_recording_handler(
+        tmp_path,
+        grant_outcome=GrantOutcome.NEEDS_MANUAL_CREDENTIALS,
+        grant_message="Slack does not support browser sign-in.",
+        grant_set_credentials_example=expected_example,
+    )
+    client = _build_authenticated_client(tmp_path, handler, inbox)
+
+    response = client.post(
+        f"/requests/{request.event_id}/grant",
+        data={"permissions": ["slack-read-all"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["outcome"] == "NEEDS_MANUAL_CREDENTIALS"
+    assert payload["set_credentials_example"] == expected_example
+    # The request must remain pending so the user can click Approve again
+    # after running the suggested command.
+    final_inbox = _get_app_request_inbox(client)
+    assert final_inbox.get_pending_count() == 1
 
 
 def test_post_permission_deny_calls_handler_and_resolves_inbox(tmp_path: Path) -> None:
