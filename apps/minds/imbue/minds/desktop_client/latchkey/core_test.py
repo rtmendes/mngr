@@ -577,6 +577,15 @@ def test_services_info_returns_unknown_when_process_fails(tmp_path: Path) -> Non
     assert info.set_credentials_example is None
 
 
+def test_services_info_returns_unknown_when_binary_does_not_exist(tmp_path: Path) -> None:
+    """Missing latchkey binary must degrade to UNKNOWN, not crash callers (e.g. dialog render)."""
+    latchkey = Latchkey(latchkey_binary=str(tmp_path / "does-not-exist"))
+    info = latchkey.services_info("slack")
+    assert info.credential_status == CredentialStatus.UNKNOWN
+    assert info.auth_options == frozenset()
+    assert info.set_credentials_example is None
+
+
 def test_services_info_returns_unknown_when_output_is_not_json(tmp_path: Path) -> None:
     script = tmp_path / "latchkey"
     script.write_text("#!/usr/bin/env python3\nprint('not json')\n")

@@ -416,6 +416,20 @@ class LatchkeyPermissionGrantHandler(RequestEventHandler):
         ws_name = _resolve_workspace_name(backend_resolver, parsed_id, fallback=req_event.agent_id)
         pre_checked = self._initial_checked_permissions(parsed_id, service_info)
 
+        # Match ``grant()``: ``latchkey auth browser`` runs only when
+        # credentials are not VALID AND the service either advertises a
+        # browser flow or returns no auth options at all (legacy fallback).
+        # Computed up front so the dialog's progress notice tells the
+        # truth about whether to expect a browser pop-up. If the status
+        # changes between render and submit (rare), the user may see a
+        # slightly inaccurate notice for one cycle; the actual outcome
+        # is unaffected.
+        latchkey_service_info = self.latchkey.services_info(service_info.name)
+        will_open_browser = latchkey_service_info.credential_status != CredentialStatus.VALID and (
+            LATCHKEY_AUTH_OPTION_BROWSER in latchkey_service_info.auth_options
+            or not latchkey_service_info.auth_options
+        )
+
         rendered = render_latchkey_permission_dialog(
             agent_id=req_event.agent_id,
             request_id=str(req_event.event_id),
@@ -423,6 +437,7 @@ class LatchkeyPermissionGrantHandler(RequestEventHandler):
             rationale=req_event.rationale,
             service=service_info,
             checked_permissions=pre_checked,
+            will_open_browser=will_open_browser,
         )
         return HTMLResponse(content=rendered)
 

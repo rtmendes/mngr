@@ -2,7 +2,9 @@ import json
 from pathlib import Path
 
 import pytest
+from starlette.responses import HTMLResponse
 
+from imbue.minds.desktop_client.backend_resolver import StaticBackendResolver
 from imbue.minds.desktop_client.latchkey.core import Latchkey
 from imbue.minds.desktop_client.latchkey.permissions import GrantOutcome
 from imbue.minds.desktop_client.latchkey.permissions import LatchkeyPermissionFlowError
@@ -12,6 +14,7 @@ from imbue.minds.desktop_client.latchkey.services_catalog import ServicePermissi
 from imbue.minds.desktop_client.latchkey.store import load_permissions
 from imbue.minds.desktop_client.latchkey.store import permissions_path_for_agent
 from imbue.minds.desktop_client.request_events import RequestStatus
+from imbue.minds.desktop_client.request_events import create_latchkey_permission_request_event
 from imbue.minds.desktop_client.request_events import load_response_events
 from imbue.mngr.primitives import AgentId
 
@@ -458,6 +461,55 @@ def test_grant_re_checks_credentials_on_second_call_after_manual_setup(tmp_path:
     )
     assert second.outcome == GrantOutcome.GRANTED
     assert second.response_event is not None
+
+
+# -- LatchkeyPermissionGrantHandler.render_request_page --
+
+
+def _render_dialog_html(handler: LatchkeyPermissionGrantHandler) -> str:
+    """Run ``render_request_page`` for a fixed Slack request and return its HTML."""
+    request = create_latchkey_permission_request_event(
+        agent_id=str(AgentId()),
+        service_name=_SLACK_SERVICE_INFO.name,
+        rationale="need slack access",
+    )
+    backend_resolver = StaticBackendResolver(url_by_agent_and_service={})
+    response = handler.render_request_page(req_event=request, backend_resolver=backend_resolver)
+    assert isinstance(response, HTMLResponse)
+    return response.body.decode("utf-8")
+
+
+def test_render_request_page_omits_browser_notice_when_credentials_valid(tmp_path: Path) -> None:
+    """Valid credentials skip ``latchkey auth browser``; the dialog must not falsely promise one."""
+    handler = _build_handler(tmp_path, credential_status="valid")
+
+    html = _render_dialog_html(handler)
+
+    assert "opening a browser window" not in html
+    assert "Granting permission" in html
+
+
+def test_render_request_page_shows_browser_notice_when_credentials_missing(tmp_path: Path) -> None:
+    """Missing credentials with browser auth supported -> dialog warns about the browser pop-up."""
+    handler = _build_handler(tmp_path, credential_status="missing")
+
+    html = _render_dialog_html(handler)
+
+    assert "opening a browser window" in html
+
+
+def test_render_request_page_omits_browser_notice_when_browser_auth_unsupported(tmp_path: Path) -> None:
+    """Service that only supports manual creds -> dialog must not promise a browser pop-up."""
+    handler = _build_handler(
+        tmp_path,
+        credential_status="missing",
+        auth_options_json=json.dumps(["set"]),
+    )
+
+    html = _render_dialog_html(handler)
+
+    assert "opening a browser window" not in html
+    assert "Granting permission" in html
 
 
 # -- LatchkeyPermissionGrantHandler.deny --

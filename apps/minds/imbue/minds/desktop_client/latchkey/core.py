@@ -38,7 +38,9 @@ from loguru import logger
 from pydantic import Field
 from pydantic import PrivateAttr
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.concurrency_group.errors import ProcessSetupError
 from imbue.imbue_common.enums import UpperCaseStrEnum
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
@@ -485,13 +487,27 @@ class Latchkey(MutableModel):
         """
         env = _build_env_with_latchkey_directory(self.latchkey_directory)
         cg = ConcurrencyGroup(name="latchkey-services-info")
-        with cg:
-            result = cg.run_process_to_completion(
-                command=[self.latchkey_binary, "services", "info", service_name],
-                timeout=_SERVICES_INFO_TIMEOUT_SECONDS,
-                is_checked_after=False,
-                env=env,
-            )
+        try:
+            with cg:
+                result = cg.run_process_to_completion(
+                    command=[self.latchkey_binary, "services", "info", service_name],
+                    timeout=_SERVICES_INFO_TIMEOUT_SECONDS,
+                    is_checked_after=False,
+                    env=env,
+                )
+        except ConcurrencyExceptionGroup as group:
+            # ``ConcurrencyGroup`` wraps the underlying error (e.g. a
+            # ``ProcessSetupError`` when the latchkey binary is missing /
+            # unexecutable) in an exception group on context-manager exit.
+            # The docstring promises any process error degrades to UNKNOWN
+            # rather than raising, so callers (e.g. the request dialog
+            # renderer) can fall back to legacy behaviour instead of
+            # crashing. Anything that isn't a process-setup failure is
+            # re-raised so genuinely unexpected bugs still surface.
+            if not group.only_exception_is_instance_of(ProcessSetupError):
+                raise
+            logger.warning("latchkey services info {} failed to start: {}", service_name, group)
+            return _UNKNOWN_LATCHKEY_SERVICE_INFO
         if result.returncode != 0:
             logger.warning(
                 "latchkey services info {} exited {}: {}",
