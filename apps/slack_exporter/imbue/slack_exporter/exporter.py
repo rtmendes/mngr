@@ -622,9 +622,7 @@ def _export_single_channel(
     # to overlap the refresh range, the same parent would otherwise be processed twice and
     # trigger duplicate conversations.replies calls.
     fetched_message_ts = {m.message_ts for m in all_fetched}
-    all_messages_for_downstream = all_fetched + [
-        m for m in refresh_fetched if m.message_ts not in fetched_message_ts
-    ]
+    all_messages_for_downstream = all_fetched + [m for m in refresh_fetched if m.message_ts not in fetched_message_ts]
 
     # Extract reactions from fetched messages (no extra API calls needed).
     message_reactions = _extract_reactions_from_messages(all_messages_for_downstream)
