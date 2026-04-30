@@ -23,14 +23,24 @@ _RESERVED_REQUEST_EVENT_KEYS: Final[frozenset[str]] = frozenset(
 )
 
 # Mapping from RequestType (the string written to ``request_type``) to the
-# event-envelope ``type`` field. Mirrors the ``EventType(...)`` values used in
-# ``imbue.minds.desktop_client.request_events`` so the desktop client's parser
-# can dispatch on ``request_type``.
+# event-envelope ``type`` field. Mirrors the ``RequestType`` enum and the
+# ``EventType(...)`` values used in ``imbue.minds.desktop_client.request_events``
+# so the desktop client's parser can dispatch on ``request_type``. Only request
+# types in this table are accepted by ``write_request_event``; adding a new
+# RequestType requires updating both this mapping and the desktop-side enum.
 _REQUEST_TYPE_TO_EVENT_TYPE: Final[dict[str, str]] = {
     "SHARING": "sharing_request",
     "PERMISSIONS": "permissions_request",
     "LATCHKEY_PERMISSION": "latchkey_permission_request",
 }
+
+KNOWN_REQUEST_TYPES: Final[frozenset[str]] = frozenset(_REQUEST_TYPE_TO_EVENT_TYPE.keys())
+
+
+class UnknownRequestTypeError(ValueError):
+    """Raised when ``request_type`` is not in :data:`KNOWN_REQUEST_TYPES`."""
+
+    ...
 
 
 def _generate_event_id() -> str:
@@ -67,17 +77,6 @@ def _append_event_line(events_file: Path, event: dict[str, object]) -> None:
         f.write(line)
 
 
-def _event_type_for_request_type(request_type: str) -> str:
-    """Return the event-envelope ``type`` for a given ``request_type``.
-
-    Falls back to ``<lowercase>_request`` for unknown request types so the
-    desktop client at least sees a coherent event-type string.
-    """
-    if request_type in _REQUEST_TYPE_TO_EVENT_TYPE:
-        return _REQUEST_TYPE_TO_EVENT_TYPE[request_type]
-    return f"{request_type.lower()}_request"
-
-
 def write_request_event(
     request_type: str,
     payload: dict[str, object],
@@ -85,13 +84,18 @@ def write_request_event(
 ) -> dict[str, object]:
     """Append a generic request event to ``events/requests/events.jsonl``.
 
-    The ``payload`` is merged onto a metadata dict the server fills in
-    (``timestamp``, ``type``, ``event_id``, ``source``, ``agent_id``,
-    ``request_type``). Reserved metadata keys are stripped from ``payload`` so
-    the caller cannot spoof them. Returns the full event dict that was written.
+    ``request_type`` must be one of :data:`KNOWN_REQUEST_TYPES`; unknown values
+    raise :class:`UnknownRequestTypeError`. The ``payload`` is merged onto a
+    metadata dict the server fills in (``timestamp``, ``type``, ``event_id``,
+    ``source``, ``agent_id``, ``request_type``). Reserved metadata keys are
+    stripped from ``payload`` so the caller cannot spoof them. Returns the full
+    event dict that was written.
     """
-    if not request_type:
-        raise ValueError("request_type must be a non-empty string")
+    if request_type not in _REQUEST_TYPE_TO_EVENT_TYPE:
+        known = ", ".join(sorted(KNOWN_REQUEST_TYPES))
+        raise UnknownRequestTypeError(
+            f"Unknown request_type {request_type!r}; expected one of: {known}"
+        )
 
     agent_id = os.environ.get("MNGR_AGENT_ID", "")
     if not agent_id:
@@ -99,7 +103,7 @@ def write_request_event(
 
     event: dict[str, object] = {
         "timestamp": _now_iso(),
-        "type": _event_type_for_request_type(request_type),
+        "type": _REQUEST_TYPE_TO_EVENT_TYPE[request_type],
         "event_id": _generate_event_id(),
         "source": "requests",
         "agent_id": agent_id,

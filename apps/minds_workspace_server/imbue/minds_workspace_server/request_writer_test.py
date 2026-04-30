@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from imbue.minds_workspace_server.request_writer import UnknownRequestTypeError
 from imbue.minds_workspace_server.request_writer import write_refresh_request
 from imbue.minds_workspace_server.request_writer import write_request_event
 from imbue.minds_workspace_server.request_writer import write_sharing_request
@@ -118,28 +119,45 @@ def test_write_request_event_strips_reserved_metadata_keys(
     assert event["request_type"] == "LATCHKEY_PERMISSION"
 
 
-def test_write_request_event_unknown_request_type_falls_back_to_lowercase(
+def test_write_request_event_rejects_unknown_request_type(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("MNGR_AGENT_ID", "agent-1")
 
-    write_request_event(request_type="CUSTOM_THING", payload={"foo": "bar"})
+    with pytest.raises(UnknownRequestTypeError, match="CUSTOM_THING"):
+        write_request_event(request_type="CUSTOM_THING", payload={"foo": "bar"})
 
     events_file = tmp_path / "events" / "requests" / "events.jsonl"
-    event = json.loads(events_file.read_text().splitlines()[0])
-    assert event["type"] == "custom_thing_request"
-    assert event["foo"] == "bar"
+    assert not events_file.exists()
 
 
-def test_write_request_event_requires_request_type(
+def test_write_request_event_rejects_empty_request_type(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("MNGR_AGENT_ID", "agent-1")
 
-    with pytest.raises(ValueError, match="request_type"):
+    with pytest.raises(UnknownRequestTypeError):
         write_request_event(request_type="", payload={})
+
+
+def test_write_request_event_accepts_all_known_request_types(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each known request_type maps to a distinct envelope ``type`` and writes successfully."""
+    monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("MNGR_AGENT_ID", "agent-1")
+
+    expected_event_types = {
+        "SHARING": "sharing_request",
+        "PERMISSIONS": "permissions_request",
+        "LATCHKEY_PERMISSION": "latchkey_permission_request",
+    }
+    for request_type, expected_type in expected_event_types.items():
+        written = write_request_event(request_type=request_type, payload={})
+        assert written["type"] == expected_type
+        assert written["request_type"] == request_type
 
 
 def test_write_request_event_requires_agent_id(

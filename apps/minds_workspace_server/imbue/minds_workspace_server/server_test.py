@@ -387,6 +387,25 @@ def test_request_event_endpoint_rejects_non_object_body(
     assert response.status_code == 400
 
 
+def test_request_event_endpoint_rejects_unknown_request_type(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("MNGR_AGENT_ID", "agent-7")
+
+    response = client.post(
+        "/api/permissions/request",
+        json={"request_type": "CUSTOM_THING", "service_name": "slack"},
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "CUSTOM_THING" in detail
+    assert "LATCHKEY_PERMISSION" in detail
+
+    events_file = tmp_path / "events" / "requests" / "events.jsonl"
+    assert not events_file.exists()
+
+
 def test_request_event_endpoint_honors_caller_is_user_requested(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

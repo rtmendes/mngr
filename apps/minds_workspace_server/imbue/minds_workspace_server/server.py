@@ -45,6 +45,8 @@ from imbue.minds_workspace_server.models import RandomNameResponse
 from imbue.minds_workspace_server.models import SendMessageRequest
 from imbue.minds_workspace_server.models import SendMessageResponse
 from imbue.minds_workspace_server.plugins import get_plugin_manager
+from imbue.minds_workspace_server.request_writer import KNOWN_REQUEST_TYPES
+from imbue.minds_workspace_server.request_writer import UnknownRequestTypeError
 from imbue.minds_workspace_server.request_writer import write_refresh_request
 from imbue.minds_workspace_server.request_writer import write_request_event
 from imbue.minds_workspace_server.service_dispatcher import register_service_routes
@@ -710,6 +712,13 @@ async def _request_event_endpoint(request: Request) -> JSONResponse:
         error = ErrorResponse(detail="Field 'request_type' is required and must be a non-empty string")
         return JSONResponse(content=error.model_dump(), status_code=400)
 
+    if request_type_raw not in KNOWN_REQUEST_TYPES:
+        known = ", ".join(sorted(KNOWN_REQUEST_TYPES))
+        error = ErrorResponse(
+            detail=f"Unknown request_type {request_type_raw!r}; expected one of: {known}"
+        )
+        return JSONResponse(content=error.model_dump(), status_code=400)
+
     is_user_requested_raw = body.get("is_user_requested", True)
     if not isinstance(is_user_requested_raw, bool):
         error = ErrorResponse(detail="Field 'is_user_requested' must be a boolean")
@@ -726,7 +735,10 @@ async def _request_event_endpoint(request: Request) -> JSONResponse:
             payload,
             is_user_requested_raw,
         )
-    except (RuntimeError, ValueError, OSError) as e:
+    except UnknownRequestTypeError as e:
+        error = ErrorResponse(detail=str(e))
+        return JSONResponse(content=error.model_dump(), status_code=400)
+    except (RuntimeError, OSError) as e:
         error = ErrorResponse(detail=str(e))
         return JSONResponse(content=error.model_dump(), status_code=500)
 
