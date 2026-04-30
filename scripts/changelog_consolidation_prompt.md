@@ -1,10 +1,18 @@
 You are running as a nightly changelog consolidation automation inside an
-ephemeral Modal sandbox. Working directory: `/code/project`. Execute the
-following steps in order, exactly. Do not deviate. Do not ask questions. If
-any step fails, capture the failure detail in `status.json` (see step 10) and
-exit non-zero.
+ephemeral Modal sandbox. The schedule creates a fresh worktree at
+`$MNGR_AGENT_WORK_DIR` with a per-run branch (`mngr/changelog-consolidation-
+<timestamp>`) checked out — that is the directory you must operate in.
+The deployed-code root at `/code/project` is on detached HEAD and is NOT
+the right place to commit. Execute the following steps in order, exactly.
+Do not deviate. Do not ask questions. If any step fails, capture the
+failure detail in `status.json` (see step 10) and exit non-zero.
 
-1. `cd /code/project`.
+1. `cd "$MNGR_AGENT_WORK_DIR"`. Verify with `git rev-parse --abbrev-ref
+   HEAD` that you are on a `mngr/changelog-consolidation-*` branch (not
+   `HEAD`). If you are on detached HEAD, that means the schedule
+   topology has drifted from the assumption above; write `status.json`
+   with `status: failed` and the captured `pwd` + branch state in
+   `notes`, then exit non-zero.
 
 2. Run `python3 scripts/consolidate_changelog.py`. Capture stdout. If stdout
    contains the literal string "No changelog entries", write `status.json`
