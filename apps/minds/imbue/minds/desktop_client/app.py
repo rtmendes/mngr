@@ -1428,7 +1428,14 @@ async def _handle_chrome_events(
             )
             inbox: RequestInbox | None = request.app.state.request_inbox
             last_request_count = inbox.get_pending_count() if inbox else 0
-            yield "data: {}\n\n".format(json.dumps({"type": "request_count", "count": last_request_count}))
+            # ``auto_open`` is bundled with ``request_count`` (rather than its
+            # own SSE event) so the Electron shell sees both atomically when
+            # deciding whether to auto-open the panel on count increases.
+            minds_config: MindsConfig | None = request.app.state.minds_config
+            auto_open = minds_config.get_auto_open_requests_panel() if minds_config else True
+            yield "data: {}\n\n".format(
+                json.dumps({"type": "request_count", "count": last_request_count, "auto_open": auto_open})
+            )
 
             # Wait for changes and push updates until client disconnects
             connected = not await request.is_disconnected()
@@ -1453,7 +1460,12 @@ async def _handle_chrome_events(
                 current_request_count = inbox.get_pending_count() if inbox else 0
                 if current_request_count != last_request_count:
                     last_request_count = current_request_count
-                    yield "data: {}\n\n".format(json.dumps({"type": "request_count", "count": current_request_count}))
+                    auto_open = minds_config.get_auto_open_requests_panel() if minds_config else True
+                    yield "data: {}\n\n".format(
+                        json.dumps(
+                            {"type": "request_count", "count": current_request_count, "auto_open": auto_open}
+                        )
+                    )
         finally:
             if isinstance(backend_resolver, MngrCliBackendResolver):
                 backend_resolver.remove_on_change_callback(_on_change)
@@ -1975,7 +1987,13 @@ _refresh_event_apps: dict[int, FastAPI] = {}
 
 
 def _handle_request_event_callback(agent_id_str: str, raw_line: str) -> None:
-    """Process an incoming request event and add it to the app's inbox."""
+    """Process an incoming request event and add it to the app's inbox.
+
+    After mutating the inbox, fires the resolver's change notification so
+    the chrome SSE wakes up and pushes the new ``request_count`` immediately
+    (otherwise it would lag up to 30s for the next poll tick, breaking the
+    requests panel auto-open and badge UX).
+    """
     event = parse_request_event(raw_line)
     if event is None:
         return
@@ -1984,6 +2002,9 @@ def _handle_request_event_callback(agent_id_str: str, raw_line: str) -> None:
         if current_inbox is not None:
             app.state.request_inbox = current_inbox.add_request(event)
             logger.info("Request event from agent {}: {}", agent_id_str, event.request_type)
+            backend_resolver = getattr(app.state, "backend_resolver", None)
+            if isinstance(backend_resolver, MngrCliBackendResolver):
+                backend_resolver.notify_change()
 
 
 def _parse_refresh_service_name(raw_line: str) -> str | None:

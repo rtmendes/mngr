@@ -39,6 +39,7 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.minds.config.data_types import MNGR_BINARY
 from imbue.minds.desktop_client.backend_resolver import BackendResolverInterface
+from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
 from imbue.minds.desktop_client.latchkey.core import CredentialStatus
 from imbue.minds.desktop_client.latchkey.core import LATCHKEY_AUTH_OPTION_BROWSER
 from imbue.minds.desktop_client.latchkey.core import Latchkey
@@ -605,8 +606,15 @@ class LatchkeyPermissionGrantHandler(RequestEventHandler):
         The on-disk event-sourcing log is the source of truth; this update
         is just so the requests panel doesn't show the resolved request as
         still pending until the next desktop-client restart.
+
+        Also wakes the chrome SSE so the new ``request_count`` is pushed
+        right away -- otherwise the panel would keep showing the resolved
+        card for up to 30s while the SSE poll waits for its next tick.
         """
         inbox: RequestInbox | None = request.app.state.request_inbox
         if inbox is None:
             return
         request.app.state.request_inbox = inbox.add_response(response_event)
+        backend_resolver = getattr(request.app.state, "backend_resolver", None)
+        if isinstance(backend_resolver, MngrCliBackendResolver):
+            backend_resolver.notify_change()
