@@ -93,9 +93,7 @@ def write_request_event(
     """
     if request_type not in _REQUEST_TYPE_TO_EVENT_TYPE:
         known = ", ".join(sorted(KNOWN_REQUEST_TYPES))
-        raise UnknownRequestTypeError(
-            f"Unknown request_type {request_type!r}; expected one of: {known}"
-        )
+        raise UnknownRequestTypeError(f"Unknown request_type {request_type!r}; expected one of: {known}")
 
     agent_id = os.environ.get("MNGR_AGENT_ID", "")
     if not agent_id:

@@ -92,7 +92,6 @@ def test_gateway_log_path_uses_per_agent_subdirectory(tmp_path: Path) -> None:
 # -- Permissions config tests (merged from permissions_store_test.py) --
 
 
-
 def test_load_permissions_returns_empty_for_missing_file(tmp_path: Path) -> None:
     config = load_permissions(tmp_path / "missing.json")
     assert config == LatchkeyPermissionsConfig()

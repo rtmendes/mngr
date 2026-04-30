@@ -66,9 +66,7 @@ _SLACK_SERVICE_INFO = ServicePermissionInfo(
 
 
 _DEFAULT_AUTH_OPTIONS_JSON: str = json.dumps(["browser", "set"])
-_DEFAULT_SET_EXAMPLE: str = (
-    'latchkey auth set slack -H "Authorization: Bearer xoxb-your-token"'
-)
+_DEFAULT_SET_EXAMPLE: str = 'latchkey auth set slack -H "Authorization: Bearer xoxb-your-token"'
 
 
 def _make_latchkey_with_status(
@@ -354,9 +352,7 @@ def test_grant_replaces_existing_rule_for_same_scope(tmp_path: Path) -> None:
 
 
 def test_grant_refuses_when_browser_auth_unsupported_and_returns_set_example(tmp_path: Path) -> None:
-    expected_example = (
-        'latchkey auth set coolify -H "Authorization: Bearer <token>"'
-    )
+    expected_example = 'latchkey auth set coolify -H "Authorization: Bearer <token>"'
     handler = _build_handler(
         tmp_path,
         credential_status="missing",

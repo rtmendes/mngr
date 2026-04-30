@@ -296,6 +296,3 @@ def render_accounts_page(
         accounts=accounts,
         default_account_id=default_account_id or "",
     )
-
-
-

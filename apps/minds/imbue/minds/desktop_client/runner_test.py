@@ -168,9 +168,7 @@ def test_agent_discovery_handler_handles_remote_agent_tunnel_error(tmp_path: Pat
     fake_manager.cleanup()
 
 
-def test_build_latchkey_uses_defaults_when_env_unset(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_build_latchkey_uses_defaults_when_env_unset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MINDS_LATCHKEY_BINARY", raising=False)
     monkeypatch.delenv("MINDS_LATCHKEY_DIRECTORY", raising=False)
 
@@ -188,9 +186,7 @@ def test_build_latchkey_honors_env_overrides(tmp_path: Path, monkeypatch: pytest
     assert manager.latchkey_directory == tmp_path / "shared"
 
 
-def test_build_latchkey_expands_home_in_directory_override(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_build_latchkey_expands_home_in_directory_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MINDS_LATCHKEY_BINARY", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("MINDS_LATCHKEY_DIRECTORY", "~/shared_latchkey")

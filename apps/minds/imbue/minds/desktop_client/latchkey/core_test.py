@@ -596,11 +596,7 @@ def test_services_info_returns_unknown_for_unrecognized_status(tmp_path: Path) -
 
 def test_services_info_returns_empty_auth_options_when_field_is_missing(tmp_path: Path) -> None:
     script = tmp_path / "latchkey"
-    script.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json\n"
-        "print(json.dumps({'credentialStatus': 'missing'}))\n"
-    )
+    script.write_text("#!/usr/bin/env python3\nimport json\nprint(json.dumps({'credentialStatus': 'missing'}))\n")
     script.chmod(0o755)
     latchkey = Latchkey(latchkey_binary=str(script))
     info = latchkey.services_info("coolify")

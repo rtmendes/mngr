@@ -62,9 +62,7 @@ def test_write_sharing_request_still_works(tmp_path: Path, monkeypatch: pytest.M
     assert event["is_user_requested"] is True
 
 
-def test_write_request_event_writes_latchkey_permission(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_request_event_writes_latchkey_permission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("MNGR_AGENT_ID", "agent-42")
 
@@ -88,9 +86,7 @@ def test_write_request_event_writes_latchkey_permission(
     assert "timestamp" in event
 
 
-def test_write_request_event_strips_reserved_metadata_keys(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_request_event_strips_reserved_metadata_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Caller cannot spoof identity fields by including them in the payload."""
     monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("MNGR_AGENT_ID", "real-agent")
@@ -119,9 +115,7 @@ def test_write_request_event_strips_reserved_metadata_keys(
     assert event["request_type"] == "LATCHKEY_PERMISSION"
 
 
-def test_write_request_event_rejects_unknown_request_type(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_request_event_rejects_unknown_request_type(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("MNGR_AGENT_ID", "agent-1")
 
@@ -132,9 +126,7 @@ def test_write_request_event_rejects_unknown_request_type(
     assert not events_file.exists()
 
 
-def test_write_request_event_rejects_empty_request_type(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_request_event_rejects_empty_request_type(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("MNGR_AGENT_ID", "agent-1")
 
@@ -142,9 +134,7 @@ def test_write_request_event_rejects_empty_request_type(
         write_request_event(request_type="", payload={})
 
 
-def test_write_request_event_accepts_all_known_request_types(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_request_event_accepts_all_known_request_types(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Each known request_type maps to a distinct envelope ``type`` and writes successfully."""
     monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("MNGR_AGENT_ID", "agent-1")
@@ -160,9 +150,7 @@ def test_write_request_event_accepts_all_known_request_types(
         assert written["request_type"] == request_type
 
 
-def test_write_request_event_requires_agent_id(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_write_request_event_requires_agent_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(tmp_path))
     monkeypatch.delenv("MNGR_AGENT_ID", raising=False)
 

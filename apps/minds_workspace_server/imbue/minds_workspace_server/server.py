@@ -714,9 +714,7 @@ async def _request_event_endpoint(request: Request) -> JSONResponse:
 
     if request_type_raw not in KNOWN_REQUEST_TYPES:
         known = ", ".join(sorted(KNOWN_REQUEST_TYPES))
-        error = ErrorResponse(
-            detail=f"Unknown request_type {request_type_raw!r}; expected one of: {known}"
-        )
+        error = ErrorResponse(detail=f"Unknown request_type {request_type_raw!r}; expected one of: {known}")
         return JSONResponse(content=error.model_dump(), status_code=400)
 
     is_user_requested_raw = body.get("is_user_requested", True)

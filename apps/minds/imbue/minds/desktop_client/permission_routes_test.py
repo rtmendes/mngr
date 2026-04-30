@@ -81,9 +81,7 @@ class _RecordingHandler(LatchkeyPermissionGrantHandler):
                 response_event=None,
                 set_credentials_example=self.grant_set_credentials_example,
             )
-        status = (
-            RequestStatus.GRANTED if self.grant_outcome == GrantOutcome.GRANTED else RequestStatus.DENIED
-        )
+        status = RequestStatus.GRANTED if self.grant_outcome == GrantOutcome.GRANTED else RequestStatus.DENIED
         response_event = create_request_response_event(
             request_event_id=request_event_id,
             status=status,
