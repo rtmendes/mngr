@@ -161,17 +161,21 @@
       }
     });
 
-    window.submitPermissionDeny = async function () {
+    window.submitPermissionDeny = function () {
       approveBtn.disabled = true;
-      try {
-        await fetch("/requests/{{ request_id }}/deny", {
-          method: "POST",
-          credentials: "same-origin",
-        });
-      } catch (err) {
-        // Best-effort: the response event may have failed to write,
-        // but the dialog should still close so the user is unblocked.
-      }
+      // Fire-and-forget: don't make the user wait for the server to
+      // notify the agent (``mngr message`` spawns a subprocess and can
+      // take a few seconds). ``keepalive: true`` lets the request
+      // outlive the navigation below so the response event still gets
+      // written and the agent still gets notified; the home page picks
+      // up the resolved state via SSE once the server is done. If the
+      // request fails entirely the dialog still closes so the user is
+      // unblocked.
+      fetch("/requests/{{ request_id }}/deny", {
+        method: "POST",
+        credentials: "same-origin",
+        keepalive: true,
+      }).catch(function () {});
       window.location.href = "/";
     };
   })();
