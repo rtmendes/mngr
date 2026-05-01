@@ -433,16 +433,11 @@ def check_no_type_errors(project_root: Path) -> None:
         error_count = len(error_lines)
 
         failure_message = [
-            f"Type checker found {error_count} error(s) (returncode {result.returncode}):",
+            f"Type checker found {error_count} error(s):",
             "",
-            "Full type checker stdout:",
+            "Full type checker output:",
             "=" * 80,
             result.stdout,
-            "=" * 80,
-            "",
-            "Full type checker stderr:",
-            "=" * 80,
-            result.stderr,
             "=" * 80,
         ]
 
@@ -460,16 +455,11 @@ def check_no_ruff_errors(project_root: Path) -> None:
 
     if result.returncode != 0:
         failure_message = [
-            f"Ruff linter found errors (returncode {result.returncode}):",
+            "Ruff linter found errors:",
             "",
-            "Full ruff stdout:",
+            "Full ruff output:",
             "=" * 80,
             result.stdout,
-            "=" * 80,
-            "",
-            "Full ruff stderr:",
-            "=" * 80,
-            result.stderr,
             "=" * 80,
         ]
 
