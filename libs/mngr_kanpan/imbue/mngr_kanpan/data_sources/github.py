@@ -457,32 +457,9 @@ class GitHubDataSource(FrozenModel):
                 elif agent_prs_loaded:
                     agent_fields[FIELD_PR] = CreatePrUrlField(url=_build_create_pr_url(agent_repo, branch))
                 else:
-                    # Fetch failed for this repo: silently fall back to cached PrField/CiField
-                    # if available; otherwise emit a PrFetchFailedField so the agent shows up
-                    # under "PRs not loaded" instead of being misclassified as "no PR yet".
-                    #
-                    # Branch match: only reuse the cache when the cached PR's head_branch
-                    # equals the agent's current branch. Otherwise the agent has moved on to
-                    # a different branch since the cache was written, and showing the old
-                    # PR would misattribute it to the wrong branch.
-                    #
-                    # Staleness: there is no TTL on the cached PR. If `gh pr list` keeps failing
-                    # for hours, we will keep showing the last-known PR row (number, state, CI).
-                    # That is the intentional trade-off -- a stale row is more useful than a
-                    # blank one and the failure is reported via `errors`. Re-evaluate if
-                    # auth/rate-limit failures become long-lived enough that a stale PR could
-                    # mislead the user (e.g. PR shown OPEN after it was merged days ago).
-                    cached_agent = cached_fields.get(agent.name, {})
-                    cached_pr = cached_agent.get(FIELD_PR)
-                    if isinstance(cached_pr, PrField) and cached_pr.head_branch == branch:
-                        if self.config.pr:
-                            agent_fields[FIELD_PR] = cached_pr
-                        if self.config.ci:
-                            cached_ci = cached_agent.get(FIELD_CI)
-                            if isinstance(cached_ci, CiField):
-                                agent_fields[FIELD_CI] = cached_ci
-                    elif self.config.pr:
-                        agent_fields[FIELD_PR] = PrFetchFailedField(repo=agent_repo)
+                    agent_fields.update(
+                        _compute_failed_fetch_fields(cached_fields, agent.name, branch, agent_repo, self.config)
+                    )
 
             if agent_fields:
                 fields[agent.name] = agent_fields
@@ -590,6 +567,48 @@ def _lookup_pr(
 def _build_create_pr_url(repo_path: str, branch: str) -> str:
     """Build a GitHub URL for creating a new PR from the given branch."""
     return f"https://github.com/{repo_path}/compare/{branch}?expand=1"
+
+
+@pure
+def _compute_failed_fetch_fields(
+    cached_fields: dict[AgentName, dict[str, FieldValue]],
+    agent_name: AgentName,
+    branch: str,
+    agent_repo: str,
+    config: GitHubDataSourceConfig,
+) -> dict[str, FieldValue]:
+    """Build the FIELD_PR / FIELD_CI fields for an agent whose repo PR fetch failed.
+
+    Silently falls back to a cached PrField/CiField if available; otherwise
+    emits a PrFetchFailedField so the agent shows up under "PRs not loaded"
+    instead of being misclassified as "no PR yet".
+
+    Branch match: only reuse the cache when the cached PR's head_branch
+    equals the agent's current branch. Otherwise the agent has moved on to
+    a different branch since the cache was written, and showing the old
+    PR would misattribute it to the wrong branch.
+
+    Staleness: there is no TTL on the cached PR. If ``gh pr list`` keeps
+    failing for hours, we will keep showing the last-known PR row (number,
+    state, CI). That is the intentional trade-off -- a stale row is more
+    useful than a blank one and the failure is reported via ``errors``.
+    Re-evaluate if auth/rate-limit failures become long-lived enough that
+    a stale PR could mislead the user (e.g. PR shown OPEN after it was
+    merged days ago).
+    """
+    agent_fields: dict[str, FieldValue] = {}
+    cached_agent = cached_fields.get(agent_name, {})
+    cached_pr = cached_agent.get(FIELD_PR)
+    if isinstance(cached_pr, PrField) and cached_pr.head_branch == branch:
+        if config.pr:
+            agent_fields[FIELD_PR] = cached_pr
+        if config.ci:
+            cached_ci = cached_agent.get(FIELD_CI)
+            if isinstance(cached_ci, CiField):
+                agent_fields[FIELD_CI] = cached_ci
+    elif config.pr:
+        agent_fields[FIELD_PR] = PrFetchFailedField(repo=agent_repo)
+    return agent_fields
 
 
 def _fetch_pr_metadata(
