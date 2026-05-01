@@ -546,14 +546,17 @@ def test_load_field_cache_returns_empty_on_invalid_agent_name(tmp_path: Path) ->
 
 
 def test_load_field_cache_skips_unknown_types(tmp_path: Path) -> None:
-    """load_field_cache skips field entries whose type is not in the type registry."""
+    """load_field_cache drops cache entries whose field key is not declared by any
+    data source's ``field_types`` adapter map. With no data sources passed in there
+    are no adapters, so every saved field key is unknown and the result is empty.
+    """
     ctx = make_mngr_ctx_with_profile_dir(tmp_path)
     agent_name = AgentName("agent-1")
     original: dict[AgentName, dict[str, FieldValue]] = {
         agent_name: {"status": StringField(value="hello")},
     }
     save_field_cache(ctx, original)
-    # Load with no data sources (empty type registry) -- field should be skipped
+    # No data sources -> no field-key adapters, so every saved key is unknown and dropped.
     loaded = load_field_cache(ctx, [])
     assert loaded == {}
 
