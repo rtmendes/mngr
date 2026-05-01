@@ -25,6 +25,9 @@ class ShellCommandConfig(FrozenModel):
     command: str = Field(description="Shell command to run per agent")
 
 
+_STRING_ADAPTER: TypeAdapter[FieldValue] = TypeAdapter(StringField)
+
+
 class ShellCommandDataSource(FrozenModel):
     """Runs user-defined shell commands per agent and produces StringField values.
 
@@ -51,7 +54,7 @@ class ShellCommandDataSource(FrozenModel):
 
     @property
     def field_types(self) -> dict[str, TypeAdapter[FieldValue]]:
-        return {self.field_key: TypeAdapter(StringField)}
+        return {self.field_key: _STRING_ADAPTER}
 
     def compute(
         self,

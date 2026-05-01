@@ -37,6 +37,9 @@ class CommitsAheadField(FieldValue):
         return CellDisplay(text=f"[{self.count} unpushed]")
 
 
+_COMMITS_AHEAD_ADAPTER: TypeAdapter[FieldValue] = TypeAdapter(CommitsAheadField)
+
+
 class GitInfoDataSource(FrozenModel):
     """Computes commits_ahead field from git rev-list --count."""
 
@@ -54,7 +57,7 @@ class GitInfoDataSource(FrozenModel):
 
     @property
     def field_types(self) -> dict[str, TypeAdapter[FieldValue]]:
-        return {FIELD_COMMITS_AHEAD: TypeAdapter(CommitsAheadField)}
+        return {FIELD_COMMITS_AHEAD: _COMMITS_AHEAD_ADAPTER}
 
     def compute(
         self,

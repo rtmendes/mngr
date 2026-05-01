@@ -31,6 +31,9 @@ class _ColoredStringField(FieldValue):
         return CellDisplay(text=self.value, color=self.color)
 
 
+_COLORED_STRING_ADAPTER: TypeAdapter[FieldValue] = TypeAdapter(_ColoredStringField)
+
+
 class LabelsDataSource(FrozenModel):
     """Reads agent labels and produces colored string fields.
 
@@ -55,7 +58,7 @@ class LabelsDataSource(FrozenModel):
 
     @property
     def field_types(self) -> dict[str, TypeAdapter[FieldValue]]:
-        return {self.field_key: TypeAdapter(_ColoredStringField)}
+        return {self.field_key: _COLORED_STRING_ADAPTER}
 
     def compute(
         self,

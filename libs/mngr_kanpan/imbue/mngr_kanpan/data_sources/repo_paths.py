@@ -59,6 +59,9 @@ def repo_path_from_labels(labels: dict[str, str]) -> str | None:
     return _parse_github_repo_path(remote_url)
 
 
+_REPO_PATH_ADAPTER: TypeAdapter[FieldValue] = TypeAdapter(RepoPathField)
+
+
 class RepoPathsDataSource(FrozenModel):
     """Computes repo_path field from agent remote labels.
 
@@ -80,7 +83,7 @@ class RepoPathsDataSource(FrozenModel):
 
     @property
     def field_types(self) -> dict[str, TypeAdapter[FieldValue]]:
-        return {FIELD_REPO_PATH: TypeAdapter(RepoPathField)}
+        return {FIELD_REPO_PATH: _REPO_PATH_ADAPTER}
 
     def compute(
         self,
