@@ -322,6 +322,22 @@ def _make_fetch_cg(open_json: str, all_json: str) -> MagicMock:
     return cg
 
 
+def _make_failing_fetch_cg(stderr: str = "HTTP 504") -> MagicMock:
+    """Build a mock ConcurrencyGroup whose two PR fetches both fail with the given stderr.
+
+    Mirrors the failure shape used by tests that exercise the PR-fetch-failed code
+    paths (returncode=1, empty stdout). The two-process side_effect matches
+    fetch_all_prs's open + all queries.
+    """
+    fail_proc = MagicMock()
+    fail_proc.read_stdout.return_value = ""
+    fail_proc.read_stderr.return_value = stderr
+    fail_proc.returncode = 1
+    cg = MagicMock()
+    cg.run_process_in_background.side_effect = [fail_proc, fail_proc]
+    return cg
+
+
 def _make_open_pr_json(number: int = 1, branch: str = "test-branch") -> str:
     return json.dumps(
         [
@@ -418,13 +434,7 @@ def test_compute_no_pr_for_branch_generates_create_url_in_pr_slot() -> None:
 def test_compute_pr_fetch_error_adds_error() -> None:
     ds = GitHubDataSource(config=GitHubDataSourceConfig(conflicts=False, unresolved=False))
     agent = make_agent_details(name="a1", initial_branch="branch-1", labels={"remote": "git@github.com:org/repo.git"})
-    cg = MagicMock()
-    fail_proc = MagicMock()
-    fail_proc.read_stdout.return_value = ""
-    fail_proc.read_stderr.return_value = "HTTP 504"
-    fail_proc.returncode = 1
-    cg.run_process_in_background.side_effect = [fail_proc, fail_proc]
-    ctx = make_mngr_ctx_with_cg(cg)
+    ctx = make_mngr_ctx_with_cg(_make_failing_fetch_cg())
     fields, errors = ds.compute(agents=(agent,), cached_fields={}, mngr_ctx=ctx)
     assert len(errors) > 0
 
@@ -435,13 +445,7 @@ def test_compute_pr_fetch_failed_no_cache_emits_fetch_failed_field() -> None:
     """
     ds = GitHubDataSource(config=GitHubDataSourceConfig(conflicts=False, unresolved=False))
     agent = make_agent_details(name="a1", initial_branch="branch-1", labels={"remote": "git@github.com:org/repo.git"})
-    cg = MagicMock()
-    fail_proc = MagicMock()
-    fail_proc.read_stdout.return_value = ""
-    fail_proc.read_stderr.return_value = "HTTP 504"
-    fail_proc.returncode = 1
-    cg.run_process_in_background.side_effect = [fail_proc, fail_proc]
-    ctx = make_mngr_ctx_with_cg(cg)
+    ctx = make_mngr_ctx_with_cg(_make_failing_fetch_cg())
     fields, _errors = ds.compute(agents=(agent,), cached_fields={}, mngr_ctx=ctx)
     assert agent.name in fields
     pr_field = fields[agent.name].get(FIELD_PR)
@@ -460,13 +464,7 @@ def test_compute_pr_fetch_failed_with_cached_pr_uses_cache() -> None:
     cached: dict[AgentName, dict[str, FieldValue]] = {
         agent.name: {FIELD_PR: cached_pr, FIELD_CI: cached_ci},
     }
-    cg = MagicMock()
-    fail_proc = MagicMock()
-    fail_proc.read_stdout.return_value = ""
-    fail_proc.read_stderr.return_value = "HTTP 504"
-    fail_proc.returncode = 1
-    cg.run_process_in_background.side_effect = [fail_proc, fail_proc]
-    ctx = make_mngr_ctx_with_cg(cg)
+    ctx = make_mngr_ctx_with_cg(_make_failing_fetch_cg())
     fields, _errors = ds.compute(agents=(agent,), cached_fields=cached, mngr_ctx=ctx)
     assert agent.name in fields
     pr_field = fields[agent.name].get(FIELD_PR)
@@ -488,13 +486,7 @@ def test_compute_pr_fetch_failed_with_cached_pr_for_different_branch_emits_fetch
     cached: dict[AgentName, dict[str, FieldValue]] = {
         agent.name: {FIELD_PR: stale_cached_pr, FIELD_CI: cached_ci},
     }
-    cg = MagicMock()
-    fail_proc = MagicMock()
-    fail_proc.read_stdout.return_value = ""
-    fail_proc.read_stderr.return_value = "HTTP 504"
-    fail_proc.returncode = 1
-    cg.run_process_in_background.side_effect = [fail_proc, fail_proc]
-    ctx = make_mngr_ctx_with_cg(cg)
+    ctx = make_mngr_ctx_with_cg(_make_failing_fetch_cg())
     fields, _errors = ds.compute(agents=(agent,), cached_fields=cached, mngr_ctx=ctx)
     assert agent.name in fields
     pr_field = fields[agent.name].get(FIELD_PR)
