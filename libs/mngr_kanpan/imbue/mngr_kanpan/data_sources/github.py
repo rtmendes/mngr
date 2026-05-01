@@ -3,10 +3,13 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from enum import auto
 from pathlib import Path
+from typing import Annotated
 from typing import Any
+from typing import Literal
 
 from loguru import logger
 from pydantic import Field
+from pydantic import TypeAdapter
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.errors import ProcessError
@@ -60,6 +63,7 @@ class CiStatus(UpperCaseStrEnum):
 class PrField(FieldValue):
     """GitHub pull request field value."""
 
+    kind: Literal["pr"] = Field(default="pr", description="Discriminator tag")
     number: int = Field(description="PR number")
     url: str = Field(description="PR URL")
     is_draft: bool = Field(description="Whether the PR is a draft")
@@ -81,6 +85,7 @@ class PrField(FieldValue):
 class CiField(FieldValue):
     """CI check status field value."""
 
+    kind: Literal["ci"] = Field(default="ci", description="Discriminator tag")
     status: CiStatus = Field(description="Aggregate CI check status")
 
     def display(self) -> CellDisplay:
@@ -95,6 +100,7 @@ class CiField(FieldValue):
 class CreatePrUrlField(FieldValue):
     """URL to create a new PR for a branch."""
 
+    kind: Literal["create_pr_url"] = Field(default="create_pr_url", description="Discriminator tag")
     url: str = Field(description="URL to create a PR")
 
     def display(self) -> CellDisplay:
@@ -110,6 +116,7 @@ class PrFetchFailedField(FieldValue):
     emitting this sentinel (silent fallback).
     """
 
+    kind: Literal["pr_fetch_failed"] = Field(default="pr_fetch_failed", description="Discriminator tag")
     repo: str = Field(description="Repo path that failed to load (e.g. 'org/repo')")
 
     def display(self) -> CellDisplay:
@@ -119,6 +126,7 @@ class PrFetchFailedField(FieldValue):
 class ConflictsField(FieldValue):
     """Merge conflict status for a PR."""
 
+    kind: Literal["conflicts"] = Field(default="conflicts", description="Discriminator tag")
     has_conflicts: bool = Field(description="Whether the PR has merge conflicts")
 
     def display(self) -> CellDisplay:
@@ -130,6 +138,7 @@ class ConflictsField(FieldValue):
 class UnresolvedField(FieldValue):
     """Unresolved review comment status for a PR."""
 
+    kind: Literal["unresolved"] = Field(default="unresolved", description="Discriminator tag")
     has_unresolved: bool = Field(description="Whether the PR has unresolved review comments")
 
     def display(self) -> CellDisplay:
@@ -310,6 +319,18 @@ def _parse_check_status(rollup: list[dict[str, Any]] | None) -> CiStatus:
     return CiStatus.PASSING
 
 
+# Discriminated-union adapter for the FIELD_PR slot. The slot is polymorphic --
+# a real PR is a PrField, a pushed-but-no-PR branch is a CreatePrUrlField, and
+# a fetch failure with no cached fallback is a PrFetchFailedField. The
+# `kind` Literal on each subclass is the discriminator, so pydantic picks the
+# right concrete class without order-sensitive trial validation.
+PrSlotField = Annotated[
+    PrField | CreatePrUrlField | PrFetchFailedField,
+    Field(discriminator="kind"),
+]
+_PR_SLOT_ADAPTER: TypeAdapter[FieldValue] = TypeAdapter(PrSlotField)
+
+
 class GitHubDataSourceConfig(DataSourceConfig):
     """Configuration for the GitHub data source."""
 
@@ -355,20 +376,16 @@ class GitHubDataSource(FrozenModel):
         return cols
 
     @property
-    def field_types(self) -> dict[str, tuple[type[FieldValue], ...]]:
-        types: dict[str, tuple[type[FieldValue], ...]] = {}
+    def field_types(self) -> dict[str, TypeAdapter[FieldValue]]:
+        types: dict[str, TypeAdapter[FieldValue]] = {}
         if self.config.pr:
-            # FIELD_PR is polymorphic: a real PR -> PrField; pushed branch with
-            # no PR -> CreatePrUrlField; repo fetch failed and no cached PR ->
-            # PrFetchFailedField. All three classes need to round-trip through
-            # the cache so a previously-saved entry is re-typed correctly on load.
-            types[FIELD_PR] = (PrField, CreatePrUrlField, PrFetchFailedField)
+            types[FIELD_PR] = _PR_SLOT_ADAPTER
         if self.config.ci:
-            types[FIELD_CI] = (CiField,)
+            types[FIELD_CI] = TypeAdapter(CiField)
         if self.config.conflicts:
-            types[FIELD_CONFLICTS] = (ConflictsField,)
+            types[FIELD_CONFLICTS] = TypeAdapter(ConflictsField)
         if self.config.unresolved:
-            types[FIELD_UNRESOLVED] = (UnresolvedField,)
+            types[FIELD_UNRESOLVED] = TypeAdapter(UnresolvedField)
         return types
 
     def compute(

@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import TypeAdapter
 
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.primitives import AgentName
@@ -210,7 +211,7 @@ class _MockDataSource:
         return {}
 
     @property
-    def field_types(self) -> dict[str, tuple[type[FieldValue], ...]]:
+    def field_types(self) -> dict[str, TypeAdapter[FieldValue]]:
         return {}
 
     def compute(
@@ -236,7 +237,7 @@ class _FailingDataSource:
         return {}
 
     @property
-    def field_types(self) -> dict[str, tuple[type[FieldValue], ...]]:
+    def field_types(self) -> dict[str, TypeAdapter[FieldValue]]:
         return {}
 
     def compute(
@@ -431,7 +432,7 @@ def test_plugin_kanpan_data_sources_from_loader_path() -> None:
 
 def _make_mock_data_source(field_key: str, field_type: type[FieldValue]) -> KanpanDataSource:
     return SimpleNamespace(  # ty: ignore[invalid-return-type]
-        field_types={field_key: (field_type,)},
+        field_types={field_key: TypeAdapter(field_type)},
     )
 
 

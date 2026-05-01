@@ -3,6 +3,7 @@ from collections.abc import Sequence
 
 from loguru import logger
 from pydantic import Field
+from pydantic import TypeAdapter
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.concurrency_group.local_process import RunningProcess
@@ -49,8 +50,8 @@ class ShellCommandDataSource(FrozenModel):
         return {self.field_key: self.config.header}
 
     @property
-    def field_types(self) -> dict[str, tuple[type[FieldValue], ...]]:
-        return {self.field_key: (StringField,)}
+    def field_types(self) -> dict[str, TypeAdapter[FieldValue]]:
+        return {self.field_key: TypeAdapter(StringField)}
 
     def compute(
         self,

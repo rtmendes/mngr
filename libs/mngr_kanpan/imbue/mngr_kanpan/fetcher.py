@@ -9,6 +9,8 @@ from typing import Any
 
 from loguru import logger
 from pydantic import Field
+from pydantic import TypeAdapter
+from pydantic import ValidationError
 
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.pure import pure
@@ -284,10 +286,9 @@ def save_field_cache(
         for agent_name, agent_fields in cached_fields.items():
             agent_data: dict[str, Any] = {}
             for key, field in agent_fields.items():
-                agent_data[key] = {
-                    "type": type(field).__name__,
-                    "data": field.model_dump(),
-                }
+                # mode="json" so non-string keys / enums / etc. survive json.dump.
+                # The dump includes the kind discriminator -- no separate envelope needed.
+                agent_data[key] = field.model_dump(mode="json")
             serialized[str(agent_name)] = agent_data
 
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -309,51 +310,50 @@ def load_field_cache(
 ) -> dict[AgentName, dict[str, FieldValue]]:
     """Load cached fields from the local JSON file.
 
-    Uses field_types from data sources to deserialize each field value.
-    Returns an empty dict if the cache file doesn't exist or is corrupt.
+    Each slot's TypeAdapter (from ``KanpanDataSource.field_types``) validates
+    the raw payload. For polymorphic slots the adapter wraps a discriminated
+    union and dispatches on the ``kind`` tag in the payload. Returns an empty
+    dict if the cache file doesn't exist or is corrupt; per-key validation
+    failures are logged at debug and the offending key is dropped.
     """
     cache_path = _cache_file_path(mngr_ctx)
     if not cache_path.exists():
         return {}
 
-    # Build type registry from all data sources. Each slot may have multiple
-    # concrete classes (e.g. FIELD_PR can hold PrField, CreatePrUrlField, or
-    # PrFetchFailedField); register every class by name so the cache can
-    # round-trip whichever class the source last persisted into the slot.
-    type_registry: dict[str, type[FieldValue]] = {}
+    adapters: dict[str, TypeAdapter[FieldValue]] = {}
     for source in data_sources:
-        for _key, field_classes in source.field_types.items():
-            for field_class in field_classes:
-                type_registry[field_class.__name__] = field_class
+        adapters.update(source.field_types)
 
     try:
         raw = json.loads(cache_path.read_text())
-        result: dict[AgentName, dict[str, FieldValue]] = {}
-        for agent_name_str, agent_data in raw.items():
-            agent_fields: dict[str, FieldValue] = {}
-            for key, field_info in agent_data.items():
-                type_name = field_info.get("type")
-                data = field_info.get("data")
-                field_type = type_registry.get(type_name or "")
-                if field_type is None:
-                    logger.debug(
-                        "load_field_cache: unknown FieldValue type {!r} for agent {} key {!r}; "
-                        "the field will be dropped (registered classes: {})",
-                        type_name,
-                        agent_name_str,
-                        key,
-                        sorted(type_registry.keys()),
-                    )
-                    continue
-                if data is None:
-                    continue
-                agent_fields[key] = field_type.model_validate(data)
-            if agent_fields:
-                result[AgentName(agent_name_str)] = agent_fields
-        return result
     except Exception as e:
         logger.debug("Failed to load field cache: {}", e)
         return {}
+
+    result: dict[AgentName, dict[str, FieldValue]] = {}
+    for agent_name_str, agent_data in raw.items():
+        agent_fields: dict[str, FieldValue] = {}
+        for key, payload in agent_data.items():
+            adapter = adapters.get(key)
+            if adapter is None:
+                logger.debug(
+                    "load_field_cache: no adapter registered for agent {} key {!r}; dropping",
+                    agent_name_str,
+                    key,
+                )
+                continue
+            try:
+                agent_fields[key] = adapter.validate_python(payload)
+            except ValidationError as e:
+                logger.debug(
+                    "load_field_cache: validation failed for agent {} key {!r}: {}",
+                    agent_name_str,
+                    key,
+                    e,
+                )
+        if agent_fields:
+            result[AgentName(agent_name_str)] = agent_fields
+    return result
 
 
 def collect_data_sources(

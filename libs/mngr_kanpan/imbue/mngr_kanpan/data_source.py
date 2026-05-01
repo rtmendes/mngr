@@ -1,10 +1,12 @@
 from collections.abc import Sequence
 from typing import Any
+from typing import Literal
 from typing import Protocol
 from typing import runtime_checkable
 
 from loguru import logger
 from pydantic import Field
+from pydantic import TypeAdapter
 from pydantic import ValidationError
 
 from imbue.imbue_common.frozen_model import FrozenModel
@@ -51,6 +53,7 @@ class FieldValue(FrozenModel):
 class StringField(FieldValue):
     """Simple string field for shell data sources and similar."""
 
+    kind: Literal["string"] = Field(default="string", description="Discriminator tag")
     value: str = Field(description="The string value")
 
     def display(self) -> CellDisplay:
@@ -63,6 +66,7 @@ class StringField(FieldValue):
 class BoolField(FieldValue):
     """Boolean field (e.g. muted state)."""
 
+    kind: Literal["bool"] = Field(default="bool", description="Discriminator tag")
     value: bool = Field(description="The boolean value")
 
     def display(self) -> CellDisplay:
@@ -97,21 +101,21 @@ class KanpanDataSource(Protocol):
         ...
 
     @property
-    def field_types(self) -> dict[str, tuple[type[FieldValue], ...]]:
-        """Field key -> tuple of FieldValue subclasses that may appear in this slot.
+    def field_types(self) -> dict[str, "TypeAdapter[FieldValue]"]:
+        """Field key -> TypeAdapter that validates raw payloads for this slot.
 
         A "slot" (e.g. FIELD_PR) can be polymorphic: it may hold a real PrField,
-        or a sentinel like CreatePrUrlField / PrFetchFailedField. List every
-        concrete class that can land in the slot so the cache loader can
-        round-trip whichever one was last persisted.
+        or a sentinel like CreatePrUrlField / PrFetchFailedField. Build a
+        discriminated union for the slot using pydantic's standard pattern --
+        every FieldValue subclass declares ``kind: Literal["..."]`` and the
+        adapter is constructed as::
 
-        Tuple order is precedence for ambiguous payloads. ``deserialize_fields``
-        tries each class in order and keeps the first that validates. This works
-        unambiguously today because every FieldValue subclass uses pydantic's
-        ``extra="forbid"`` config (see imbue.imbue_common.frozen_model.FrozenModel),
-        so payload shapes are mutually exclusive. If you ever add two classes
-        whose required fields are subsets of each other, list the more
-        constrained one first.
+            TypeAdapter(Annotated[
+                PrField | CreatePrUrlField | PrFetchFailedField,
+                Field(discriminator="kind"),
+            ])
+
+        Single-class slots use ``TypeAdapter(SomeField)`` directly.
         """
         ...
 
@@ -142,34 +146,24 @@ FIELD_UNRESOLVED = "unresolved"
 
 def deserialize_fields(
     raw: dict[str, Any],
-    field_types: dict[str, tuple[type[FieldValue], ...]],
+    field_types: dict[str, TypeAdapter[FieldValue]],
 ) -> dict[str, FieldValue]:
     """Deserialize a dict of raw JSON dicts into typed FieldValue objects.
 
-    ``field_types`` matches the protocol's polymorphic shape: each slot lists
-    every concrete class that may land in it. This helper has no per-value
-    type tag to consult, so it tries each declared class in order and keeps
-    the first one that validates. For single-class slots that's just the
-    declared class; for polymorphic slots the order in the tuple defines
-    precedence. Keys not present in field_types are skipped.
+    ``field_types`` maps each slot to a pydantic ``TypeAdapter``. For
+    polymorphic slots the adapter wraps a discriminated union keyed on the
+    ``kind`` field; for single-class slots it wraps the class directly.
+    Pydantic picks the right concrete class via the discriminator (no
+    order-sensitive trial validation). Keys not present in field_types are
+    skipped; payloads that fail validation are logged and dropped.
     """
     result: dict[str, FieldValue] = {}
     for key, value in raw.items():
-        field_classes = field_types.get(key)
-        if field_classes is None:
+        adapter = field_types.get(key)
+        if adapter is None:
             continue
-        validated = False
-        for field_class in field_classes:
-            try:
-                result[key] = field_class.model_validate(value)
-                validated = True
-                break
-            except ValidationError:
-                continue
-        if not validated:
-            logger.debug(
-                "deserialize_fields: no class validated key {!r} against {}",
-                key,
-                [c.__name__ for c in field_classes],
-            )
+        try:
+            result[key] = adapter.validate_python(value)
+        except ValidationError as e:
+            logger.debug("deserialize_fields: validation failed for key {!r}: {}", key, e)
     return result
