@@ -1462,9 +1462,7 @@ async def _handle_chrome_events(
                     last_request_count = current_request_count
                     auto_open = minds_config.get_auto_open_requests_panel() if minds_config else True
                     yield "data: {}\n\n".format(
-                        json.dumps(
-                            {"type": "request_count", "count": current_request_count, "auto_open": auto_open}
-                        )
+                        json.dumps({"type": "request_count", "count": current_request_count, "auto_open": auto_open})
                     )
         finally:
             if isinstance(backend_resolver, MngrCliBackendResolver):
