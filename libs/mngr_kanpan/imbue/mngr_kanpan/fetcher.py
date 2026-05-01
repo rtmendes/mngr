@@ -329,16 +329,15 @@ def load_field_cache(
 
     try:
         raw = json.loads(cache_path.read_text())
+        result: dict[AgentName, dict[str, FieldValue]] = {}
+        for agent_name_str, agent_data in raw.items():
+            agent_fields = deserialize_fields(agent_data, adapters)
+            if agent_fields:
+                result[AgentName(agent_name_str)] = agent_fields
+        return result
     except Exception as e:
         logger.debug("Failed to load field cache: {}", e)
         return {}
-
-    result: dict[AgentName, dict[str, FieldValue]] = {}
-    for agent_name_str, agent_data in raw.items():
-        agent_fields = deserialize_fields(agent_data, adapters)
-        if agent_fields:
-            result[AgentName(agent_name_str)] = agent_fields
-    return result
 
 
 def collect_data_sources(

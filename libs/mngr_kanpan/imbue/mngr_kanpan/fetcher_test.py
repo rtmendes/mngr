@@ -508,6 +508,32 @@ def test_load_field_cache_returns_empty_on_corrupt_json(tmp_path: Path) -> None:
     assert result == {}
 
 
+def test_load_field_cache_returns_empty_on_top_level_non_dict_json(tmp_path: Path) -> None:
+    """load_field_cache returns empty dict when the cache JSON parses but isn't a dict at the top level."""
+    cache_dir = tmp_path / "kanpan"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "field_cache.json").write_text("[]")
+    ctx = make_mngr_ctx_with_profile_dir(tmp_path)
+    result = load_field_cache(ctx, [])
+    assert result == {}
+
+
+def test_load_field_cache_returns_empty_on_invalid_agent_name(tmp_path: Path) -> None:
+    """load_field_cache returns empty dict when a top-level key is not a valid AgentName.
+
+    The cache file may have been hand-edited or written by an older incompatible
+    version. AgentName construction enforces SafeName's regex and would otherwise
+    raise InvalidName; load_field_cache must swallow that and return {}.
+    """
+    cache_dir = tmp_path / "kanpan"
+    cache_dir.mkdir(parents=True)
+    # 'a1/x' contains '/', which violates SafeName's regex.
+    (cache_dir / "field_cache.json").write_text('{"a1/x": {}}')
+    ctx = make_mngr_ctx_with_profile_dir(tmp_path)
+    result = load_field_cache(ctx, [])
+    assert result == {}
+
+
 def test_load_field_cache_skips_unknown_types(tmp_path: Path) -> None:
     """load_field_cache skips field entries whose type is not in the type registry."""
     ctx = make_mngr_ctx_with_profile_dir(tmp_path)
