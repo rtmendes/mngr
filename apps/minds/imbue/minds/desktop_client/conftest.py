@@ -178,7 +178,16 @@ class _FakeKeyHandler(BaseHTTPRequestHandler):
 
 @pytest.fixture()
 def fake_key_server() -> Iterator[LiteLLMKeyClient]:
-    """Start a local HTTP server and return a LiteLLMKeyClient pointing to it."""
+    """Start a local HTTP server and return a LiteLLMKeyClient pointing to it.
+
+    Known intermittent failure mode: tests using this fixture sometimes fail
+    with "Connection reset by peer" before the first response arrives. The
+    `LiteLLMKeyClient` issues bare httpx calls (no retry wrapper), so adding
+    retry there just to mask a fixture race would pollute production code.
+    A proper fix belongs here -- e.g. a readiness probe before yielding or
+    using `ThreadingHTTPServer` -- but is deferred; the affected tests carry
+    `@pytest.mark.flaky` so offload retries them.
+    """
     server = HTTPServer(("127.0.0.1", 0), _FakeKeyHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
