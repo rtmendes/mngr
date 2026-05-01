@@ -294,6 +294,9 @@ jobs:
         with:
           name: test-results-offload-acceptance
           path: test-results/
+          # Same rationale as the test-offload upload step above: offload's
+          # per-sandbox flaky_tests_*.txt manifests live under hidden
+          # test-results/<sb>/.test_output/ subdirs.
           include-hidden-files: true
           retention-days: 30
 
