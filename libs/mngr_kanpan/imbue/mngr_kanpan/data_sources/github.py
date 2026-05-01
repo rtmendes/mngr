@@ -112,11 +112,14 @@ class CreatePrUrlField(FieldValue):
 
 class PrFetchFailedField(FieldValue):
     """Sentinel placed in the FIELD_PR slot when the repo's PR fetch failed
-    and no historical PR data is available to fall back to.
+    and no usable historical PR data is available to fall back to.
 
     Routes the agent into BoardSection.PRS_FAILED. If a previous cycle
-    successfully fetched a PrField, that cached PrField is used instead of
-    emitting this sentinel (silent fallback).
+    cached a PrField whose ``head_branch`` matches the agent's current
+    branch, that cached PrField is used instead of emitting this sentinel
+    (silent fallback). A cached PrField for a different branch is treated
+    as unusable -- the agent has moved on and the old PR would be
+    misattributed -- so this sentinel is emitted in that case too.
     """
 
     kind: Literal["pr_fetch_failed"] = Field(default="pr_fetch_failed", description="Discriminator tag")
