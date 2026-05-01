@@ -358,13 +358,11 @@ class GitHubDataSource(FrozenModel):
     def field_types(self) -> dict[str, tuple[type[FieldValue], ...]]:
         types: dict[str, tuple[type[FieldValue], ...]] = {}
         if self.config.pr:
-            # FIELD_PR is polymorphic: a real PR -> _PrFieldInternal (PrField
-            # subclass that carries the fetched check_status); pushed branch with
+            # FIELD_PR is polymorphic: a real PR -> PrField; pushed branch with
             # no PR -> CreatePrUrlField; repo fetch failed and no cached PR ->
-            # PrFetchFailedField. All four classes (including the public PrField
-            # base) need to round-trip through the cache so a previously-saved
-            # entry is re-typed correctly on load.
-            types[FIELD_PR] = (_PrFieldInternal, PrField, CreatePrUrlField, PrFetchFailedField)
+            # PrFetchFailedField. All three classes need to round-trip through
+            # the cache so a previously-saved entry is re-typed correctly on load.
+            types[FIELD_PR] = (PrField, CreatePrUrlField, PrFetchFailedField)
         if self.config.ci:
             types[FIELD_CI] = (CiField,)
         if self.config.conflicts:
@@ -397,7 +395,7 @@ class GitHubDataSource(FrozenModel):
             return {}, errors
 
         # Fetch PRs for all unique repos in parallel
-        pr_by_repo_branch: dict[str, dict[str, _PrFieldInternal]] = {}
+        pr_by_repo_branch: dict[str, dict[str, _PrLookup]] = {}
         repo_pr_loaded: dict[str, bool] = {}
 
         with ThreadPoolExecutor(max_workers=min(len(all_repos), 8)) as executor:
@@ -419,14 +417,14 @@ class GitHubDataSource(FrozenModel):
             agent_fields: dict[str, FieldValue] = {}
 
             if agent_repo is not None and branch is not None:
-                pr = _lookup_pr(pr_by_repo_branch, agent_repo, branch)
+                lookup = _lookup_pr(pr_by_repo_branch, agent_repo, branch)
                 agent_prs_loaded = repo_pr_loaded.get(agent_repo) is True
 
-                if pr is not None:
+                if lookup is not None:
                     if self.config.pr:
-                        agent_fields[FIELD_PR] = pr
+                        agent_fields[FIELD_PR] = lookup.pr
                     if self.config.ci:
-                        agent_fields[FIELD_CI] = CiField(status=pr.internal_check_status)
+                        agent_fields[FIELD_CI] = CiField(status=lookup.check_status)
                 elif agent_prs_loaded:
                     agent_fields[FIELD_PR] = CreatePrUrlField(url=_build_create_pr_url(agent_repo, branch))
                 else:
@@ -461,16 +459,22 @@ class GitHubDataSource(FrozenModel):
         return fields, errors
 
 
-class _PrFieldInternal(PrField):
-    """Internal PR field with check_status for CI field extraction."""
+class _PrLookup(FrozenModel):
+    """Internal record bundling a fetched PR with its CI status.
 
-    internal_check_status: CiStatus = Field(default=CiStatus.UNKNOWN, description="CI check status for internal use")
+    Used while building the per-repo PR index so the public PrField stays a
+    pure board-display value -- the CiStatus rides alongside instead of being
+    smuggled in as an extra PrField subclass field.
+    """
+
+    pr: PrField = Field(description="The fetched PR (canonical FIELD_PR value)")
+    check_status: CiStatus = Field(description="Aggregate CI check status from the same fetch")
 
 
 class _FetchPrsResult(FrozenModel):
-    """Result of fetching PRs from GitHub, using PrField."""
+    """Result of fetching PRs from GitHub."""
 
-    prs: tuple[_PrFieldInternal, ...] = Field(description="Fetched PRs as PrField objects")
+    prs: tuple[_PrLookup, ...] = Field(description="Fetched PRs paired with their CI status")
     error: str | None = Field(default=None, description="Error message if fetch failed")
 
 
@@ -488,34 +492,35 @@ def _get_cached_repo_path(cached_fields: dict[AgentName, dict[str, FieldValue]],
 def _fetch_repo_prs(cg: ConcurrencyGroup, repo_path: str) -> tuple[str, _FetchPrsResult]:
     """Fetch PRs for a single repo."""
     result = fetch_all_prs(cg, repo=repo_path)
-    # Convert PrInfo objects to PrField objects
-    pr_fields: list[_PrFieldInternal] = []
+    lookups: list[_PrLookup] = []
     for pr_info in result.prs:
-        pr_fields.append(
-            _PrFieldInternal(
-                number=pr_info.number,
-                url=pr_info.url,
-                is_draft=pr_info.is_draft,
-                title=pr_info.title,
-                state=PrState(str(pr_info.state)),
-                head_branch=pr_info.head_branch,
-                internal_check_status=CiStatus(str(pr_info.check_status)),
+        lookups.append(
+            _PrLookup(
+                pr=PrField(
+                    number=pr_info.number,
+                    url=pr_info.url,
+                    is_draft=pr_info.is_draft,
+                    title=pr_info.title,
+                    state=PrState(str(pr_info.state)),
+                    head_branch=pr_info.head_branch,
+                ),
+                check_status=CiStatus(str(pr_info.check_status)),
             )
         )
-    return repo_path, _FetchPrsResult(prs=tuple(pr_fields), error=result.error)
+    return repo_path, _FetchPrsResult(prs=tuple(lookups), error=result.error)
 
 
 @pure
-def _build_pr_branch_index(prs: tuple[_PrFieldInternal, ...]) -> dict[str, _PrFieldInternal]:
+def _build_pr_branch_index(prs: tuple[_PrLookup, ...]) -> dict[str, _PrLookup]:
     """Build a lookup dict from branch name to the most relevant PR.
 
     If multiple PRs share the same branch, prefers OPEN > MERGED > CLOSED.
     """
-    result: dict[str, _PrFieldInternal] = {}
-    for pr in prs:
-        existing = result.get(pr.head_branch)
-        if existing is None or _pr_priority(pr) > _pr_priority(existing):
-            result[pr.head_branch] = pr
+    result: dict[str, _PrLookup] = {}
+    for lookup in prs:
+        existing = result.get(lookup.pr.head_branch)
+        if existing is None or _pr_priority(lookup.pr) > _pr_priority(existing.pr):
+            result[lookup.pr.head_branch] = lookup
     return result
 
 
@@ -531,10 +536,10 @@ def _pr_priority(pr: PrField) -> int:
 
 @pure
 def _lookup_pr(
-    pr_by_repo_branch: dict[str, dict[str, _PrFieldInternal]],
+    pr_by_repo_branch: dict[str, dict[str, _PrLookup]],
     agent_repo: str,
     branch: str,
-) -> _PrFieldInternal | None:
+) -> _PrLookup | None:
     """Look up the PR for an agent by its repo and branch."""
     repo_prs = pr_by_repo_branch.get(agent_repo)
     return repo_prs.get(branch) if repo_prs is not None else None

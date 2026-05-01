@@ -20,7 +20,6 @@ from imbue.mngr_kanpan.data_sources.github import GitHubDataSource
 from imbue.mngr_kanpan.data_sources.github import GitHubDataSourceConfig
 from imbue.mngr_kanpan.data_sources.github import PrFetchFailedField
 from imbue.mngr_kanpan.data_sources.github import PrState
-from imbue.mngr_kanpan.data_sources.github import _PrFieldInternal
 from imbue.mngr_kanpan.data_sources.repo_paths import _parse_github_repo_path
 from imbue.mngr_kanpan.data_sources.repo_paths import repo_path_from_labels
 from imbue.mngr_kanpan.data_types import BoardSection
@@ -489,21 +488,10 @@ def test_save_load_field_cache_polymorphic_slot_roundtrip(tmp_path: Path) -> Non
     a1 = AgentName("a1")
     a2 = AgentName("a2")
     a3 = AgentName("a3")
-    a4 = AgentName("a4")
-    pr_internal = _PrFieldInternal(
-        number=99,
-        url="https://example.com/99",
-        is_draft=False,
-        title="t",
-        state=PrState.OPEN,
-        head_branch="b",
-        internal_check_status=CiStatus.PASSING,
-    )
     original: dict[AgentName, dict[str, FieldValue]] = {
         a1: {FIELD_PR: make_pr_field(number=42)},
         a2: {FIELD_PR: CreatePrUrlField(url="https://example.com/compare")},
         a3: {FIELD_PR: PrFetchFailedField(repo="org/repo")},
-        a4: {FIELD_PR: pr_internal},
     }
     save_field_cache(ctx, original)
 
@@ -511,13 +499,11 @@ def test_save_load_field_cache_polymorphic_slot_roundtrip(tmp_path: Path) -> Non
     loaded = load_field_cache(ctx, data_sources)
 
     assert isinstance(loaded[a1][FIELD_PR], type(original[a1][FIELD_PR]))
+    assert loaded[a1][FIELD_PR] == original[a1][FIELD_PR]
     assert isinstance(loaded[a2][FIELD_PR], CreatePrUrlField)
+    assert loaded[a2][FIELD_PR] == original[a2][FIELD_PR]
     assert isinstance(loaded[a3][FIELD_PR], PrFetchFailedField)
     assert loaded[a3][FIELD_PR] == original[a3][FIELD_PR]
-    assert isinstance(loaded[a4][FIELD_PR], _PrFieldInternal)
-    loaded_internal = loaded[a4][FIELD_PR]
-    assert isinstance(loaded_internal, _PrFieldInternal)
-    assert loaded_internal.internal_check_status == CiStatus.PASSING
 
 
 def test_load_field_cache_returns_empty_on_corrupt_json(tmp_path: Path) -> None:

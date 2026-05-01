@@ -4,6 +4,7 @@ from typing import Protocol
 from typing import runtime_checkable
 
 from pydantic import Field
+from pydantic import ValidationError
 
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.mngr.config.data_types import MngrContext
@@ -132,16 +133,26 @@ FIELD_UNRESOLVED = "unresolved"
 
 def deserialize_fields(
     raw: dict[str, Any],
-    field_types: dict[str, type[FieldValue]],
+    field_types: dict[str, tuple[type[FieldValue], ...]],
 ) -> dict[str, FieldValue]:
     """Deserialize a dict of raw JSON dicts into typed FieldValue objects.
 
-    Keys not present in field_types are skipped.
+    ``field_types`` matches the protocol's polymorphic shape: each slot lists
+    every concrete class that may land in it. This helper has no per-value
+    type tag to consult, so it tries each declared class in order and keeps
+    the first one that validates. For single-class slots that's just the
+    declared class; for polymorphic slots the order in the tuple defines
+    precedence. Keys not present in field_types are skipped.
     """
     result: dict[str, FieldValue] = {}
     for key, value in raw.items():
-        field_type = field_types.get(key)
-        if field_type is None:
+        field_classes = field_types.get(key)
+        if field_classes is None:
             continue
-        result[key] = field_type.model_validate(value)
+        for field_class in field_classes:
+            try:
+                result[key] = field_class.model_validate(value)
+                break
+            except ValidationError:
+                continue
     return result
