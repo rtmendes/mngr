@@ -110,12 +110,18 @@ def test_compute_section_open_pr_no_ci() -> None:
     assert compute_section(fields) == BoardSection.PR_BEING_REVIEWED
 
 
-def test_compute_section_open_pr_ci_failing() -> None:
-    # Failing CI does NOT route to PRS_FAILED. PRS_FAILED is reserved for the
-    # "could not load PR data" case. A real PR with red CI is still in review.
+@pytest.mark.parametrize(
+    "ci_status",
+    [CiStatus.PASSING, CiStatus.FAILING, CiStatus.PENDING, CiStatus.UNKNOWN],
+)
+def test_compute_section_open_pr_ignores_ci(ci_status: CiStatus) -> None:
+    # Regression: compute_section no longer dispatches on FIELD_CI for open PRs.
+    # An open, non-draft PR is always PR_BEING_REVIEWED regardless of CI status;
+    # PRS_FAILED is reserved for the "could not load PR data" case (see
+    # test_compute_section_pr_fetch_failed below).
     fields: dict[str, FieldValue] = {
         FIELD_PR: make_pr_field(),
-        FIELD_CI: CiField(status=CiStatus.FAILING),
+        FIELD_CI: CiField(status=ci_status),
     }
     assert compute_section(fields) == BoardSection.PR_BEING_REVIEWED
 
@@ -123,30 +129,6 @@ def test_compute_section_open_pr_ci_failing() -> None:
 def test_compute_section_pr_fetch_failed() -> None:
     fields: dict[str, FieldValue] = {FIELD_PR: PrFetchFailedField(repo="org/repo")}
     assert compute_section(fields) == BoardSection.PRS_FAILED
-
-
-def test_compute_section_open_pr_ci_passing() -> None:
-    fields: dict[str, FieldValue] = {
-        FIELD_PR: make_pr_field(),
-        FIELD_CI: CiField(status=CiStatus.PASSING),
-    }
-    assert compute_section(fields) == BoardSection.PR_BEING_REVIEWED
-
-
-def test_compute_section_open_pr_ci_pending() -> None:
-    fields: dict[str, FieldValue] = {
-        FIELD_PR: make_pr_field(),
-        FIELD_CI: CiField(status=CiStatus.PENDING),
-    }
-    assert compute_section(fields) == BoardSection.PR_BEING_REVIEWED
-
-
-def test_compute_section_open_pr_ci_unknown() -> None:
-    fields: dict[str, FieldValue] = {
-        FIELD_PR: make_pr_field(),
-        FIELD_CI: CiField(status=CiStatus.UNKNOWN),
-    }
-    assert compute_section(fields) == BoardSection.PR_BEING_REVIEWED
 
 
 def test_compute_section_wrong_muted_type() -> None:
