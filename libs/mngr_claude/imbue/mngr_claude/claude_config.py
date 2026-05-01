@@ -453,6 +453,10 @@ def find_project_config(projects: Mapping[str, Any], path: Path) -> dict[str, An
 # Project Directory Encoding
 # =============================================================================
 
+# Matches every character that Claude Code's project-dir encoder maps to '-'
+# (i.e. everything that is not an ASCII alphanumeric or literal '-').
+_NON_DASH_ALNUM_ASCII: Final = re.compile(r"[^A-Za-z0-9-]")
+
 
 @pure
 def encode_claude_project_dir_name(path: Path) -> str:
@@ -469,9 +473,6 @@ def encode_claude_project_dir_name(path: Path) -> str:
     silently spawns a fresh session via the ``||`` fallback.
     """
     return _NON_DASH_ALNUM_ASCII.sub("-", str(path))
-
-
-_NON_DASH_ALNUM_ASCII: Final = re.compile(r"[^A-Za-z0-9-]")
 
 
 # =============================================================================
