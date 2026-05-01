@@ -15,7 +15,6 @@ from imbue.mngr_kanpan.data_sources.github import CreatePrUrlField
 from imbue.mngr_kanpan.data_sources.github import GitHubDataSource
 from imbue.mngr_kanpan.data_sources.github import GitHubDataSourceConfig
 from imbue.mngr_kanpan.data_sources.github import PrFetchFailedField
-from imbue.mngr_kanpan.data_sources.github import PrField
 from imbue.mngr_kanpan.data_sources.github import PrState
 from imbue.mngr_kanpan.data_sources.github import UnresolvedField
 from imbue.mngr_kanpan.data_sources.github import _PrLookup
@@ -36,21 +35,7 @@ from imbue.mngr_kanpan.data_sources.github import fetch_all_prs
 from imbue.mngr_kanpan.data_sources.repo_paths import RepoPathField
 from imbue.mngr_kanpan.testing import make_agent_details
 from imbue.mngr_kanpan.testing import make_mngr_ctx_with_cg
-
-
-def _make_pr(
-    number: int = 1,
-    branch: str = "test-branch",
-    state: PrState = PrState.OPEN,
-) -> PrField:
-    return PrField(
-        number=number,
-        title=f"PR {number}",
-        state=state,
-        url=f"https://github.com/org/repo/pull/{number}",
-        head_branch=branch,
-        is_draft=False,
-    )
+from imbue.mngr_kanpan.testing import make_pr_field
 
 
 def _make_pr_lookup(
@@ -59,7 +44,10 @@ def _make_pr_lookup(
     state: PrState = PrState.OPEN,
     check_status: CiStatus = CiStatus.PASSING,
 ) -> _PrLookup:
-    return _PrLookup(pr=_make_pr(number=number, branch=branch, state=state), check_status=check_status)
+    return _PrLookup(
+        pr=make_pr_field(number=number, head_branch=branch, state=state),
+        check_status=check_status,
+    )
 
 
 # === GitHubDataSource properties ===
@@ -106,7 +94,7 @@ def test_get_cached_repo_path_not_found() -> None:
 
 def test_get_cached_repo_path_wrong_type() -> None:
     cached: dict[AgentName, dict[str, FieldValue]] = {
-        AgentName("a1"): {"repo_path": _make_pr()},
+        AgentName("a1"): {"repo_path": make_pr_field()},
     }
     assert _get_cached_repo_path(cached, AgentName("a1")) is None
 
@@ -115,15 +103,15 @@ def test_get_cached_repo_path_wrong_type() -> None:
 
 
 def test_pr_priority_open() -> None:
-    assert _pr_priority(_make_pr(state=PrState.OPEN)) == 2
+    assert _pr_priority(make_pr_field(state=PrState.OPEN)) == 2
 
 
 def test_pr_priority_merged() -> None:
-    assert _pr_priority(_make_pr(state=PrState.MERGED)) == 1
+    assert _pr_priority(make_pr_field(state=PrState.MERGED)) == 1
 
 
 def test_pr_priority_closed() -> None:
-    assert _pr_priority(_make_pr(state=PrState.CLOSED)) == 0
+    assert _pr_priority(make_pr_field(state=PrState.CLOSED)) == 0
 
 
 # === _build_pr_branch_index ===
@@ -459,7 +447,7 @@ def test_compute_pr_fetch_failed_with_cached_pr_uses_cache() -> None:
     """
     ds = GitHubDataSource(config=GitHubDataSourceConfig(conflicts=False, unresolved=False))
     agent = make_agent_details(name="a1", initial_branch="branch-1", labels={"remote": "git@github.com:org/repo.git"})
-    cached_pr = _make_pr(number=42, branch="branch-1")
+    cached_pr = make_pr_field(number=42, head_branch="branch-1")
     cached_ci = CiField(status=CiStatus.PASSING)
     cached: dict[AgentName, dict[str, FieldValue]] = {
         agent.name: {FIELD_PR: cached_pr, FIELD_CI: cached_ci},
@@ -482,7 +470,7 @@ def test_compute_pr_fetch_failed_with_cached_pr_for_different_branch_emits_fetch
     ds = GitHubDataSource(config=GitHubDataSourceConfig(conflicts=False, unresolved=False))
     agent = make_agent_details(name="a1", initial_branch="branch-2", labels={"remote": "git@github.com:org/repo.git"})
     # The cached PR's head_branch ("branch-1") differs from the agent's current branch.
-    stale_cached_pr = _make_pr(number=42, branch="branch-1")
+    stale_cached_pr = make_pr_field(number=42, head_branch="branch-1")
     cached_ci = CiField(status=CiStatus.PASSING)
     cached: dict[AgentName, dict[str, FieldValue]] = {
         agent.name: {FIELD_PR: stale_cached_pr, FIELD_CI: cached_ci},
