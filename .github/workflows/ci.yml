@@ -444,5 +444,7 @@ jobs:
         with:
           name: test-durations-release-${{ matrix.os }}-${{ matrix.group }}
           path: .test_output/test_durations_*.json
+          # The .test_output/ parent is hidden, so upload-artifact's default
+          # of stripping hidden paths would drop the entire glob match.
           include-hidden-files: true
           retention-days: 30
