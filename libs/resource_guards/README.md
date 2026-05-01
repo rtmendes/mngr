@@ -17,7 +17,7 @@ There are two guard mechanisms, covering CLI binaries and Python SDKs respective
 
 Both mechanisms use per-test tracking files so the `makereport` hook can detect violations even when the test swallows errors or handles non-zero exit codes.
 
-## Setup
+## Basic usage
 
 In your `conftest.py`, register each resource you want to guard with `register_resource_guard()`, then add `pytest_configure`, `pytest_sessionstart`, and `pytest_sessionfinish` hooks as shown below. `register_guarded_resource_markers` registers the pytest marks for all guarded resources in one call.
 
@@ -53,9 +53,13 @@ def test_agent_creates_tmux_session():
     ...
 ```
 
-## Discovering guards from installed packages
+That's the complete setup for a single-package project: every guard the project cares about is listed in one `conftest.py`, and tests opt into each guard with the matching mark.
 
-Multi-package projects can advertise their guards through the `resource_guards` entry point group instead of having every consumer's `conftest.py` re-list them. Each entry point's value is a callable that takes no arguments and registers one or more guards via `register_resource_guard()` and/or `register_sdk_guard()`/`create_sdk_method_guard()`. Call `register_all_resource_guards()` once before installing the pytest hooks to invoke every callable in the group.
+## Usage for multi-package projects
+
+When a project is split across multiple packages, listing every guard in every consumer's `conftest.py` becomes a maintenance hazard: each package has to know which guards every other package's tools need, and a forgotten line silently downgrades a guarded mark back to "unknown". Resource guards solve this by letting the package that owns a tool declare its guards through a `resource_guards` entry point group, and letting consumers pick them up automatically with one call.
+
+Each entry point's value is a callable that takes no arguments and registers one or more guards via `register_resource_guard()` and/or `register_sdk_guard()`/`create_sdk_method_guard()`:
 
 ```toml
 # library's pyproject.toml
@@ -71,6 +75,8 @@ def register_my_guard():
     register_resource_guard("my_tool")
 ```
 
+The consumer's `conftest.py` then replaces explicit `register_resource_guard(...)` calls with a single `register_all_resource_guards()`, which imports and invokes every entry point in the group:
+
 ```python
 # consumer's conftest.py
 from imbue.resource_guards.resource_guards import (
@@ -80,7 +86,7 @@ from imbue.resource_guards.resource_guards import (
     stop_resource_guards,
 )
 
-register_all_resource_guards()  # imports + invokes every entry point in the group
+register_all_resource_guards()
 
 def pytest_configure(config):
     register_guarded_resource_markers(config)
