@@ -53,8 +53,6 @@ def test_agent_creates_tmux_session():
     ...
 ```
 
-That's the complete setup for a single-package project: every guard the project cares about is listed in one `conftest.py`, and tests opt into each guard with the matching mark.
-
 ## Usage for multi-package projects
 
 When a project is split across multiple packages, listing every guard in every consumer's `conftest.py` becomes a maintenance hazard: each package has to know which guards every other package's tools need, and a forgotten line silently downgrades a guarded mark back to "unknown". Resource guards solve this by letting the package that owns a tool declare its guards through a `resource_guards` entry point group, and letting consumers pick them up automatically with one call.
