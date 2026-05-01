@@ -2000,7 +2000,7 @@ def _handle_request_event_callback(agent_id_str: str, raw_line: str) -> None:
         if current_inbox is not None:
             app.state.request_inbox = current_inbox.add_request(event)
             logger.info("Request event from agent {}: {}", agent_id_str, event.request_type)
-            backend_resolver = getattr(app.state, "backend_resolver", None)
+            backend_resolver: BackendResolverInterface = app.state.backend_resolver
             if isinstance(backend_resolver, MngrCliBackendResolver):
                 backend_resolver.notify_change()
 

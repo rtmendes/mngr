@@ -642,6 +642,6 @@ class LatchkeyPermissionGrantHandler(RequestEventHandler):
         if inbox is None:
             return
         request.app.state.request_inbox = inbox.add_response(response_event)
-        backend_resolver = getattr(request.app.state, "backend_resolver", None)
+        backend_resolver: BackendResolverInterface = request.app.state.backend_resolver
         if isinstance(backend_resolver, MngrCliBackendResolver):
             backend_resolver.notify_change()
