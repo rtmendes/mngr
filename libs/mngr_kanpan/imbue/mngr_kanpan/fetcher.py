@@ -28,8 +28,8 @@ from imbue.mngr_kanpan.data_source import FieldValue
 from imbue.mngr_kanpan.data_source import KanpanDataSource
 from imbue.mngr_kanpan.data_source import KanpanFieldTypeError
 from imbue.mngr_kanpan.data_sources.github import CiField
-from imbue.mngr_kanpan.data_sources.github import CiStatus
 from imbue.mngr_kanpan.data_sources.github import CreatePrUrlField
+from imbue.mngr_kanpan.data_sources.github import PrFetchFailedField
 from imbue.mngr_kanpan.data_sources.github import PrField
 from imbue.mngr_kanpan.data_sources.github import PrState
 from imbue.mngr_kanpan.data_types import AgentBoardEntry
@@ -198,8 +198,19 @@ def compute_section(fields: dict[str, FieldValue]) -> BoardSection:
     if isinstance(pr, CreatePrUrlField):
         # CreatePrUrlField in the pr slot means no real PR exists yet
         return BoardSection.STILL_COOKING
+    if isinstance(pr, PrFetchFailedField):
+        # The repo's PR fetch failed and no cached PrField was available to
+        # fall back to, so we genuinely have no PR data for this agent.
+        return BoardSection.PRS_FAILED
     if not isinstance(pr, PrField):
         raise KanpanFieldTypeError(f"Expected PrField for 'pr', got {type(pr).__name__}")
+
+    # CiField is still type-validated below for any open PR that has a ci field,
+    # even though CI status no longer affects section assignment, so type errors
+    # in the cache are caught early.
+    ci = fields.get(FIELD_CI)
+    if ci is not None and not isinstance(ci, CiField):
+        raise KanpanFieldTypeError(f"Expected CiField for 'ci', got {type(ci).__name__}")
 
     match pr.state:
         case PrState.MERGED:
@@ -209,20 +220,7 @@ def compute_section(fields: dict[str, FieldValue]) -> BoardSection:
         case PrState.OPEN:
             if pr.is_draft:
                 return BoardSection.PR_DRAFT
-            ci = fields.get(FIELD_CI)
-            match ci:
-                case None:
-                    return BoardSection.PR_BEING_REVIEWED
-                case CiField():
-                    pass
-                case _:
-                    raise KanpanFieldTypeError(f"Expected CiField for 'ci', got {type(ci).__name__}")
-            match ci.status:
-                case CiStatus.FAILING:
-                    return BoardSection.PRS_FAILED
-                case CiStatus.PASSING | CiStatus.PENDING | CiStatus.UNKNOWN:
-                    return BoardSection.PR_BEING_REVIEWED
-            raise AssertionError(f"Unhandled CI status: {ci.status}")
+            return BoardSection.PR_BEING_REVIEWED
     raise AssertionError(f"Unhandled PR state: {pr.state}")
 
 

@@ -15,6 +15,7 @@ from imbue.mngr_kanpan.data_source import KanpanFieldTypeError
 from imbue.mngr_kanpan.data_source import StringField
 from imbue.mngr_kanpan.data_sources.github import CiField
 from imbue.mngr_kanpan.data_sources.github import CiStatus
+from imbue.mngr_kanpan.data_sources.github import PrFetchFailedField
 from imbue.mngr_kanpan.data_sources.github import PrState
 from imbue.mngr_kanpan.data_sources.repo_paths import _parse_github_repo_path
 from imbue.mngr_kanpan.data_sources.repo_paths import repo_path_from_labels
@@ -105,10 +106,17 @@ def test_compute_section_open_pr_no_ci() -> None:
 
 
 def test_compute_section_open_pr_ci_failing() -> None:
+    # Failing CI does NOT route to PRS_FAILED. PRS_FAILED is reserved for the
+    # "could not load PR data" case. A real PR with red CI is still in review.
     fields: dict[str, FieldValue] = {
         FIELD_PR: make_pr_field(),
         FIELD_CI: CiField(status=CiStatus.FAILING),
     }
+    assert compute_section(fields) == BoardSection.PR_BEING_REVIEWED
+
+
+def test_compute_section_pr_fetch_failed() -> None:
+    fields: dict[str, FieldValue] = {FIELD_PR: PrFetchFailedField(repo="org/repo")}
     assert compute_section(fields) == BoardSection.PRS_FAILED
 
 

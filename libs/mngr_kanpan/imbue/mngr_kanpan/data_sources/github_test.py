@@ -8,11 +8,13 @@ from imbue.mngr_kanpan.data_source import FIELD_CONFLICTS
 from imbue.mngr_kanpan.data_source import FIELD_PR
 from imbue.mngr_kanpan.data_source import FIELD_UNRESOLVED
 from imbue.mngr_kanpan.data_source import FieldValue
+from imbue.mngr_kanpan.data_sources.github import CiField
 from imbue.mngr_kanpan.data_sources.github import CiStatus
 from imbue.mngr_kanpan.data_sources.github import ConflictsField
 from imbue.mngr_kanpan.data_sources.github import CreatePrUrlField
 from imbue.mngr_kanpan.data_sources.github import GitHubDataSource
 from imbue.mngr_kanpan.data_sources.github import GitHubDataSourceConfig
+from imbue.mngr_kanpan.data_sources.github import PrFetchFailedField
 from imbue.mngr_kanpan.data_sources.github import PrState
 from imbue.mngr_kanpan.data_sources.github import UnresolvedField
 from imbue.mngr_kanpan.data_sources.github import _PrFieldInternal
@@ -417,6 +419,52 @@ def test_compute_pr_fetch_error_adds_error() -> None:
     ctx = make_mngr_ctx_with_cg(cg)
     fields, errors = ds.compute(agents=(agent,), cached_fields={}, mngr_ctx=ctx)
     assert len(errors) > 0
+
+
+def test_compute_pr_fetch_failed_no_cache_emits_fetch_failed_field() -> None:
+    """When the repo's PR fetch fails and no cached PrField exists, the agent
+    gets a PrFetchFailedField in the FIELD_PR slot so it routes into PRS_FAILED.
+    """
+    ds = GitHubDataSource(config=GitHubDataSourceConfig(conflicts=False, unresolved=False))
+    agent = make_agent_details(name="a1", initial_branch="branch-1", labels={"remote": "git@github.com:org/repo.git"})
+    cg = MagicMock()
+    fail_proc = MagicMock()
+    fail_proc.read_stdout.return_value = ""
+    fail_proc.read_stderr.return_value = "HTTP 504"
+    fail_proc.returncode = 1
+    cg.run_process_in_background.side_effect = [fail_proc, fail_proc]
+    ctx = make_mngr_ctx_with_cg(cg)
+    fields, _errors = ds.compute(agents=(agent,), cached_fields={}, mngr_ctx=ctx)
+    assert agent.name in fields
+    pr_field = fields[agent.name].get(FIELD_PR)
+    assert isinstance(pr_field, PrFetchFailedField)
+    assert pr_field.repo == "org/repo"
+
+
+def test_compute_pr_fetch_failed_with_cached_pr_uses_cache() -> None:
+    """When the repo's PR fetch fails but a cached PrField exists, fall back to
+    the cached field silently (no PrFetchFailedField, no agent flagged in PRS_FAILED).
+    """
+    ds = GitHubDataSource(config=GitHubDataSourceConfig(conflicts=False, unresolved=False))
+    agent = make_agent_details(name="a1", initial_branch="branch-1", labels={"remote": "git@github.com:org/repo.git"})
+    cached_pr = _make_internal_pr(number=42, branch="branch-1", check_status=CiStatus.PASSING)
+    cached_ci = CiField(status=CiStatus.PASSING)
+    cached: dict[AgentName, dict[str, FieldValue]] = {
+        agent.name: {FIELD_PR: cached_pr, FIELD_CI: cached_ci},
+    }
+    cg = MagicMock()
+    fail_proc = MagicMock()
+    fail_proc.read_stdout.return_value = ""
+    fail_proc.read_stderr.return_value = "HTTP 504"
+    fail_proc.returncode = 1
+    cg.run_process_in_background.side_effect = [fail_proc, fail_proc]
+    ctx = make_mngr_ctx_with_cg(cg)
+    fields, _errors = ds.compute(agents=(agent,), cached_fields=cached, mngr_ctx=ctx)
+    assert agent.name in fields
+    pr_field = fields[agent.name].get(FIELD_PR)
+    assert not isinstance(pr_field, PrFetchFailedField)
+    assert pr_field == cached_pr
+    assert fields[agent.name].get(FIELD_CI) == cached_ci
 
 
 def test_compute_with_conflicts_and_unresolved() -> None:

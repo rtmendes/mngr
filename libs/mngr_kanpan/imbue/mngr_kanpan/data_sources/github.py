@@ -101,6 +101,21 @@ class CreatePrUrlField(FieldValue):
         return CellDisplay(text="+PR", url=self.url)
 
 
+class PrFetchFailedField(FieldValue):
+    """Sentinel placed in the FIELD_PR slot when the repo's PR fetch failed
+    and no historical PR data is available to fall back to.
+
+    Routes the agent into BoardSection.PRS_FAILED. If a previous cycle
+    successfully fetched a PrField, that cached PrField is used instead of
+    emitting this sentinel (silent fallback).
+    """
+
+    repo: str = Field(description="Repo path that failed to load (e.g. 'org/repo')")
+
+    def display(self) -> CellDisplay:
+        return CellDisplay(text="?", color="light red")
+
+
 class ConflictsField(FieldValue):
     """Merge conflict status for a PR."""
 
@@ -406,9 +421,23 @@ class GitHubDataSource(FrozenModel):
                         agent_fields[FIELD_PR] = pr
                     if self.config.ci:
                         agent_fields[FIELD_CI] = CiField(status=pr.internal_check_status)
+                elif agent_prs_loaded:
+                    agent_fields[FIELD_PR] = CreatePrUrlField(url=_build_create_pr_url(agent_repo, branch))
                 else:
-                    if agent_prs_loaded:
-                        agent_fields[FIELD_PR] = CreatePrUrlField(url=_build_create_pr_url(agent_repo, branch))
+                    # Fetch failed for this repo: silently fall back to cached PrField/CiField
+                    # if available; otherwise emit a PrFetchFailedField so the agent shows up
+                    # under "PRs not loaded" instead of being misclassified as "no PR yet".
+                    cached_agent = cached_fields.get(agent.name, {})
+                    cached_pr = cached_agent.get(FIELD_PR)
+                    if isinstance(cached_pr, PrField):
+                        if self.config.pr:
+                            agent_fields[FIELD_PR] = cached_pr
+                        if self.config.ci:
+                            cached_ci = cached_agent.get(FIELD_CI)
+                            if isinstance(cached_ci, CiField):
+                                agent_fields[FIELD_CI] = cached_ci
+                    elif self.config.pr:
+                        agent_fields[FIELD_PR] = PrFetchFailedField(repo=agent_repo)
 
             if agent_fields:
                 fields[agent.name] = agent_fields
