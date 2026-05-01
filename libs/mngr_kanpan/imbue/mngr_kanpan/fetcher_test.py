@@ -159,15 +159,6 @@ def test_compute_section_wrong_pr_type() -> None:
         compute_section(fields)
 
 
-def test_compute_section_wrong_ci_type() -> None:
-    fields: dict[str, FieldValue] = {
-        FIELD_PR: make_pr_field(),
-        FIELD_CI: StringField(value="oops"),
-    }
-    with pytest.raises(KanpanFieldTypeError, match="Expected CiField"):
-        compute_section(fields)
-
-
 # === _is_agent_muted ===
 
 

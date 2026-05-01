@@ -3,6 +3,7 @@ from typing import Any
 from typing import Protocol
 from typing import runtime_checkable
 
+from loguru import logger
 from pydantic import Field
 from pydantic import ValidationError
 
@@ -103,6 +104,14 @@ class KanpanDataSource(Protocol):
         or a sentinel like CreatePrUrlField / PrFetchFailedField. List every
         concrete class that can land in the slot so the cache loader can
         round-trip whichever one was last persisted.
+
+        Tuple order is precedence for ambiguous payloads. ``deserialize_fields``
+        tries each class in order and keeps the first that validates. This works
+        unambiguously today because every FieldValue subclass uses pydantic's
+        ``extra="forbid"`` config (see imbue.imbue_common.frozen_model.FrozenModel),
+        so payload shapes are mutually exclusive. If you ever add two classes
+        whose required fields are subsets of each other, list the more
+        constrained one first.
         """
         ...
 
@@ -149,10 +158,18 @@ def deserialize_fields(
         field_classes = field_types.get(key)
         if field_classes is None:
             continue
+        validated = False
         for field_class in field_classes:
             try:
                 result[key] = field_class.model_validate(value)
+                validated = True
                 break
             except ValidationError:
                 continue
+        if not validated:
+            logger.debug(
+                "deserialize_fields: no class validated key {!r} against {}",
+                key,
+                [c.__name__ for c in field_classes],
+            )
     return result

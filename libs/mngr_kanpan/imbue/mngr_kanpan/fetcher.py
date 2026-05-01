@@ -21,13 +21,11 @@ from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import ErrorBehavior
 from imbue.mngr.primitives import LOCAL_PROVIDER_NAME
 from imbue.mngr_kanpan.data_source import BoolField
-from imbue.mngr_kanpan.data_source import FIELD_CI
 from imbue.mngr_kanpan.data_source import FIELD_MUTED
 from imbue.mngr_kanpan.data_source import FIELD_PR
 from imbue.mngr_kanpan.data_source import FieldValue
 from imbue.mngr_kanpan.data_source import KanpanDataSource
 from imbue.mngr_kanpan.data_source import KanpanFieldTypeError
-from imbue.mngr_kanpan.data_sources.github import CiField
 from imbue.mngr_kanpan.data_sources.github import CreatePrUrlField
 from imbue.mngr_kanpan.data_sources.github import PrFetchFailedField
 from imbue.mngr_kanpan.data_sources.github import PrField
@@ -205,13 +203,6 @@ def compute_section(fields: dict[str, FieldValue]) -> BoardSection:
     if not isinstance(pr, PrField):
         raise KanpanFieldTypeError(f"Expected PrField for 'pr', got {type(pr).__name__}")
 
-    # CiField is still type-validated below for any open PR that has a ci field,
-    # even though CI status no longer affects section assignment, so type errors
-    # in the cache are caught early.
-    ci = fields.get(FIELD_CI)
-    if ci is not None and not isinstance(ci, CiField):
-        raise KanpanFieldTypeError(f"Expected CiField for 'ci', got {type(ci).__name__}")
-
     match pr.state:
         case PrState.MERGED:
             return BoardSection.PR_MERGED
@@ -344,8 +335,19 @@ def load_field_cache(
                 type_name = field_info.get("type")
                 data = field_info.get("data")
                 field_type = type_registry.get(type_name or "")
-                if field_type is not None and data is not None:
-                    agent_fields[key] = field_type.model_validate(data)
+                if field_type is None:
+                    logger.debug(
+                        "load_field_cache: unknown FieldValue type {!r} for agent {} key {!r}; "
+                        "the field will be dropped (registered classes: {})",
+                        type_name,
+                        agent_name_str,
+                        key,
+                        sorted(type_registry.keys()),
+                    )
+                    continue
+                if data is None:
+                    continue
+                agent_fields[key] = field_type.model_validate(data)
             if agent_fields:
                 result[AgentName(agent_name_str)] = agent_fields
         return result

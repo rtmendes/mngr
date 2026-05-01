@@ -431,6 +431,13 @@ class GitHubDataSource(FrozenModel):
                     # Fetch failed for this repo: silently fall back to cached PrField/CiField
                     # if available; otherwise emit a PrFetchFailedField so the agent shows up
                     # under "PRs not loaded" instead of being misclassified as "no PR yet".
+                    #
+                    # Staleness: there is no TTL on the cached PR. If `gh pr list` keeps failing
+                    # for hours, we will keep showing the last-known PR row (number, state, CI).
+                    # That is the intentional trade-off -- a stale row is more useful than a
+                    # blank one and the failure is reported via `errors`. Re-evaluate if
+                    # auth/rate-limit failures become long-lived enough that a stale PR could
+                    # mislead the user (e.g. PR shown OPEN after it was merged days ago).
                     cached_agent = cached_fields.get(agent.name, {})
                     cached_pr = cached_agent.get(FIELD_PR)
                     if isinstance(cached_pr, PrField):
