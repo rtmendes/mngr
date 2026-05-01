@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from pydantic import Field
@@ -7,11 +6,6 @@ from imbue.mngr.config.data_types import ProviderInstanceConfig
 from imbue.mngr.primitives import ActivitySource
 from imbue.mngr.primitives import DockerBuilder
 from imbue.mngr.primitives import IdleMode
-from imbue.mngr.utils.env_utils import parse_bool_env
-
-
-def _default_builder() -> DockerBuilder:
-    return DockerBuilder.DEPOT if parse_bool_env(os.environ.get("MNGR_USE_DEPOT", "")) else DockerBuilder.DOCKER
 
 
 class VpsDockerProviderConfig(ProviderInstanceConfig):
@@ -70,13 +64,11 @@ class VpsDockerProviderConfig(ProviderInstanceConfig):
         description="Default docker run arguments applied to all containers",
     )
     builder: DockerBuilder = Field(
-        default_factory=_default_builder,
+        default=DockerBuilder.DOCKER,
         description=(
-            "Image builder used on the VPS. DOCKER runs native `docker build` over SSH. "
-            "DEPOT runs `depot build --load` over SSH (auto-installs the depot CLI on the VPS "
-            "the first time). DEPOT requires DEPOT_TOKEN in the agent's environment; "
-            "DEPOT_PROJECT_ID is optional and only forwarded when set "
-            "(needed when no depot.json is on the VPS). "
-            "Default reads MNGR_USE_DEPOT env var: '1'/'true'/'yes' selects DEPOT, else DOCKER."
+            "Image builder used on the VPS. DOCKER (default) runs native `docker build` over SSH. "
+            "DEPOT runs `depot build --load` over SSH, auto-installs the depot CLI on the VPS the "
+            "first time, and requires DEPOT_TOKEN in the agent's environment (DEPOT_PROJECT_ID "
+            "optional, only forwarded when set)."
         ),
     )

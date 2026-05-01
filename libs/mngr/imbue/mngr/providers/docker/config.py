@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from pydantic import Field
@@ -8,11 +7,6 @@ from imbue.mngr.primitives import ActivitySource
 from imbue.mngr.primitives import DockerBuilder
 from imbue.mngr.primitives import IdleMode
 from imbue.mngr.primitives import ProviderBackendName
-from imbue.mngr.utils.env_utils import parse_bool_env
-
-
-def _default_builder() -> DockerBuilder:
-    return DockerBuilder.DEPOT if parse_bool_env(os.environ.get("MNGR_USE_DEPOT", "")) else DockerBuilder.DOCKER
 
 
 class DockerProviderConfig(ProviderInstanceConfig):
@@ -53,11 +47,10 @@ class DockerProviderConfig(ProviderInstanceConfig):
         description="Default activity sources that count toward keeping host active",
     )
     builder: DockerBuilder = Field(
-        default_factory=_default_builder,
+        default=DockerBuilder.DOCKER,
         description=(
-            "Docker image builder to use. DOCKER uses native `docker build`. "
-            "DEPOT uses `depot build --load` (requires depot CLI + DEPOT_TOKEN). "
-            "Default reads MNGR_USE_DEPOT env var: '1'/'true'/'yes' selects DEPOT, else DOCKER."
+            "Image builder. DOCKER (default) runs native `docker build`. "
+            "DEPOT runs `depot build --load` (requires depot CLI + DEPOT_TOKEN in env)."
         ),
     )
     is_host_volume_created: bool = Field(
