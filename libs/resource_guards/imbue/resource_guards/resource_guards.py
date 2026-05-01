@@ -32,6 +32,7 @@ import stat
 import tempfile
 from collections.abc import Callable
 from collections.abc import Generator
+from collections.abc import Iterable
 from enum import StrEnum
 from enum import auto
 from pathlib import Path
@@ -118,7 +119,7 @@ def get_guarded_resource_names() -> tuple[str, ...]:
 
 
 def register_all_resource_guards(
-    entry_points: Callable[..., Any] = importlib.metadata.entry_points,
+    entry_points: Callable[..., Iterable[Any]] = importlib.metadata.entry_points,
 ) -> None:
     """Register every guard declared via the imbue_resource_guards entry point group.
 
