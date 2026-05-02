@@ -240,46 +240,134 @@ deploy-all env="production": (push-secrets env) (deploy-connector env) (deploy-l
 # Start the minds desktop client (electron) in dev mode.
 # Sources .env (for ANTHROPIC_API_KEY etc.) and sets MINDS_WORKSPACE_*
 # env vars so the create-form auto-fills "repository", "name", and
-# "branch". Defaults:
+# "branch":
 #   MINDS_WORKSPACE_GIT_URL = .external_worktrees/forever-claude-template/
-#       if that directory exists (typically created by create-pool-hosts-dev),
-#       else $HOME/project/forever-claude-template.
-#   MINDS_WORKSPACE_BRANCH = the FCT path's current branch.
-#   MINDS_WORKSPACE_NAME   = "mindtest".
-# Override any of them via positional args, e.g.:
-#   just minds-start agent_name=foo branch=main
-# Run `pnpm install` inside apps/minds/ once before first use.
-minds-start agent_name="mindtest" branch="" fct_repo="$HOME/project/forever-claude-template":
+#       (REQUIRED -- recipe fails if missing; run create-pool-hosts-dev
+#       first to set it up).
+#   MINDS_WORKSPACE_BRANCH  = the FCT worktree's current branch.
+#   MINDS_WORKSPACE_NAME    = "mindtest".
+# Override agent_name / branch via positional args:
+#   just minds-start agent_name=foo branch=some-branch
+# Refuses to start if another minds-start is already running in this
+# worktree (PID file under /tmp keyed by worktree path). Use `just
+# minds-stop` to kill the running instance first.
+minds-start agent_name="mindtest" branch="":
     #!/bin/bash
     set -ueo pipefail
+    pid_file="/tmp/minds-start-$(echo -n "$PWD" | sha1sum | cut -c1-12).pid"
+    if [ -f "$pid_file" ]; then
+        existing=$(cat "$pid_file" 2>/dev/null || echo "")
+        if [ -n "$existing" ] && kill -0 "$existing" 2>/dev/null; then
+            echo "error: minds-start is already running in this worktree (pid=$existing)" >&2
+            echo "       run \`just minds-stop\` first." >&2
+            exit 2
+        fi
+        rm -f "$pid_file"
+    fi
+    fct_wt="$(pwd)/.external_worktrees/forever-claude-template"
+    if [ ! -e "$fct_wt/.git" ]; then
+        echo "error: no FCT worktree at $fct_wt" >&2
+        echo "       run \`just create-pool-hosts-dev <count>\` first to set it up," >&2
+        echo "       or \`git worktree add\` it manually before re-running minds-start." >&2
+        exit 2
+    fi
     if [ -f .env ]; then
         set -a
         . .env
         set +a
     fi
-    fct_wt="$(pwd)/.external_worktrees/forever-claude-template"
-    if [ -e "$fct_wt/.git" ]; then
-        export MINDS_WORKSPACE_GIT_URL="$fct_wt"
-        path_for_branch="$fct_wt"
-    else
-        export MINDS_WORKSPACE_GIT_URL="{{fct_repo}}"
-        path_for_branch="{{fct_repo}}"
-        echo "warning: no FCT worktree at $fct_wt; falling back to $MINDS_WORKSPACE_GIT_URL" >&2
-    fi
+    export MINDS_WORKSPACE_GIT_URL="$fct_wt"
     if [ -n "{{branch}}" ]; then
         export MINDS_WORKSPACE_BRANCH="{{branch}}"
     else
-        export MINDS_WORKSPACE_BRANCH="$(git -C "$path_for_branch" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+        export MINDS_WORKSPACE_BRANCH="$(git -C "$fct_wt" rev-parse --abbrev-ref HEAD)"
     fi
     export MINDS_WORKSPACE_NAME="{{agent_name}}"
     echo "MINDS_WORKSPACE_GIT_URL=$MINDS_WORKSPACE_GIT_URL"
     echo "MINDS_WORKSPACE_NAME=$MINDS_WORKSPACE_NAME"
     echo "MINDS_WORKSPACE_BRANCH=$MINDS_WORKSPACE_BRANCH"
+    echo "$$" > "$pid_file"
+    trap 'rm -f "$pid_file"' EXIT
     cd apps/minds && pnpm start
+
+# Stop the minds desktop client started in this worktree by `just minds-start`.
+# Reads the PID file written by minds-start and SIGTERMs the recipe shell;
+# pnpm and electron follow on cascade. Idempotent (no-op if nothing running).
+minds-stop:
+    #!/bin/bash
+    set -ueo pipefail
+    pid_file="/tmp/minds-start-$(echo -n "$PWD" | sha1sum | cut -c1-12).pid"
+    if [ ! -f "$pid_file" ]; then
+        echo "no PID file at $pid_file -- nothing to stop"
+        exit 0
+    fi
+    pid=$(cat "$pid_file")
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        echo "PID $pid in $pid_file is not running -- removing stale file"
+        rm -f "$pid_file"
+        exit 0
+    fi
+    echo "Stopping minds-start (pid=$pid)"
+    kill "$pid"
+    # Wait up to 10s for graceful shutdown, then SIGKILL.
+    for i in $(seq 1 10); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$pid_file"
+            exit 0
+        fi
+        sleep 1
+    done
+    echo "minds-start (pid=$pid) did not exit after SIGTERM; sending SIGKILL"
+    kill -9 "$pid" 2>/dev/null || true
+    rm -f "$pid_file"
 
 # Build the minds desktop client distributable (slow; uses todesktop).
 minds-build:
     cd apps/minds && pnpm build
+
+# Sync this repo's mngr changes (and the FCT worktree's template state)
+# into a running Docker agent's container, then restart the agent and the
+# desktop client. Wraps apps/minds/scripts/propagate_changes by auto-
+# discovering the agent's Docker SSH port (via `docker port`) and the
+# minds-side SSH key (under MNGR_HOST_DIR's profiles/.../docker/.../keys/).
+# Defaults MNGR_HOST_DIR to ~/.minds/mngr (production minds); pass
+# mngr_host_dir=$HOME/.devminds/mngr if you're on a dev profile.
+propagate-changes agent_name mngr_host_dir="$HOME/.minds/mngr":
+    #!/bin/bash
+    set -ueo pipefail
+    agent_name="{{agent_name}}"
+    mngr_host_dir="{{mngr_host_dir}}"
+    container_name="mngr-${agent_name}-host"
+    if ! docker inspect "$container_name" >/dev/null 2>&1; then
+        echo "error: no docker container named '$container_name'" >&2
+        echo "       run \`docker ps\` to see running containers" >&2
+        exit 2
+    fi
+    port_mapping=$(docker port "$container_name" 22/tcp 2>/dev/null | head -1)
+    if [ -z "$port_mapping" ]; then
+        echo "error: container $container_name has no host port mapping for 22/tcp" >&2
+        exit 2
+    fi
+    port="${port_mapping##*:}"
+    keys=$(find "$mngr_host_dir/profiles" -path "*/docker/*/keys/docker_ssh_key" 2>/dev/null || true)
+    if [ -z "$keys" ]; then
+        echo "error: no docker_ssh_key found under $mngr_host_dir/profiles" >&2
+        echo "       try mngr_host_dir=\$HOME/.devminds/mngr if you're on a dev profile," >&2
+        echo "       or pass mngr_host_dir=<custom path>." >&2
+        exit 2
+    fi
+    key_count=$(echo "$keys" | wc -l)
+    if [ "$key_count" -gt 1 ]; then
+        echo "error: multiple docker_ssh_key files found under $mngr_host_dir/profiles:" >&2
+        echo "$keys" >&2
+        echo "       narrow with mngr_host_dir=<more specific path>." >&2
+        exit 2
+    fi
+    key="$keys"
+    echo "Propagating changes to $agent_name (container=$container_name, port=$port, key=$key)"
+    apps/minds/scripts/propagate_changes \
+        --agent "$agent_name" \
+        --user root --host 127.0.0.1 --port "$port" --key "$key"
 
 # Pool host provisioning. Two recipes with different "what mngr code runs
 # on the host?" semantics:
