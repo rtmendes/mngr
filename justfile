@@ -246,15 +246,79 @@ minds-start:
 minds-build:
     cd apps/minds && pnpm build
 
-# Provision N Vultr-backed pool hosts and register them in the pool DB
-# at the given version tag (matched by /hosts/lease). Sources
-# .minds/<env>/.env and .minds/<env>/neon.sh so DATABASE_URL,
-# VULTR_API_KEY, etc. are available to the python script. Override
-# `template_repo` if your forever-claude-template clone lives outside
-# the default path.
-create-pool-hosts count="1" env="production" version="v0.1.0" template_repo="$HOME/project/forever-claude-template":
+# Pool host provisioning. Two recipes with different "what mngr code runs
+# on the host?" semantics:
+#  - create-pool-hosts-dev: maintains a PERSISTENT FCT worktree at
+#    .external_worktrees/forever-claude-template/ on a branch named after
+#    this repo's current mngr branch (so e.g. work on `mngr/imbue-auth`
+#    here, see a parallel `mngr/imbue-auth` branch in FCT). On each run,
+#    rsyncs THIS repo's working tree into vendor/mngr just long enough to
+#    provision, then resets vendor/mngr to HEAD so any template-side
+#    commits the user makes in the worktree stay free of mngr churn.
+#  - create-pool-hosts: an EPHEMERAL temp checkout of FCT at a chosen
+#    tag, with vendor/mngr left untouched. Whatever vendor/mngr is
+#    committed at that tag is exactly what runs on the host. Cleaned up
+#    on exit.
+
+# Provision N Vultr pool hosts from a persistent FCT worktree, with this
+# repo's WORKING TREE mngr code rsynced into vendor/mngr for the duration
+# of provisioning. The worktree lives at .external_worktrees/forever-claude-template/
+# and tracks a branch named the same as your current mngr branch, so you
+# can iterate on template-side changes there without losing them between
+# runs. After provisioning succeeds, vendor/mngr is reset to HEAD.
+create-pool-hosts-dev count="1" env="production" version="v0.1.0" fct_repo="$HOME/project/forever-claude-template":
     #!/bin/bash
     set -ueo pipefail
+    fct_repo="{{fct_repo}}"
+    if [ ! -d "$fct_repo/.git" ]; then
+        echo "error: FCT not found at $fct_repo (override fct_repo=...)" >&2
+        exit 2
+    fi
+    if ! git -C "$fct_repo" rev-parse --verify origin/main >/dev/null 2>&1; then
+        echo "error: $fct_repo has no origin/main (try git fetch origin)" >&2
+        exit 2
+    fi
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    if [ "$branch" = "HEAD" ]; then
+        echo "error: this repo is in detached HEAD; check out a branch first" >&2
+        exit 2
+    fi
+    mkdir -p .external_worktrees
+    fct_wt="$(pwd)/.external_worktrees/forever-claude-template"
+    # Ensure the FCT worktree exists at $fct_wt on a branch named $branch.
+    # Three cases: (1) no worktree, no FCT branch yet -- create both;
+    # (2) no worktree, FCT branch already exists -- reuse the branch;
+    # (3) worktree exists -- switch it to $branch (creating if needed).
+    if [ -d "$fct_wt" ] && git -C "$fct_wt" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        cur_branch=$(git -C "$fct_wt" rev-parse --abbrev-ref HEAD)
+        if [ "$cur_branch" != "$branch" ]; then
+            if git -C "$fct_wt" rev-parse --verify "refs/heads/$branch" >/dev/null 2>&1; then
+                git -C "$fct_wt" checkout "$branch"
+            else
+                git -C "$fct_wt" checkout -b "$branch" origin/main
+            fi
+        fi
+    else
+        if [ -e "$fct_wt" ]; then rm -rf "$fct_wt"; fi
+        if git -C "$fct_repo" rev-parse --verify "refs/heads/$branch" >/dev/null 2>&1; then
+            git -C "$fct_repo" worktree add "$fct_wt" "$branch"
+        else
+            git -C "$fct_repo" worktree add -b "$branch" "$fct_wt" origin/main
+        fi
+    fi
+    target="$fct_wt/vendor/mngr"
+    if [ ! -d "$target" ]; then
+        echo "error: $target missing (FCT branch '$branch' lacks vendor/mngr)" >&2
+        exit 2
+    fi
+    # Replace vendor/mngr with this repo's working tree (tracked + untracked-not-ignored).
+    rm -rf "$target"
+    mkdir -p "$target"
+    tarball=$(mktemp)
+    trap 'rm -f "$tarball"' EXIT
+    echo "Snapshotting working tree into $target"
+    git ls-files -z -co --exclude-standard | tar --null -T - -cf "$tarball"
+    tar -xf "$tarball" -C "$target"
     set -a
     . .minds/{{env}}/.env
     . .minds/{{env}}/neon.sh
@@ -262,7 +326,68 @@ create-pool-hosts count="1" env="production" version="v0.1.0" template_repo="$HO
     uv run python apps/remote_service_connector/scripts/create_pool_hosts.py \
         --count {{count}} --version {{version}} \
         --management-public-key-file .minds/{{env}}/pool_management_key/id_ed25519.pub \
-        --template-dir {{template_repo}}
+        --template-dir "$fct_wt"
+    # On success: restore vendor/mngr to whatever's checked in for $branch
+    # so the worktree stays "clean" wrt vendor/mngr and template-side
+    # commits don't carry mngr churn. A failure above leaves vendor/mngr
+    # in its rsynced state for debugging; re-run to overwrite.
+    echo "Resetting $target to HEAD."
+    git -C "$fct_wt" checkout HEAD -- vendor/mngr
+    git -C "$fct_wt" clean -fdx vendor/mngr
+
+# Provision N Vultr pool hosts from a TAGGED FCT release, untouched. The
+# vendor/mngr that ships in that tag is what runs on the host; this
+# recipe never modifies vendor/mngr. Defaults to the most recent FCT tag
+# whose tree contains vendor/mngr/ (older FCT tags predate that layout
+# and are skipped). Pass `fct_tag=<tag>` to pin to a specific tag.
+create-pool-hosts count="1" env="production" version="v0.1.0" fct_tag="" fct_repo="$HOME/project/forever-claude-template":
+    #!/bin/bash
+    set -ueo pipefail
+    fct_repo="{{fct_repo}}"
+    if [ ! -d "$fct_repo/.git" ]; then
+        echo "error: FCT not found at $fct_repo (override fct_repo=...)" >&2
+        exit 2
+    fi
+    fct_tag="{{fct_tag}}"
+    if [ -z "$fct_tag" ]; then
+        # Most recent tag (by version sort) whose tree contains vendor/mngr.
+        for t in $(git -C "$fct_repo" tag --sort=-version:refname); do
+            if git -C "$fct_repo" ls-tree -d "$t" vendor/mngr 2>/dev/null | grep -q .; then
+                fct_tag="$t"
+                break
+            fi
+        done
+        if [ -z "$fct_tag" ]; then
+            echo "error: no FCT tag with vendor/mngr/ in its tree." >&2
+            echo "       Tag a commit that has vendor/mngr/, or pass fct_tag=<tag>." >&2
+            exit 2
+        fi
+        echo "Defaulting to most recent FCT tag with vendor/mngr: $fct_tag"
+    fi
+    if ! git -C "$fct_repo" rev-parse --verify "${fct_tag}^{commit}" >/dev/null 2>&1; then
+        echo "error: '$fct_tag' is not a known git ref in $fct_repo" >&2
+        exit 2
+    fi
+    if ! git -C "$fct_repo" ls-tree -d "$fct_tag" vendor/mngr 2>/dev/null | grep -q .; then
+        echo "error: FCT tag '$fct_tag' does not contain vendor/mngr/" >&2
+        exit 2
+    fi
+    mkdir -p .external_worktrees
+    fct_temp="$(pwd)/.external_worktrees/forever-claude-template-strict-$$-$(date +%s)"
+    cleanup() {
+        git -C "$fct_repo" worktree remove --force "$fct_temp" 2>/dev/null || rm -rf "$fct_temp"
+    }
+    trap cleanup EXIT
+    echo "Creating temp FCT worktree at $fct_tag in $fct_temp"
+    git -C "$fct_repo" worktree add --detach "$fct_temp" "$fct_tag"
+    set -a
+    . .minds/{{env}}/.env
+    . .minds/{{env}}/neon.sh
+    set +a
+    uv run python apps/remote_service_connector/scripts/create_pool_hosts.py \
+        --count {{count}} --version {{version}} \
+        --management-public-key-file .minds/{{env}}/pool_management_key/id_ed25519.pub \
+        --template-dir "$fct_temp"
 
 # Destroy and remove every host in the pool with status='released'.
 # Sources .minds/<env>/neon.sh for DATABASE_URL.
