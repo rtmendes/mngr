@@ -611,7 +611,7 @@ def _run_post_destroy_gc(
 CommandHelpMetadata(
     key="destroy",
     one_line_description="Destroy agent(s) and clean up resources",
-    synopsis="mngr [destroy|rm] [AGENTS...|-] [--agent <AGENT>] [--session <SESSION>] [-f|--force] [-b|--remove-created-branch]",
+    synopsis="mngr [destroy|rm] [AGENTS...|-] [--agent <AGENT>] [--session <SESSION>] [-f|--force] [-b|--remove-created-branch] [--[no-]gc] [--[no-]allow-worktree-removal]",
     description="""When the last agent on a host is destroyed, the host itself is also destroyed
 (including containers, volumes, snapshots, and any remote infrastructure).
 
