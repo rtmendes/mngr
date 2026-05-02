@@ -238,8 +238,43 @@ deploy-litellm env="production":
 deploy-all env="production": (push-secrets env) (deploy-connector env) (deploy-litellm env)
 
 # Start the minds desktop client (electron) in dev mode.
+# Sources .env (for ANTHROPIC_API_KEY etc.) and sets MINDS_WORKSPACE_*
+# env vars so the create-form auto-fills "repository", "name", and
+# "branch". Defaults:
+#   MINDS_WORKSPACE_GIT_URL = .external_worktrees/forever-claude-template/
+#       if that directory exists (typically created by create-pool-hosts-dev),
+#       else $HOME/project/forever-claude-template.
+#   MINDS_WORKSPACE_BRANCH = the FCT path's current branch.
+#   MINDS_WORKSPACE_NAME   = "mindtest".
+# Override any of them via positional args, e.g.:
+#   just minds-start agent_name=foo branch=main
 # Run `pnpm install` inside apps/minds/ once before first use.
-minds-start:
+minds-start agent_name="mindtest" branch="" fct_repo="$HOME/project/forever-claude-template":
+    #!/bin/bash
+    set -ueo pipefail
+    if [ -f .env ]; then
+        set -a
+        . .env
+        set +a
+    fi
+    fct_wt="$(pwd)/.external_worktrees/forever-claude-template"
+    if [ -e "$fct_wt/.git" ]; then
+        export MINDS_WORKSPACE_GIT_URL="$fct_wt"
+        path_for_branch="$fct_wt"
+    else
+        export MINDS_WORKSPACE_GIT_URL="{{fct_repo}}"
+        path_for_branch="{{fct_repo}}"
+        echo "warning: no FCT worktree at $fct_wt; falling back to $MINDS_WORKSPACE_GIT_URL" >&2
+    fi
+    if [ -n "{{branch}}" ]; then
+        export MINDS_WORKSPACE_BRANCH="{{branch}}"
+    else
+        export MINDS_WORKSPACE_BRANCH="$(git -C "$path_for_branch" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+    fi
+    export MINDS_WORKSPACE_NAME="{{agent_name}}"
+    echo "MINDS_WORKSPACE_GIT_URL=$MINDS_WORKSPACE_GIT_URL"
+    echo "MINDS_WORKSPACE_NAME=$MINDS_WORKSPACE_NAME"
+    echo "MINDS_WORKSPACE_BRANCH=$MINDS_WORKSPACE_BRANCH"
     cd apps/minds && pnpm start
 
 # Build the minds desktop client distributable (slow; uses todesktop).
