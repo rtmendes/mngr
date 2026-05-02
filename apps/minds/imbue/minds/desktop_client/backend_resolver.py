@@ -30,7 +30,6 @@ from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
 from imbue.mngr.api.discovery_events import HostDestroyedEvent
 from imbue.mngr.api.discovery_events import HostSSHInfoEvent
 from imbue.mngr.api.discovery_events import parse_discovery_event_line
-from imbue.mngr.errors import DiscoverySchemaChangedError
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import DiscoveredAgent
 
@@ -571,11 +570,7 @@ class MngrStreamManager(MutableModel):
         - AGENT_DESTROYED: incrementally removes a single agent
         - HOST_DESTROYED: removes all agents that were on the destroyed host
         """
-        try:
-            event = parse_discovery_event_line(line)
-        except DiscoverySchemaChangedError as e:
-            logger.warning("Skipping discovery event with stale schema: {} (line: {})", e, line[:200])
-            return
+        event = parse_discovery_event_line(line)
 
         if isinstance(event, FullDiscoverySnapshotEvent):
             self._handle_full_snapshot(event)
@@ -590,7 +585,8 @@ class MngrStreamManager(MutableModel):
         elif isinstance(event, DiscoveryErrorEvent):
             self._handle_discovery_error(event)
         elif event is None:
-            logger.warning("Unrecognized discovery event line: {}", line[:200])
+            raise Exception("Unrecognized discovery event line: {}", line[:200])
+        # FIXME: make the match exhaustive so that we have to think about what to do when there are new types
         else:
             logger.trace("Ignoring discovery event: {}", type(event).__name__)
 

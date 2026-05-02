@@ -45,7 +45,10 @@ class MalformedJsonLineWarner(MutableModel):
                 self._pending_malformed_line = stripped
                 return None
         if not isinstance(data, dict):
-            return None
+            raise Exception(
+                "Malformed JSONL line is not a JSON object. Fix by preventing the underlying process from outputting non-JSON or non-object lines. Line content: {}",
+                stripped[:_MALFORMED_LINE_LOG_TRUNCATION],
+            )
         return data, stripped
 
     def reset(self) -> None:

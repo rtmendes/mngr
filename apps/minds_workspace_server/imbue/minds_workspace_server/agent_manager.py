@@ -34,7 +34,6 @@ from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
 from imbue.mngr.api.discovery_events import HostDestroyedEvent
 from imbue.mngr.api.discovery_events import parse_discovery_event_line
 from imbue.mngr.errors import BaseMngrError
-from imbue.mngr.errors import DiscoverySchemaChangedError
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentNameStyle
 from imbue.mngr.utils.name_generator import generate_agent_name
@@ -715,13 +714,10 @@ class AgentManager:
         if not is_stdout:
             _loguru_logger.warning("mngr observe stderr: {}", stripped)
             return
-        try:
-            event = parse_discovery_event_line(stripped)
-        except DiscoverySchemaChangedError as e:
-            _loguru_logger.warning("Skipping discovery event with stale schema: {}", e)
-            return
-        if event is not None:
-            self._handle_discovery_event(event)
+        event = parse_discovery_event_line(stripped)
+        if event is None:
+            raise Exception("This should never happen")
+        self._handle_discovery_event(event)
 
     def _handle_discovery_event(self, event: object) -> None:
         """Handle a discovery event from mngr observe."""
@@ -733,6 +729,7 @@ class AgentManager:
             self._handle_agent_destroyed(event)
         elif isinstance(event, HostDestroyedEvent):
             self._handle_host_destroyed(event)
+        # FIXME: make the match exhaustive so that we have to think about what to do for new types
         else:
             pass
 

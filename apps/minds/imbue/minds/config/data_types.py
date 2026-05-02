@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 from typing import Final
 
-from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.frozen_model import FrozenModel
@@ -36,19 +35,14 @@ class WorkspacePaths(FrozenModel):
 
 
 def parse_agents_from_mngr_output(stdout: str) -> list[dict[str, object]]:
-    """Extract agent records from ``mngr list --format json`` stdout.
-
-    The stdout may contain non-JSON lines (e.g. SSH error tracebacks)
-    mixed with the JSON. Finds the first line starting with ``{`` and
-    parses the ``agents`` array from it.
-    """
+    """Extract agent records from ``mngr list --format json`` stdout."""
     for line in stdout.splitlines():
         stripped = line.strip()
-        if stripped.startswith("{"):
-            try:
-                data = json.loads(stripped)
-                return list(data.get("agents", []))
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse JSON from mngr list output line: {}", stripped[:200])
-                continue
+        if not stripped.startswith("{"):
+            raise Exception(
+                "Malformed mngr output line. Fix by preventing the underlying process from outputting non-JSON. Expected JSON object: {}",
+                stripped[:200],
+            )
+        data = json.loads(stripped)
+        return data["agents"]
     return []

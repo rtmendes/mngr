@@ -173,6 +173,7 @@ class LimaHostStore(MutableModel):
                 agent_data = json.loads(content)
                 agent_records.append(agent_data)
             except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+                # FIXME: I don't see how we can meaningfully proceed here. At the very least, we need to shuffle the on_error behavior down to here (maybe in mngr context?) so that we can know whether to warn or abort
                 logger.warning("Skipped invalid agent record {}: {}", entry.path, e)
                 continue
 

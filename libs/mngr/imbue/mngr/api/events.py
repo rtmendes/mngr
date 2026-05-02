@@ -328,7 +328,7 @@ def filter_sources_by_name(
 
 
 @pure
-def _record_from_event_data(data: Mapping[str, Any], stripped_line: str, source_hint: str) -> EventRecord | None:
+def _record_from_event_data(data: Mapping[str, Any], stripped_line: str, source_hint: str) -> EventRecord:
     """Build an EventRecord from already-parsed JSON data, applying source-hint correction.
 
     The input is a Mapping rather than a dict so the type system enforces that
@@ -337,7 +337,7 @@ def _record_from_event_data(data: Mapping[str, Any], stripped_line: str, source_
     """
     timestamp = data.get("timestamp", "")
     if not timestamp:
-        return None
+        raise Exception("Missing required 'timestamp' field in event JSON")
 
     event_id = data.get("event_id", "")
     if not event_id:
@@ -378,26 +378,12 @@ def _record_from_event_data(data: Mapping[str, Any], stripped_line: str, source_
 
 
 @pure
-def parse_event_line(line: str, source_hint: str) -> EventRecord | None:
-    """Parse a single JSONL line into an EventRecord.
-
-    Returns None if the line cannot be parsed (malformed JSON, missing required fields).
-    Always uses source_hint (derived from the file path) as the authoritative source;
-    if the event JSON contains a different source, it is corrected and the mismatch
-    is recorded in the returned EventRecord's original_source field.
-    Generates a deterministic fallback event_id from the line hash if missing.
-    Stateless and silent on malformed JSON; use MalformedJsonLineWarner alongside
-    _record_from_event_data when reading multiple lines so corruption is surfaced.
-    """
+def parse_event_line(line: str, source_hint: str) -> EventRecord:
+    """Parse a single JSONL line into an EventRecord."""
     stripped = line.strip()
-    if not stripped:
-        return None
-    try:
-        data = json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
+    data = json.loads(stripped)
     if not isinstance(data, dict):
-        return None
+        raise Exception(f"Expected JSON object but got {type(data).__name__}")
     return _record_from_event_data(data, stripped, source_hint)
 
 

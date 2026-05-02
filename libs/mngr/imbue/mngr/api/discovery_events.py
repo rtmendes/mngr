@@ -622,7 +622,9 @@ def resolve_provider_names_for_identifiers(
             resolved_providers.update(providers_by_agent_name[identifier])
         else:
             # Unknown identifier -- fall back to full scan
-            return None
+            logger.debug(
+                f"Could not resolve provider for identifier '{identifier}' from discovery events; full scan needed"
+            )
 
     return tuple(sorted(resolved_providers))
 
