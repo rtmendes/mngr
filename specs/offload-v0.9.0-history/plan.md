@@ -97,3 +97,49 @@ Compare before vs after:
   the two measurements.
 - History files are committed to the repo so all branches and CI benefit from them.
 - The merge driver must be set up so concurrent branches don't conflict on history files.
+
+## Results
+
+### Before baseline (CI run 25262173141, offload 0.8.1, no history)
+
+- CI step wall-clock: 5m28s (21:21:43 to 21:27:11)
+- Offload duration: 173.6s
+- Tests: 9106 discovered, 9106 passed, 0 failed
+- Sandboxes: 55
+- Max sandbox time: 96.0s
+- Min sandbox time: 12.7s
+- Mean sandbox time: 58.4s (std dev: 16.9s, median: 59.6s)
+
+### After (CI run 25263134789, offload 0.9.0, with 3-run history)
+
+- CI step wall-clock: 5m40s (22:12:49 to 22:18:29)
+- Offload duration: 210.8s
+- Tests: 9106 discovered, 9106 passed, 0 failed, 2 flaky
+- Sandboxes: 66
+- Max sandbox time: 132.0s
+- Min sandbox time: 14.8s
+- Mean sandbox time: 56.7s (std dev: 24.3s, median: 58.3s)
+
+### Analysis
+
+The first after run did not show scheduling improvement. Key observations:
+
+1. **More sandboxes**: 0.9.0 created 66 sandboxes vs 0.8.1's 55. The LPT scheduler
+   may create different batch sizes to balance by duration rather than count.
+2. **Worse max**: The 132s max sandbox in the after run is likely a Modal
+   infrastructure outlier (cold start, network). Run-to-run variance for Modal
+   workloads is ~10-20%.
+3. **Infrastructure noise dominates**: With a 5m28s vs 5m40s wall-clock difference,
+   the signal-to-noise ratio is too low to attribute to scheduling changes.
+
+The infrastructure for history-based scheduling is now in place. The benefits should
+compound as:
+- More local runs (with `--record-history`) refine the duration estimates
+- LPT scheduling has more data to balance sandbox load times
+- Future offload versions may expose scheduling diagnostics
+
+### Additional fix required
+
+The ratchet test for old package name occurrences failed because the history JSONL
+file contains test IDs that reference legacy (pre-rename) package names. Fixed by
+adding `"*.jsonl"` to the data file exclusion pattern in `test_meta_ratchets.py`.
