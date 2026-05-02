@@ -389,7 +389,12 @@ propagate-changes agent_name mngr_host_dir="$HOME/.minds/mngr":
 # and tracks a branch named the same as your current mngr branch, so you
 # can iterate on template-side changes there without losing them between
 # runs. After provisioning succeeds, vendor/mngr is reset to HEAD.
-create-pool-hosts-dev count="1" env="production" version="v0.1.0" fct_repo="$HOME/project/forever-claude-template":
+#
+# `version` defaults to the current mngr branch name so it matches what
+# `just minds-start` puts in MINDS_WORKSPACE_BRANCH (which the desktop
+# client sends as the `version` field on /hosts/lease). Override only for
+# unusual cases where you want to label a pool host differently.
+create-pool-hosts-dev count="1" env="production" version="" fct_repo="$HOME/project/forever-claude-template":
     #!/bin/bash
     set -ueo pipefail
     fct_repo="{{fct_repo}}"
@@ -405,6 +410,11 @@ create-pool-hosts-dev count="1" env="production" version="v0.1.0" fct_repo="$HOM
     if [ "$branch" = "HEAD" ]; then
         echo "error: this repo is in detached HEAD; check out a branch first" >&2
         exit 2
+    fi
+    version="{{version}}"
+    if [ -z "$version" ]; then
+        version="$branch"
+        echo "Defaulting pool_hosts.version to current mngr branch: $version"
     fi
     mkdir -p .external_worktrees
     fct_wt="$(pwd)/.external_worktrees/forever-claude-template"
@@ -447,7 +457,7 @@ create-pool-hosts-dev count="1" env="production" version="v0.1.0" fct_repo="$HOM
     . .minds/{{env}}/neon.sh
     set +a
     uv run python apps/remote_service_connector/scripts/create_pool_hosts.py \
-        --count {{count}} --version {{version}} \
+        --count {{count}} --version "$version" \
         --management-public-key-file .minds/{{env}}/pool_management_key/id_ed25519.pub \
         --template-dir "$fct_wt"
     # On success: restore vendor/mngr to whatever's checked in for $branch
