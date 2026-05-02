@@ -52,6 +52,9 @@ filters = "-m 'not acceptance and not release and not flaky'"
 retry_count = 4
 filters = "-m 'flaky and not acceptance and not release'"
 
+[history]
+path = "offload-history-modal.jsonl"
+
 [report]
 output_dir = "test-results"
 junit = true
