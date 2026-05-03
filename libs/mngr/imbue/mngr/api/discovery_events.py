@@ -17,6 +17,10 @@ from pydantic import Discriminator
 from pydantic import Field
 from pydantic import TypeAdapter
 from pydantic import ValidationError
+from tenacity import retry
+from tenacity import retry_if_exception_type
+from tenacity import stop_after_attempt
+from tenacity import wait_exponential
 
 from imbue.imbue_common.enums import UpperCaseStrEnum
 from imbue.imbue_common.event_envelope import EventEnvelope
@@ -594,9 +598,11 @@ def resolve_provider_names_for_identifiers(
         )
     except DiscoverySchemaChangedError as e:
         logger.warning("Discovery event schema mismatch; regenerating snapshot and retrying ({})", e)
-        # FIXME: might want to retry a few times here if ther are transient errors
-        #  otherwise you'd get a pretty rare failure (during upgrade, if the schema shifted, and then you got a transient error, this would fail)
-        _write_unfiltered_full_snapshot(mngr_ctx, ErrorBehavior.ABORT)
+        # _write_unfiltered_full_snapshot retries a few times internally on
+        # transient errors, so the previously-flagged "rare failure during
+        # upgrade if schema shifted and a transient error happened" is now
+        # less brittle.
+        _write_unfiltered_full_snapshot(mngr_ctx)
         # after we've regenerated the list, we should no longer get the DiscoverySchemaChangedError anymore
         provider_by_agent_id, name_by_agent_id, destroyed_agent_ids = _replay_discovery_events_for_resolution(
             events_path
@@ -763,27 +769,65 @@ def _emit_lines_from_offset(
     return offset + bytes_consumed
 
 
-def _write_unfiltered_full_snapshot(mngr_ctx: MngrContext, error_behavior: ErrorBehavior) -> None:
+_DISCOVERY_SNAPSHOT_RETRY_ATTEMPTS: Final[int] = 3
+_DISCOVERY_SNAPSHOT_RETRY_INITIAL_WAIT_SECONDS: Final[float] = 0.5
+_DISCOVERY_SNAPSHOT_RETRY_MAX_WAIT_SECONDS: Final[float] = 4.0
+
+
+# FIXME: rework this to do "per-provider" full discovery so a single flaky
+# provider can't poison the whole snapshot. The current design does one all-
+# providers list_agents under ABORT semantics: if any provider raises, the
+# whole snapshot is skipped (after retries). That's the right correctness
+# trade-off given list_agents has no notion of "partial-but-trusted" results,
+# but it means a single chronically-broken provider blocks discovery for
+# everyone. The right fix is for discovery to scan each provider
+# independently, emit per-provider AGENT_DISCOVERED / HOST_DISCOVERED
+# events, and reconstruct the union state in the consumer rather than relying
+# on whole-world DISCOVERY_FULL events.
+@retry(
+    retry=retry_if_exception_type(BaseMngrError),
+    stop=stop_after_attempt(_DISCOVERY_SNAPSHOT_RETRY_ATTEMPTS),
+    wait=wait_exponential(
+        multiplier=1,
+        min=_DISCOVERY_SNAPSHOT_RETRY_INITIAL_WAIT_SECONDS,
+        max=_DISCOVERY_SNAPSHOT_RETRY_MAX_WAIT_SECONDS,
+    ),
+    reraise=True,
+)
+def _write_unfiltered_full_snapshot(mngr_ctx: MngrContext) -> None:
     """Run an unfiltered list to trigger a full discovery snapshot event.
 
-    The snapshot is written as a side effect of list_agents when the listing is
-    unfiltered and error-free. This function exists to trigger that side effect
-    explicitly (e.g. for the discovery stream's periodic re-polls).
+    The snapshot is written as a side effect of list_agents when the listing
+    is unfiltered and error-free. This function exists to trigger that side
+    effect explicitly (e.g. for the discovery stream's periodic re-polls).
+
+    Always uses ``ErrorBehavior.ABORT`` so a single flaky provider can never
+    cause a partial DISCOVERY_FULL event to be emitted -- consumers treat
+    every full snapshot as authoritative state, so a docker hiccup that
+    returns zero docker agents would briefly nuke every docker-hosted
+    workspace from the desktop client's view. Better to retry a few times
+    (transient SSH / Docker / Modal errors usually heal) and skip the
+    snapshot entirely if we still can't get a clean read.
     """
     from imbue.mngr.api.list import list_agents
 
     list_agents(
         mngr_ctx=mngr_ctx,
         is_streaming=False,
-        error_behavior=error_behavior,
+        error_behavior=ErrorBehavior.ABORT,
         reset_caches=True,
     )
 
 
-def _write_unfiltered_full_snapshot_logged(mngr_ctx: MngrContext, error_behavior: ErrorBehavior) -> None:
-    """Run an unfiltered full snapshot, logging any errors instead of raising."""
+def _write_unfiltered_full_snapshot_logged(mngr_ctx: MngrContext) -> None:
+    """Run an unfiltered full snapshot, logging any errors instead of raising.
+
+    The underlying ``_write_unfiltered_full_snapshot`` always lists with
+    ``ErrorBehavior.ABORT`` (with retries) so partial snapshots are never
+    persisted.
+    """
     try:
-        _write_unfiltered_full_snapshot(mngr_ctx, error_behavior)
+        _write_unfiltered_full_snapshot(mngr_ctx)
     except Exception as e:
         logger.opt(exception=e).error("Failed to write discovery snapshot")
         try:
@@ -799,12 +843,15 @@ def _write_unfiltered_full_snapshot_logged(mngr_ctx: MngrContext, error_behavior
 
 def run_discovery_stream(
     mngr_ctx: MngrContext,
-    error_behavior: ErrorBehavior,
     on_line: Callable[[str], None] | None = None,
 ) -> None:
     """Stream discovery events as JSONL.
 
     Snapshots are always unfiltered so they can be used for state reconstruction.
+    The underlying ``_write_unfiltered_full_snapshot`` always lists with
+    ``ErrorBehavior.ABORT`` (with retries) so a flaky provider can never
+    cause a partial DISCOVERY_FULL event to be emitted; consumers can rely
+    on every full snapshot being authoritative.
 
     1. Emit from the latest cached snapshot on disk (instant, if available)
     2. Run a full sync in the background to update the event stream
@@ -850,12 +897,12 @@ def run_discovery_stream(
     if has_cached_snapshot:
         initial_sync = threading.Thread(
             target=_write_unfiltered_full_snapshot_logged,
-            args=(mngr_ctx, error_behavior),
+            args=(mngr_ctx,),
             daemon=True,
         )
         initial_sync.start()
     else:
-        _write_unfiltered_full_snapshot_logged(mngr_ctx, error_behavior)
+        _write_unfiltered_full_snapshot_logged(mngr_ctx)
         # Emit whatever the sync just wrote (the tail thread may not have picked it up yet).
         # The return value is intentionally ignored here: the tail thread is already running
         # and tracking its own offset, and dedup via emitted_event_ids covers any overlap.
@@ -870,7 +917,7 @@ def run_discovery_stream(
             if stop_event.is_set():
                 break
             try:
-                _write_unfiltered_full_snapshot(mngr_ctx, error_behavior)
+                _write_unfiltered_full_snapshot(mngr_ctx)
                 # The tail thread will pick up the new snapshot and emit it
             except Exception as e:
                 logger.opt(exception=e).error("Discovery stream poll failed (continuing)")
