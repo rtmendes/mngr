@@ -22,7 +22,6 @@ class ObserveCliOptions(CommonCliOptions):
 
     events_dir: Path | None = None
     discovery_only: bool = False
-    on_error: str = "abort"
     daemonize: bool = False
 
 
@@ -40,12 +39,6 @@ class ObserveCliOptions(CommonCliOptions):
     "Outputs a full snapshot, then tails the event file for updates. "
     "Periodically re-polls to catch any missed changes. "
     "Does not start activity streams or emit agent state events.",
-)
-@click.option(
-    "--on-error",
-    type=click.Choice(["abort", "continue"], case_sensitive=False),
-    default="abort",
-    help="What to do when errors occur: abort (stop immediately) or continue (keep going)",
 )
 @click.option(
     "--daemonize/--no-daemonize",
@@ -73,11 +66,6 @@ def observe(ctx: click.Context, **kwargs: Any) -> None:
         events_base_dir = get_default_events_base_dir(mngr_ctx.config)
 
     if opts.discovery_only:
-        # The discovery stream's snapshot writer always uses ABORT internally
-        # (see discovery_events._write_unfiltered_full_snapshot) regardless of
-        # --on-error -- consumers treat each DISCOVERY_FULL as authoritative
-        # state, so a partial snapshot from a flaky provider would briefly
-        # nuke other providers' agents from the consumer's view.
         run_discovery_stream(mngr_ctx=mngr_ctx)
         return
 
