@@ -457,18 +457,25 @@ def _build_mngr_create_command(
             # The pool host already has the repo + agent baked in, so no
             # template is applied here. ``-b`` flags become LeaseAttributes
             # the connector matches against the pool host's attributes JSONB.
+            #
+            # ``ANTHROPIC_API_KEY`` and ``ANTHROPIC_BASE_URL`` flow via
+            # ``--pass-host-env`` (read from the calling shell's env) rather
+            # than ``--host-env KEY=VALUE`` so the LiteLLM key never appears
+            # in the mngr command line (where it would be visible in ``ps``
+            # and in mngr's logs). The caller sets these env vars in the
+            # subprocess env dict it hands ``run_mngr_create``; see
+            # ``_create_agent_background``.
             mngr_command.extend(["--new-host", "--idle-mode", "disabled"])
             if imbue_cloud_repo_url:
                 mngr_command.extend(["-b", f"repo_url={imbue_cloud_repo_url}"])
             if imbue_cloud_branch_or_tag:
                 mngr_command.extend(["-b", f"repo_branch_or_tag={imbue_cloud_branch_or_tag}"])
             if imbue_cloud_anthropic_api_key:
-                mngr_command.extend(["--host-env", f"ANTHROPIC_API_KEY={imbue_cloud_anthropic_api_key}"])
+                mngr_command.extend(["--pass-host-env", "ANTHROPIC_API_KEY"])
             if imbue_cloud_anthropic_base_url:
-                mngr_command.extend(["--host-env", f"ANTHROPIC_BASE_URL={imbue_cloud_anthropic_base_url}"])
-            mngr_prefix = os.environ.get("MNGR_PREFIX")
-            if mngr_prefix:
-                mngr_command.extend(["--host-env", f"MNGR_PREFIX={mngr_prefix}"])
+                mngr_command.extend(["--pass-host-env", "ANTHROPIC_BASE_URL"])
+            if os.environ.get("MNGR_PREFIX"):
+                mngr_command.extend(["--pass-host-env", "MNGR_PREFIX"])
         case _ as unreachable:
             assert_never(unreachable)
 
@@ -604,6 +611,19 @@ def run_mngr_create(
         imbue_cloud_anthropic_base_url=imbue_cloud_anthropic_base_url,
     )
 
+    # Build the subprocess env from the parent's env + any IMBUE_CLOUD
+    # secrets we inject for ``--pass-host-env`` to forward. Mutating
+    # ``os.environ`` directly would leak the LiteLLM key into the desktop
+    # client's other subprocesses, so we keep the override scoped to this
+    # invocation.
+    subprocess_env: dict[str, str] | None = None
+    if launch_mode is LaunchMode.IMBUE_CLOUD and (imbue_cloud_anthropic_api_key or imbue_cloud_anthropic_base_url):
+        subprocess_env = dict(os.environ)
+        if imbue_cloud_anthropic_api_key:
+            subprocess_env["ANTHROPIC_API_KEY"] = imbue_cloud_anthropic_api_key
+        if imbue_cloud_anthropic_base_url:
+            subprocess_env["ANTHROPIC_BASE_URL"] = imbue_cloud_anthropic_base_url
+
     logger.info("Running: {}", " ".join(mngr_command))
 
     cg = _make_child_cg("mngr-create", parent_cg)
@@ -613,6 +633,7 @@ def run_mngr_create(
             cwd=workspace_dir,
             is_checked_after=False,
             on_output=on_output,
+            env=subprocess_env,
         )
 
     if result.returncode != 0:

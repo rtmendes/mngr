@@ -122,9 +122,14 @@ def test_build_mngr_create_command_imbue_cloud_targets_account_provider() -> Non
     assert "-b" in command
     assert "repo_url=https://github.com/imbue-ai/forever-claude-template" in command
     assert "repo_branch_or_tag=v1.2.3" in command
-    # ANTHROPIC_API_KEY / BASE_URL are injected via --host-env.
-    assert "ANTHROPIC_API_KEY=sk-test" in command
-    assert "ANTHROPIC_BASE_URL=https://litellm.example.com" in command
+    # ANTHROPIC_API_KEY / BASE_URL flow via --pass-host-env (the values
+    # land in the subprocess env, not the command line, so the LiteLLM
+    # key isn't visible in `ps` or in mngr's logs).
+    assert "ANTHROPIC_API_KEY=sk-test" not in command
+    assert "ANTHROPIC_BASE_URL=https://litellm.example.com" not in command
+    assert "--pass-host-env" in command
+    assert "ANTHROPIC_API_KEY" in command
+    assert "ANTHROPIC_BASE_URL" in command
     # IMBUE_CLOUD does not run a local template; the pool host has its own.
     assert "--template" not in command
     assert api_key
