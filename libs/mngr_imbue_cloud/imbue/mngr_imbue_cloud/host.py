@@ -1,18 +1,26 @@
 """Host class for imbue_cloud-leased agents.
 
-Subclasses mngr's ``Host`` to adopt a pool host's pre-baked agent under the
-caller's chosen name. Overrides four methods on the standard create pipeline
-so ``mngr create --provider imbue_cloud_<account> --new-host`` runs end-to-end
-without needing a separate "claim" verb:
+Subclasses mngr's ``Host`` so the standard ``mngr create --provider
+imbue_cloud_<account> --new-host`` pipeline can adopt a pool host's
+pre-baked agent under the caller's chosen name when one exists, and
+fall back to mngr's standard create flow when it doesn't (e.g. after
+``mngr destroy`` has wiped the previous agent's state on the leased
+container). Adoption is purely an optimization that skips a slow
+file-transfer + provisioning round when we can.
 
-- ``set_env_vars`` merges with the pre-baked ``/mngr/env`` instead of clobbering it
-- ``create_agent_work_dir`` returns the pre-baked work_dir (no transfer)
-- ``create_agent_state`` reuses the pre-baked agent id and overwrites the
-  pre-baked ``data.json`` with the caller's name + labels + freshly assembled
-  command
-- ``provision_agent`` only writes the agent env file (and patches the claude
-  config when ``ANTHROPIC_API_KEY`` is set in env); the pool host is already
-  fully provisioned, so all other provisioning steps are skipped.
+Overrides:
+
+- ``set_env_vars`` always merges into the pre-baked ``/mngr/env``
+  (clobbering would lose ``MNGR_HOST_DIR``/``MNGR_PREFIX``/etc. that
+  the pool baking wrote).
+- ``create_agent_state`` always pins ``options.agent_id`` to
+  ``pre_baked_agent_id`` so the lease's canonical id stays stable
+  across destroy/recreate cycles, regardless of whether on-disk state
+  survives. The parent's ``data.json`` write then runs as usual.
+- ``create_agent_work_dir`` and ``provision_agent`` short-circuit to a
+  no-transfer + minimal-provision path *only* when the pre-baked
+  agent's ``data.json`` is still on disk; otherwise they delegate to
+  ``super()`` and let mngr do a full create + provision.
 """
 
 import json as _json
@@ -67,44 +75,47 @@ class ImbueCloudHost(Host):
         existing.update(env)
         super().set_env_vars(existing)
 
+    def _read_pre_baked_data(self) -> dict[str, Any] | None:
+        """Try to read the pre-baked agent's ``data.json`` from the leased container.
+
+        Returns the parsed dict when present, ``None`` when this host has
+        no ``pre_baked_agent_id`` (constructed outside the lease flow) or
+        the file is missing on disk (e.g. ``mngr destroy`` deleted the
+        agent state on a previous lease cycle). Callers use this to
+        decide whether the optimized adopt path is available; ``None``
+        means "fall back to mngr's standard create flow".
+        """
+        if self.pre_baked_agent_id is None:
+            return None
+        data_path = self.host_dir / "agents" / str(self.pre_baked_agent_id) / "data.json"
+        try:
+            return _json.loads(self.read_text_file(data_path))
+        except FileNotFoundError:
+            return None
+
     def create_agent_work_dir(
         self,
         host: OnlineHostInterface,
         path: Path,
         options: CreateAgentOptions,
     ) -> CreateWorkDirResult:
-        """No-op transfer: return the pre-baked work_dir recorded in data.json.
+        """Adopt the pre-baked work_dir when one is on disk, otherwise transfer normally.
 
-        The pool-baking step already ran ``mngr create`` with the requested
-        repo+branch, so the work_dir on the leased container is wherever
-        the FCT template's ``target_path`` placed it (``/code/`` for the
-        vultr template, etc.). We pull the path out of the pre-baked
-        ``data.json`` rather than reconstructing it, so this stays correct
-        no matter which template the pool host was baked from.
+        When the pre-baked agent's ``data.json`` is still present on the
+        leased container (the common case, right after a fresh lease), we
+        skip the file transfer and return the recorded ``work_dir`` -- the
+        FCT template baked it (``target_path = "/code/"`` for the vultr
+        template, etc.) and we just trust whatever was written.
 
-        The caller's source ``path`` (from their laptop) is intentionally
-        ignored -- ``mngr create --provider imbue_cloud_*`` is meaningful
-        only when the pre-baked repo matches what the caller asked for, and
-        ``LeaseAttributes`` (passed via ``--build-arg``) are how the
-        connector enforces that match.
+        Otherwise, fall through to mngr's standard ``create_agent_work_dir``
+        which runs the configured transfer mode against ``host`` / ``path``.
         """
-        if self.pre_baked_agent_id is None:
-            raise RuntimeError(
-                "ImbueCloudHost.create_agent_work_dir requires pre_baked_agent_id; "
-                "this host was constructed outside the lease flow."
-            )
-        data_path = self.host_dir / "agents" / str(self.pre_baked_agent_id) / "data.json"
-        try:
-            data = _json.loads(self.read_text_file(data_path))
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                f"Pre-baked agent data.json not found at {data_path} on leased host {self.id}; "
-                "the pool host was not properly provisioned."
-            ) from exc
-        recorded_work_dir = data.get("work_dir")
-        if not isinstance(recorded_work_dir, str) or not recorded_work_dir:
-            raise RuntimeError(f"Pre-baked agent data.json at {data_path} is missing a 'work_dir' field")
-        return CreateWorkDirResult(path=Path(recorded_work_dir))
+        data = self._read_pre_baked_data()
+        if data is not None:
+            recorded_work_dir = data.get("work_dir")
+            if isinstance(recorded_work_dir, str) and recorded_work_dir:
+                return CreateWorkDirResult(path=Path(recorded_work_dir))
+        return super().create_agent_work_dir(host, path, options)
 
     def create_agent_state(
         self,
@@ -112,26 +123,22 @@ class ImbueCloudHost(Host):
         options: CreateAgentOptions,
         created_branch_name: str | None = None,
     ) -> AgentInterface:
-        """Adopt the pre-baked agent under the caller's name + labels.
+        """Pin the lease's pre-baked id, then run the standard create flow.
 
-        Forces ``options.agent_id`` to the pre-baked id (raising if the caller
-        passed a conflicting one) so the standard parent implementation
-        rewrites the existing ``data.json`` with the caller's name, labels,
-        and a freshly assembled command. ``mkdir -p`` on already-present
-        directories is a no-op, so re-running this is safe.
+        Forcing ``options.agent_id = pre_baked_agent_id`` (regardless of
+        whether on-disk state survives) keeps the lease's canonical id
+        stable across destroy/recreate cycles, so subsequent commands
+        (``mngr list``, ``mngr connect``, ...) keep targeting the same
+        agent record in the connector's pool DB.
         """
-        if self.pre_baked_agent_id is None:
-            raise RuntimeError(
-                "ImbueCloudHost.create_agent_state requires pre_baked_agent_id; "
-                "this host was constructed outside the lease flow."
-            )
-        if options.agent_id is not None and options.agent_id != self.pre_baked_agent_id:
-            raise ValueError(
-                f"imbue_cloud agent id is fixed by the lease ({self.pre_baked_agent_id}); "
-                f"caller requested {options.agent_id}. Drop --id to let the lease decide."
-            )
-        if options.agent_id != self.pre_baked_agent_id:
-            options = options.model_copy(update={"agent_id": self.pre_baked_agent_id})
+        if self.pre_baked_agent_id is not None:
+            if options.agent_id is not None and options.agent_id != self.pre_baked_agent_id:
+                raise ValueError(
+                    f"imbue_cloud agent id is fixed by the lease ({self.pre_baked_agent_id}); "
+                    f"caller requested {options.agent_id}. Drop --id to let the lease decide."
+                )
+            if options.agent_id != self.pre_baked_agent_id:
+                options = options.model_copy(update={"agent_id": self.pre_baked_agent_id})
         return super().create_agent_state(work_dir_path, options, created_branch_name)
 
     def provision_agent(
@@ -140,19 +147,24 @@ class ImbueCloudHost(Host):
         options: CreateAgentOptions,
         mngr_ctx: MngrContext,
     ) -> None:
-        """Pool hosts are already fully provisioned; only update the agent env file.
+        """Minimal provisioning when the pool host is already provisioned, full otherwise.
 
-        Standard ``Host.provision_agent`` would re-run package install, file
-        transfers, and agent-type provisioning -- all of which the pool baking
-        step already did. We just need the agent env file to reflect the
-        caller's ``--env`` flags (and the caller-renamed ``MNGR_AGENT_NAME``)
-        and, when an ``ANTHROPIC_API_KEY`` lands anywhere in the env (host or
-        agent), the claude config patch that lets ``claude`` accept the
-        LiteLLM key. ``--pass-host-env ANTHROPIC_API_KEY`` (the minds path)
-        writes to ``/mngr/env`` via ``set_env_vars``; ``--env
-        ANTHROPIC_API_KEY=...`` writes to the per-agent env. We look at
-        both, agent first so a per-agent override wins.
+        When the pre-baked agent's ``data.json`` is still on disk, the
+        container has all the packages and file transfers the FCT template
+        installed and we only need to (a) write the agent env file (so
+        ``MNGR_AGENT_NAME`` / ``--env`` overrides land) and (b) patch the
+        claude config when ``ANTHROPIC_API_KEY`` is set anywhere in env
+        (the LiteLLM key flows through ``--pass-host-env`` for minds, so
+        we have to look at host env, not just agent env).
+
+        When the pre-baked agent state has been wiped (``mngr destroy``
+        on a previous lease cycle, etc.), fall through to mngr's standard
+        ``provision_agent`` so packages/file transfers/agent-type provisioning
+        run from scratch.
         """
+        if self._read_pre_baked_data() is None:
+            super().provision_agent(agent, options, mngr_ctx)
+            return
         agent_env = self._collect_agent_env_vars(agent, options)
         self._write_agent_env_file(agent, agent_env)
         anthropic_api_key = agent_env.get("ANTHROPIC_API_KEY") or self.get_env_vars().get("ANTHROPIC_API_KEY")
