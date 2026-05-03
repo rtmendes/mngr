@@ -53,14 +53,28 @@ def mngr_prefix_for(root_name: str) -> str:
 
 
 def _ensure_mngr_settings(root_name: str) -> None:
-    """Ensure the mngr settings.toml has an SSH provider configured.
+    """Ensure the mngr settings.toml has minds-side overrides configured.
 
-    The SSH provider reads dynamic host entries written by the leased-host
-    flow. Without this provider, ``mngr rename``/``mngr start`` cannot
-    discover agents on leased hosts.
+    Two responsibilities, both idempotent:
 
-    Only adds the SSH provider section if it is missing -- does not
-    overwrite any existing configuration.
+    1. Make sure the SSH provider is registered with the dynamic-hosts
+       file that the leased-host flow writes; without this provider,
+       ``mngr rename`` / ``mngr start`` can't discover agents on leased
+       hosts.
+
+    2. Disable ``mngr_recursive`` for every ``mngr`` subprocess minds
+       spawns. ``mngr_recursive``'s ``on_host_created`` hook injects the
+       calling user's local ``~/.claude/`` and ``~/.mngr/`` deploy files
+       into the workspace, which contradicts the contract that the repo
+       (whatever git URL/branch the user picked) is the full definition
+       of the workspace. minds runs inside its own ``MNGR_HOST_DIR``
+       profile, so flipping the plugin off here only affects
+       minds-spawned subprocesses; CLI-side mngr usage from other
+       host_dirs is unaffected.
+
+    Skips silently when mngr hasn't been initialized in this host_dir
+    yet (no ``config.toml`` / no profile dir) -- there's nothing to
+    write to.
     """
     mngr_host_dir = mngr_host_dir_for(root_name)
     root_config_path = mngr_host_dir / "config.toml"
@@ -82,38 +96,36 @@ def _ensure_mngr_settings(root_name: str) -> None:
         existing = tomllib.loads(settings_path.read_text())
         providers = existing.get("providers", {})
         ssh_config = providers.get("ssh", {})
+        plugins = existing.get("plugins", {})
+        recursive_plugin = plugins.get("mngr_recursive", {})
         if (
             ssh_config.get("backend") == "ssh"
             and ssh_config.get("dynamic_hosts_file") == expected_dynamic_hosts_file
             and ssh_config.get("host_dir") == "/mngr"
+            and recursive_plugin.get("enabled") is False
         ):
             return
-    else:
-        existing = {}
-
-    # Build the config content with the SSH provider section
-    ssh_config = {
-        "providers": {
-            "ssh": {
-                "backend": "ssh",
-                "host_dir": "/mngr",
-                "dynamic_hosts_file": expected_dynamic_hosts_file,
-            },
-        },
-    }
-
-    if settings_path.exists():
         doc = tomlkit.loads(settings_path.read_text())
-        doc.update(ssh_config)
     else:
         doc = tomlkit.document()
-        doc.update(ssh_config)
+
+    providers_section = doc.setdefault("providers", tomlkit.table())
+    ssh_block = tomlkit.table()
+    ssh_block["backend"] = "ssh"
+    ssh_block["host_dir"] = "/mngr"
+    ssh_block["dynamic_hosts_file"] = expected_dynamic_hosts_file
+    providers_section["ssh"] = ssh_block
+
+    plugins_section = doc.setdefault("plugins", tomlkit.table())
+    recursive_block = tomlkit.table()
+    recursive_block["enabled"] = False
+    plugins_section["mngr_recursive"] = recursive_block
 
     settings_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = settings_path.with_suffix(".tmp")
     tmp_path.write_text(tomlkit.dumps(doc))
     tmp_path.rename(settings_path)
-    logger.debug("Updated mngr settings at {} with SSH provider config", settings_path)
+    logger.debug("Updated mngr settings at {} with minds-side overrides", settings_path)
 
 
 def apply_bootstrap() -> None:
