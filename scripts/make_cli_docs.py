@@ -60,6 +60,7 @@ SECONDARY_COMMANDS = {
     "file",
     "gc",
     "help",
+    "imbue_cloud",
     "kanpan",
     "label",
     "limit",
