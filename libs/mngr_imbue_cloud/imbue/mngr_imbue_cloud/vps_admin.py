@@ -10,11 +10,13 @@ This module wraps that flow: open an SSH session to ``root@vps_ip:22`` using
 the per-host private key from
 ``providers/imbue_cloud/<instance>/hosts/<host_id>/ssh_key`` and run the
 requested ``docker stop``/``docker start``/``docker rm`` command against the
-container labeled ``mngr-host-id=<host_id>``.
+container labeled ``com.imbue.mngr.host-id=<host_id>`` (the canonical
+``LABEL_HOST_ID`` from ``mngr_vps_docker``).
 """
 
 import shlex
 from pathlib import Path
+from typing import Final
 
 import paramiko
 from loguru import logger
@@ -83,14 +85,19 @@ def _run_root_command(client: paramiko.SSHClient, command: str, *, label: str) -
     return out
 
 
+_DOCKER_HOST_ID_LABEL: Final[str] = "com.imbue.mngr.host-id"
+
+
 def _container_id_for_host_filter(host_id: str) -> str:
     """Build a ``docker ps -aq --filter ...`` expression for the host's container.
 
-    Pool hosts label the per-agent docker container with ``mngr-host-id=<id>``
-    at provisioning time, so we use that as the canonical identifier instead
-    of assuming a specific container name format.
+    Pool hosts label the per-agent docker container with
+    ``com.imbue.mngr.host-id=<id>`` at provisioning time (the
+    ``LABEL_HOST_ID`` constant from ``mngr_vps_docker``); use that as
+    the canonical identifier instead of assuming a specific container
+    name format.
     """
-    return f"docker ps -aq --filter label=mngr-host-id={shlex.quote(host_id)}"
+    return f"docker ps -aq --filter label={_DOCKER_HOST_ID_LABEL}={shlex.quote(host_id)}"
 
 
 def _resolve_container_id(client: paramiko.SSHClient, host_id: str) -> str | None:
