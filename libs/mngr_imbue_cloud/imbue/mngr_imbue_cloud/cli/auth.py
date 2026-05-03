@@ -11,7 +11,7 @@ from typing import Any
 
 import click
 
-from imbue.mngr_imbue_cloud.auth_helper import get_active_token
+from imbue.mngr_imbue_cloud.auth_helper import force_refresh
 from imbue.mngr_imbue_cloud.cli._common import emit_json
 from imbue.mngr_imbue_cloud.cli._common import fail_with_json
 from imbue.mngr_imbue_cloud.cli._common import handle_imbue_cloud_errors
@@ -176,22 +176,28 @@ def status(account: str) -> None:
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
 def refresh(account: str, connector_url: str | None) -> None:
-    """Force a token refresh now (also runs transparently before any authed call)."""
+    """Force a token refresh now.
+
+    Unconditionally calls the connector's refresh endpoint and rotates the
+    persisted access + refresh tokens. Useful for verifying refresh works
+    before tokens are near expiry. Authed CLI subcommands rotate
+    transparently when the cached token is near expiry, so manual
+    invocations of this command are normally unnecessary.
+    """
     parsed_account = parse_account(account)
     store = make_session_store()
     client = make_connector_client(connector_url)
-    token = get_active_token(store, client, parsed_account)
-    new_session = store.load_by_account(parsed_account)
-    assert new_session is not None
+    previous = store.load_by_account(parsed_account)
+    refreshed_session = force_refresh(store, client, parsed_account)
     emit_json(
         {
-            "user_id": str(new_session.user_id),
-            "email": str(new_session.email),
-            "access_token_expires_at": new_session.access_token_expires_at,
+            "user_id": str(refreshed_session.user_id),
+            "email": str(refreshed_session.email),
+            "access_token_expires_at": refreshed_session.access_token_expires_at,
+            "previous_access_token_expires_at": (previous.access_token_expires_at if previous is not None else None),
             "refreshed": True,
         }
     )
-    _ = token  # explicitly mark consumed
 
 
 # ----------------------------------------------------------------------
