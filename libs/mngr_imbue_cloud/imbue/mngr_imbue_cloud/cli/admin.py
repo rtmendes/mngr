@@ -226,7 +226,23 @@ def _create_single_pool_host(
         logger.warning("mngr stop failed (continuing): {}", stop_result.stderr)
 
     logger.info("  Ensuring sshd is running in container")
-    _run_mngr_command(["exec", agent_name, "/usr/sbin/sshd"], timeout=30)
+    # Match the cloud-init bump we apply to the host VPS (and the lima
+    # provider's sshd config): the default ``MaxStartups=10:30:100``
+    # caps the pre-auth queue tightly, and the imbue_cloud lease + claim
+    # flow plus parallel ``mngr observe`` discovery routinely exceeds it
+    # and loses connections mid-rsync.
+    _run_mngr_command(
+        [
+            "exec",
+            agent_name,
+            "/usr/sbin/sshd",
+            "-o",
+            "MaxSessions=100",
+            "-o",
+            "MaxStartups=100:30:200",
+        ],
+        timeout=30,
+    )
 
     agent_info = _get_agent_info(agent_name)
     if agent_info is None:
