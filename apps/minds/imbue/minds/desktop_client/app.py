@@ -44,17 +44,17 @@ from imbue.minds.desktop_client.api_v1 import create_api_v1_router
 from imbue.minds.desktop_client.api_v1 import get_cf_client_with_auth
 from imbue.minds.desktop_client.api_v1 import inject_tunnel_token_into_agent
 from imbue.minds.desktop_client.auth import AuthStoreInterface
-from imbue.minds.desktop_client.auth_backend_client import AuthBackendClient
 from imbue.minds.desktop_client.backend_resolver import BackendResolverInterface
 from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
 from imbue.minds.desktop_client.backend_resolver import MngrStreamManager
-from imbue.minds.desktop_client.cloudflare_client import CloudflareClient
 from imbue.minds.desktop_client.cookie_manager import SESSION_COOKIE_NAME
 from imbue.minds.desktop_client.cookie_manager import create_session_cookie
 from imbue.minds.desktop_client.cookie_manager import create_subdomain_auth_token
 from imbue.minds.desktop_client.cookie_manager import verify_session_cookie
 from imbue.minds.desktop_client.cookie_manager import verify_subdomain_auth_token
 from imbue.minds.desktop_client.deps import BackendResolverDep
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
 from imbue.minds.desktop_client.latchkey.core import Latchkey
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.notification import NotificationDispatcher
@@ -65,7 +65,6 @@ from imbue.minds.desktop_client.request_events import parse_request_event
 from imbue.minds.desktop_client.request_handler import RequestEventHandler
 from imbue.minds.desktop_client.request_handler import find_handler_for_event
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
-from imbue.minds.desktop_client.session_store import derive_user_id_prefix
 from imbue.minds.desktop_client.sharing_handler import enable_sharing_via_cloudflare
 from imbue.minds.desktop_client.sharing_handler import parse_emails_form_value
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
@@ -792,31 +791,32 @@ async def _handle_workspace_forward_websocket(websocket: WebSocket) -> None:
 
 def _run_tunnel_setup(
     agent_id: AgentId,
-    enriched_client: CloudflareClient,
+    imbue_cloud_cli: ImbueCloudCli,
+    account_email: str,
     paths: WorkspacePaths,
     notification_dispatcher: NotificationDispatcher,
     agent_display_name: str,
 ) -> None:
-    """Create a Cloudflare tunnel and inject its token into the agent.
+    """Create a Cloudflare tunnel via the plugin and inject its token into the agent.
 
     Runs on a detached thread scheduled by ``_OnCreatedCallbackFactory`` on
     the desktop client's root ``ConcurrencyGroup``. Failures are logged via
-    loguru and surfaced to the user via ``notification_dispatcher`` -- every
-    failure dispatches one notification, no rate limit.
-
-    ``create_tunnel`` returns ``(None, error_message)`` for every failure mode
-    (HTTP, bad response, etc.) rather than raising, so no defensive wrapper is
-    needed here; we just inspect the return value.
+    loguru and surfaced to the user via ``notification_dispatcher``.
     """
-    tunnel_token, message = enriched_client.create_tunnel(agent_id)
-    if tunnel_token is None:
-        logger.warning("Failed to create tunnel for {}: {}", agent_id, message)
+    try:
+        info = imbue_cloud_cli.create_tunnel(account=account_email, agent_id=str(agent_id))
+    except ImbueCloudCliError as exc:
+        logger.warning("Failed to create tunnel for {}: {}", agent_id, exc)
         _notify_tunnel_failure(
             notification_dispatcher=notification_dispatcher,
             agent_display_name=agent_display_name,
-            error_message=message,
+            error_message=str(exc),
         )
         return
+    if info.token is None:
+        logger.warning("Tunnel created for {} but no token returned", agent_id)
+        return
+    tunnel_token = info.token.get_secret_value()
     _save_tunnel_token(paths.data_dir, agent_id, tunnel_token)
     inject_tunnel_token_into_agent(agent_id, tunnel_token)
     logger.debug("Injected tunnel token into agent {}", agent_id)
@@ -856,7 +856,10 @@ class _OnCreatedCallbackFactory(MutableModel):
     """
 
     session_store: MultiAccountSessionStore = Field(frozen=True, description="Session store for account lookup")
-    cf_client: CloudflareClient = Field(frozen=True, description="Cloudflare client for tunnel creation")
+    imbue_cloud_cli: ImbueCloudCli = Field(
+        frozen=True,
+        description="CLI wrapper for `mngr imbue_cloud tunnels create`.",
+    )
     paths: WorkspacePaths = Field(frozen=True, description="Workspace paths for tunnel token storage")
     root_concurrency_group: ConcurrencyGroup = Field(
         frozen=True,
@@ -871,15 +874,6 @@ class _OnCreatedCallbackFactory(MutableModel):
         account = self.session_store.get_account_for_workspace(str(agent_id))
         if account is None:
             return
-        token = self.session_store.get_access_token(str(account.user_id))
-        if token is None:
-            return
-        enriched_client = type(self.cf_client)(
-            connector_url=self.cf_client.connector_url,
-            supertokens_token=token,
-            supertokens_user_id_prefix=str(derive_user_id_prefix(str(account.user_id))),
-            supertokens_email=account.email,
-        )
         # ``_build_on_created_callback`` doesn't have easy access to the
         # user-chosen name at this point (see ``backend_resolver``), so fall
         # back to the short form of the agent id for the notification copy.
@@ -888,7 +882,8 @@ class _OnCreatedCallbackFactory(MutableModel):
             target=_run_tunnel_setup,
             kwargs={
                 "agent_id": agent_id,
-                "enriched_client": enriched_client,
+                "imbue_cloud_cli": self.imbue_cloud_cli,
+                "account_email": str(account.email),
                 "paths": self.paths,
                 "notification_dispatcher": self.notification_dispatcher,
                 "agent_display_name": agent_display_name,
@@ -913,7 +908,7 @@ def _build_on_created_callback(
         return None
 
     session_store: MultiAccountSessionStore | None = request.app.state.session_store
-    cf_client: CloudflareClient | None = request.app.state.cloudflare_client
+    imbue_cloud_cli: ImbueCloudCli | None = request.app.state.imbue_cloud_cli
     try:
         paths: WorkspacePaths | None = request.app.state.api_v1_paths
     except AttributeError:
@@ -924,7 +919,7 @@ def _build_on_created_callback(
 
     if (
         session_store is None
-        or cf_client is None
+        or imbue_cloud_cli is None
         or paths is None
         or root_concurrency_group is None
         or notification_dispatcher is None
@@ -933,7 +928,7 @@ def _build_on_created_callback(
 
     return _OnCreatedCallbackFactory(
         session_store=session_store,
-        cf_client=cf_client,
+        imbue_cloud_cli=imbue_cloud_cli,
         paths=paths,
         root_concurrency_group=root_concurrency_group,
         notification_dispatcher=notification_dispatcher,
@@ -2124,14 +2119,13 @@ def create_desktop_client(
     tunnel_manager: SSHTunnelManager | None = None,
     latchkey: Latchkey | None = None,
     agent_creator: AgentCreator | None = None,
-    cloudflare_client: CloudflareClient | None = None,
+    imbue_cloud_cli: ImbueCloudCli | None = None,
     telegram_orchestrator: TelegramSetupOrchestrator | None = None,
     notification_dispatcher: NotificationDispatcher | None = None,
     paths: WorkspacePaths | None = None,
     minds_config: MindsConfig | None = None,
     stream_manager: MngrStreamManager | None = None,
     session_store: MultiAccountSessionStore | None = None,
-    auth_backend_client: AuthBackendClient | None = None,
     request_inbox: RequestInbox | None = None,
     request_event_handlers: tuple[RequestEventHandler, ...] = (),
     server_port: int = 0,
@@ -2190,11 +2184,10 @@ def create_desktop_client(
     app.state.latchkey = latchkey
     app.state.stream_manager = stream_manager
     app.state.agent_creator = agent_creator
-    app.state.cloudflare_client = cloudflare_client
+    app.state.imbue_cloud_cli = imbue_cloud_cli
     app.state.telegram_orchestrator = telegram_orchestrator
     app.state.notification_dispatcher = notification_dispatcher
     app.state.session_store = session_store
-    app.state.auth_backend_client = auth_backend_client
     app.state.minds_config = minds_config
     app.state.request_inbox = request_inbox
     app.state.request_event_handlers = request_event_handlers
@@ -2218,11 +2211,11 @@ def create_desktop_client(
         _refresh_event_apps[id(backend_resolver)] = app
         backend_resolver.add_on_refresh_callback(_handle_refresh_event_callback)
 
-    # Mount the auth routes (proxy to the remote_service_connector auth backend)
-    if session_store is not None and auth_backend_client is not None:
+    # Mount the auth routes (proxy to the mngr_imbue_cloud plugin's auth subcommands)
+    if session_store is not None and imbue_cloud_cli is not None:
         supertokens_router = create_supertokens_router(
             session_store=session_store,
-            auth_backend_client=auth_backend_client,
+            imbue_cloud_cli=imbue_cloud_cli,
             server_port=server_port,
             output_format=output_format or OutputFormat.JSONL,
         )

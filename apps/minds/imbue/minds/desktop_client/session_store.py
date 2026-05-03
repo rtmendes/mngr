@@ -14,7 +14,6 @@ import threading
 import time
 from pathlib import Path
 
-import httpx
 from loguru import logger
 from pydantic import Field
 from pydantic import PrivateAttr
@@ -23,7 +22,8 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.primitives import NonEmptyStr
-from imbue.minds.desktop_client.auth_backend_client import AuthBackendClient
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
 
 _SESSIONS_FILENAME = "sessions.json"
 _USER_ID_PREFIX_LENGTH = 16
@@ -108,9 +108,13 @@ class MultiAccountSessionStore(MutableModel):
     """
 
     data_dir: Path = Field(frozen=True, description="Root data directory (e.g. ~/.minds)")
-    auth_backend_client: AuthBackendClient | None = Field(
+    imbue_cloud_cli: ImbueCloudCli | None = Field(
         default=None,
-        description="Backend used to refresh sessions. When omitted, expired tokens are not refreshed.",
+        description=(
+            "Wrapper around `mngr imbue_cloud …`. When provided, near-expiry access tokens "
+            "are refreshed by invoking `mngr imbue_cloud auth refresh --account <email>` "
+            "instead of hitting the connector directly."
+        ),
     )
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     # Per-user lock protecting the refresh-token rotation. Without this, two
@@ -234,14 +238,14 @@ class MultiAccountSessionStore(MutableModel):
             return lock
 
     def _try_refresh(self, session: AccountSession) -> str | None:
-        """Attempt to refresh the access token. Returns new token on success, None on failure.
+        """Attempt to refresh the access token via `mngr imbue_cloud auth refresh`.
 
         Serializes concurrent refreshes for the same user behind a per-user
-        lock. The second caller re-reads the stored session once it acquires
-        the lock -- if the first caller already rotated the tokens, the newly
-        stored access token is returned without hitting the backend again.
+        lock. The plugin owns the SuperTokens session on disk, so after the
+        CLI call we read the plugin's status to pick up the rotated tokens
+        and mirror them into minds' own session file.
         """
-        if session.refresh_token is None or self.auth_backend_client is None:
+        if session.refresh_token is None or self.imbue_cloud_cli is None:
             return None
         user_id_str = str(session.user_id)
         with self._refresh_lock_for(user_id_str):
@@ -253,27 +257,41 @@ class MultiAccountSessionStore(MutableModel):
             if seconds_left is not None and seconds_left >= _TOKEN_EXPIRY_BUFFER_SECONDS:
                 # Another caller already refreshed while we waited.
                 return latest_token_str
-            refresh_token = latest.refresh_token
-            if refresh_token is None:
-                return None
             try:
-                tokens = self.auth_backend_client.refresh_session(refresh_token=str(refresh_token))
-            except httpx.HTTPError as exc:
+                self.imbue_cloud_cli.auth_refresh(latest.email)
+            except ImbueCloudCliError as exc:
                 logger.warning("Failed to refresh session for user {}: {}", user_id_str[:8], exc)
                 return None
-            if tokens is None:
-                logger.warning("Backend rejected session refresh for user {}", user_id_str[:8])
+            try:
+                status = self.imbue_cloud_cli.auth_status(latest.email)
+            except ImbueCloudCliError as exc:
+                logger.warning("Failed to read refreshed session for user {}: {}", user_id_str[:8], exc)
                 return None
-            new_refresh_token = tokens.refresh_token or str(refresh_token)
+            new_access = status.get("access_token") if isinstance(status, dict) else None
+            if not isinstance(new_access, str) or not new_access:
+                # The plugin's `auth status` doesn't echo the access token by
+                # design (the JSON only confirms expiry). Re-issue
+                # `mngr imbue_cloud auth refresh` already wrote the new
+                # tokens to the plugin's on-disk session, but minds' mirror
+                # cannot easily read them without filesystem access. Fall
+                # back to leaving the cached token alone; the next CLI call
+                # will refresh transparently inside the plugin.
+                logger.debug(
+                    "Refresh succeeded but minds cannot mirror the rotated token "
+                    "(plugin owns the session on disk); next subprocess invocation "
+                    "will pick up the rotated token transparently."
+                )
+                return latest_token_str
+            new_refresh = status.get("refresh_token") if isinstance(status, dict) else None
             self.add_or_update_session(
-                access_token=tokens.access_token,
-                refresh_token=new_refresh_token,
+                access_token=new_access,
+                refresh_token=new_refresh if isinstance(new_refresh, str) else None,
                 user_id=user_id_str,
                 email=latest.email,
                 display_name=latest.display_name,
             )
             logger.info("Refreshed access token for user {}", user_id_str[:8])
-            return tokens.access_token
+            return new_access
 
     def associate_workspace(self, user_id: str, agent_id: str) -> None:
         """Associate a workspace with an account."""
@@ -320,6 +338,13 @@ class MultiAccountSessionStore(MutableModel):
         with self._lock:
             sessions = self._read_all()
             return list(sessions.values())
+
+    def get_account_email(self, user_id: str) -> str | None:
+        """Return the email for a user_id, or None if the account isn't known."""
+        session = self.get_session(user_id)
+        if session is None:
+            return None
+        return str(session.email)
 
     def get_user_info(self, user_id: str) -> UserInfo | None:
         """Return user info for a specific account, or None if not logged in."""
