@@ -1225,17 +1225,18 @@ async def _handle_destroy_agent_api(
 
     parsed_id = AgentId(agent_id)
 
-    # Get access token for releasing leased hosts
-    access_token = ""
+    # Resolve the imbue_cloud account email so the agent_creator can call
+    # `mngr imbue_cloud hosts release` via the plugin. Tokens themselves
+    # live in the plugin's session store, not minds'.
+    account_email = ""
     session_store: MultiAccountSessionStore | None = request.app.state.session_store
     if session_store:
         account = session_store.get_account_for_workspace(agent_id)
         if account:
-            token = session_store.get_access_token(str(account.user_id))
-            access_token = str(token) if token else ""
+            account_email = str(account.email)
             session_store.disassociate_workspace(str(account.user_id), agent_id)
 
-    agent_creator.start_destruction(parsed_id, access_token=access_token)
+    agent_creator.start_destruction(parsed_id, account_email=account_email)
 
     return Response(
         content=json.dumps({"agent_id": agent_id, "status": "destroying"}),

@@ -13,7 +13,6 @@ import json
 import threading
 import time
 import webbrowser
-from typing import Any
 from urllib.parse import parse_qs
 from urllib.parse import urlencode
 from urllib.parse import urlparse
@@ -44,13 +43,6 @@ class AuthBackendError(RuntimeError):
     """Raised when the auth backend (mngr imbue_cloud auth ...) fails unexpectedly."""
 
 
-class SessionTokens(FrozenModel):
-    """Access + refresh token pair issued by the auth backend."""
-
-    access_token: str = Field(description="SuperTokens JWT access token")
-    refresh_token: str | None = Field(default=None, description="SuperTokens refresh token")
-
-
 class AuthUser(FrozenModel):
     """User information returned by the auth backend."""
 
@@ -60,12 +52,16 @@ class AuthUser(FrozenModel):
 
 
 class AuthResult(FrozenModel):
-    """Normalized result of a sign-in / sign-up / OAuth callback."""
+    """Normalized result of a sign-in / sign-up / OAuth callback.
+
+    Note: tokens are NOT carried back through this struct. The plugin owns
+    the SuperTokens session on disk; minds only needs to know the user
+    identity (rendered in the UI) and whether email verification is pending.
+    """
 
     status: str = Field(description="OK, WRONG_CREDENTIALS, EMAIL_ALREADY_EXISTS, FIELD_ERROR, or ERROR")
     message: str | None = Field(default=None)
     user: AuthUser | None = Field(default=None)
-    tokens: SessionTokens | None = Field(default=None)
     needs_email_verification: bool = Field(default=False)
 
 
@@ -82,36 +78,11 @@ class _AuthBackendShim:
     def __init__(self, imbue_cloud_cli: ImbueCloudCli) -> None:
         self._cli = imbue_cloud_cli
 
-    @staticmethod
-    def _ok_result_from_session(
-        session_payload: dict[str, Any],
-        access_token: str,
-        refresh_token: str | None,
-    ) -> AuthResult:
-        user_id = session_payload.get("user_id")
-        email = session_payload.get("email")
-        if not isinstance(user_id, str) or not isinstance(email, str):
-            return AuthResult(status="ERROR", message="Plugin response missing user_id/email")
-        display_name_raw = session_payload.get("display_name")
-        return AuthResult(
-            status="OK",
-            user=AuthUser(
-                user_id=user_id,
-                email=email,
-                display_name=display_name_raw if isinstance(display_name_raw, str) else None,
-            ),
-            tokens=SessionTokens(access_token=access_token, refresh_token=refresh_token),
-            needs_email_verification=bool(session_payload.get("needs_email_verification", False)),
-        )
-
     def signup(self, email: str, password: str) -> AuthResult:
         try:
             session_obj = self._cli.auth_signup(email, password)
         except ImbueCloudCliError as exc:
             return AuthResult(status="ERROR", message=str(exc))
-        # The plugin persists tokens on disk; we don't get them back in the
-        # CLI response, so the access_token field here is empty until the
-        # caller reads from the on-disk session via auth_status.
         return AuthResult(
             status="OK",
             user=AuthUser(
@@ -119,7 +90,6 @@ class _AuthBackendShim:
                 email=str(session_obj.email),
                 display_name=session_obj.display_name,
             ),
-            tokens=SessionTokens(access_token="", refresh_token=None),
             needs_email_verification=session_obj.needs_email_verification,
         )
 
@@ -135,16 +105,8 @@ class _AuthBackendShim:
                 email=str(session_obj.email),
                 display_name=session_obj.display_name,
             ),
-            tokens=SessionTokens(access_token="", refresh_token=None),
             needs_email_verification=session_obj.needs_email_verification,
         )
-
-    def revoke_all_sessions(self, _access_token: str) -> None:
-        # The plugin's signout takes the email, not the access token. We can't
-        # easily convert here without the email, so the route handler should
-        # be updated to call auth_signout directly. For now this is a no-op
-        # on the backend; the local session deletion still happens.
-        return None
 
     def signout_account(self, account_email: str) -> None:
         try:
@@ -244,14 +206,17 @@ def _store_session_from_auth_result(
     result: AuthResult,
     request: Request,
 ) -> None:
-    """Persist the session tokens + user info from a successful auth result.
+    """Mirror the account identity from a successful auth result.
 
-    On first login (no default account set), auto-sets this account as default.
+    Tokens are NOT mirrored -- the mngr_imbue_cloud plugin owns SuperTokens
+    state on disk. Minds only records ``user_id``/``email``/``display_name``
+    so the desktop UI can render the signed-in account, and so workspace<->
+    account associations survive a restart.
+
+    On first login (no default account set), this account becomes the default.
     """
-    assert result.user is not None and result.tokens is not None, "AuthResult missing user/tokens"
+    assert result.user is not None, "AuthResult missing user"
     session_store.add_or_update_session(
-        access_token=result.tokens.access_token,
-        refresh_token=result.tokens.refresh_token,
         user_id=result.user.user_id,
         email=result.user.email,
         display_name=result.user.display_name,
@@ -347,12 +312,11 @@ async def _handle_signout_api(request: Request) -> Response:
     Expects a JSON body with a ``user_id`` field identifying which account to
     sign out. If no user_id is provided, returns an error.
 
-    Revokes every SuperTokens session for the user on the backend before
-    deleting the local record -- otherwise the access/refresh tokens stored
-    on disk remain valid until their natural expiry even after the user
-    clicks "Sign out". A backend revoke failure is logged but does not block
-    the local deletion: the user's intent to sign out is honored locally
-    regardless.
+    Delegates the actual SuperTokens revocation to ``mngr imbue_cloud auth
+    signout --account <email>``: the plugin owns the session and is the only
+    component that knows the access token. A failed backend revoke is
+    logged; we still drop the local mirror so the user's intent is honored
+    even when the connector is unreachable.
     """
     session_store = _get_session_store(request)
     backend = _get_auth_backend(request)
@@ -365,16 +329,11 @@ async def _handle_signout_api(request: Request) -> Response:
     if not user_id:
         return _json_response({"status": "ERROR", "message": "user_id is required"}, 400)
 
-    # The backend derives the user_id from the access token we send, so an
-    # attacker cannot revoke a different user's sessions by POSTing here.
-    # If the token cannot be refreshed (e.g. offline), skip the backend call
-    # -- we still honor the local sign-out intent, and any stolen token from
-    # this machine will expire naturally.
-    access_token = session_store.get_access_token(str(user_id))
-    if access_token is not None:
-        backend.revoke_all_sessions(access_token)
+    session = session_store.get_session(str(user_id))
+    if session is not None:
+        backend.signout_account(str(session.email))
     else:
-        logger.warning("No usable access token for user {}; skipping backend revoke", str(user_id)[:8])
+        logger.warning("No mirrored account for user {}; skipping plugin signout", str(user_id)[:8])
     session_store.remove_session(str(user_id))
     return _json_response({"status": "OK"})
 
@@ -544,7 +503,7 @@ def _handle_oauth_callback(provider_id: str, request: Request) -> HTMLResponse:
             status_code=502,
         )
 
-    if result.status != "OK" or result.user is None or result.tokens is None:
+    if result.status != "OK" or result.user is None:
         message = result.message or "Sign-in failed"
         safe_message = html.escape(message, quote=True)
         return HTMLResponse(

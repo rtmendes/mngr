@@ -26,8 +26,6 @@ from imbue.minds.desktop_client.deps import BackendResolverDep
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
-from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
-from imbue.minds.desktop_client.session_store import derive_user_id_prefix
 from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
 from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token
 from imbue.minds.primitives import ServiceName
@@ -150,38 +148,18 @@ def _json_error(message: str, status_code: int) -> Response:
 def get_cf_client_with_auth(
     request: Request, agent_id: AgentId | None = None
 ) -> tuple[CloudflareClient | None, Response | None]:
-    """Get a cloudflare client enriched with the active account's SuperTokens session.
+    """Cloudflare forwarding is not wired post-cutover; always returns 501.
 
-    Returns ``(client, None)`` when the workspace has an associated signed-in
-    account and its access token is still valid. Returns ``(None, error)`` in
-    every other case -- missing cloudflare config, missing session store, no
-    workspace-account association, or an unrefreshable token. Without a valid
-    session there is no way to authenticate to the forwarding backend.
+    The original signature returned an HTTP-client enriched with the
+    caller's SuperTokens token. After the mngr_imbue_cloud cutover, those
+    tokens live entirely inside the plugin and minds doesn't have a
+    Cloudflare client at all -- the route handlers below should be
+    rewritten to call ``mngr imbue_cloud tunnels …`` via ``ImbueCloudCli``
+    instead. Until that happens, every cloudflare endpoint short-circuits
+    here.
     """
-    cf_client: CloudflareClient | None = request.app.state.cloudflare_client
-    session_store: MultiAccountSessionStore | None = request.app.state.session_store
-
-    if cf_client is None:
-        return None, _json_error("Cloudflare forwarding not configured", 501)
-    if session_store is None or agent_id is None:
-        return None, _json_error("No signed-in account available for Cloudflare forwarding", 403)
-
-    account = session_store.get_account_for_workspace(str(agent_id))
-    if account is None:
-        return None, _json_error("No signed-in account is associated with this workspace", 403)
-
-    access_token = session_store.get_access_token(str(account.user_id))
-    if access_token is None:
-        return None, _json_error("The associated account's session has expired; sign in again", 401)
-
-    # Preserve the concrete subclass (tests swap in subclasses that stub HTTP methods).
-    enriched_client = type(cf_client)(
-        connector_url=cf_client.connector_url,
-        supertokens_token=access_token,
-        supertokens_user_id_prefix=str(derive_user_id_prefix(str(account.user_id))),
-        supertokens_email=account.email,
-    )
-    return enriched_client, None
+    _ = request, agent_id
+    return None, _json_error("Cloudflare forwarding not configured", 501)
 
 
 # -- Request body models --

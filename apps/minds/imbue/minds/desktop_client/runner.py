@@ -168,14 +168,11 @@ def start_desktop_client(
     )
     telegram_orchestrator = TelegramSetupOrchestrator(paths=paths)
 
-    # Initialize multi-account session store. Token refresh is handled by the
-    # mngr_imbue_cloud plugin (any subprocess invocation transparently
-    # refreshes near-expiry tokens) so minds no longer needs an HTTP client
-    # for this.
-    session_store = MultiAccountSessionStore(
-        data_dir=data_directory,
-        imbue_cloud_cli=imbue_cloud_cli,
-    )
+    # Initialize multi-account session store. The plugin owns SuperTokens
+    # tokens; minds only mirrors the account identity (user_id / email /
+    # display_name / workspace associations) so the desktop UI can render
+    # which account each workspace is associated with.
+    session_store = MultiAccountSessionStore(data_dir=data_directory)
     sharing_request_handler = SharingRequestHandler(session_store=session_store)
 
     # Initialize request inbox from stored response events
