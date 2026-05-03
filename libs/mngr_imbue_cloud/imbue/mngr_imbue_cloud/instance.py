@@ -65,10 +65,10 @@ from imbue.mngr_imbue_cloud.client import ImbueCloudConnectorClient
 from imbue.mngr_imbue_cloud.config import ImbueCloudProviderConfig
 from imbue.mngr_imbue_cloud.config import get_provider_data_dir
 from imbue.mngr_imbue_cloud.data_types import LeaseAttributes
-from imbue.mngr_imbue_cloud.data_types import LeaseResult
 from imbue.mngr_imbue_cloud.data_types import LeasedHostInfo
 from imbue.mngr_imbue_cloud.errors import ImbueCloudConnectorError
 from imbue.mngr_imbue_cloud.host import ImbueCloudHost
+from imbue.mngr_imbue_cloud.primitives import ImbueCloudAccount
 from imbue.mngr_imbue_cloud.session_store import ImbueCloudSessionStore
 
 _SSH_WAIT_TIMEOUT_SECONDS: Final[float] = 120.0
@@ -153,16 +153,61 @@ class ImbueCloudProvider(BaseProviderInstance):
     # Auth helper
     # ------------------------------------------------------------------
 
-    def _get_access_token(self) -> SecretStr:
-        """Fetch a fresh access token for this instance's account.
+    def _resolve_account(self, override: str | None = None) -> ImbueCloudAccount | None:
+        """Pick the effective account for this provider operation.
 
-        Wrapping the call in a method makes the access path easy to mock in tests
-        and keeps the refresh-on-near-expiry policy in one place.
+        Precedence: explicit ``override`` > ``self.config.account`` >
+        single-session fallback (only if exactly one session is on disk).
+        Returns ``None`` when none of the above produce an account; callers
+        are responsible for raising a useful error in that case (the right
+        message depends on what they were trying to do).
         """
-        return get_active_token(self.session_store, self.client, self.config.account)
+        if override:
+            return ImbueCloudAccount(override)
+        if self.config.account is not None:
+            return self.config.account
+        signed_in = self.session_store.list_accounts()
+        if len(signed_in) == 1:
+            return signed_in[0]
+        return None
+
+    def _get_access_token(self, account: ImbueCloudAccount) -> SecretStr:
+        """Fetch a fresh access token for ``account``.
+
+        Wrapping the call in a method makes the access path easy to mock in
+        tests and keeps the refresh-on-near-expiry policy in one place.
+        """
+        return get_active_token(self.session_store, self.client, account)
+
+    def _require_account(self, override: str | None = None) -> ImbueCloudAccount:
+        """Like ``_resolve_account`` but raises if no account is available.
+
+        Use this from any code path that genuinely needs to talk to the
+        connector. The error message tells the caller exactly which lever to
+        pull (``-b account=<email>`` for ``mngr create``, ``--account`` for
+        sub-commands, sign in, or pin one in the provider config).
+        """
+        resolved = self._resolve_account(override)
+        if resolved is not None:
+            return resolved
+        signed_in = [str(entry) for entry in self.session_store.list_accounts()]
+        if not signed_in:
+            raise MngrError(
+                f"imbue_cloud provider '{self.name}' requires an account. "
+                "Sign in with `mngr imbue_cloud auth signin --account <email>` "
+                "first, then either bind the provider to it via "
+                '`[providers.imbue_cloud_<slug>] account = "<email>"` or pass '
+                "`-b account=<email>` on `mngr create`."
+            )
+        raise MngrError(
+            f"imbue_cloud provider '{self.name}' has multiple signed-in accounts "
+            f"({signed_in}); pass `-b account=<email>` (mngr create) or "
+            "`--account <email>` (sub-commands) to disambiguate, or pin one in the "
+            "provider config."
+        )
 
     # ------------------------------------------------------------------
-    # Lease bookkeeping (called by the claim CLI command after a successful lease)
+    # Lease bookkeeping
     # ------------------------------------------------------------------
 
     def generate_per_host_keypair(self, host_id: HostId) -> tuple[Path, str]:
@@ -173,25 +218,25 @@ class ImbueCloudProvider(BaseProviderInstance):
         """
         return load_or_create_ssh_keypair(self._host_state_dir(host_id), "ssh_key")
 
-    def lease_for_claim(self, attributes: LeaseAttributes, ssh_public_key: str) -> LeaseResult:
-        """Wrapper around client.lease_host that injects the active token.
-
-        Used by the claim CLI command. Kept on the provider so the client and
-        token-resolution logic don't need to be plumbed through CLI args.
-        """
-        token = self._get_access_token()
-        result = self.client.lease_host(token, attributes, ssh_public_key)
-        self.reset_caches()
-        return result
-
     # ------------------------------------------------------------------
     # Discovery
     # ------------------------------------------------------------------
 
     def _list_leased_hosts_cached(self) -> list[LeasedHostInfo]:
+        """List leased hosts for this provider's resolved account.
+
+        Returns an empty list when no account can be resolved (e.g. the
+        default ``[providers.imbue_cloud]`` instance with no signed-in
+        sessions, or with multiple sessions when none are pinned). That
+        keeps ``mngr list`` working without an account configured.
+        """
         if self._leased_hosts_cache is not None:
             return self._leased_hosts_cache
-        token = self._get_access_token()
+        account = self._resolve_account()
+        if account is None:
+            self._leased_hosts_cache = []
+            return self._leased_hosts_cache
+        token = self._get_access_token(account)
         try:
             self._leased_hosts_cache = self.client.list_hosts(token)
         except MngrError as exc:
@@ -300,14 +345,23 @@ class ImbueCloudProvider(BaseProviderInstance):
     ) -> Host:
         """Lease a pool host whose attributes match ``build_args`` and return it.
 
-        ``mngr create --provider imbue_cloud_<account> --new-host -b
-        cpus=4 -b version=...`` lands here. ``build_args`` are parsed into a
-        ``LeaseAttributes`` and sent to the connector, which finds an
-        available pool host whose ``attributes`` JSONB row matches and binds
-        it to this account. The returned ``ImbueCloudHost`` carries the
-        pre-baked agent id so the rest of mngr's create pipeline (agent
-        state, env injection, agent start) can adopt the existing agent
-        under the caller's chosen name.
+        Two address forms work:
+          - ``mngr create my-agent@.imbue_cloud_alice --new-host -b cpus=4 -b
+            version=...`` -- the per-account provider instance carries the
+            account in ``config.account`` and the build args are pure lease
+            attributes.
+          - ``mngr create my-agent@.imbue_cloud --new-host -b
+            account=alice@imbue.com -b cpus=4 -b version=...`` -- the
+            default instance has no account; the caller passes one through
+            build args.
+
+        ``account`` is extracted from ``build_args``; remaining keys are
+        parsed into ``LeaseAttributes`` and sent to the connector, which
+        finds an available pool host whose ``attributes`` JSONB row
+        matches. The returned ``ImbueCloudHost`` carries the pre-baked
+        agent id so the rest of mngr's create pipeline (agent state, env
+        injection, agent start) can adopt the existing agent under the
+        caller's chosen name.
         """
         if snapshot is not None:
             raise SnapshotsNotSupportedError(self.name)
@@ -317,11 +371,12 @@ class ImbueCloudProvider(BaseProviderInstance):
                 "use --build-arg KEY=VALUE flags to constrain the lease attributes."
             )
         try:
-            attributes = LeaseAttributes.from_build_args(build_args)
+            attributes, account_override = LeaseAttributes.from_build_args(build_args)
         except ValueError as exc:
             raise MngrError(f"Invalid build_args for imbue_cloud lease: {exc}") from exc
 
-        token = self._get_access_token()
+        account = self._require_account(account_override)
+        token = self._get_access_token(account)
         # The lease request needs a host_id placeholder so we can stash the
         # per-host keypair under its canonical path before we know the
         # pool-baked id. We generate a temp dir, then move the keys into the
@@ -480,7 +535,8 @@ class ImbueCloudProvider(BaseProviderInstance):
                 except ImbueCloudConnectorError as exc:
                     logger.warning("delete_host: failed to remove container for host {}: {}", host_id, exc)
         if host_db_id is not None:
-            token = self._get_access_token()
+            account = self._require_account()
+            token = self._get_access_token(account)
             self.client.release_host(token, host_db_id)
         self._cleanup_local_host_state(host_id)
 

@@ -16,16 +16,32 @@ CONNECTOR_URL_ENV_VAR = "MNGR__PROVIDERS__IMBUE_CLOUD__CONNECTOR_URL"
 class ImbueCloudProviderConfig(ProviderInstanceConfig):
     """Configuration for an imbue_cloud provider instance.
 
-    Each signed-in account is its own instance entry; the ``account`` field
-    is required and identifies which session to use.
+    Two recognized usages:
+
+    - Default instance ``[providers.imbue_cloud]``: ``account`` is unset.
+      Callers pass ``-b account=<email>`` to ``mngr create``, or rely on
+      single-account fallback when exactly one ``imbue_cloud`` session is
+      signed in. Also the form mngr falls back to when no
+      ``[providers.imbue_cloud_*]`` block is configured.
+    - Per-account instance ``[providers.imbue_cloud_<slug>]``: ``account``
+      is bound at config time. Minds writes one of these per signed-in
+      account into its mngr settings.toml (see
+      ``minds.bootstrap.set_imbue_cloud_provider_for_account`` /
+      ``unset_imbue_cloud_provider_for_account``) so per-account
+      ``discover_hosts`` works without ambiguity.
     """
 
     backend: ProviderBackendName = Field(
         default=ProviderBackendName(IMBUE_CLOUD_BACKEND_NAME),
         description="Always 'imbue_cloud' for this backend",
     )
-    account: ImbueCloudAccount = Field(
-        description="Email of the Imbue Cloud account this provider instance is bound to",
+    account: ImbueCloudAccount | None = Field(
+        default=None,
+        description=(
+            "Email of the Imbue Cloud account this provider instance is bound to. "
+            "Optional; when unset, callers must pass ``-b account=<email>`` on ``mngr "
+            "create`` (or rely on single-account fallback)."
+        ),
     )
     connector_url: AnyUrl | None = Field(
         default=None,

@@ -540,6 +540,30 @@ class MngrStreamManager(MutableModel):
             process.terminate()
         self._cg.__exit__(None, None, None)
 
+    def restart_observe(self) -> None:
+        """Bounce the ``mngr observe`` subprocess so config changes take effect.
+
+        ``mngr observe`` only reads ``settings.toml`` at startup, so newly
+        registered provider instances (e.g. an ``[providers.imbue_cloud_<slug>]``
+        block written when an account signs in) are invisible until the
+        process is restarted. Per-agent ``mngr event`` subprocesses are
+        left alone -- they don't depend on provider registration.
+
+        No-op if ``start`` has not been called yet (the next ``start`` will
+        pick up the latest config).
+        """
+        if self._observe_process is None:
+            logger.debug("restart_observe: no running observe process; skipping")
+            return
+        logger.info("Restarting mngr observe to pick up updated provider config")
+        self._observe_process.terminate()
+        self._observe_process = self._cg.run_process_in_background(
+            command=[self.mngr_binary, "observe", "--discovery-only", "--quiet"],
+            on_output=self._on_discovery_stream_output,
+            cwd=Path.home(),
+        )
+        self._watch_process_exit(self._observe_process, "mngr observe")
+
     def _all_managed_processes(self) -> list[RunningProcess]:
         """Return all managed subprocess handles (observe + per-agent events)."""
         result: list[RunningProcess] = []
