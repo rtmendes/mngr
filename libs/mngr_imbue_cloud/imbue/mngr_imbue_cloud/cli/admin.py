@@ -30,7 +30,10 @@ from imbue.mngr_imbue_cloud.cli._common import emit_json
 from imbue.mngr_imbue_cloud.cli._common import fail_with_json
 
 _CONTAINER_SSH_PORT: Final[int] = 2222
-_MNGR_COMMAND_TIMEOUT_SECONDS: Final[int] = 600
+# 30 min: the inner ``mngr create ... --template vultr`` builds a fresh
+# Docker image on the leased VPS, which can take 10-20 min (network bound).
+# A previous 10-min cap occasionally killed otherwise-healthy provisions.
+_MNGR_COMMAND_TIMEOUT_SECONDS: Final[int] = 1800
 _SSH_COMMAND_TIMEOUT_SECONDS: Final[int] = 60
 
 _RSYNC_EXCLUDES: Final[tuple[str, ...]] = (
