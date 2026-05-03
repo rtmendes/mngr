@@ -15,6 +15,7 @@ without needing a separate "claim" verb:
   fully provisioned, so all other provisioning steps are skipped.
 """
 
+import json as _json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -72,22 +73,38 @@ class ImbueCloudHost(Host):
         path: Path,
         options: CreateAgentOptions,
     ) -> CreateWorkDirResult:
-        """No-op transfer: return the pool-baked work_dir at /mngr/agents/<id>/work_dir.
+        """No-op transfer: return the pre-baked work_dir recorded in data.json.
 
-        The pool-baking step ran ``mngr create`` with the requested repo+branch
-        already, so the work dir is on the leased container at
-        ``/mngr/agents/<pre_baked_agent_id>/work_dir``. The caller's source
-        ``path`` (from their laptop) is intentionally ignored -- ``mngr create
-        --provider imbue_cloud_*`` is meaningful only when the pre-baked repo
-        matches what the caller asked for, and ``LeaseAttributes`` (passed via
-        ``--build-arg``) are how the connector enforces that match.
+        The pool-baking step already ran ``mngr create`` with the requested
+        repo+branch, so the work_dir on the leased container is wherever
+        the FCT template's ``target_path`` placed it (``/code/`` for the
+        vultr template, etc.). We pull the path out of the pre-baked
+        ``data.json`` rather than reconstructing it, so this stays correct
+        no matter which template the pool host was baked from.
+
+        The caller's source ``path`` (from their laptop) is intentionally
+        ignored -- ``mngr create --provider imbue_cloud_*`` is meaningful
+        only when the pre-baked repo matches what the caller asked for, and
+        ``LeaseAttributes`` (passed via ``--build-arg``) are how the
+        connector enforces that match.
         """
         if self.pre_baked_agent_id is None:
             raise RuntimeError(
                 "ImbueCloudHost.create_agent_work_dir requires pre_baked_agent_id; "
                 "this host was constructed outside the lease flow."
             )
-        return CreateWorkDirResult(path=self.host_dir / "agents" / str(self.pre_baked_agent_id) / "work_dir")
+        data_path = self.host_dir / "agents" / str(self.pre_baked_agent_id) / "data.json"
+        try:
+            data = _json.loads(self.read_text_file(data_path))
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Pre-baked agent data.json not found at {data_path} on leased host {self.id}; "
+                "the pool host was not properly provisioned."
+            ) from exc
+        recorded_work_dir = data.get("work_dir")
+        if not isinstance(recorded_work_dir, str) or not recorded_work_dir:
+            raise RuntimeError(f"Pre-baked agent data.json at {data_path} is missing a 'work_dir' field")
+        return CreateWorkDirResult(path=Path(recorded_work_dir))
 
     def create_agent_state(
         self,
