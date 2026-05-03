@@ -23,35 +23,30 @@ from typing import Final
 from typing import assert_never
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
-from uuid import UUID
 
-import tomlkit
 from loguru import logger
 from pydantic import Field
 from pydantic import PrivateAttr
 
-from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
-from imbue.concurrency_group.errors import ProcessError
 from imbue.imbue_common.enums import UpperCaseStrEnum
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.mutable_model import MutableModel
-from imbue.imbue_common.pure import pure
 from imbue.minds.config.data_types import MNGR_BINARY
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.api_key_store import generate_api_key
 from imbue.minds.desktop_client.api_key_store import hash_api_key
 from imbue.minds.desktop_client.api_key_store import save_api_key_hash
-from imbue.minds.desktop_client.host_pool_client import HostPoolClient
-from imbue.minds.desktop_client.host_pool_client import HostPoolError
-from imbue.minds.desktop_client.host_pool_client import LeaseHostResult
+from imbue.minds.desktop_client.imbue_cloud_cli import ClaimedAgentInfo
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudUnavailableError
+from imbue.minds.desktop_client.imbue_cloud_cli import LiteLLMKeyMaterial
 from imbue.minds.desktop_client.latchkey.core import AGENT_SIDE_LATCHKEY_PORT
 from imbue.minds.desktop_client.latchkey.core import Latchkey
 from imbue.minds.desktop_client.latchkey.core import LatchkeyError
 from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
-from imbue.minds.desktop_client.litellm_key_client import LiteLLMKeyClient
-from imbue.minds.desktop_client.litellm_key_client import LiteLLMKeyError
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.errors import GitCloneError
 from imbue.minds.errors import GitOperationError
@@ -77,77 +72,9 @@ def _make_child_cg(name: str, parent: ConcurrencyGroup | None) -> ConcurrencyGro
     return parent.make_concurrency_group(name=name)
 
 
-def _leased_agent_address(agent_id: AgentId) -> str:
-    """Explicit mngr address for a leased agent.
-
-    Uses ``<agent-id>@leased-<agent-id>.ssh`` so mngr discovery only loads the
-    SSH provider configured by ``imbue.minds.bootstrap._ensure_mngr_settings``
-    and skips name/ID lookup entirely. This assumes the leased-mode invariant
-    that the canonical agent id equals ``lease_result.agent_id`` (set in
-    ``_lease_host_synchronously``).
-    """
-    return f"{agent_id}@leased-{agent_id}.ssh"
-
-
 OutputCallback = Callable[[str, bool], None]
 
 LOG_SENTINEL: Final[str] = "__DONE__"
-
-# Placeholder ANTHROPIC_API_KEY set on pre-created pool hosts. Must look like
-# a real Anthropic key (correct prefix, correct length ~108 chars) so that
-# Claude Code validation accepts it during provisioning. The real LiteLLM
-# virtual key is written into the agent env file and claude config during
-# lease setup (see _build_inject_anthropic_command and
-# _build_patch_claude_config_command).
-PLACEHOLDER_ANTHROPIC_API_KEY: Final[str] = (
-    "sk-ant-api03-PLACEHOLDER000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-)
-
-
-@pure
-def _build_inject_anthropic_command(
-    litellm_key: str,
-    litellm_base_url: str,
-    env_path: str,
-) -> str:
-    """Build a shell command that sets ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL in the agent env file."""
-    return (
-        "sed -i '/^ANTHROPIC_API_KEY=/d' {path}"
-        " && echo 'ANTHROPIC_API_KEY={real_key}' >> {path}"
-        " && sed -i '/^ANTHROPIC_BASE_URL=/d' {path}"
-        " && echo 'ANTHROPIC_BASE_URL={base_url}' >> {path}"
-    ).format(
-        real_key=litellm_key,
-        path=env_path,
-        base_url=litellm_base_url,
-    )
-
-
-@pure
-def _build_patch_claude_config_command(
-    litellm_key: str,
-    agent_id: AgentId,
-) -> str:
-    """Build a shell command that patches the agent's claude config to approve the LiteLLM key."""
-    claude_config_path = "/mngr/agents/{}/plugin/claude/anthropic/.claude.json".format(agent_id)
-    key_suffix = litellm_key[-20:]
-    return (
-        'python3 -c "'
-        "import json; "
-        "p='{path}'; "
-        "d=json.load(open(p)); "
-        "d['primaryApiKey']='{key}'; "
-        "a=d.setdefault('customApiKeyResponses',{{}}).setdefault('approved',[]); "
-        "s='{suffix}'; "
-        "a.append(s) if s not in a else None; "
-        "d['customApiKeyResponses']['rejected']=[]; "
-        "json.dump(d,open(p,'w'),indent=2)"
-        '"'
-    ).format(
-        path=claude_config_path,
-        key=litellm_key,
-        suffix=key_suffix,
-    )
 
 
 def make_log_callback(log_queue: queue.Queue[str]) -> OutputCallback:
@@ -406,9 +333,6 @@ def _make_host_name(agent_name: AgentName) -> str:
     return f"{agent_name}-host"
 
 
-WELCOME_INITIAL_MESSAGE: Final[str] = "/welcome"
-
-
 def _build_latchkey_gateway_url(launch_mode: LaunchMode, info: LatchkeyGatewayInfo) -> str:
     """Return the ``LATCHKEY_GATEWAY`` URL the agent should see in its environment.
 
@@ -421,7 +345,7 @@ def _build_latchkey_gateway_url(launch_mode: LaunchMode, info: LatchkeyGatewayIn
     match launch_mode:
         case LaunchMode.DEV:
             return f"http://{info.host}:{info.port}"
-        case LaunchMode.LOCAL | LaunchMode.LIMA | LaunchMode.CLOUD | LaunchMode.LEASED:
+        case LaunchMode.LOCAL | LaunchMode.LIMA | LaunchMode.CLOUD | LaunchMode.IMBUE_CLOUD:
             return f"http://127.0.0.1:{AGENT_SIDE_LATCHKEY_PORT}"
         case _ as unreachable:
             assert_never(unreachable)
@@ -466,13 +390,18 @@ def _build_mngr_create_command(
             address = f"{agent_name}@{_make_host_name(agent_name)}.lima"
         case LaunchMode.CLOUD:
             address = f"{agent_name}@{_make_host_name(agent_name)}.vultr"
-        case LaunchMode.LEASED:
-            raise MngrCommandError("LEASED mode does not use mngr create -- use the host pool lease flow instead")
+        case LaunchMode.IMBUE_CLOUD:
+            raise MngrCommandError(
+                "IMBUE_CLOUD mode does not use mngr create -- the mngr_imbue_cloud "
+                "plugin's claim flow handles lease + provisioning in one step."
+            )
         case _ as unreachable:
             assert_never(unreachable)
 
     api_key = generate_api_key()
 
+    # The `/welcome` initial message is now baked into the FCT template's
+    # [create_templates.main] section, so we no longer pass `--message` here.
     mngr_command: list[str] = [
         MNGR_BINARY,
         "create",
@@ -493,8 +422,6 @@ def _build_mngr_create_command(
         "is_primary=true",
         "--template",
         "main",
-        "--message",
-        WELCOME_INITIAL_MESSAGE,
     ]
 
     match launch_mode:
@@ -512,9 +439,12 @@ def _build_mngr_create_command(
         case LaunchMode.CLOUD:
             mngr_command.extend(["--new-host", "--idle-mode", "disabled", "--template", "vultr"])
             mngr_command.extend(_remote_host_env_flags())
-        case LaunchMode.LEASED:
-            # Unreachable: the first match statement raises for LEASED mode.
-            raise MngrCommandError("LEASED mode does not use mngr create -- use the host pool lease flow instead")
+        case LaunchMode.IMBUE_CLOUD:
+            # Unreachable: the first match statement raises for IMBUE_CLOUD mode.
+            raise MngrCommandError(
+                "IMBUE_CLOUD mode does not use mngr create -- the mngr_imbue_cloud "
+                "plugin's claim flow handles lease + provisioning in one step."
+            )
         case _ as unreachable:
             assert_never(unreachable)
 
@@ -542,124 +472,6 @@ def _remote_host_env_flags() -> list[str]:
         "--pass-host-env",
         "MNGR_PREFIX",
     ]
-
-
-def _load_or_create_leased_host_keypair(
-    data_dir: Path,
-    *,
-    parent_cg: ConcurrencyGroup | None = None,
-) -> tuple[Path, str]:
-    """Load or generate an SSH keypair for connecting to leased hosts.
-
-    The keypair lives at ``<data_dir>/ssh/keys/leased_host/id_ed25519``. If
-    the private key does not exist, ``ssh-keygen`` is invoked to create it.
-    Returns ``(private_key_path, public_key_string)``.
-    """
-    key_dir = data_dir / "ssh" / "keys" / "leased_host"
-    key_dir.mkdir(parents=True, exist_ok=True)
-    private_key_path = key_dir / "id_ed25519"
-    public_key_path = key_dir / "id_ed25519.pub"
-
-    if not private_key_path.exists():
-        with log_span("Generating SSH keypair for leased hosts"):
-            cg = _make_child_cg("ssh-keygen", parent_cg)
-            with cg:
-                result = cg.run_process_to_completion(
-                    command=[
-                        "ssh-keygen",
-                        "-t",
-                        "ed25519",
-                        "-f",
-                        str(private_key_path),
-                        "-N",
-                        "",
-                        "-q",
-                    ],
-                    is_checked_after=False,
-                )
-            if result.returncode != 0:
-                raise MngrCommandError(
-                    "ssh-keygen failed (exit code {}): {}".format(
-                        result.returncode,
-                        result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
-                    )
-                )
-
-    public_key_content = public_key_path.read_text().strip()
-    return private_key_path, public_key_content
-
-
-def _write_dynamic_host_entry(
-    dynamic_hosts_file: Path,
-    host_name: str,
-    address: str,
-    port: int,
-    user: str,
-    key_file: Path,
-) -> None:
-    """Write or update a host entry in a dynamic hosts TOML file.
-
-    Creates the file and parent directories if they do not exist. Writes
-    atomically via a temporary file and rename.
-    """
-    dynamic_hosts_file.parent.mkdir(parents=True, exist_ok=True)
-
-    if dynamic_hosts_file.exists():
-        doc = tomlkit.loads(dynamic_hosts_file.read_text())
-    else:
-        doc = tomlkit.document()
-
-    # Build the host section
-    host_table = tomlkit.table()
-    host_table.add("address", address)
-    host_table.add("port", port)
-    host_table.add("user", user)
-    host_table.add("key_file", str(key_file))
-    doc[host_name] = host_table
-
-    tmp_path = dynamic_hosts_file.with_suffix(".tmp")
-    tmp_path.write_text(tomlkit.dumps(doc))
-    tmp_path.rename(dynamic_hosts_file)
-
-
-def _remove_dynamic_host_entry(dynamic_hosts_file: Path, host_name: str) -> None:
-    """Remove a host entry from a dynamic hosts TOML file.
-
-    No-op if the file does not exist or the host name is not present.
-    """
-    if not dynamic_hosts_file.exists():
-        return
-
-    doc = tomlkit.loads(dynamic_hosts_file.read_text())
-    if host_name not in doc:
-        return
-
-    del doc[host_name]
-    tmp_path = dynamic_hosts_file.with_suffix(".tmp")
-    tmp_path.write_text(tomlkit.dumps(doc))
-    tmp_path.rename(dynamic_hosts_file)
-
-
-def _save_lease_info(data_dir: Path, agent_id: AgentId, host_db_id: UUID) -> None:
-    """Persist the lease's host_db_id so release can retrieve it later."""
-    lease_dir = data_dir / "leases"
-    lease_dir.mkdir(parents=True, exist_ok=True)
-    (lease_dir / str(agent_id)).write_text(str(host_db_id))
-
-
-def _load_lease_info(data_dir: Path, agent_id: AgentId) -> UUID | None:
-    """Load the host_db_id for a leased agent, or None if not found."""
-    lease_file = data_dir / "leases" / str(agent_id)
-    if not lease_file.exists():
-        return None
-    return UUID(lease_file.read_text().strip())
-
-
-def _remove_lease_info(data_dir: Path, agent_id: AgentId) -> None:
-    """Remove the persisted lease info for an agent."""
-    lease_file = data_dir / "leases" / str(agent_id)
-    if lease_file.exists():
-        lease_file.unlink()
 
 
 _SEMVER_TAG_PATTERN: Final[re.Pattern[str]] = re.compile(r"^refs/tags/(v\d+\.\d+\.\d+)$")
@@ -782,15 +594,15 @@ class AgentCreator(MutableModel):
             "happy-path redirect."
         ),
     )
-    host_pool_client: HostPoolClient | None = Field(
+    imbue_cloud_cli: ImbueCloudCli | None = Field(
         default=None,
         frozen=True,
-        description="Client for leasing pre-provisioned hosts from the Vultr host pool",
-    )
-    litellm_key_client: LiteLLMKeyClient | None = Field(
-        default=None,
-        frozen=True,
-        description="Client for creating LiteLLM virtual keys via the remote connector",
+        description=(
+            "Wrapper around `mngr imbue_cloud …`. When provided, IMBUE_CLOUD-mode creations "
+            "delegate to `mngr imbue_cloud claim` (lease + rename + label + env injection + "
+            "start) and minds no longer maintains its own SuperTokens session, host pool, or "
+            "LiteLLM key code. Other launch modes do not consult this client."
+        ),
     )
     latchkey: Latchkey | None = Field(
         default=None,
@@ -837,8 +649,8 @@ class AgentCreator(MutableModel):
         branch: str = "",
         launch_mode: LaunchMode = LaunchMode.LOCAL,
         include_env_file: bool = False,
-        access_token: str = "",
-        version: str = "",
+        account_email: str = "",
+        branch_or_tag: str = "",
         on_created: Callable[[AgentId], None] | None = None,
     ) -> AgentId:
         """Start creating an agent from a git URL or local path in a background thread.
@@ -848,9 +660,11 @@ class AgentCreator(MutableModel):
         via ``--host-env-file`` so local secrets reach the new agent's host.
         The flag is ignored for git URLs (since ``.env`` is gitignored).
 
-        For ``LaunchMode.LEASED``, the host is leased synchronously (fast HTTP
-        call) so that the real agent ID from the pool host is used as the
-        canonical ID. The remaining setup (rename, start) runs in the background.
+        For ``LaunchMode.IMBUE_CLOUD``, the entire flow (lease + rename + label +
+        env injection + start) runs synchronously in the background thread by
+        delegating to ``mngr imbue_cloud claim`` via ``imbue_cloud_cli``. The
+        plugin owns the SuperTokens session, so minds only needs to know which
+        account to ask for.
 
         When ``on_created`` is provided, it is called with the agent ID after the
         agent has been successfully created (but before the status is set to DONE).
@@ -862,15 +676,7 @@ class AgentCreator(MutableModel):
         effective_name = agent_name.strip() if agent_name.strip() else extract_repo_name(repo_source)
         effective_branch = branch.strip()
 
-        lease_result: LeaseHostResult | None = None
-        if launch_mode is LaunchMode.LEASED:
-            agent_id, lease_result = self._lease_host_synchronously(
-                access_token=access_token,
-                version=version,
-                log_queue=log_queue,
-            )
-        else:
-            agent_id = AgentId()
+        agent_id = AgentId()
 
         with self._lock:
             self._statuses[str(agent_id)] = AgentCreationStatus.CLONING
@@ -886,10 +692,9 @@ class AgentCreator(MutableModel):
                 log_queue,
                 launch_mode,
                 include_env_file,
-                access_token,
-                version,
+                account_email,
+                branch_or_tag,
                 on_created,
-                lease_result,
             ),
             daemon=True,
             name="agent-creator-{}".format(agent_id),
@@ -898,39 +703,6 @@ class AgentCreator(MutableModel):
         with self._lock:
             self._threads.append(thread)
         return agent_id
-
-    def _lease_host_synchronously(
-        self,
-        access_token: str,
-        version: str,
-        log_queue: queue.Queue[str],
-    ) -> tuple[AgentId, LeaseHostResult]:
-        """Lease a host from the pool and return (agent_id, lease_result).
-
-        Runs synchronously so the caller gets the real agent ID from the
-        pool host before setting up status tracking.
-        """
-        if self.host_pool_client is None:
-            raise MngrCommandError("LEASED mode requires a host_pool_client but none is configured")
-        if not access_token:
-            raise MngrCommandError("LEASED mode requires an access_token for authentication")
-        if not version:
-            raise MngrCommandError("LEASED mode requires a version string")
-
-        private_key_path, public_key = _load_or_create_leased_host_keypair(
-            self.paths.data_dir, parent_cg=self.root_concurrency_group
-        )
-        log_queue.put("[minds] Requesting a leased host (version: {})...".format(version))
-        lease_result = self.host_pool_client.lease_host(access_token, public_key, version)
-        logger.debug(
-            "Leased host: db_id={}, vps_ip={}, agent_id={}, host_id={}",
-            lease_result.host_db_id,
-            lease_result.vps_ip,
-            lease_result.agent_id,
-            lease_result.host_id,
-        )
-        agent_id = AgentId(lease_result.agent_id)
-        return agent_id, lease_result
 
     def wait_for_all(self, timeout: float = 10.0) -> None:
         """Wait for all background creation threads to finish."""
@@ -957,49 +729,50 @@ class AgentCreator(MutableModel):
         with self._lock:
             return self._log_queues.get(str(agent_id))
 
-    def release_leased_host(self, agent_id: AgentId, access_token: str) -> None:
-        """Release a leased host and clean up local state.
+    def release_imbue_cloud_host(self, agent_id: AgentId, account_email: str) -> None:
+        """Release the imbue_cloud lease backing an agent, if any.
 
-        Removes the dynamic host entry and calls the host pool release endpoint.
-        No-op if no lease info is found for the agent.
+        Looks up the lease via ``mngr imbue_cloud hosts list --account <email>``
+        and releases the matching entry. No-op when the agent isn't backed by
+        an imbue_cloud lease (returns silently).
         """
-        host_db_id = _load_lease_info(self.paths.data_dir, agent_id)
-        if host_db_id is None:
-            logger.debug("No lease info found for agent {}, skipping release", agent_id)
+        if self.imbue_cloud_cli is None or not account_email:
             return
-
-        # Remove the dynamic host entry
-        dynamic_hosts_file = self.paths.data_dir / "ssh" / "dynamic_hosts.toml"
-        host_name = "leased-{}".format(agent_id)
-        _remove_dynamic_host_entry(dynamic_hosts_file, host_name)
-
-        # Call the release endpoint
-        if self.host_pool_client is not None:
-            is_released = self.host_pool_client.release_host(access_token, host_db_id)
-            if is_released:
-                _remove_lease_info(self.paths.data_dir, agent_id)
-                logger.debug("Released leased host {} for agent {}", host_db_id, agent_id)
-            else:
-                logger.warning("Failed to release leased host {} for agent {}", host_db_id, agent_id)
+        try:
+            leased = self.imbue_cloud_cli.list_hosts(account_email)
+        except ImbueCloudCliError as exc:
+            logger.warning("Could not list imbue_cloud hosts for {}: {}", account_email, exc)
+            return
+        host_db_id: str | None = None
+        for entry in leased:
+            if entry.agent_id == str(agent_id):
+                host_db_id = entry.host_db_id
+                break
+        if host_db_id is None:
+            logger.debug("No imbue_cloud lease found for agent {}, skipping release", agent_id)
+            return
+        is_released = self.imbue_cloud_cli.release_host(account_email, host_db_id)
+        if is_released:
+            logger.debug("Released imbue_cloud lease {} for agent {}", host_db_id, agent_id)
         else:
-            logger.warning("No host_pool_client configured, cannot release host {}", host_db_id)
+            logger.warning("Failed to release imbue_cloud lease {} for agent {}", host_db_id, agent_id)
 
     def start_destruction(
         self,
         agent_id: AgentId,
-        access_token: str = "",
+        account_email: str = "",
     ) -> None:
         """Start destroying an agent in a background thread.
 
-        Runs ``mngr destroy``, releases the leased host if applicable,
-        and updates the destruction status.
+        Runs ``mngr destroy``; if ``account_email`` is supplied, also releases
+        any matching imbue_cloud lease through ``mngr imbue_cloud hosts release``.
         """
         with self._lock:
             self._destroy_statuses[str(agent_id)] = AgentDestructionStatus.DESTROYING
 
         thread = threading.Thread(
             target=self._destroy_agent_background,
-            args=(agent_id, access_token),
+            args=(agent_id, account_email),
             daemon=True,
             name="agent-destroyer-{}".format(agent_id),
         )
@@ -1022,15 +795,12 @@ class AgentCreator(MutableModel):
     def _destroy_agent_background(
         self,
         agent_id: AgentId,
-        access_token: str,
+        account_email: str,
     ) -> None:
-        """Background thread that destroys all agents on the same host and releases leased resources."""
+        """Background thread that destroys all agents on the same host and releases imbue_cloud resources."""
         aid = str(agent_id)
         try:
             with log_span("Destroying workspace {}", agent_id):
-                # Find the host ID and destroy agents BEFORE removing the
-                # dynamic host entry -- mngr needs the SSH provider config
-                # to discover and destroy agents on the remote host.
                 host_id = self._get_host_id_for_agent(agent_id)
 
                 if host_id is not None:
@@ -1039,20 +809,15 @@ class AgentCreator(MutableModel):
                     logger.warning("Could not determine host for agent {}, destroying single agent", agent_id)
                     self._destroy_single_agent(agent_id)
 
-                # Remove the dynamic host entry AFTER destroy so mngr observe
-                # stops trying to connect to the now-dead host.
-                dynamic_hosts_file = self.paths.data_dir / "ssh" / "dynamic_hosts.toml"
-                host_entry_name = "leased-{}".format(agent_id)
-                _remove_dynamic_host_entry(dynamic_hosts_file, host_entry_name)
-
-                # Release leased host back to the pool (no-op if not leased)
-                if access_token:
-                    self.release_leased_host(agent_id, access_token)
+                # Release the imbue_cloud lease (no-op when the agent isn't backed
+                # by one or no account is supplied).
+                if account_email:
+                    self.release_imbue_cloud_host(agent_id, account_email)
 
                 with self._lock:
                     self._destroy_statuses[aid] = AgentDestructionStatus.DONE
 
-        except (MngrCommandError, HostPoolError, ValueError, OSError) as e:
+        except (MngrCommandError, ImbueCloudCliError, ValueError, OSError) as e:
             logger.error("Failed to destroy agent {}: {}", agent_id, e)
             with self._lock:
                 self._destroy_statuses[aid] = AgentDestructionStatus.FAILED
@@ -1135,26 +900,24 @@ class AgentCreator(MutableModel):
         log_queue: queue.Queue[str],
         launch_mode: LaunchMode,
         include_env_file: bool,
-        access_token: str = "",
-        version: str = "",
+        account_email: str = "",
+        branch_or_tag: str = "",
         on_created: Callable[[AgentId], None] | None = None,
-        lease_result: LeaseHostResult | None = None,
     ) -> None:
         """Background thread that resolves the repo source and creates an mngr agent."""
         aid = str(agent_id)
         emit_log = make_log_callback(log_queue)
         host_env_file: Path | None = None
         try:
-            if launch_mode is LaunchMode.LEASED:
-                if lease_result is None:
-                    raise MngrCommandError("LEASED mode requires a lease_result from _lease_host_synchronously")
-                self._setup_leased_agent(
+            if launch_mode is LaunchMode.IMBUE_CLOUD:
+                self._claim_imbue_cloud_agent(
                     agent_id=agent_id,
                     agent_name=agent_name,
                     log_queue=log_queue,
                     emit_log=emit_log,
-                    access_token=access_token,
-                    lease_result=lease_result,
+                    account_email=account_email,
+                    repo_source=repo_source,
+                    branch_or_tag=branch_or_tag,
                     on_created=on_created,
                 )
                 return
@@ -1276,7 +1039,7 @@ class AgentCreator(MutableModel):
                 if on_created is not None:
                     on_created(agent_id)
 
-        except (GitCloneError, GitOperationError, MngrCommandError, HostPoolError, ValueError, OSError) as e:
+        except (GitCloneError, GitOperationError, MngrCommandError, ImbueCloudCliError, ValueError, OSError) as e:
             logger.opt(exception=e).error("Failed to create agent {}", agent_id)
             log_queue.put("[minds] ERROR: {}".format(e))
             with self._lock:
@@ -1319,262 +1082,97 @@ class AgentCreator(MutableModel):
         log_queue.put(f"[minds] Latchkey gateway for this agent: {url}")
         return url
 
-    def _setup_leased_agent(
+    def _claim_imbue_cloud_agent(
         self,
         agent_id: AgentId,
         agent_name: str,
         log_queue: queue.Queue[str],
         emit_log: OutputCallback,
-        access_token: str,
-        lease_result: LeaseHostResult,
+        account_email: str,
+        repo_source: str,
+        branch_or_tag: str,
         on_created: Callable[[AgentId], None] | None = None,
     ) -> None:
-        """Set up a leased host (write dynamic host entry, rename, start)."""
-        aid = str(agent_id)
-        private_key_path = _load_or_create_leased_host_keypair(
-            self.paths.data_dir, parent_cg=self.root_concurrency_group
-        )[0]
+        """Claim a pre-baked agent from the imbue_cloud pool via `mngr imbue_cloud claim`.
 
-        with log_span("Setting up leased agent {} on {}", agent_id, lease_result.vps_ip):
-            with self._lock:
-                self._statuses[aid] = AgentCreationStatus.CREATING
-
-            log_queue.put(
-                "[minds] Leased host {} (agent: {}, host: {})".format(
-                    lease_result.vps_ip, lease_result.agent_id, lease_result.host_id
-                )
-            )
-
-            dynamic_hosts_file = self.paths.data_dir / "ssh" / "dynamic_hosts.toml"
-            host_entry_name = "leased-{}".format(agent_id)
-            try:
-                _save_lease_info(self.paths.data_dir, agent_id, lease_result.host_db_id)
-
-                _write_dynamic_host_entry(
-                    dynamic_hosts_file=dynamic_hosts_file,
-                    host_name=host_entry_name,
-                    address=lease_result.vps_ip,
-                    port=lease_result.container_ssh_port,
-                    user=lease_result.ssh_user,
-                    key_file=private_key_path,
-                )
-                log_queue.put("[minds] Dynamic host entry written for {}".format(host_entry_name))
-
-                self._setup_and_start_leased_agent(
-                    agent_id=agent_id,
-                    aid=aid,
-                    agent_name=agent_name,
-                    log_queue=log_queue,
-                    emit_log=emit_log,
-                    access_token=access_token,
-                    lease_result=lease_result,
-                    on_created=on_created,
-                )
-            except (MngrCommandError, HostPoolError, LiteLLMKeyError, ValueError, OSError):
-                self._cleanup_failed_lease(
-                    agent_id=agent_id,
-                    access_token=access_token,
-                    host_db_id=lease_result.host_db_id,
-                    dynamic_hosts_file=dynamic_hosts_file,
-                    host_entry_name=host_entry_name,
-                    log_queue=log_queue,
-                )
-                raise
-
-    def _setup_and_start_leased_agent(
-        self,
-        agent_id: AgentId,
-        aid: str,
-        agent_name: str,
-        log_queue: queue.Queue[str],
-        emit_log: OutputCallback,
-        access_token: str,
-        lease_result: LeaseHostResult,
-        on_created: Callable[[AgentId], None] | None = None,
-    ) -> None:
-        """Create a LiteLLM key, rename, apply labels, inject credentials, and start the leased agent.
-
-        Sequence:
-          0. Create a LiteLLM virtual key via the remote connector (network call).
-          1. ``mngr rename`` (sequential).
-          2. ``mngr label`` + inject MINDS_API_KEY + replace ANTHROPIC_API_KEY
-             placeholder + append ANTHROPIC_BASE_URL + patch claude config (parallel).
-          3. ``mngr start`` (sequential).
-
-        Raises ``MngrCommandError`` on any failure.
+        The plugin's claim command does the entire flow in 2 SSH round trips:
+        lease, rename + labels, env injection, and (optionally) start. We mint
+        the per-agent LiteLLM key first via `mngr imbue_cloud keys litellm
+        create` and pass it through as ANTHROPIC_API_KEY/ANTHROPIC_BASE_URL on
+        the claim invocation -- the architect spec requires keys to exist
+        before the agent boots so it never sees a placeholder.
         """
-        parsed_name = AgentName(agent_name)
-        address = _leased_agent_address(agent_id)
+        if self.imbue_cloud_cli is None:
+            raise MngrCommandError("IMBUE_CLOUD mode requires imbue_cloud_cli to be configured")
+        if not account_email:
+            raise MngrCommandError("IMBUE_CLOUD mode requires an account_email to be supplied")
 
-        # Step 0: create a LiteLLM virtual key for this agent
-        litellm_key: str | None = None
-        litellm_base_url: str | None = None
-        if self.litellm_key_client is not None:
-            log_queue.put("[minds] Creating LiteLLM virtual key...")
-            try:
-                key_result = self.litellm_key_client.create_key(
-                    access_token=access_token,
-                    key_alias=None,
-                    max_budget=100.0,
-                    budget_duration="1d",
-                    metadata={
-                        "agent_id": str(agent_id),
-                        "host_id": lease_result.host_id,
-                    },
-                )
-                litellm_key = key_result.key
-                litellm_base_url = key_result.base_url
-                log_queue.put("[minds] LiteLLM virtual key created.")
-            except LiteLLMKeyError as e:
-                raise MngrCommandError("Failed to create LiteLLM key: {}".format(e)) from e
+        aid = str(agent_id)
+        cli = self.imbue_cloud_cli
+        parsed_name = AgentName(agent_name)
+
+        with self._lock:
+            self._statuses[aid] = AgentCreationStatus.CREATING
+
+        log_queue.put(f"[minds] Minting LiteLLM virtual key for account {account_email}...")
+        try:
+            key_material: LiteLLMKeyMaterial = cli.create_litellm_key(
+                account=account_email,
+                alias=None,
+                max_budget=100.0,
+                budget_duration="1d",
+                metadata={"agent_name": str(parsed_name)},
+            )
+        except ImbueCloudCliError as exc:
+            raise MngrCommandError(f"Failed to create LiteLLM key: {exc}") from exc
+        log_queue.put("[minds] LiteLLM key minted.")
 
         api_key = generate_api_key()
-        env_path = "/mngr/agents/{}/env".format(agent_id)
-        host_env_path = "/mngr/env"
-
-        # Build the inject command for MINDS_API_KEY
-        inject_minds_key_command = (
-            "sed -i '/^MINDS_API_KEY=/d' {path} && echo 'MINDS_API_KEY={key}' >> {path}"
-        ).format(path=env_path, key=api_key)
-
-        # Inject MNGR_PREFIX into the host env so the workspace server
-        # and all services inside the container use the correct prefix
-        mngr_prefix = os.environ.get("MNGR_PREFIX", "")
-        inject_prefix_command: str | None = None
-        if mngr_prefix:
-            inject_prefix_command = (
-                "sed -i '/^MNGR_PREFIX=/d' {path} && echo 'MNGR_PREFIX={prefix}' >> {path}"
-            ).format(path=host_env_path, prefix=mngr_prefix)
-
-        # Build the inject command for ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL
-        inject_anthropic_command: str | None = None
-        if litellm_key is not None and litellm_base_url is not None:
-            inject_anthropic_command = _build_inject_anthropic_command(
-                litellm_key=litellm_key,
-                litellm_base_url=litellm_base_url,
-                env_path=host_env_path,
-            )
-
-        # Build the command to patch the claude config JSON to approve the new key
-        patch_claude_config_command: str | None = None
-        if litellm_key is not None:
-            patch_claude_config_command = _build_patch_claude_config_command(
-                litellm_key=litellm_key,
-                agent_id=agent_id,
-            )
-
-        # Glue all the env/credential mutations into ONE bash command so they
-        # ride a single SSH connection (one mngr exec) instead of three or
-        # four parallel SSH round-trips. They're sequenced with `&&` so a
-        # failure halts the rest -- the previous parallel layout could leave
-        # the agent in a half-injected state where one credential was
-        # written and another silently failed.
-        inject_pieces: list[str] = [inject_minds_key_command]
-        if inject_anthropic_command is not None:
-            inject_pieces.append(inject_anthropic_command)
-        if patch_claude_config_command is not None:
-            inject_pieces.append(patch_claude_config_command)
-        if inject_prefix_command is not None:
-            inject_pieces.append(inject_prefix_command)
-        combined_inject_command = " && ".join(inject_pieces)
-
-        cg = _make_child_cg("mngr-leased-setup", self.root_concurrency_group)
+        log_queue.put(
+            f"[minds] Claiming pool host for agent '{parsed_name}' "
+            f"(repo={_redact_url_credentials(repo_source) or '<not specified>'}, "
+            f"branch_or_tag={branch_or_tag or '<not specified>'})..."
+        )
         try:
-            with cg:
-                # Step 1: rename + apply labels in a single atomic data.json
-                # write (mngr rename --label). Doing both in one mngr-side
-                # operation avoids the discovery-stream race where an
-                # observer briefly saw the agent under its new name without
-                # the workspace/is_primary labels.
-                log_queue.put("[minds] Renaming agent to '{}' and applying labels...".format(parsed_name))
-                cg.run_process_to_completion(
-                    command=[
-                        MNGR_BINARY,
-                        "rename",
-                        address,
-                        str(parsed_name),
-                        "-l",
-                        "workspace={}".format(parsed_name),
-                        "-l",
-                        "user_created=true",
-                        "-l",
-                        "is_primary=true",
-                    ],
-                    is_checked_after=True,
-                    on_output=emit_log,
-                )
+            claim_info: ClaimedAgentInfo = cli.claim(
+                account=account_email,
+                agent_name=str(parsed_name),
+                attributes={
+                    "repo_url": repo_source if repo_source else None,
+                    "repo_branch_or_tag": branch_or_tag or None,
+                },
+                labels={
+                    "workspace": str(parsed_name),
+                    "user_created": "true",
+                    "is_primary": "true",
+                },
+                env=None,
+                minds_api_key=api_key,
+                anthropic_api_key=key_material.key.get_secret_value(),
+                anthropic_base_url=str(key_material.base_url),
+                mngr_prefix=os.environ.get("MNGR_PREFIX") or None,
+                start=True,
+                on_output=emit_log,
+            )
+        except ImbueCloudUnavailableError as exc:
+            log_queue.put(f"[minds] No matching pool host available: {exc}")
+            raise MngrCommandError(str(exc)) from exc
 
-                # Step 2: inject MINDS_API_KEY + ANTHROPIC creds + claude
-                # config + MNGR_PREFIX in a single SSH-bound mngr exec.
-                log_queue.put("[minds] Injecting credentials...")
-                cg.run_process_to_completion(
-                    command=[MNGR_BINARY, "exec", address, combined_inject_command],
-                    is_checked_after=True,
-                    on_output=emit_log,
-                )
-
-                # Step 3: start
-                log_queue.put("[minds] Starting agent '{}'...".format(parsed_name))
-                cg.run_process_to_completion(
-                    command=[MNGR_BINARY, "start", address],
-                    is_checked_after=True,
-                    on_output=emit_log,
-                )
-        except (ProcessError, ConcurrencyExceptionGroup) as e:
-            raise MngrCommandError("Leased agent setup failed: {}".format(e)) from e
-
+        # The pool host's pre-baked agent_id (which the plugin renamed in
+        # place to `parsed_name`) is the id mngr knows about. minds's own
+        # agent_id is only used to key the in-memory creation-status dicts.
+        canonical_agent_id = AgentId(claim_info.agent_id)
         key_hash = hash_api_key(api_key)
-        save_api_key_hash(self.paths.data_dir, agent_id, key_hash)
-        log_queue.put("[minds] API key hash stored.")
-        log_queue.put("[minds] Leased agent started successfully.")
+        save_api_key_hash(self.paths.data_dir, canonical_agent_id, key_hash)
+        log_queue.put(
+            f"[minds] Leased host {claim_info.vps_ip}:{claim_info.container_ssh_port}, "
+            f"claimed agent {canonical_agent_id}."
+        )
 
-        redirect_url = "/goto/{}/".format(agent_id)
-
-        # Set DONE before invoking on_created so the UI can redirect as soon
-        # as the agent is actually usable. ``on_created`` is expected to
-        # return quickly (it only schedules background work -- see
-        # ``_OnCreatedCallbackFactory``), so the try/except wrapper that
-        # previously guarded a blocking callback is intentionally gone.
+        redirect_url = "/goto/{}/".format(canonical_agent_id)
         with self._lock:
             self._statuses[aid] = AgentCreationStatus.DONE
             self._redirect_urls[aid] = redirect_url
 
         if on_created is not None:
-            on_created(agent_id)
-
-    def _cleanup_failed_lease(
-        self,
-        agent_id: AgentId,
-        access_token: str,
-        host_db_id: UUID,
-        dynamic_hosts_file: Path,
-        host_entry_name: str,
-        log_queue: queue.Queue[str],
-    ) -> None:
-        """Best-effort cleanup after a failed leased agent setup.
-
-        Removes the dynamic host entry, releases the host back to the pool,
-        and removes the persisted lease info. Logs warnings on cleanup failures
-        rather than masking the original error.
-        """
-        log_queue.put("[minds] Cleaning up after failed lease setup...")
-
-        try:
-            _remove_dynamic_host_entry(dynamic_hosts_file, host_entry_name)
-        except OSError as cleanup_exc:
-            logger.warning("Failed to remove dynamic host entry during cleanup: {}", cleanup_exc)
-
-        if self.host_pool_client is not None and access_token:
-            try:
-                is_released = self.host_pool_client.release_host(access_token, host_db_id)
-                if is_released:
-                    logger.debug("Released leased host {} during cleanup", host_db_id)
-                else:
-                    logger.warning("Failed to release leased host {} during cleanup", host_db_id)
-            except (HostPoolError, OSError) as cleanup_exc:
-                logger.warning("Error releasing leased host {} during cleanup: {}", host_db_id, cleanup_exc)
-
-        try:
-            _remove_lease_info(self.paths.data_dir, agent_id)
-        except OSError as cleanup_exc:
-            logger.warning("Failed to remove lease info during cleanup: {}", cleanup_exc)
+            on_created(canonical_agent_id)

@@ -22,13 +22,10 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.minds.config.data_types import MNGR_BINARY
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.api_key_store import find_agent_by_api_key
-from imbue.minds.desktop_client.cloudflare_client import CloudflareClient
 from imbue.minds.desktop_client.deps import BackendResolverDep
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
-from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
-from imbue.minds.desktop_client.session_store import derive_user_id_prefix
 from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
 from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token
 from imbue.minds.primitives import ServiceName
@@ -36,6 +33,57 @@ from imbue.minds.telegram.credential_store import load_agent_bot_credentials
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
 from imbue.minds.telegram.setup import TelegramSetupStatus
 from imbue.mngr.primitives import AgentId
+
+
+class CloudflareClient:
+    """Placeholder for the now-deleted minds CloudflareClient.
+
+    The Cloudflare-related endpoints in this file were originally backed by
+    direct HTTP calls to ``remote_service_connector``; that wiring has been
+    removed in favour of the ``mngr_imbue_cloud`` plugin. Until each handler
+    is rewritten to call ``ImbueCloudCli.list_services`` / ``add_service`` /
+    etc., this stub keeps the file importable. ``app.state.cloudflare_client``
+    is permanently ``None``, so the route helper ``get_cf_client_with_auth``
+    always returns 501 and the cloudflare UI is disabled.
+
+    The methods below are stubs that raise NotImplementedError if a handler
+    somehow gets a real instance (which won't happen in production -- they
+    are only here to satisfy the type checker over the unmigrated handlers).
+    """
+
+    supertokens_email: str | None = None
+    connector_url: str | None = None
+
+    def list_services(self, *_a: object, **_k: object) -> dict[str, str] | None:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels services list")
+
+    def add_service(self, *_a: object, **_k: object) -> object:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels services add")
+
+    def remove_service(self, *_a: object, **_k: object) -> object:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels services remove")
+
+    def create_tunnel(self, *_a: object, **_k: object) -> tuple[str | None, str]:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels create")
+
+    def delete_tunnel(self, *_a: object, **_k: object) -> object:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels delete")
+
+    def get_tunnel_auth(self, *_a: object, **_k: object) -> list[object]:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth get")
+
+    def set_tunnel_auth(self, *_a: object, **_k: object) -> object:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth set")
+
+    def get_service_auth(self, *_a: object, **_k: object) -> list[object]:
+        raise NotImplementedError(
+            "CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth get --service ..."
+        )
+
+    def set_service_auth(self, *_a: object, **_k: object) -> object:
+        raise NotImplementedError(
+            "CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth set --service ..."
+        )
 
 
 def _authenticate_api_key(request: Request) -> AgentId:
@@ -100,38 +148,18 @@ def _json_error(message: str, status_code: int) -> Response:
 def get_cf_client_with_auth(
     request: Request, agent_id: AgentId | None = None
 ) -> tuple[CloudflareClient | None, Response | None]:
-    """Get a cloudflare client enriched with the active account's SuperTokens session.
+    """Cloudflare forwarding is not wired post-cutover; always returns 501.
 
-    Returns ``(client, None)`` when the workspace has an associated signed-in
-    account and its access token is still valid. Returns ``(None, error)`` in
-    every other case -- missing cloudflare config, missing session store, no
-    workspace-account association, or an unrefreshable token. Without a valid
-    session there is no way to authenticate to the forwarding backend.
+    The original signature returned an HTTP-client enriched with the
+    caller's SuperTokens token. After the mngr_imbue_cloud cutover, those
+    tokens live entirely inside the plugin and minds doesn't have a
+    Cloudflare client at all -- the route handlers below should be
+    rewritten to call ``mngr imbue_cloud tunnels …`` via ``ImbueCloudCli``
+    instead. Until that happens, every cloudflare endpoint short-circuits
+    here.
     """
-    cf_client: CloudflareClient | None = request.app.state.cloudflare_client
-    session_store: MultiAccountSessionStore | None = request.app.state.session_store
-
-    if cf_client is None:
-        return None, _json_error("Cloudflare forwarding not configured", 501)
-    if session_store is None or agent_id is None:
-        return None, _json_error("No signed-in account available for Cloudflare forwarding", 403)
-
-    account = session_store.get_account_for_workspace(str(agent_id))
-    if account is None:
-        return None, _json_error("No signed-in account is associated with this workspace", 403)
-
-    access_token = session_store.get_access_token(str(account.user_id))
-    if access_token is None:
-        return None, _json_error("The associated account's session has expired; sign in again", 401)
-
-    # Preserve the concrete subclass (tests swap in subclasses that stub HTTP methods).
-    enriched_client = type(cf_client)(
-        connector_url=cf_client.connector_url,
-        supertokens_token=access_token,
-        supertokens_user_id_prefix=str(derive_user_id_prefix(str(account.user_id))),
-        supertokens_email=account.email,
-    )
-    return enriched_client, None
+    _ = request, agent_id
+    return None, _json_error("Cloudflare forwarding not configured", 501)
 
 
 # -- Request body models --

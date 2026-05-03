@@ -282,7 +282,12 @@ AuthResult = AdminAuth | AgentAuth
 
 class LeaseHostRequest(BaseModel):
     ssh_public_key: str = Field(description="SSH public key to authorize on the leased host")
-    version: str = Field(description="Pool host version tag to match (e.g. v0.1.0)")
+    attributes: dict[str, Any] = Field(
+        description=(
+            "Lease-attribute filter. Matches with PostgreSQL '@>' so only fields the request "
+            "explicitly sets are constrained; missing fields are unconstrained. Required."
+        ),
+    )
 
 
 class LeaseHostResponse(BaseModel):
@@ -293,7 +298,7 @@ class LeaseHostResponse(BaseModel):
     container_ssh_port: int = Field(description="SSH port mapped to the Docker container")
     agent_id: str = Field(description="Pre-provisioned mngr agent ID")
     host_id: str = Field(description="Host ID in the mngr provider")
-    version: str = Field(description="Pool host version tag")
+    attributes: dict[str, Any] = Field(description="Attributes the row was matched against")
 
 
 class ReleaseHostResponse(BaseModel):
@@ -308,7 +313,7 @@ class LeasedHostInfo(BaseModel):
     container_ssh_port: int = Field(description="SSH port mapped to the Docker container")
     agent_id: str = Field(description="Pre-provisioned mngr agent ID")
     host_id: str = Field(description="Host ID in the mngr provider")
-    version: str = Field(description="Pool host version tag")
+    attributes: dict[str, Any] = Field(description="Attributes attached to the lease row")
     leased_at: str = Field(description="ISO 8601 timestamp when the host was leased")
 
 
@@ -1532,19 +1537,22 @@ def lease_host(request: Request, body: LeaseHostRequest) -> dict[str, object]:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, version "
+                        "SELECT id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, attributes "
                         "FROM pool_hosts "
-                        "WHERE status = 'available' AND version = %s "
+                        "WHERE status = 'available' AND attributes @> %s::jsonb "
                         "ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
-                        (body.version,),
+                        (json.dumps(body.attributes),),
                     )
                     row = cur.fetchone()
                     if row is None:
                         raise HTTPException(
                             status_code=503,
-                            detail="No pre-created agents are currently ready. Please ask Josh to provision more.",
+                            detail=(
+                                "No pre-created agents match the requested attributes. "
+                                "Please ask Josh to provision more, or relax the attribute filter."
+                            ),
                         )
-                    host_db_id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, version = row
+                    host_db_id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, attributes = row
 
                     # Inject the user's SSH public key on VPS and container
                     management_key_pem = os.environ["POOL_SSH_PRIVATE_KEY"]
@@ -1566,6 +1574,7 @@ def lease_host(request: Request, body: LeaseHostRequest) -> dict[str, object]:
                     )
         finally:
             conn.close()
+        attrs_dict = attributes if isinstance(attributes, dict) else {}
         return LeaseHostResponse(
             host_db_id=host_db_id,
             vps_ip=vps_ip,
@@ -1574,7 +1583,7 @@ def lease_host(request: Request, body: LeaseHostRequest) -> dict[str, object]:
             container_ssh_port=container_ssh_port,
             agent_id=agent_id,
             host_id=host_id,
-            version=version,
+            attributes=attrs_dict,
         ).model_dump()
 
 
@@ -1619,7 +1628,7 @@ def list_leased_hosts(request: Request) -> list[dict[str, object]]:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, version, leased_at "
+                    "SELECT id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, attributes, leased_at "
                     "FROM pool_hosts "
                     "WHERE status = 'leased' AND leased_to_user = %s",
                     (admin.username,),
@@ -1636,7 +1645,7 @@ def list_leased_hosts(request: Request) -> list[dict[str, object]]:
                 container_ssh_port=r[4],
                 agent_id=r[5],
                 host_id=r[6],
-                version=r[7],
+                attributes=r[7] if isinstance(r[7], dict) else {},
                 leased_at=str(r[8]) if r[8] is not None else "",
             ).model_dump()
             for r in rows
@@ -1737,12 +1746,25 @@ def list_litellm_keys(request: Request) -> list[dict[str, object]]:
         token = request.headers.get("authorization", "")[7:]
         user_id = _get_user_id_from_access_token(token)
 
-        resp = _litellm_request("GET", "/key/list", params={"user_id": user_id})
+        # Without ``return_full_object=true`` LiteLLM returns the keys as a
+        # bare list of token-id strings (and the ``KeyInfo`` mapping below
+        # would crash on ``entry.get(...)``); with it, each entry is a dict
+        # carrying alias / spend / budget / etc.
+        resp = _litellm_request(
+            "GET",
+            "/key/list",
+            params={"user_id": user_id, "return_full_object": "true"},
+        )
         data = resp.json()
 
         keys_raw = data if isinstance(data, list) else data.get("keys", [])
         result: list[dict[str, object]] = []
         for entry in keys_raw:
+            if not isinstance(entry, dict):
+                # Defensive: if LiteLLM ever flips back to bare token strings,
+                # surface what we have rather than 500ing.
+                result.append(KeyInfo(token=str(entry)).model_dump())
+                continue
             result.append(
                 KeyInfo(
                     token=entry.get("token", ""),

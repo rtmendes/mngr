@@ -21,7 +21,7 @@ class LaunchMode(UpperCaseStrEnum):
     CLOUD = auto()
     DEV = auto()
     LIMA = auto()
-    LEASED = auto()
+    IMBUE_CLOUD = auto()
 
 
 class AgentName(NonEmptyStr):

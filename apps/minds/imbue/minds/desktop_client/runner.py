@@ -9,7 +9,6 @@ from typing import Final
 import paramiko
 import uvicorn
 from loguru import logger
-from pydantic import AnyUrl
 from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
@@ -19,12 +18,9 @@ from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.api_v1 import inject_tunnel_token_into_agent
 from imbue.minds.desktop_client.app import create_desktop_client
 from imbue.minds.desktop_client.auth import FileAuthStore
-from imbue.minds.desktop_client.auth_backend_client import AuthBackendClient
 from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
 from imbue.minds.desktop_client.backend_resolver import MngrStreamManager
-from imbue.minds.desktop_client.cloudflare_client import CloudflareClient
-from imbue.minds.desktop_client.cloudflare_client import RemoteServiceConnectorUrl
-from imbue.minds.desktop_client.host_pool_client import HostPoolClient
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
 from imbue.minds.desktop_client.latchkey.core import LATCHKEY_BINARY
 from imbue.minds.desktop_client.latchkey.core import Latchkey
 from imbue.minds.desktop_client.latchkey.core import LatchkeyDestructionHandler
@@ -35,7 +31,6 @@ from imbue.minds.desktop_client.latchkey.permissions import MngrMessageSender
 from imbue.minds.desktop_client.latchkey.services_catalog import LatchkeyServicesCatalogError
 from imbue.minds.desktop_client.latchkey.services_catalog import ServicePermissionInfo
 from imbue.minds.desktop_client.latchkey.services_catalog import load_services_catalog
-from imbue.minds.desktop_client.litellm_key_client import LiteLLMKeyClient
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.request_events import RequestInbox
@@ -162,26 +157,22 @@ def start_desktop_client(
         services_catalog=_try_load_latchkey_services_catalog(),
         mngr_message_sender=MngrMessageSender(),
     )
-    cloudflare_client = _build_cloudflare_client(minds_config.remote_service_connector_url)
-    auth_backend_client = AuthBackendClient(base_url=minds_config.remote_service_connector_url)
-    host_pool_client = _build_host_pool_client(minds_config.remote_service_connector_url)
-    litellm_key_client = _build_litellm_key_client(minds_config.remote_service_connector_url)
+    imbue_cloud_cli = ImbueCloudCli(parent_concurrency_group=root_concurrency_group)
     agent_creator = AgentCreator(
         paths=paths,
         server_port=port,
         latchkey=latchkey,
-        host_pool_client=host_pool_client,
-        litellm_key_client=litellm_key_client,
+        imbue_cloud_cli=imbue_cloud_cli,
         root_concurrency_group=root_concurrency_group,
         notification_dispatcher=notification_dispatcher,
     )
     telegram_orchestrator = TelegramSetupOrchestrator(paths=paths)
 
-    # Initialize multi-account session store
-    session_store = MultiAccountSessionStore(
-        data_dir=data_directory,
-        auth_backend_client=auth_backend_client,
-    )
+    # Initialize multi-account session store. The plugin owns SuperTokens
+    # tokens; minds only mirrors the account identity (user_id / email /
+    # display_name / workspace associations) so the desktop UI can render
+    # which account each workspace is associated with.
+    session_store = MultiAccountSessionStore(data_dir=data_directory)
     sharing_request_handler = SharingRequestHandler(session_store=session_store)
 
     # Initialize request inbox from stored response events
@@ -254,13 +245,12 @@ def start_desktop_client(
         tunnel_manager=tunnel_manager,
         latchkey=latchkey,
         agent_creator=agent_creator,
-        cloudflare_client=cloudflare_client,
+        imbue_cloud_cli=imbue_cloud_cli,
         telegram_orchestrator=telegram_orchestrator,
         notification_dispatcher=notification_dispatcher,
         paths=paths,
         stream_manager=stream_manager,
         session_store=session_store,
-        auth_backend_client=auth_backend_client,
         minds_config=minds_config,
         request_inbox=request_inbox,
         request_event_handlers=(latchkey_permission_handler, sharing_request_handler),
@@ -299,31 +289,6 @@ def _try_load_latchkey_services_catalog() -> dict[str, ServicePermissionInfo]:
     except LatchkeyServicesCatalogError as e:
         logger.warning("Could not load latchkey services catalog; permission dialogs disabled: {}", e)
         return {}
-
-
-def _build_host_pool_client(connector_url: AnyUrl) -> HostPoolClient:
-    """Build a HostPoolClient from the remote service connector URL."""
-    return HostPoolClient(
-        connector_url=RemoteServiceConnectorUrl(str(connector_url)),
-    )
-
-
-def _build_litellm_key_client(connector_url: AnyUrl) -> LiteLLMKeyClient:
-    """Build a LiteLLMKeyClient from the remote service connector URL."""
-    return LiteLLMKeyClient(
-        connector_url=RemoteServiceConnectorUrl(str(connector_url)),
-    )
-
-
-def _build_cloudflare_client(connector_url: AnyUrl) -> CloudflareClient:
-    """Build a shared CloudflareClient holding only the remote service connector URL.
-
-    Per-request auth (SuperTokens token, user-id prefix, email) is attached in
-    ``api_v1.get_cf_client_with_auth`` from the caller's signed-in account.
-    """
-    return CloudflareClient(
-        connector_url=RemoteServiceConnectorUrl(str(connector_url)),
-    )
 
 
 def _build_latchkey(data_directory: Path) -> Latchkey:

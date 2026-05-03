@@ -115,7 +115,9 @@ def render_create_form(
     effective_branch = branch if branch else _DEFAULT_BRANCH
     has_account = bool(default_account_id and accounts)
     effective_mode = (
-        launch_mode if launch_mode != LaunchMode.LOCAL else (LaunchMode.LEASED if has_account else LaunchMode.LOCAL)
+        launch_mode
+        if launch_mode != LaunchMode.LOCAL
+        else (LaunchMode.IMBUE_CLOUD if has_account else LaunchMode.LOCAL)
     )
     template = JINJA_ENV.get_template("create.html")
     return template.render(
@@ -135,7 +137,7 @@ _STATUS_TEXT_DEFAULT: Final[dict[str, str]] = {
     "DONE": "Done. Redirecting...",
 }
 
-_STATUS_TEXT_LEASED: Final[dict[str, str]] = {
+_STATUS_TEXT_IMBUE_CLOUD: Final[dict[str, str]] = {
     "CLONING": "Connecting to host...",
     "CREATING": "Setting up agent...",
     "DONE": "Done. Redirecting...",
@@ -149,7 +151,7 @@ def render_creating_page(
     launch_mode: LaunchMode = LaunchMode.LOCAL,
 ) -> str:
     """Render the progress page shown while an agent is being created."""
-    text_map = _STATUS_TEXT_LEASED if launch_mode is LaunchMode.LEASED else _STATUS_TEXT_DEFAULT
+    text_map = _STATUS_TEXT_IMBUE_CLOUD if launch_mode is LaunchMode.IMBUE_CLOUD else _STATUS_TEXT_DEFAULT
     if str(info.status) == "FAILED":
         status_text = "Failed: {}".format(info.error or "unknown error")
     else:

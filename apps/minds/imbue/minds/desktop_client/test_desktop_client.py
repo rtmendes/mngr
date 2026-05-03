@@ -1036,8 +1036,6 @@ def test_accounts_page_shows_logged_in_accounts(tmp_path: Path) -> None:
 
     session_store = MultiAccountSessionStore(data_dir=tmp_path)
     session_store.add_or_update_session(
-        access_token="tok-123",
-        refresh_token=None,
         user_id="user-test-123",
         email="test@example.com",
     )

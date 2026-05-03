@@ -761,9 +761,32 @@ class FakePoolRow:
     container_ssh_port: int
     status: str
     version: str
+    attributes: dict[str, Any] | None
     leased_to_user: str | None
     leased_at: str | None
     released_at: str | None
+
+
+def _row_attributes(row: "FakePoolRow") -> dict[str, Any]:
+    """Return the JSONB attributes view of a fake row.
+
+    Existing tests pass ``version="v…"`` for ergonomics; we synthesise a
+    matching attributes dict from that here so the fake's behaviour mirrors
+    what production does once admin pool create writes attributes directly.
+    """
+    if isinstance(row.attributes, dict):
+        return dict(row.attributes)
+    return {"version": row.version}
+
+
+def _attributes_contain(row_attrs: dict[str, Any], requested: dict[str, Any]) -> bool:
+    """Reproduce PostgreSQL's ``@>`` containment for primitive-valued attribute dicts."""
+    for key, value in requested.items():
+        if key not in row_attrs:
+            return False
+        if row_attrs[key] != value:
+            return False
+    return True
 
 
 def _make_pool_row(
@@ -793,6 +816,7 @@ def _make_pool_row(
     row.leased_to_user = leased_to_user
     row.leased_at = leased_at
     row.released_at = None
+    row.attributes = None
     return row
 
 
@@ -809,23 +833,30 @@ class FakeCursor:
         query_lower = query.strip().lower()
 
         if "from pool_hosts" in query_lower and "status = 'available'" in query_lower:
-            # SELECT available host by version
-            version = params[0]
+            # The connector serialises the request attributes via json.dumps
+            # before passing them to the SQL bind parameter, so we always get
+            # a JSON string here.
+            raw = params[0]
+            requested = json.loads(raw) if isinstance(raw, str) else dict(raw)
             for row in self._backend.pool_rows:
-                if row.status == "available" and row.version == version:
-                    self._results = [
-                        (
-                            row.host_id,
-                            row.vps_ip,
-                            row.ssh_port,
-                            row.ssh_user,
-                            row.container_ssh_port,
-                            row.agent_id,
-                            row.host_id_str,
-                            row.version,
-                        )
-                    ]
-                    break
+                if row.status != "available":
+                    continue
+                row_attrs = _row_attributes(row)
+                if not _attributes_contain(row_attrs, requested):
+                    continue
+                self._results = [
+                    (
+                        row.host_id,
+                        row.vps_ip,
+                        row.ssh_port,
+                        row.ssh_user,
+                        row.container_ssh_port,
+                        row.agent_id,
+                        row.host_id_str,
+                        row_attrs,
+                    )
+                ]
+                break
 
         elif "update pool_hosts set status = 'leased'" in query_lower:
             username, host_id = params
@@ -860,7 +891,7 @@ class FakeCursor:
                                 row.container_ssh_port,
                                 row.agent_id,
                                 row.host_id_str,
-                                row.version,
+                                _row_attributes(row),
                                 row.leased_at,
                             )
                         )
