@@ -105,17 +105,53 @@ def signin(account: str, password: str | None, connector_url: str | None) -> Non
     emit_json(payload)
 
 
+_MAX_PASSWORD_CONFIRM_ATTEMPTS = 3
+
+
+def _prompt_password_with_confirmation(parsed_account: ImbueCloudAccount) -> str:
+    """Read a password from the TTY twice, verify they match.
+
+    Allows up to ``_MAX_PASSWORD_CONFIRM_ATTEMPTS`` retries on mismatch
+    so a typo doesn't ship to the connector. ``--password`` on the CLI
+    bypasses this entirely (CI / scripted use cases).
+    """
+    for attempt in range(_MAX_PASSWORD_CONFIRM_ATTEMPTS):
+        first = getpass.getpass(prompt=f"Password for new account {parsed_account}: ")
+        if not first:
+            fail_with_json("Password cannot be empty", error_class="UsageError")
+        confirm = getpass.getpass(prompt="Confirm password: ")
+        if first == confirm:
+            return first
+        remaining = _MAX_PASSWORD_CONFIRM_ATTEMPTS - attempt - 1
+        if remaining == 0:
+            fail_with_json(
+                "Passwords did not match after several attempts",
+                error_class="UsageError",
+            )
+        click.echo(
+            f"Passwords did not match. {remaining} attempt(s) remaining.",
+            err=True,
+        )
+    # Unreachable -- the loop either returns or fails out -- but keeps the
+    # type checker happy about the return type.
+    raise AssertionError("unreachable")
+
+
 @auth.command(name="signup")
 @click.option("--account", required=True, help="Account email")
-@click.option("--password", default=None, help="Password (prompts if omitted)")
+@click.option(
+    "--password",
+    default=None,
+    help="Password. When omitted, the command prompts twice on the TTY and verifies the two entries match.",
+)
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
 def signup(account: str, password: str | None, connector_url: str | None) -> None:
     """Sign up with email + password (returns the new session)."""
     parsed_account = parse_account(account)
     if password is None:
-        password = getpass.getpass(prompt=f"Password for new account {parsed_account}: ")
-    if not password:
+        password = _prompt_password_with_confirmation(parsed_account)
+    elif not password:
         fail_with_json("Password cannot be empty", error_class="UsageError")
     client = make_connector_client(connector_url)
     store = make_session_store()
