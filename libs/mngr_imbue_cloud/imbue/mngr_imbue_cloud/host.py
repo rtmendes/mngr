@@ -146,12 +146,16 @@ class ImbueCloudHost(Host):
         transfers, and agent-type provisioning -- all of which the pool baking
         step already did. We just need the agent env file to reflect the
         caller's ``--env`` flags (and the caller-renamed ``MNGR_AGENT_NAME``)
-        and, when an ``ANTHROPIC_API_KEY`` lands in the env, the claude config
-        patch that lets ``claude`` accept the LiteLLM key.
+        and, when an ``ANTHROPIC_API_KEY`` lands anywhere in the env (host or
+        agent), the claude config patch that lets ``claude`` accept the
+        LiteLLM key. ``--pass-host-env ANTHROPIC_API_KEY`` (the minds path)
+        writes to ``/mngr/env`` via ``set_env_vars``; ``--env
+        ANTHROPIC_API_KEY=...`` writes to the per-agent env. We look at
+        both, agent first so a per-agent override wins.
         """
-        env_vars = self._collect_agent_env_vars(agent, options)
-        self._write_agent_env_file(agent, env_vars)
-        anthropic_api_key = env_vars.get("ANTHROPIC_API_KEY")
+        agent_env = self._collect_agent_env_vars(agent, options)
+        self._write_agent_env_file(agent, agent_env)
+        anthropic_api_key = agent_env.get("ANTHROPIC_API_KEY") or self.get_env_vars().get("ANTHROPIC_API_KEY")
         if anthropic_api_key:
             patch_command = _build_patch_claude_config_command(anthropic_api_key, agent.id)
             result = self.execute_idempotent_command(patch_command)
