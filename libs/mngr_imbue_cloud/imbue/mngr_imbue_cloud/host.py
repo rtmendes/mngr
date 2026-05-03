@@ -1,15 +1,32 @@
 """Host class for imbue_cloud-leased agents.
 
-Subclasses mngr's Host to remember the pre-baked agent id so the claim
-flow (rename + relabel + env injection) can target it directly.
+Subclasses mngr's ``Host`` to adopt a pool host's pre-baked agent under the
+caller's chosen name. Overrides four methods on the standard create pipeline
+so ``mngr create --provider imbue_cloud_<account> --new-host`` runs end-to-end
+without needing a separate "claim" verb:
+
+- ``set_env_vars`` merges with the pre-baked ``/mngr/env`` instead of clobbering it
+- ``create_agent_work_dir`` returns the pre-baked work_dir (no transfer)
+- ``create_agent_state`` reuses the pre-baked agent id and overwrites the
+  pre-baked ``data.json`` with the caller's name + labels + freshly assembled
+  command
+- ``provision_agent`` only writes the agent env file (and patches the claude
+  config when ``ANTHROPIC_API_KEY`` is set in env); the pool host is already
+  fully provisioned, so all other provisioning steps are skipped.
 """
 
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
-from typing import Mapping
 
 from pydantic import Field
 
+from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.hosts.host import Host
+from imbue.mngr.interfaces.agent import AgentInterface
+from imbue.mngr.interfaces.host import CreateAgentOptions
+from imbue.mngr.interfaces.host import CreateWorkDirResult
+from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
 
@@ -17,9 +34,8 @@ from imbue.mngr.primitives import AgentName
 class ImbueCloudHost(Host):
     """A leased pool host.
 
-    The pre-baked agent's id is captured at lease time so the plugin's claim
-    command can do its rename + label + env-injection sequence on the right
-    agent. Outside the claim flow this field is informational.
+    The pre-baked agent's id is captured at lease time so ``create_agent_state``
+    can adopt that agent under the caller's name instead of generating a new id.
     """
 
     pre_baked_agent_id: AgentId | None = Field(
@@ -35,6 +51,95 @@ class ImbueCloudHost(Host):
         frozen=True,
         description="Database id of this lease (UUID returned by /hosts/lease).",
     )
+
+    def set_env_vars(self, env: Mapping[str, str]) -> None:
+        """Merge ``env`` into the pre-baked ``/mngr/env`` instead of overwriting.
+
+        The pool host's host env file already contains values that the agent
+        runtime needs (``MNGR_HOST_DIR``, ``MNGR_PREFIX``, etc.). The standard
+        ``Host.set_env_vars`` would clobber them, so we read-modify-write to
+        keep the pre-baked entries that the caller didn't override.
+        """
+        if not env:
+            return
+        existing = self.get_env_vars()
+        existing.update(env)
+        super().set_env_vars(existing)
+
+    def create_agent_work_dir(
+        self,
+        host: OnlineHostInterface,
+        path: Path,
+        options: CreateAgentOptions,
+    ) -> CreateWorkDirResult:
+        """No-op transfer: return the pool-baked work_dir at /mngr/agents/<id>/work_dir.
+
+        The pool-baking step ran ``mngr create`` with the requested repo+branch
+        already, so the work dir is on the leased container at
+        ``/mngr/agents/<pre_baked_agent_id>/work_dir``. The caller's source
+        ``path`` (from their laptop) is intentionally ignored -- ``mngr create
+        --provider imbue_cloud_*`` is meaningful only when the pre-baked repo
+        matches what the caller asked for, and ``LeaseAttributes`` (passed via
+        ``--build-arg``) are how the connector enforces that match.
+        """
+        if self.pre_baked_agent_id is None:
+            raise RuntimeError(
+                "ImbueCloudHost.create_agent_work_dir requires pre_baked_agent_id; "
+                "this host was constructed outside the lease flow."
+            )
+        return CreateWorkDirResult(path=self.host_dir / "agents" / str(self.pre_baked_agent_id) / "work_dir")
+
+    def create_agent_state(
+        self,
+        work_dir_path: Path,
+        options: CreateAgentOptions,
+        created_branch_name: str | None = None,
+    ) -> AgentInterface:
+        """Adopt the pre-baked agent under the caller's name + labels.
+
+        Forces ``options.agent_id`` to the pre-baked id (raising if the caller
+        passed a conflicting one) so the standard parent implementation
+        rewrites the existing ``data.json`` with the caller's name, labels,
+        and a freshly assembled command. ``mkdir -p`` on already-present
+        directories is a no-op, so re-running this is safe.
+        """
+        if self.pre_baked_agent_id is None:
+            raise RuntimeError(
+                "ImbueCloudHost.create_agent_state requires pre_baked_agent_id; "
+                "this host was constructed outside the lease flow."
+            )
+        if options.agent_id is not None and options.agent_id != self.pre_baked_agent_id:
+            raise ValueError(
+                f"imbue_cloud agent id is fixed by the lease ({self.pre_baked_agent_id}); "
+                f"caller requested {options.agent_id}. Drop --id to let the lease decide."
+            )
+        if options.agent_id != self.pre_baked_agent_id:
+            options = options.model_copy(update={"agent_id": self.pre_baked_agent_id})
+        return super().create_agent_state(work_dir_path, options, created_branch_name)
+
+    def provision_agent(
+        self,
+        agent: AgentInterface,
+        options: CreateAgentOptions,
+        mngr_ctx: MngrContext,
+    ) -> None:
+        """Pool hosts are already fully provisioned; only update the agent env file.
+
+        Standard ``Host.provision_agent`` would re-run package install, file
+        transfers, and agent-type provisioning -- all of which the pool baking
+        step already did. We just need the agent env file to reflect the
+        caller's ``--env`` flags (and the caller-renamed ``MNGR_AGENT_NAME``)
+        and, when an ``ANTHROPIC_API_KEY`` lands in the env, the claude config
+        patch that lets ``claude`` accept the LiteLLM key.
+        """
+        env_vars = self._collect_agent_env_vars(agent, options)
+        self._write_agent_env_file(agent, env_vars)
+        anthropic_api_key = env_vars.get("ANTHROPIC_API_KEY")
+        if anthropic_api_key:
+            patch_command = _build_patch_claude_config_command(anthropic_api_key, agent.id)
+            result = self.execute_idempotent_command(patch_command)
+            if not result.success:
+                raise RuntimeError(f"Failed to patch claude config on imbue_cloud host {self.id}: {result.stderr}")
 
 
 def build_combined_inject_command(

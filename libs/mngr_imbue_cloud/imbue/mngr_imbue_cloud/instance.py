@@ -16,11 +16,15 @@ This provider's responsibilities are then:
 - `stop_host` -- stop the docker container on the VPS.
 """
 
+import json
+import time
 from collections.abc import Mapping
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from typing import Final
 
+import paramiko
 from loguru import logger
 from pydantic import ConfigDict
 from pydantic import Field
@@ -50,8 +54,11 @@ from imbue.mngr.primitives import SnapshotId
 from imbue.mngr.primitives import SnapshotName
 from imbue.mngr.primitives import VolumeId
 from imbue.mngr.providers.base_provider import BaseProviderInstance
+from imbue.mngr.providers.ssh_utils import add_host_to_known_hosts
 from imbue.mngr.providers.ssh_utils import create_pyinfra_host
 from imbue.mngr.providers.ssh_utils import load_or_create_ssh_keypair
+from imbue.mngr.providers.ssh_utils import save_ssh_keypair
+from imbue.mngr.providers.ssh_utils import wait_for_sshd
 from imbue.mngr_imbue_cloud import vps_admin
 from imbue.mngr_imbue_cloud.auth_helper import get_active_token
 from imbue.mngr_imbue_cloud.client import ImbueCloudConnectorClient
@@ -63,6 +70,30 @@ from imbue.mngr_imbue_cloud.data_types import LeasedHostInfo
 from imbue.mngr_imbue_cloud.errors import ImbueCloudConnectorError
 from imbue.mngr_imbue_cloud.host import ImbueCloudHost
 from imbue.mngr_imbue_cloud.session_store import ImbueCloudSessionStore
+
+_SSH_WAIT_TIMEOUT_SECONDS: Final[float] = 120.0
+
+
+def _scan_container_host_key(vps_ip: str, container_ssh_port: int) -> str | None:
+    """Best-effort: pull the leased container's sshd public key for known_hosts.
+
+    Returns ``"<key_type> <base64>"`` on success, or ``None`` on any failure
+    (timeout, connection refused, protocol error). Callers add this to
+    ``known_hosts`` so subsequent SSH connections succeed under
+    ``StrictHostKeyChecking``.
+    """
+    transport = paramiko.Transport((vps_ip, container_ssh_port))
+    try:
+        transport.start_client(timeout=10.0)
+        host_key = transport.get_remote_server_key()
+    except (paramiko.SSHException, OSError):
+        return None
+    finally:
+        try:
+            transport.close()
+        except (OSError, paramiko.SSHException):
+            pass
+    return f"{host_key.get_name()} {host_key.get_base64()}"
 
 
 class ImbueCloudProvider(BaseProviderInstance):
@@ -267,11 +298,98 @@ class ImbueCloudProvider(BaseProviderInstance):
         authorized_keys: Sequence[str] | None = None,
         snapshot: SnapshotName | None = None,
     ) -> Host:
-        raise MngrError(
-            "Hosts on the imbue_cloud provider are leased from a pre-provisioned pool. "
-            "Use `mngr imbue_cloud claim <agent-name> --account <email> ...` instead of "
-            "`mngr create --provider imbue_cloud_*`."
+        """Lease a pool host whose attributes match ``build_args`` and return it.
+
+        ``mngr create --provider imbue_cloud_<account> --new-host -b
+        cpus=4 -b version=...`` lands here. ``build_args`` are parsed into a
+        ``LeaseAttributes`` and sent to the connector, which finds an
+        available pool host whose ``attributes`` JSONB row matches and binds
+        it to this account. The returned ``ImbueCloudHost`` carries the
+        pre-baked agent id so the rest of mngr's create pipeline (agent
+        state, env injection, agent start) can adopt the existing agent
+        under the caller's chosen name.
+        """
+        if snapshot is not None:
+            raise SnapshotsNotSupportedError(self.name)
+        if image is not None or start_args:
+            raise MngrError(
+                "imbue_cloud provider does not accept --image or --start-arg; "
+                "use --build-arg KEY=VALUE flags to constrain the lease attributes."
+            )
+        try:
+            attributes = LeaseAttributes.from_build_args(build_args)
+        except ValueError as exc:
+            raise MngrError(f"Invalid build_args for imbue_cloud lease: {exc}") from exc
+
+        token = self._get_access_token()
+        # The lease request needs a host_id placeholder so we can stash the
+        # per-host keypair under its canonical path before we know the
+        # pool-baked id. We generate a temp dir, then move the keys into the
+        # canonical hosts/<lease.host_id>/ once the lease comes back.
+        provider_dir = self._provider_data_dir()
+        leases_dir = provider_dir / "leases"
+        leases_dir.mkdir(parents=True, exist_ok=True)
+        tmp_key_dir = leases_dir / f"pending-{int(time.time() * 1000)}"
+        tmp_key_dir.mkdir(parents=True, exist_ok=True)
+        tmp_private_key, tmp_public_key = save_ssh_keypair(tmp_key_dir, "ssh_key")
+        public_key_text = tmp_public_key.read_text().strip()
+
+        lease_result = self.client.lease_host(token, attributes, public_key_text)
+        self.reset_caches()
+
+        host_id = HostId(lease_result.host_id)
+        host_state_dir = self._host_state_dir(host_id)
+        host_state_dir.mkdir(parents=True, exist_ok=True)
+        final_private_key = host_state_dir / "ssh_key"
+        final_public_key = host_state_dir / "ssh_key.pub"
+        tmp_private_key.replace(final_private_key)
+        tmp_public_key.replace(final_public_key)
+        final_private_key.chmod(0o600)
+        # Best-effort cleanup of the pending dir; fails harmlessly if a
+        # concurrent lease left peers behind.
+        try:
+            tmp_key_dir.rmdir()
+        except OSError:
+            pass
+
+        # Persist a small lease metadata file so subsequent commands (and
+        # ``hosts release``) can find host_db_id without going to the connector.
+        lease_meta_path = host_state_dir / "lease.json"
+        lease_meta_path.write_text(json.dumps(lease_result.model_dump(), indent=2, default=str))
+
+        # Wait for the leased container's sshd to be ready before we hand the
+        # host back to mngr's create pipeline (which will SSH in immediately
+        # to write the agent env file and start tmux).
+        wait_for_sshd(lease_result.vps_ip, lease_result.container_ssh_port, _SSH_WAIT_TIMEOUT_SECONDS)
+
+        # Try to scan the container's host key so strict host-key checking
+        # succeeds. This is best-effort: if the scan fails we leave the
+        # known_hosts file empty and rely on mngr's auto-add policy.
+        known_hosts_path = self._host_known_hosts_path(host_id)
+        known_hosts_path.parent.mkdir(parents=True, exist_ok=True)
+        if not known_hosts_path.exists():
+            known_hosts_path.touch()
+        scanned_key = _scan_container_host_key(lease_result.vps_ip, lease_result.container_ssh_port)
+        if scanned_key is not None:
+            add_host_to_known_hosts(
+                known_hosts_path,
+                lease_result.vps_ip,
+                lease_result.container_ssh_port,
+                scanned_key,
+            )
+
+        leased_info = LeasedHostInfo(
+            host_db_id=lease_result.host_db_id,
+            vps_ip=lease_result.vps_ip,
+            ssh_port=lease_result.ssh_port,
+            ssh_user=lease_result.ssh_user,
+            container_ssh_port=lease_result.container_ssh_port,
+            agent_id=lease_result.agent_id,
+            host_id=lease_result.host_id,
+            attributes=lease_result.attributes,
+            leased_at="",
         )
+        return self._build_host_object(leased_info)
 
     def stop_host(
         self,

@@ -1,7 +1,10 @@
 """`mngr imbue_cloud hosts ...` subcommands.
 
-Lease creation goes through `mngr imbue_cloud claim` (not these commands)
-because claiming runs the full rename/relabel/env-injection sequence.
+Lease creation goes through ``mngr create --provider imbue_cloud_<account>
+--new-host -b <attr>=<val> ...``; the provider implementation issues the
+lease, runs the SSH bootstrap, and returns a host that the standard mngr
+create pipeline finishes adopting under the caller's chosen agent name.
+These subcommands are listing + release helpers on top of that flow.
 """
 
 import click

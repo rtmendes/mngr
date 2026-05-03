@@ -19,9 +19,11 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.responses import Response
 from loguru import logger
+from pydantic import ConfigDict
 from pydantic import Field
 
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.imbue_common.mutable_model import MutableModel
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
 from imbue.minds.desktop_client.minds_config import MindsConfig
@@ -61,7 +63,7 @@ class AuthResult(FrozenModel):
     needs_email_verification: bool = Field(default=False)
 
 
-class _AuthBackendShim:
+class _AuthBackendShim(MutableModel):
     """Adapt ``ImbueCloudCli`` to the API shape the route handlers expect.
 
     The route handlers were originally written against ``AuthBackendClient``;
@@ -71,8 +73,13 @@ class _AuthBackendShim:
     or writes session files, it only maps response shapes.
     """
 
-    def __init__(self, imbue_cloud_cli: ImbueCloudCli) -> None:
-        self._cli = imbue_cloud_cli
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    cli: ImbueCloudCli = Field(frozen=True, description="Subprocess wrapper around the imbue_cloud plugin CLI")
+
+    @property
+    def _cli(self) -> ImbueCloudCli:
+        return self.cli
 
     def signup(self, email: str, password: str) -> AuthResult:
         try:
@@ -118,7 +125,8 @@ class _AuthBackendShim:
 
     def send_verification_email(self, _user_id: str, email: str) -> bool:
         try:
-            self._cli.auth_status(email)  # Touch the session as a smoke check.
+            # Touch the session as a smoke check.
+            self._cli.auth_status(email)
             return True
         except ImbueCloudCliError as exc:
             logger.warning("Could not invoke auth status for {}: {}", email, exc)
@@ -126,7 +134,8 @@ class _AuthBackendShim:
 
     def forgot_password(self, email: str) -> None:
         try:
-            self._cli.auth_status(email)  # Plugin doesn't currently expose forgot-password.
+            # Plugin doesn't currently expose forgot-password.
+            self._cli.auth_status(email)
         except ImbueCloudCliError as exc:
             logger.warning("Forgot-password (placeholder) call failed for {}: {}", email, exc)
 
@@ -158,7 +167,7 @@ def _get_auth_backend(request: Request) -> _AuthBackendShim:
     cli: ImbueCloudCli | None = request.app.state.imbue_cloud_cli
     if cli is None:
         raise AuthBackendError("imbue_cloud_cli is not configured on this app")
-    return _AuthBackendShim(cli)
+    return _AuthBackendShim(cli=cli)
 
 
 def _get_latest_user_info(session_store: MultiAccountSessionStore) -> UserInfo | None:
@@ -380,9 +389,12 @@ _OAUTH_FLOW_TTL_SECONDS = 10 * 60
 
 
 class _OAuthFlowStatus(FrozenModel):
-    """Status snapshot for a single in-flight OAuth subprocess."""
+    """Status snapshot for a single in-flight OAuth subprocess.
 
-    state: str  # "running" | "done" | "error"
+    ``state`` is one of ``"running"``, ``"done"``, or ``"error"``.
+    """
+
+    state: str
     user_id: str | None = None
     email: str | None = None
     display_name: str | None = None

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -29,6 +30,38 @@ class LeaseAttributes(FrozenModel):
     def to_request_dict(self) -> dict[str, Any]:
         """Drop None values so the connector treats them as 'unconstrained'."""
         return {k: v for k, v in self.model_dump().items() if v is not None}
+
+    @classmethod
+    def from_build_args(cls, build_args: Sequence[str] | None) -> "LeaseAttributes":
+        """Parse mngr's ``--build-arg KEY=VALUE`` entries into a LeaseAttributes.
+
+        Recognized keys: ``repo_url``, ``repo_branch_or_tag``, ``cpus``,
+        ``memory_gb``, ``gpu_count``. Unknown keys are rejected with a clear
+        ``ValueError`` so a misspelled flag fails fast rather than silently
+        widening the lease match.
+        """
+        if not build_args:
+            return cls()
+        parsed: dict[str, Any] = {}
+        valid_keys = set(cls.model_fields.keys())
+        for entry in build_args:
+            if "=" not in entry:
+                raise ValueError(f"build_args entry must be KEY=VALUE, got: {entry!r}")
+            key, _, value = entry.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                raise ValueError(f"build_args entry has empty key: {entry!r}")
+            if key not in valid_keys:
+                raise ValueError(f"Unknown build_arg key {key!r}; allowed keys are {sorted(valid_keys)}")
+            if key in {"cpus", "memory_gb", "gpu_count"}:
+                try:
+                    parsed[key] = int(value)
+                except ValueError as exc:
+                    raise ValueError(f"build_arg {key}={value!r} must be an integer") from exc
+            else:
+                parsed[key] = value
+        return cls(**parsed)
 
 
 class LeaseResult(FrozenModel):
