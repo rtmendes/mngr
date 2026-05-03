@@ -588,7 +588,7 @@ def test_build_mngr_create_command_raises_for_leased_mode() -> None:
     """LEASED mode should not use mngr create and must raise."""
     with pytest.raises(MngrCommandError, match="LEASED mode does not use mngr create"):
         _build_mngr_create_command(
-            launch_mode=LaunchMode.LEASED,
+            launch_mode=LaunchMode.IMBUE_CLOUD,
             agent_name=AgentName("test-agent"),
             agent_id=AgentId(),
         )
@@ -881,7 +881,7 @@ def test_start_creation_leased_raises_without_pool_client(
         creator.start_creation(
             repo_source="https://example.com/repo.git",
             agent_name="test",
-            launch_mode=LaunchMode.LEASED,
+            launch_mode=LaunchMode.IMBUE_CLOUD,
             access_token="test-token",
             version="v0.1.0",
         )
@@ -905,7 +905,7 @@ def test_create_leased_agent_fails_without_access_token(
         creator.start_creation(
             repo_source="https://example.com/repo.git",
             agent_name="test",
-            launch_mode=LaunchMode.LEASED,
+            launch_mode=LaunchMode.IMBUE_CLOUD,
             access_token="",
             version="v0.1.0",
         )
@@ -929,7 +929,7 @@ def test_create_leased_agent_fails_without_version(
         creator.start_creation(
             repo_source="https://example.com/repo.git",
             agent_name="test",
-            launch_mode=LaunchMode.LEASED,
+            launch_mode=LaunchMode.IMBUE_CLOUD,
             access_token="test-token",
             version="",
         )
@@ -956,7 +956,7 @@ def test_create_leased_agent_leases_and_writes_dynamic_host(
     agent_id = creator.start_creation(
         repo_source="https://example.com/repo.git",
         agent_name="test-workspace",
-        launch_mode=LaunchMode.LEASED,
+        launch_mode=LaunchMode.IMBUE_CLOUD,
         access_token="test-token",
         version="v0.1.0",
     )

@@ -975,15 +975,18 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
         )
         return HTMLResponse(content=html, status_code=400)
 
-    # Resolve access token and version for LEASED mode
-    access_token = ""
-    version = ""
-    if launch_mode is LaunchMode.LEASED:
-        session_store_for_token: MultiAccountSessionStore | None = request.app.state.session_store
-        if session_store_for_token and account_id:
-            token = session_store_for_token.get_access_token(account_id)
-            access_token = str(token) if token else ""
-        version = resolve_template_version(git_url, branch, parent_cg=agent_creator.root_concurrency_group)
+    # Resolve the account email for IMBUE_CLOUD mode. The mngr_imbue_cloud
+    # plugin owns the SuperTokens session and is responsible for fetching a
+    # fresh access token at the time of each subprocess invocation, so minds
+    # only needs to know which account to ask for.
+    account_email = ""
+    branch_or_tag = branch
+    if launch_mode is LaunchMode.IMBUE_CLOUD:
+        session_store_for_account: MultiAccountSessionStore | None = request.app.state.session_store
+        if session_store_for_account and account_id:
+            account_email = session_store_for_account.get_account_email(account_id) or ""
+        if not branch_or_tag:
+            branch_or_tag = resolve_template_version(git_url, branch, parent_cg=agent_creator.root_concurrency_group)
 
     # Build a post-creation callback that injects the tunnel token
     on_created = _build_on_created_callback(request, account_id)
@@ -994,8 +997,8 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
         branch=branch,
         launch_mode=launch_mode,
         include_env_file=include_env_file,
-        access_token=access_token,
-        version=version,
+        account_email=account_email,
+        branch_or_tag=branch_or_tag,
         on_created=on_created,
     )
 
@@ -1006,8 +1009,8 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
             session_store_assoc.associate_workspace(account_id, str(agent_id))
 
     creating_url = "/creating/{}".format(agent_id)
-    if launch_mode is LaunchMode.LEASED:
-        creating_url += "?mode=LEASED"
+    if launch_mode is LaunchMode.IMBUE_CLOUD:
+        creating_url += "?mode=IMBUE_CLOUD"
     return Response(status_code=303, headers={"Location": creating_url})
 
 
