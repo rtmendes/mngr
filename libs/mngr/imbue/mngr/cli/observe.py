@@ -14,7 +14,6 @@ from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.cli.help_formatter import CommandHelpMetadata
 from imbue.mngr.cli.help_formatter import add_pager_help_option
 from imbue.mngr.config.data_types import CommonCliOptions
-from imbue.mngr.primitives import ErrorBehavior
 from imbue.mngr.utils.parent_process import start_parent_death_watcher
 
 
@@ -74,11 +73,12 @@ def observe(ctx: click.Context, **kwargs: Any) -> None:
         events_base_dir = get_default_events_base_dir(mngr_ctx.config)
 
     if opts.discovery_only:
-        error_behavior = ErrorBehavior(opts.on_error.upper())
-        run_discovery_stream(
-            mngr_ctx=mngr_ctx,
-            error_behavior=error_behavior,
-        )
+        # The discovery stream's snapshot writer always uses ABORT internally
+        # (see discovery_events._write_unfiltered_full_snapshot) regardless of
+        # --on-error -- consumers treat each DISCOVERY_FULL as authoritative
+        # state, so a partial snapshot from a flaky provider would briefly
+        # nuke other providers' agents from the consumer's view.
+        run_discovery_stream(mngr_ctx=mngr_ctx)
         return
 
     # Acquire an exclusive lock per output directory
