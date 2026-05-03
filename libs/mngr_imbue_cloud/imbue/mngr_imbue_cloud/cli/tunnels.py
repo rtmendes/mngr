@@ -3,6 +3,7 @@
 import json as _json
 
 import click
+from loguru import logger
 
 from imbue.mngr_imbue_cloud.auth_helper import get_active_token
 from imbue.mngr_imbue_cloud.cli._common import emit_json
@@ -25,6 +26,7 @@ def _parse_policy_arg(policy_json: str | None) -> AuthPolicy | None:
     try:
         parsed = _json.loads(policy_json)
     except _json.JSONDecodeError as exc:
+        logger.error("Invalid --policy JSON: {}", exc)
         fail_with_json(f"Invalid --policy JSON: {exc}", error_class="UsageError")
     if not isinstance(parsed, dict):
         fail_with_json("--policy must be a JSON object", error_class="UsageError")

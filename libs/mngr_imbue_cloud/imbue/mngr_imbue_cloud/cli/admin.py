@@ -343,6 +343,7 @@ def pool_create(
     try:
         parsed_attributes = _json.loads(attributes_json)
     except _json.JSONDecodeError as exc:
+        logger.error("Invalid --attributes JSON: {}", exc)
         fail_with_json(f"Invalid --attributes JSON: {exc}", error_class="UsageError")
     if not isinstance(parsed_attributes, dict):
         fail_with_json("--attributes must be a JSON object", error_class="UsageError")

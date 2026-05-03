@@ -7,6 +7,7 @@ the future without breaking existing usage of ``keys litellm``.
 import json as _json
 
 import click
+from loguru import logger
 
 from imbue.mngr_imbue_cloud.auth_helper import get_active_token
 from imbue.mngr_imbue_cloud.cli._common import emit_json
@@ -54,6 +55,7 @@ def create_key(
         try:
             parsed = _json.loads(metadata)
         except _json.JSONDecodeError as exc:
+            logger.error("Invalid --metadata JSON: {}", exc)
             fail_with_json(f"Invalid --metadata JSON: {exc}", error_class="UsageError")
         if not isinstance(parsed, dict):
             fail_with_json("--metadata must be a JSON object", error_class="UsageError")

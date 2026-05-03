@@ -56,7 +56,7 @@ def _decode_jwt_exp(access_token: str) -> datetime | None:
     try:
         payload = json.loads(payload_bytes)
     except json.JSONDecodeError as exc:
-        logger.debug("Skipping JWT exp decode: payload is not JSON ({})", exc)
+        logger.warning("Skipping JWT exp decode: payload is not JSON ({})", exc)
         return None
     exp = payload.get("exp")
     if not isinstance(exp, (int, float)):
