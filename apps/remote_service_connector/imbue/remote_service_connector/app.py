@@ -1746,12 +1746,25 @@ def list_litellm_keys(request: Request) -> list[dict[str, object]]:
         token = request.headers.get("authorization", "")[7:]
         user_id = _get_user_id_from_access_token(token)
 
-        resp = _litellm_request("GET", "/key/list", params={"user_id": user_id})
+        # Without ``return_full_object=true`` LiteLLM returns the keys as a
+        # bare list of token-id strings (and the ``KeyInfo`` mapping below
+        # would crash on ``entry.get(...)``); with it, each entry is a dict
+        # carrying alias / spend / budget / etc.
+        resp = _litellm_request(
+            "GET",
+            "/key/list",
+            params={"user_id": user_id, "return_full_object": "true"},
+        )
         data = resp.json()
 
         keys_raw = data if isinstance(data, list) else data.get("keys", [])
         result: list[dict[str, object]] = []
         for entry in keys_raw:
+            if not isinstance(entry, dict):
+                # Defensive: if LiteLLM ever flips back to bare token strings,
+                # surface what we have rather than 500ing.
+                result.append(KeyInfo(token=str(entry)).model_dump())
+                continue
             result.append(
                 KeyInfo(
                     token=entry.get("token", ""),
