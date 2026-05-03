@@ -136,7 +136,7 @@ class ImbueCloudProvider(BaseProviderInstance):
     # ------------------------------------------------------------------
 
     def _provider_data_dir(self) -> Path:
-        return get_provider_data_dir(self.mngr_ctx.config.default_host_dir, str(self.name))
+        return get_provider_data_dir(self.mngr_ctx.profile_dir, str(self.name))
 
     def _host_state_dir(self, host_id: HostId) -> Path:
         return self._provider_data_dir() / "hosts" / str(host_id)
@@ -157,19 +157,17 @@ class ImbueCloudProvider(BaseProviderInstance):
         """Pick the effective account for this provider operation.
 
         Precedence: explicit ``override`` > ``self.config.account`` >
-        single-session fallback (only if exactly one session is on disk).
-        Returns ``None`` when none of the above produce an account; callers
-        are responsible for raising a useful error in that case (the right
-        message depends on what they were trying to do).
+        active-account marker on disk (set by ``mngr imbue_cloud auth use``
+        / ``signin``). Returns ``None`` when none of the above produce an
+        account; callers are responsible for raising a useful error in
+        that case (the right message depends on what they were trying to
+        do).
         """
         if override:
             return ImbueCloudAccount(override)
         if self.config.account is not None:
             return self.config.account
-        signed_in = self.session_store.list_accounts()
-        if len(signed_in) == 1:
-            return signed_in[0]
-        return None
+        return self.session_store.get_active_account()
 
     def _get_access_token(self, account: ImbueCloudAccount) -> SecretStr:
         """Fetch a fresh access token for ``account``.
@@ -183,9 +181,10 @@ class ImbueCloudProvider(BaseProviderInstance):
         """Like ``_resolve_account`` but raises if no account is available.
 
         Use this from any code path that genuinely needs to talk to the
-        connector. The error message tells the caller exactly which lever to
-        pull (``-b account=<email>`` for ``mngr create``, ``--account`` for
-        sub-commands, sign in, or pin one in the provider config).
+        connector (including ``discover_hosts`` -- if a provider instance
+        is enabled it must produce a usable account). The error message
+        names the active-account knobs so the caller knows exactly what to
+        do.
         """
         resolved = self._resolve_account(override)
         if resolved is not None:
@@ -193,17 +192,18 @@ class ImbueCloudProvider(BaseProviderInstance):
         signed_in = [str(entry) for entry in self.session_store.list_accounts()]
         if not signed_in:
             raise MngrError(
-                f"imbue_cloud provider '{self.name}' requires an account. "
-                "Sign in with `mngr imbue_cloud auth signin --account <email>` "
-                "first, then either bind the provider to it via "
+                f"imbue_cloud provider '{self.name}' has no account configured and no "
+                "imbue_cloud accounts are signed in. Run `mngr imbue_cloud auth signin "
+                "--account <email>` first, then either bind the provider to it via "
                 '`[providers.imbue_cloud_<slug>] account = "<email>"` or pass '
-                "`-b account=<email>` on `mngr create`."
+                "`-b account=<email>` on `mngr create`. Disable the imbue_cloud "
+                "provider in your config if you don't intend to use it."
             )
         raise MngrError(
-            f"imbue_cloud provider '{self.name}' has multiple signed-in accounts "
-            f"({signed_in}); pass `-b account=<email>` (mngr create) or "
-            "`--account <email>` (sub-commands) to disambiguate, or pin one in the "
-            "provider config."
+            f"imbue_cloud provider '{self.name}' has no active account but multiple "
+            f"signed-in accounts exist ({signed_in}). Pick one with `mngr imbue_cloud "
+            "auth use --account <email>`, pass `-b account=<email>` on `mngr create`, "
+            "or pin the account in the provider config."
         )
 
     # ------------------------------------------------------------------
@@ -225,17 +225,13 @@ class ImbueCloudProvider(BaseProviderInstance):
     def _list_leased_hosts_cached(self) -> list[LeasedHostInfo]:
         """List leased hosts for this provider's resolved account.
 
-        Returns an empty list when no account can be resolved (e.g. the
-        default ``[providers.imbue_cloud]`` instance with no signed-in
-        sessions, or with multiple sessions when none are pinned). That
-        keeps ``mngr list`` working without an account configured.
+        Raises (via ``_require_account``) when no account can be resolved
+        -- enabled providers must be active. Disable the provider in
+        config if you don't want this to participate in ``mngr list``.
         """
         if self._leased_hosts_cache is not None:
             return self._leased_hosts_cache
-        account = self._resolve_account()
-        if account is None:
-            self._leased_hosts_cache = []
-            return self._leased_hosts_cache
+        account = self._require_account()
         token = self._get_access_token(account)
         try:
             self._leased_hosts_cache = self.client.list_hosts(token)

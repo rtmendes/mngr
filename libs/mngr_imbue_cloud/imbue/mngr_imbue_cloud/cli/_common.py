@@ -19,7 +19,8 @@ from pydantic import AnyUrl
 
 from imbue.mngr_imbue_cloud.client import ImbueCloudConnectorClient
 from imbue.mngr_imbue_cloud.config import CONNECTOR_URL_ENV_VAR
-from imbue.mngr_imbue_cloud.config import get_shared_sessions_dir
+from imbue.mngr_imbue_cloud.config import get_active_profile_dir
+from imbue.mngr_imbue_cloud.config import get_sessions_dir
 from imbue.mngr_imbue_cloud.errors import ImbueCloudError
 from imbue.mngr_imbue_cloud.primitives import ImbueCloudAccount
 from imbue.mngr_imbue_cloud.primitives import get_default_connector_url
@@ -40,7 +41,15 @@ def get_default_host_dir() -> Path:
 
 
 def make_session_store() -> ImbueCloudSessionStore:
-    return ImbueCloudSessionStore(sessions_dir=get_shared_sessions_dir(get_default_host_dir()))
+    """Build a session store rooted at the current mngr profile.
+
+    Plugin CLI subcommands run outside the full ``MngrContext`` (we don't
+    load plugins/agent types/providers for plugin-local commands), so we
+    resolve the active profile by reading ``<host_dir>/config.toml``
+    directly, mirroring what mngr does internally.
+    """
+    profile_dir = get_active_profile_dir(get_default_host_dir())
+    return ImbueCloudSessionStore(sessions_dir=get_sessions_dir(profile_dir))
 
 
 def resolve_connector_url(override: str | None) -> str:
@@ -75,6 +84,34 @@ def parse_account(value: str) -> ImbueCloudAccount:
         return ImbueCloudAccount(value)
     except ValueError as exc:
         fail_with_json(f"Invalid account email: {exc}")
+
+
+def resolve_account_or_active(store: ImbueCloudSessionStore, value: str | None) -> ImbueCloudAccount:
+    """Parse ``value`` if present, else fall back to the active account.
+
+    Used by every ``mngr imbue_cloud ...`` sub-command that takes
+    ``--account``. ``--account`` can be omitted; we resolve to the
+    active account written by ``auth use`` (or implicitly by ``auth
+    signin``). Errors with a helpful message when neither path produces
+    an account, listing the signed-in candidates if any.
+    """
+    if value:
+        return parse_account(value)
+    active = store.get_active_account()
+    if active is not None:
+        return active
+    known = store.list_accounts()
+    if known:
+        candidate_list = ", ".join(str(account) for account in known)
+        fail_with_json(
+            "No active account is set; pass --account <email> or run `mngr imbue_cloud "
+            f"auth use --account <email>`. Signed-in accounts: {candidate_list}",
+            error_class="UsageError",
+        )
+    fail_with_json(
+        "No imbue_cloud accounts are signed in; run `mngr imbue_cloud auth signin --account <email>` first.",
+        error_class="UsageError",
+    )
 
 
 def handle_imbue_cloud_errors(func):

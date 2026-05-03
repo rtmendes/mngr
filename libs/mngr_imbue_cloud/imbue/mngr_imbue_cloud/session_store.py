@@ -1,10 +1,16 @@
 """Persistent storage for SuperTokens sessions, keyed by user_id.
 
-Sessions are shared across all `imbue_cloud_*` provider instances, so the
-on-disk layout is `<default_host_dir>/providers/imbue_cloud/sessions/<user_id>.json`.
-A separate index file `accounts.json` maps email -> user_id so the provider
-config (which only has `account = "<email>"`) can resolve a session without
-calling the connector.
+Sessions are shared across all ``imbue_cloud_*`` provider instances, so the
+on-disk layout is ``<profile_dir>/providers/imbue_cloud/sessions/<user_id>.json``.
+A separate index file ``accounts.json`` maps email -> user_id so the
+provider config (which only has ``account = "<email>"``) can resolve a
+session without calling the connector. The active-account marker
+``active_account`` (a single line of plain text) records which account
+the default ``[providers.imbue_cloud]`` instance should use when its
+``account`` field is unset; ``mngr imbue_cloud auth use --account
+<email>`` writes it, and ``auth signin``/``auth signup``/``auth oauth``
+update it implicitly so the most recently signed-in account becomes
+active.
 """
 
 import base64
@@ -28,6 +34,7 @@ from imbue.mngr_imbue_cloud.primitives import ImbueCloudAccount
 from imbue.mngr_imbue_cloud.primitives import SuperTokensUserId
 
 _ACCOUNTS_FILENAME = "accounts.json"
+_ACTIVE_ACCOUNT_FILENAME = "active_account"
 
 
 class _AccountIndexEntry(FrozenModel):
@@ -188,7 +195,9 @@ class ImbueCloudSessionStore(MutableModel):
     def delete_by_account(self, account: ImbueCloudAccount) -> None:
         """Remove the session and email index entry for an account.
 
-        Idempotent: silently no-ops if no session is registered.
+        Also clears the active-account marker if it pointed at ``account``,
+        so a signed-out account never lingers as the active one. Idempotent:
+        silently no-ops if no session is registered.
         """
         with self._lock:
             index = self._load_index()
@@ -202,6 +211,79 @@ class ImbueCloudSessionStore(MutableModel):
                 except OSError as exc:
                     logger.warning("Failed to remove session file {}: {}", path, exc)
                 self._save_index(index)
+            if self._read_active_account_unlocked() == account:
+                self._delete_active_account_unlocked()
+
+    def _active_account_path(self) -> Path:
+        return self.sessions_dir / _ACTIVE_ACCOUNT_FILENAME
+
+    def _read_active_account_unlocked(self) -> ImbueCloudAccount | None:
+        path = self._active_account_path()
+        if not path.exists():
+            return None
+        try:
+            raw = path.read_text().strip()
+        except OSError as exc:
+            logger.warning("Failed to read active-account marker {}: {}", path, exc)
+            return None
+        if not raw:
+            return None
+        try:
+            return ImbueCloudAccount(raw)
+        except ValueError as exc:
+            logger.warning("Active-account marker {} contains invalid email {!r}: {}", path, raw, exc)
+            return None
+
+    def _delete_active_account_unlocked(self) -> None:
+        path = self._active_account_path()
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Failed to remove active-account marker {}: {}", path, exc)
+
+    def get_active_account(self) -> ImbueCloudAccount | None:
+        """Return the email of the currently active account, or None.
+
+        ``None`` is the right answer when no session exists, when the marker
+        was never written, or when the marker's account no longer has a
+        session on disk.
+        """
+        with self._lock:
+            active = self._read_active_account_unlocked()
+            if active is None:
+                return None
+            # Drop the marker if its account has been removed -- the on-disk
+            # invariant is that ``active_account`` always names an account
+            # with a session. ``signout`` already does this proactively, but
+            # leaving this guard means external session deletions can't
+            # leave a dangling marker.
+            if active not in self._load_index():
+                self._delete_active_account_unlocked()
+                return None
+            return active
+
+    def set_active_account(self, account: ImbueCloudAccount) -> None:
+        """Mark ``account`` as the active one for the default provider instance.
+
+        Raises ``ImbueCloudAuthError`` if the account has no session on
+        disk -- callers should sign in before pinning, so the on-disk
+        invariant ``active_account names a valid session`` holds.
+        """
+        with self._lock:
+            if account not in self._load_index():
+                raise ImbueCloudAuthError(
+                    f"Cannot mark {account!s} active: no session on disk. "
+                    f"Run `mngr imbue_cloud auth signin --account {account}` first."
+                )
+            self._ensure_dir()
+            atomic_write(self._active_account_path(), str(account) + "\n")
+
+    def clear_active_account(self) -> None:
+        """Remove the active-account marker. Idempotent."""
+        with self._lock:
+            self._delete_active_account_unlocked()
 
     def is_access_token_near_expiry(
         self,

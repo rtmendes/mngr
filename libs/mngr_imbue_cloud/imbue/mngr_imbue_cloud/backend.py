@@ -11,7 +11,7 @@ from imbue.mngr.primitives import ProviderBackendName
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr_imbue_cloud.client import ImbueCloudConnectorClient
 from imbue.mngr_imbue_cloud.config import ImbueCloudProviderConfig
-from imbue.mngr_imbue_cloud.config import get_shared_sessions_dir
+from imbue.mngr_imbue_cloud.config import get_sessions_dir
 from imbue.mngr_imbue_cloud.instance import ImbueCloudProvider
 from imbue.mngr_imbue_cloud.primitives import IMBUE_CLOUD_BACKEND_NAME
 from imbue.mngr_imbue_cloud.session_store import ImbueCloudSessionStore
@@ -58,7 +58,7 @@ class ImbueCloudProviderBackend(ProviderBackendInterface):
             raise MngrError(f"Expected ImbueCloudProviderConfig for instance '{name}', got {type(config).__name__}")
         connector_url = config.get_connector_url()
         client = ImbueCloudConnectorClient(base_url=AnyUrl(connector_url))
-        sessions_dir = get_shared_sessions_dir(mngr_ctx.config.default_host_dir)
+        sessions_dir = get_sessions_dir(mngr_ctx.profile_dir)
         session_store = ImbueCloudSessionStore(sessions_dir=sessions_dir)
         return ImbueCloudProvider(
             name=name,

@@ -6,19 +6,19 @@ from pydantic import AnyUrl
 from imbue.mngr_imbue_cloud.config import CONNECTOR_URL_ENV_VAR
 from imbue.mngr_imbue_cloud.config import ImbueCloudProviderConfig
 from imbue.mngr_imbue_cloud.config import get_provider_data_dir
-from imbue.mngr_imbue_cloud.config import get_shared_sessions_dir
+from imbue.mngr_imbue_cloud.config import get_sessions_dir
 from imbue.mngr_imbue_cloud.primitives import IMBUE_CLOUD_BACKEND_NAME
 from imbue.mngr_imbue_cloud.primitives import ImbueCloudAccount
 
 
 def test_provider_data_dir_uses_standard_layout() -> None:
-    data_dir = get_provider_data_dir(Path("/some/host_dir"), "imbue_cloud_alice")
-    assert data_dir == Path("/some/host_dir/providers/imbue_cloud/imbue_cloud_alice")
+    data_dir = get_provider_data_dir(Path("/some/profile_dir"), "imbue_cloud_alice")
+    assert data_dir == Path("/some/profile_dir/providers/imbue_cloud/imbue_cloud_alice")
 
 
-def test_shared_sessions_dir_is_one_level_up_from_instance() -> None:
-    sessions = get_shared_sessions_dir(Path("/some/host_dir"))
-    assert sessions == Path("/some/host_dir/providers/imbue_cloud/sessions")
+def test_sessions_dir_is_one_level_up_from_instance() -> None:
+    sessions = get_sessions_dir(Path("/some/profile_dir"))
+    assert sessions == Path("/some/profile_dir/providers/imbue_cloud/sessions")
     # Multiple instances share this dir; the path is independent of instance name.
 
 
