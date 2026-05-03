@@ -35,10 +35,16 @@ def auth() -> None:
 
 def _persist_auth_response(
     response: AuthRawResponse,
-    expected_account: ImbueCloudAccount,
+    expected_account: ImbueCloudAccount | None,
     store: ImbueCloudSessionStore,
 ) -> dict[str, Any]:
-    """Convert a successful AuthRawResponse into a saved session and emit-json payload."""
+    """Convert a successful AuthRawResponse into a saved session and emit-json payload.
+
+    When ``expected_account`` is None (the OAuth-first-time-signin case), the
+    email returned by the auth backend is accepted as-is. When it is set
+    (signin / signup with explicit ``--account``), we validate that the
+    backend returned the same account and fail otherwise.
+    """
     if response.status != "OK":
         fail_with_json(
             response.message or response.status,
@@ -56,7 +62,7 @@ def _persist_auth_response(
         fail_with_json("Auth response missing required fields", error_class="AuthFailed")
 
     account_from_response = ImbueCloudAccount(email_raw)
-    if account_from_response != expected_account:
+    if expected_account is not None and account_from_response != expected_account:
         fail_with_json(
             f"Auth backend returned account {account_from_response} but client requested {expected_account}",
             error_class="AuthMismatch",
@@ -253,7 +259,16 @@ def _free_localhost_port() -> int:
 
 @auth.command(name="oauth")
 @click.argument("provider_id", type=click.Choice(["google", "github"], case_sensitive=False))
-@click.option("--account", required=True, help="Account email (the email you'll authenticate as)")
+@click.option(
+    "--account",
+    default=None,
+    help=(
+        "Optional account email. When set, the OAuth response must come back with the same "
+        "email or the call fails (useful when re-authing a known account). When omitted, "
+        "whatever email the OAuth provider returns becomes this session's account email -- "
+        "this is the right shape for first-time signin via Google or GitHub."
+    ),
+)
 @click.option(
     "--callback-port",
     default=None,
@@ -270,7 +285,7 @@ def _free_localhost_port() -> int:
 @handle_imbue_cloud_errors
 def oauth(
     provider_id: str,
-    account: str,
+    account: str | None,
     callback_port: int | None,
     no_browser: bool,
     connector_url: str | None,
@@ -282,7 +297,7 @@ def oauth(
     captures the query params, exchanges them at /auth/oauth/callback, and
     persists the resulting session.
     """
-    parsed_account = parse_account(account)
+    parsed_account = parse_account(account) if account else None
     port = callback_port if callback_port is not None else _free_localhost_port()
     callback_url = f"http://127.0.0.1:{port}/oauth/callback"
 

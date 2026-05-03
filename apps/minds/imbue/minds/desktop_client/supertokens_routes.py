@@ -8,14 +8,11 @@ maintain has been deleted. The route handlers below speak through a thin
 ``_AuthBackendShim`` that adapts the plugin CLI to the shape they expect.
 """
 
-import html
 import json
+import secrets
 import threading
 import time
-import webbrowser
-from urllib.parse import parse_qs
 from urllib.parse import urlencode
-from urllib.parse import urlparse
 
 from fastapi import APIRouter
 from fastapi import Request
@@ -33,7 +30,6 @@ from imbue.minds.desktop_client.session_store import UserInfo
 from imbue.minds.desktop_client.templates_auth import render_auth_page
 from imbue.minds.desktop_client.templates_auth import render_check_email_page
 from imbue.minds.desktop_client.templates_auth import render_forgot_password_page
-from imbue.minds.desktop_client.templates_auth import render_oauth_close_page
 from imbue.minds.desktop_client.templates_auth import render_settings_page
 from imbue.minds.primitives import OutputFormat
 from imbue.minds.utils.output import emit_event
@@ -127,27 +123,6 @@ class _AuthBackendShim:
         except ImbueCloudCliError as exc:
             logger.warning("Could not invoke auth status for {}: {}", email, exc)
             return False
-
-    def oauth_authorize_url(self, provider_id: str, callback_url: str) -> str | None:
-        # The plugin handles the entire OAuth flow inside `mngr imbue_cloud
-        # auth oauth ...`. The desktop UI's "Sign in with Google" route is
-        # therefore best implemented by spawning that subprocess directly
-        # rather than mediating through the desktop server. Returning None
-        # signals the caller to fall back to that flow.
-        _ = provider_id, callback_url
-        return None
-
-    def oauth_callback(
-        self,
-        provider_id: str,
-        callback_url: str,
-        query_params: dict[str, str],
-    ) -> AuthResult:
-        _ = provider_id, callback_url, query_params
-        return AuthResult(
-            status="ERROR",
-            message="OAuth callback handling now lives inside `mngr imbue_cloud auth oauth ...`",
-        )
 
     def forgot_password(self, email: str) -> None:
         try:
@@ -395,134 +370,171 @@ def _handle_check_email_page(request: Request) -> HTMLResponse:
     return HTMLResponse(render_check_email_page(email=email))
 
 
-# In-memory map of ``provider_id -> (state, expiry_timestamp)`` protecting the
-# local OAuth callback against forged requests from other processes on the
-# same loopback interface. The state value is whatever the upstream provider
-# (via the SuperTokens SDK) embedded in the authorize URL -- we record it at
-# redirect time and require it to echo back unchanged on the callback. An
-# attacker process hitting ``http://127.0.0.1:{port}/auth/callback/{provider}``
-# with its own stolen authorization code would not know this state, so the
-# callback is rejected before we forward anything to the backend.
-_OAUTH_STATE_TTL_SECONDS = 10 * 60
-_oauth_pending_states: dict[str, tuple[str, float]] = {}
-_oauth_pending_states_lock = threading.Lock()
+# OAuth tracking. The plugin's ``mngr imbue_cloud auth oauth ...`` subprocess
+# is what actually drives an OAuth signin (it spins up a localhost listener,
+# launches the browser, exchanges the code, and writes the session). Each
+# in-progress flow is tracked here by a server-generated key the frontend
+# polls so it can show a "waiting for browser" state without blocking on the
+# subprocess.
+_OAUTH_FLOW_TTL_SECONDS = 10 * 60
 
 
-def _extract_state_from_auth_url(auth_url: str) -> str | None:
-    """Return the ``state`` query parameter from an OAuth authorize URL, if any."""
-    parsed = urlparse(auth_url)
-    states = parse_qs(parsed.query).get("state")
-    if states:
-        return states[0]
-    return None
+class _OAuthFlowStatus(FrozenModel):
+    """Status snapshot for a single in-flight OAuth subprocess."""
+
+    state: str  # "running" | "done" | "error"
+    user_id: str | None = None
+    email: str | None = None
+    display_name: str | None = None
+    error: str | None = None
+    deadline: float | None = None
 
 
-def _remember_oauth_state(provider_id: str, state: str) -> None:
-    """Persist the expected OAuth state for a provider with a short expiry."""
-    with _oauth_pending_states_lock:
-        _prune_expired_oauth_states_locked()
-        _oauth_pending_states[provider_id] = (state, time.monotonic() + _OAUTH_STATE_TTL_SECONDS)
+_oauth_flows: dict[str, _OAuthFlowStatus] = {}
+_oauth_flows_lock = threading.Lock()
 
 
-def _consume_oauth_state(provider_id: str) -> str | None:
-    """Pop and return the stored OAuth state for a provider, or None if none/expired."""
-    with _oauth_pending_states_lock:
-        _prune_expired_oauth_states_locked()
-        entry = _oauth_pending_states.pop(provider_id, None)
-    return entry[0] if entry is not None else None
+def _record_oauth_status(flow_id: str, status: _OAuthFlowStatus) -> None:
+    with _oauth_flows_lock:
+        _prune_expired_oauth_flows_locked()
+        _oauth_flows[flow_id] = status
 
 
-def _prune_expired_oauth_states_locked() -> None:
+def _read_oauth_status(flow_id: str) -> _OAuthFlowStatus | None:
+    with _oauth_flows_lock:
+        _prune_expired_oauth_flows_locked()
+        return _oauth_flows.get(flow_id)
+
+
+def _prune_expired_oauth_flows_locked() -> None:
     now = time.monotonic()
-    expired = [p for p, (_, exp) in _oauth_pending_states.items() if exp <= now]
-    for p in expired:
-        _oauth_pending_states.pop(p, None)
+    expired = [flow_id for flow_id, st in _oauth_flows.items() if st.deadline is not None and st.deadline <= now]
+    for flow_id in expired:
+        _oauth_flows.pop(flow_id, None)
 
 
-def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
-    """Initiate OAuth by opening the system browser at the provider-specific URL."""
-    backend = _get_auth_backend(request)
-    server_port = _get_server_port(request)
-    callback_url = f"http://127.0.0.1:{server_port}/auth/callback/{provider_id}"
+def _run_oauth_subprocess(
+    provider_id: str,
+    flow_id: str,
+    imbue_cloud_cli: ImbueCloudCli,
+    session_store: MultiAccountSessionStore,
+    minds_config: MindsConfig | None,
+    output_format: OutputFormat,
+) -> None:
+    """Run ``mngr imbue_cloud auth oauth <provider>`` in a background thread.
+
+    The plugin opens the system browser, listens on its own localhost port for
+    the OAuth callback, exchanges the code, and writes the session to its own
+    state directory. We then mirror the resulting account identity into
+    ``MultiAccountSessionStore`` so the desktop UI can render it.
+    """
     try:
-        auth_url = backend.oauth_authorize_url(provider_id=provider_id, callback_url=callback_url)
-    except (ImbueCloudCliError, AuthBackendError) as exc:
-        logger.warning("Auth backend unreachable during oauth_authorize for {}: {}", provider_id, exc)
-        return _json_response({"status": "ERROR", "error": "Authentication service is unavailable"}, 502)
-    if auth_url is None:
-        return _json_response({"status": "ERROR", "error": f"Unknown provider: {provider_id}"}, 404)
-
-    # Extract the SDK's state so we can verify it on callback. If the SDK didn't
-    # include one (older versions, or custom providers), we still open the URL
-    # but skip the state check -- nothing to compare against.
-    state = _extract_state_from_auth_url(auth_url)
-    if state is not None:
-        _remember_oauth_state(provider_id, state)
-    else:
-        logger.warning("OAuth authorize URL for {} has no state param; skipping CSRF state check", provider_id)
-
-    webbrowser.open(auth_url)
-    return _json_response({"status": "OK", "message": f"Opened {provider_id} sign-in in your browser"})
-
-
-def _handle_oauth_callback(provider_id: str, request: Request) -> HTMLResponse:
-    """Handle OAuth callback from the provider (opened in system browser)."""
-    session_store = _get_session_store(request)
-    backend = _get_auth_backend(request)
-    output_format = _get_output_format(request)
-    server_port = _get_server_port(request)
-    callback_url = f"http://127.0.0.1:{server_port}/auth/callback/{provider_id}"
-    query_params = dict(request.query_params)
-
-    # CSRF: only accept callbacks whose ``state`` matches the one recorded at
-    # ``_handle_oauth_redirect``. Rejecting stale/missing/mismatched state is
-    # what prevents a local attacker process from forging callbacks with a
-    # stolen authorization code for a different account.
-    expected_state = _consume_oauth_state(provider_id)
-    actual_state = query_params.get("state")
-    if expected_state is not None and (actual_state is None or actual_state != expected_state):
-        logger.warning("OAuth callback rejected for {}: state mismatch", provider_id)
-        return HTMLResponse(
-            "<html><body><h1>Authentication failed</h1>"
-            "<p>The OAuth callback did not originate from a sign-in you started. "
-            "Please try again from the app.</p></body></html>",
-            status_code=400,
+        result = imbue_cloud_cli.auth_oauth(account="", provider_id=provider_id)
+    except ImbueCloudCliError as exc:
+        logger.warning("Plugin OAuth subprocess failed for {}: {}", provider_id, exc)
+        _record_oauth_status(
+            flow_id,
+            _OAuthFlowStatus(
+                state="error",
+                error=str(exc),
+                deadline=time.monotonic() + _OAUTH_FLOW_TTL_SECONDS,
+            ),
         )
+        return
 
-    try:
-        result = backend.oauth_callback(
-            provider_id=provider_id,
-            callback_url=callback_url,
-            query_params=query_params,
-        )
-    except (ImbueCloudCliError, AuthBackendError) as exc:
-        logger.opt(exception=exc).error("OAuth callback failed for {}", provider_id)
-        safe_exc = html.escape(str(exc), quote=True)
-        return HTMLResponse(
-            f"<html><body><h1>Authentication failed</h1><p>{safe_exc}</p></body></html>",
-            status_code=502,
-        )
-
-    if result.status != "OK" or result.user is None:
-        message = result.message or "Sign-in failed"
-        safe_message = html.escape(message, quote=True)
-        return HTMLResponse(
-            f"<html><body><h1>Authentication failed</h1><p>{safe_message}</p></body></html>",
-            status_code=400,
-        )
-
-    _store_session_from_auth_result(session_store, result, request)
+    session_store.add_or_update_session(
+        user_id=str(result.user_id),
+        email=str(result.email),
+        display_name=result.display_name,
+    )
+    if minds_config is not None and minds_config.get_default_account_id() is None:
+        minds_config.set_default_account_id(str(result.user_id))
 
     emit_event(
         "auth_success",
         {
-            "message": f"Signed in as {result.user.display_name or result.user.email}",
-            "email": result.user.email,
+            "message": f"Signed in as {result.display_name or result.email}",
+            "email": str(result.email),
         },
         output_format,
     )
 
-    return HTMLResponse(render_oauth_close_page(email=result.user.email, display_name=result.user.display_name))
+    _record_oauth_status(
+        flow_id,
+        _OAuthFlowStatus(
+            state="done",
+            user_id=str(result.user_id),
+            email=str(result.email),
+            display_name=result.display_name,
+            deadline=time.monotonic() + _OAUTH_FLOW_TTL_SECONDS,
+        ),
+    )
+
+
+def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
+    """Kick off the plugin's OAuth flow in a background thread.
+
+    Returns immediately with a flow id the frontend can poll. The plugin
+    subprocess opens the system browser, captures the callback, and writes
+    the session itself; this route then mirrors the account identity into
+    ``MultiAccountSessionStore`` once the subprocess finishes.
+    """
+    imbue_cloud_cli: ImbueCloudCli | None = request.app.state.imbue_cloud_cli
+    session_store = _get_session_store(request)
+    output_format = _get_output_format(request)
+    minds_config: MindsConfig | None = request.app.state.minds_config
+    if imbue_cloud_cli is None:
+        return _json_response({"status": "ERROR", "error": "imbue_cloud_cli is not configured"}, 503)
+    if provider_id.lower() not in ("google", "github"):
+        return _json_response({"status": "ERROR", "error": f"Unknown provider: {provider_id}"}, 404)
+
+    flow_id = secrets.token_urlsafe(16)
+    _record_oauth_status(
+        flow_id,
+        _OAuthFlowStatus(state="running", deadline=time.monotonic() + _OAUTH_FLOW_TTL_SECONDS),
+    )
+    thread = threading.Thread(
+        target=_run_oauth_subprocess,
+        kwargs={
+            "provider_id": provider_id.lower(),
+            "flow_id": flow_id,
+            "imbue_cloud_cli": imbue_cloud_cli,
+            "session_store": session_store,
+            "minds_config": minds_config,
+            "output_format": output_format,
+        },
+        daemon=True,
+        name=f"imbue-cloud-oauth-{provider_id}",
+    )
+    thread.start()
+    return _json_response(
+        {
+            "status": "OK",
+            "flow_id": flow_id,
+            "message": f"Opening {provider_id} sign-in in your browser. Complete the flow there.",
+        }
+    )
+
+
+def _handle_oauth_status(flow_id: str, request: Request) -> Response:
+    """Poll-friendly status for an in-flight OAuth flow.
+
+    The frontend long-polls this until ``state`` is ``"done"`` or ``"error"``.
+    """
+    _ = request
+    status = _read_oauth_status(flow_id)
+    if status is None:
+        return _json_response({"status": "ERROR", "error": "Unknown flow id"}, 404)
+    return _json_response(
+        {
+            "status": "OK",
+            "state": status.state,
+            "user_id": status.user_id,
+            "email": status.email,
+            "display_name": status.display_name,
+            "error": status.error,
+        }
+    )
 
 
 def _handle_forgot_password_page(request: Request) -> HTMLResponse:
@@ -618,7 +630,7 @@ def create_supertokens_router(
     router.post("/api/resend-verification")(_handle_resend_verification_api)
     router.get("/check-email")(_handle_check_email_page)
     router.get("/oauth/{provider_id}")(_handle_oauth_redirect)
-    router.get("/callback/{provider_id}")(_handle_oauth_callback)
+    router.get("/oauth/status/{flow_id}")(_handle_oauth_status)
     router.get("/forgot-password")(_handle_forgot_password_page)
     router.post("/api/forgot-password")(_handle_forgot_password_api)
     router.get("/reset-password")(_handle_reset_password_redirect)
