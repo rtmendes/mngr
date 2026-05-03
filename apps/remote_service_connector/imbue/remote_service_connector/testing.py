@@ -770,8 +770,9 @@ class FakePoolRow:
 def _row_attributes(row: "FakePoolRow") -> dict[str, Any]:
     """Return the JSONB attributes view of a fake row.
 
-    For now we synthesise ``{"version": row.version}`` from the legacy field so
-    existing tests that set ``version=`` keep working under the new schema.
+    Existing tests pass ``version="v…"`` for ergonomics; we synthesise a
+    matching attributes dict from that here so the fake's behaviour mirrors
+    what production does once admin pool create writes attributes directly.
     """
     if isinstance(row.attributes, dict):
         return dict(row.attributes)
@@ -832,20 +833,11 @@ class FakeCursor:
         query_lower = query.strip().lower()
 
         if "from pool_hosts" in query_lower and "status = 'available'" in query_lower:
-            # SELECT available host. The new attributes @> filter expects a JSON
-            # blob in params[0]; fall back to version-string matching for any
-            # legacy callers still passing a bare version.
+            # The connector serialises the request attributes via json.dumps
+            # before passing them to the SQL bind parameter, so we always get
+            # a JSON string here.
             raw = params[0]
-            if isinstance(raw, str):
-                requested = json.loads(raw)
-            elif isinstance(raw, dict):
-                requested = dict(raw)
-            else:
-                # Legacy callers passed the version as a bare string parameter;
-                # wrap it as the equivalent attribute filter.
-                requested = {"version": raw}
-            if not isinstance(requested, dict):
-                requested = {"version": raw}
+            requested = json.loads(raw) if isinstance(raw, str) else dict(raw)
             for row in self._backend.pool_rows:
                 if row.status != "available":
                     continue

@@ -52,6 +52,7 @@ from imbue.mngr.primitives import VolumeId
 from imbue.mngr.providers.base_provider import BaseProviderInstance
 from imbue.mngr.providers.ssh_utils import create_pyinfra_host
 from imbue.mngr.providers.ssh_utils import load_or_create_ssh_keypair
+from imbue.mngr_imbue_cloud import vps_admin
 from imbue.mngr_imbue_cloud.auth_helper import get_active_token
 from imbue.mngr_imbue_cloud.client import ImbueCloudConnectorClient
 from imbue.mngr_imbue_cloud.config import ImbueCloudProviderConfig
@@ -59,6 +60,7 @@ from imbue.mngr_imbue_cloud.config import get_provider_data_dir
 from imbue.mngr_imbue_cloud.data_types import LeaseAttributes
 from imbue.mngr_imbue_cloud.data_types import LeaseResult
 from imbue.mngr_imbue_cloud.data_types import LeasedHostInfo
+from imbue.mngr_imbue_cloud.errors import ImbueCloudConnectorError
 from imbue.mngr_imbue_cloud.host import ImbueCloudHost
 from imbue.mngr_imbue_cloud.session_store import ImbueCloudSessionStore
 
@@ -271,74 +273,94 @@ class ImbueCloudProvider(BaseProviderInstance):
             "`mngr create --provider imbue_cloud_*`."
         )
 
-    def _docker_container_name(self, host_id: HostId) -> str:
-        """Pool hosts run a single container named ``mngr-<host_id-short>`` per minds convention."""
-        return f"{self.mngr_ctx.config.prefix}{host_id}"
-
-    def _container_id_via_label(self, host_id: HostId) -> str:
-        """Return a docker filter expression that resolves to this host's container.
-
-        Pool hosts label their docker container with ``mngr-host-id=<host_id>``
-        when they're provisioned. Use that as the canonical identifier so we
-        don't have to assume a specific container name format.
-        """
-        return f'$(docker ps -aq --filter "label=mngr-host-id={host_id}" | head -1)'
-
     def stop_host(
         self,
         host: HostInterface | HostId,
         create_snapshot: bool = True,
         timeout_seconds: float = 60.0,
     ) -> None:
-        """Not supported in this revision.
+        """Stop the docker container on the leased VPS via root SSH.
 
-        Stopping the docker container would require root SSH on the VPS (we
-        only have container-level SSH today), so we don't have a way to stop
-        the container without releasing the lease. Use ``mngr destroy`` if
-        you actually want to give up the lease.
+        The lease step authorized this provider's per-host SSH key on the VPS
+        root account at port 22, so we connect there and ``docker stop`` the
+        container labeled with this host_id. The lease and on-disk volume
+        are preserved; ``start_host`` brings the container back later.
         """
-        raise NotImplementedError(
-            "stop_host on imbue_cloud is not yet supported. The current revision can only "
-            "release leases (mngr destroy / mngr delete). See specs/mngr-imbue-cloud-plugin/spec.md."
-        )
+        host_id = host.id if isinstance(host, HostInterface) else host
+        leased = self._find_leased(host_id)
+        if leased is None:
+            raise HostNotFoundError(host_id)
+        private_key_path, _ = self._host_keypair_paths(host_id)
+        if not private_key_path.exists():
+            raise ImbueCloudConnectorError(
+                f"stop_host: per-host SSH key for {host_id} is missing at {private_key_path}; "
+                f"this lease was created on a different machine."
+            )
+        vps_admin.stop_container(leased.vps_ip, str(host_id), private_key_path)
 
     def start_host(
         self,
         host: HostInterface | HostId,
         snapshot_id: SnapshotId | None = None,
     ) -> Host:
-        raise NotImplementedError("start_host on imbue_cloud is not yet supported. Pool hosts auto-start when leased.")
+        """Start the previously-stopped docker container via root SSH and return the Host."""
+        host_id = host.id if isinstance(host, HostInterface) else host
+        leased = self._find_leased(host_id)
+        if leased is None:
+            raise HostNotFoundError(host_id)
+        if snapshot_id is not None:
+            raise SnapshotsNotSupportedError(self.name)
+        private_key_path, _ = self._host_keypair_paths(host_id)
+        if not private_key_path.exists():
+            raise ImbueCloudConnectorError(
+                f"start_host: per-host SSH key for {host_id} is missing at {private_key_path}."
+            )
+        vps_admin.start_container(leased.vps_ip, str(host_id), private_key_path)
+        return self._build_host_object(leased)
 
     def destroy_host(self, host: HostInterface | HostId) -> None:
-        """Release the lease (since we can only act at lease granularity in this revision).
+        """Stop the leased container (does NOT release the lease).
 
-        The architect spec called for destroy = container-stop-only, but that
-        requires VPS-root SSH access that the current implementation doesn't
-        have. Until that lands, ``destroy_host`` releases the lease so the
-        user-visible behavior of ``mngr destroy <agent>`` matches their intent
-        (the agent goes away). ``delete_host`` becomes a no-op since the lease
-        is already gone.
+        Matches the architect-spec definition of destroy: the docker container
+        is stopped on the VPS but the lease, on-disk volume, and any in-progress
+        agent work persist. Use ``delete_host`` (or ``mngr imbue_cloud hosts
+        release``) to release the lease back to the pool.
         """
         host_id = host.id if isinstance(host, HostInterface) else host
-        host_db_id = self._resolve_host_db_id(host, host_id)
-        if host_db_id is None:
-            logger.warning("destroy_host: no lease record for host {}; nothing to release", host_id)
+        leased = self._find_leased(host_id)
+        if leased is None:
+            logger.warning("destroy_host: no lease record for host {}; nothing to do", host_id)
             return
-        token = self._get_access_token()
-        is_released = self.client.release_host(token, host_db_id)
-        if not is_released:
-            logger.warning("Connector returned non-success on release for host {} (lease {})", host_id, host_db_id)
-        self._cleanup_local_host_state(host_id)
+        private_key_path, _ = self._host_keypair_paths(host_id)
+        if not private_key_path.exists():
+            logger.warning(
+                "destroy_host: SSH key for host {} missing at {}; cannot stop container remotely. "
+                "Run `mngr imbue_cloud hosts release` to release the lease instead.",
+                host_id,
+                private_key_path,
+            )
+            return
+        vps_admin.stop_container(leased.vps_ip, str(host_id), private_key_path)
+        self.reset_caches()
 
     def delete_host(self, host: HostInterface) -> None:
-        """Drop local plugin state and (if still leased) release the lease.
+        """Release the lease back to the pool and drop local state.
 
-        Called by mngr's GC after the destroyed-host grace period. By that
-        point destroy_host has already released the lease, so the connector
-        call here is a best-effort idempotent no-op.
+        Called by mngr's GC after the destroyed-host grace period (or directly
+        when an operator wants the lease freed immediately). The lease return
+        is the authoritative step here; container removal is best-effort
+        because the connector will reuse the VPS for a new lease anyway.
         """
         host_id = host.id
         host_db_id = self._resolve_host_db_id(host, host_id)
+        leased = self._find_leased(host_id)
+        if leased is not None:
+            private_key_path, _ = self._host_keypair_paths(host_id)
+            if private_key_path.exists():
+                try:
+                    vps_admin.remove_container(leased.vps_ip, str(host_id), private_key_path)
+                except ImbueCloudConnectorError as exc:
+                    logger.warning("delete_host: failed to remove container for host {}: {}", host_id, exc)
         if host_db_id is not None:
             token = self._get_access_token()
             self.client.release_host(token, host_db_id)
