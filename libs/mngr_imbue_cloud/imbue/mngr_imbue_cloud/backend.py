@@ -11,7 +11,7 @@ from imbue.mngr.primitives import ProviderBackendName
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr_imbue_cloud.client import ImbueCloudConnectorClient
 from imbue.mngr_imbue_cloud.config import ImbueCloudProviderConfig
-from imbue.mngr_imbue_cloud.config import get_shared_sessions_dir
+from imbue.mngr_imbue_cloud.config import get_sessions_dir
 from imbue.mngr_imbue_cloud.instance import ImbueCloudProvider
 from imbue.mngr_imbue_cloud.primitives import IMBUE_CLOUD_BACKEND_NAME
 from imbue.mngr_imbue_cloud.session_store import ImbueCloudSessionStore
@@ -37,9 +37,11 @@ class ImbueCloudProviderBackend(ProviderBackendInterface):
     @staticmethod
     def get_build_args_help() -> str:
         return (
-            "Build args are not used by the imbue_cloud provider. "
-            "Use `mngr imbue_cloud claim` with attribute flags (--cpus, --memory-gb, ...) "
-            "to lease a matching host."
+            "Build args constrain which pool host the connector leases for this `mngr create`. "
+            "Recognized keys (see LeaseAttributes): repo_url, repo_branch_or_tag, cpus, memory_gb, "
+            "gpu_count. Unknown keys are rejected. Example: "
+            "`mngr create my-agent@my-host.imbue_cloud_alice --new-host -b cpus=4 -b "
+            "repo_branch_or_tag=v1.2.3`."
         )
 
     @staticmethod
@@ -56,7 +58,7 @@ class ImbueCloudProviderBackend(ProviderBackendInterface):
             raise MngrError(f"Expected ImbueCloudProviderConfig for instance '{name}', got {type(config).__name__}")
         connector_url = config.get_connector_url()
         client = ImbueCloudConnectorClient(base_url=AnyUrl(connector_url))
-        sessions_dir = get_shared_sessions_dir(mngr_ctx.config.default_host_dir)
+        sessions_dir = get_sessions_dir(mngr_ctx.profile_dir)
         session_store = ImbueCloudSessionStore(sessions_dir=sessions_dir)
         return ImbueCloudProvider(
             name=name,

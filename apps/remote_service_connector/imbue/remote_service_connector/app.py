@@ -1597,9 +1597,12 @@ def release_host(request: Request, host_db_id: UUID) -> dict[str, object]:
         conn = _get_pool_db_connection()
         try:
             with conn.cursor() as cur:
+                # ``str(host_db_id)`` because psycopg2 can't adapt the
+                # Python ``UUID`` type that FastAPI parsed from the path
+                # (it raises "can't adapt type 'UUID'").
                 cur.execute(
                     "SELECT leased_to_user FROM pool_hosts WHERE id = %s AND status = 'leased'",
-                    (host_db_id,),
+                    (str(host_db_id),),
                 )
                 row = cur.fetchone()
                 if row is None:
@@ -1609,7 +1612,7 @@ def release_host(request: Request, host_db_id: UUID) -> dict[str, object]:
                     raise HTTPException(status_code=403, detail="You do not own this host lease")
                 cur.execute(
                     "UPDATE pool_hosts SET status = 'released', released_at = NOW() WHERE id = %s",
-                    (host_db_id,),
+                    (str(host_db_id),),
                 )
                 conn.commit()
         finally:

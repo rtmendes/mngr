@@ -38,10 +38,8 @@ from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.api_key_store import generate_api_key
 from imbue.minds.desktop_client.api_key_store import hash_api_key
 from imbue.minds.desktop_client.api_key_store import save_api_key_hash
-from imbue.minds.desktop_client.imbue_cloud_cli import ClaimedAgentInfo
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
-from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudUnavailableError
 from imbue.minds.desktop_client.imbue_cloud_cli import LiteLLMKeyMaterial
 from imbue.minds.desktop_client.latchkey.core import AGENT_SIDE_LATCHKEY_PORT
 from imbue.minds.desktop_client.latchkey.core import Latchkey
@@ -357,6 +355,11 @@ def _build_mngr_create_command(
     agent_id: AgentId,
     host_env_file: Path | None = None,
     latchkey_gateway_url: str | None = None,
+    imbue_cloud_account: str | None = None,
+    imbue_cloud_repo_url: str | None = None,
+    imbue_cloud_branch_or_tag: str | None = None,
+    imbue_cloud_anthropic_api_key: str | None = None,
+    imbue_cloud_anthropic_base_url: str | None = None,
 ) -> tuple[list[str], str]:
     """Build the mngr create command and generate an API key for the agent.
 
@@ -367,11 +370,16 @@ def _build_mngr_create_command(
     LOCAL mode: --template main --template docker (runs in Docker container)
     LIMA mode: --template main --template lima (runs in Lima VM)
     CLOUD mode: --template main --template vultr (runs in Docker on a Vultr VPS)
+    IMBUE_CLOUD mode: --new-host on the imbue_cloud_<slug> provider (the
+        plugin's create_host adopts the pool's pre-baked agent under
+        ``agent_name``); ``imbue_cloud_*`` arguments encode the lease
+        attributes (--build-arg) and ANTHROPIC_API_KEY/BASE_URL (--host-env).
 
-    For modes that create a separate host (LOCAL, LIMA, CLOUD), the agent address
-    uses ``agent_name@{agent_name}-host`` so hosts are clearly attributable.
-    ``--reuse`` and ``--update`` are passed so re-deploying resets the agent
-    on the same host instead of failing.
+    For modes that create a separate host (LOCAL, LIMA, CLOUD, IMBUE_CLOUD),
+    the agent address uses ``agent_name@{agent_name}-host`` so hosts are
+    clearly attributable. ``--reuse`` and ``--update`` are passed so
+    re-deploying resets the agent on the same host instead of failing
+    (omitted for IMBUE_CLOUD since each lease is one-shot).
 
     When ``host_env_file`` is supplied, its contents are loaded into the host
     environment via ``--host-env-file`` so secrets from a local ``.env`` reach
@@ -391,10 +399,10 @@ def _build_mngr_create_command(
         case LaunchMode.CLOUD:
             address = f"{agent_name}@{_make_host_name(agent_name)}.vultr"
         case LaunchMode.IMBUE_CLOUD:
-            raise MngrCommandError(
-                "IMBUE_CLOUD mode does not use mngr create -- the mngr_imbue_cloud "
-                "plugin's claim flow handles lease + provisioning in one step."
-            )
+            if not imbue_cloud_account:
+                raise MngrCommandError("IMBUE_CLOUD mode requires imbue_cloud_account")
+            slug = _slugify_account(imbue_cloud_account)
+            address = f"{agent_name}@{_make_host_name(agent_name)}.imbue_cloud_{slug}"
         case _ as unreachable:
             assert_never(unreachable)
 
@@ -406,11 +414,7 @@ def _build_mngr_create_command(
         MNGR_BINARY,
         "create",
         address,
-        "--id",
-        str(agent_id),
         "--no-connect",
-        "--reuse",
-        "--update",
         "--label",
         f"workspace={agent_name}",
         "--env",
@@ -420,31 +424,58 @@ def _build_mngr_create_command(
         *(["--env", f"LATCHKEY_GATEWAY={latchkey_gateway_url}"] if latchkey_gateway_url else []),
         "--label",
         "is_primary=true",
-        "--template",
-        "main",
     ]
+
+    match launch_mode:
+        case LaunchMode.IMBUE_CLOUD:
+            # Each lease is one-shot, so --reuse / --update would be confusing.
+            # The id is dictated by the pool's pre-baked agent (the plugin's
+            # create_agent_state rejects a conflicting --id), so we don't pass
+            # --id either; the canonical id is read back via mngr list.
+            pass
+        case _:
+            mngr_command.extend(["--id", str(agent_id), "--reuse", "--update"])
 
     match launch_mode:
         case LaunchMode.DEV:
             # Local (same-machine) mode: the agent inherits the bootstrap-set
             # MNGR_HOST_DIR/MNGR_PREFIX via os.environ directly, so no
             # host-env plumbing is needed.
-            mngr_command.extend(["--template", "dev"])
+            mngr_command.extend(["--template", "main", "--template", "dev"])
         case LaunchMode.LOCAL:
-            mngr_command.extend(["--new-host", "--idle-mode", "disabled", "--template", "docker"])
+            mngr_command.extend(
+                ["--new-host", "--idle-mode", "disabled", "--template", "main", "--template", "docker"]
+            )
             mngr_command.extend(_remote_host_env_flags())
         case LaunchMode.LIMA:
-            mngr_command.extend(["--new-host", "--idle-mode", "disabled", "--template", "lima"])
+            mngr_command.extend(["--new-host", "--idle-mode", "disabled", "--template", "main", "--template", "lima"])
             mngr_command.extend(_remote_host_env_flags())
         case LaunchMode.CLOUD:
-            mngr_command.extend(["--new-host", "--idle-mode", "disabled", "--template", "vultr"])
+            mngr_command.extend(["--new-host", "--idle-mode", "disabled", "--template", "main", "--template", "vultr"])
             mngr_command.extend(_remote_host_env_flags())
         case LaunchMode.IMBUE_CLOUD:
-            # Unreachable: the first match statement raises for IMBUE_CLOUD mode.
-            raise MngrCommandError(
-                "IMBUE_CLOUD mode does not use mngr create -- the mngr_imbue_cloud "
-                "plugin's claim flow handles lease + provisioning in one step."
-            )
+            # The pool host already has the repo + agent baked in, so no
+            # template is applied here. ``-b`` flags become LeaseAttributes
+            # the connector matches against the pool host's attributes JSONB.
+            #
+            # ``ANTHROPIC_API_KEY`` and ``ANTHROPIC_BASE_URL`` flow via
+            # ``--pass-host-env`` (read from the calling shell's env) rather
+            # than ``--host-env KEY=VALUE`` so the LiteLLM key never appears
+            # in the mngr command line (where it would be visible in ``ps``
+            # and in mngr's logs). The caller sets these env vars in the
+            # subprocess env dict it hands ``run_mngr_create``; see
+            # ``_create_agent_background``.
+            mngr_command.extend(["--new-host", "--idle-mode", "disabled"])
+            if imbue_cloud_repo_url:
+                mngr_command.extend(["-b", f"repo_url={imbue_cloud_repo_url}"])
+            if imbue_cloud_branch_or_tag:
+                mngr_command.extend(["-b", f"repo_branch_or_tag={imbue_cloud_branch_or_tag}"])
+            if imbue_cloud_anthropic_api_key:
+                mngr_command.extend(["--pass-host-env", "ANTHROPIC_API_KEY"])
+            if imbue_cloud_anthropic_base_url:
+                mngr_command.extend(["--pass-host-env", "ANTHROPIC_BASE_URL"])
+            if os.environ.get("MNGR_PREFIX"):
+                mngr_command.extend(["--pass-host-env", "MNGR_PREFIX"])
         case _ as unreachable:
             assert_never(unreachable)
 
@@ -452,6 +483,20 @@ def _build_mngr_create_command(
         mngr_command.extend(["--host-env-file", str(host_env_file)])
 
     return mngr_command, api_key
+
+
+def _slugify_account(account: str) -> str:
+    """Mirror ``slugify_account`` from the plugin so the provider instance name lines up.
+
+    Inlined (rather than imported from ``imbue.mngr_imbue_cloud``) because minds
+    invokes ``mngr`` as a subprocess and is not allowed to depend on the
+    plugin Python API.
+    """
+    lowered = account.strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
+    if not slug:
+        raise MngrCommandError(f"Cannot slugify imbue_cloud account email: {account!r}")
+    return slug
 
 
 def _remote_host_env_flags() -> list[str]:
@@ -527,19 +572,28 @@ def resolve_template_version(
 
 def run_mngr_create(
     launch_mode: LaunchMode,
-    workspace_dir: Path,
+    workspace_dir: Path | None,
     agent_name: AgentName,
     agent_id: AgentId,
     on_output: OutputCallback | None = None,
     host_env_file: Path | None = None,
     latchkey_gateway_url: str | None = None,
+    imbue_cloud_account: str | None = None,
+    imbue_cloud_repo_url: str | None = None,
+    imbue_cloud_branch_or_tag: str | None = None,
+    imbue_cloud_anthropic_api_key: str | None = None,
+    imbue_cloud_anthropic_base_url: str | None = None,
     *,
     parent_cg: ConcurrencyGroup | None = None,
 ) -> str:
     """Create an mngr agent via ``mngr create``.
 
     The repo's own ``.mngr/settings.toml`` defines agent types, templates,
-    environment variables, and all other configuration.
+    environment variables, and all other configuration. ``workspace_dir`` is
+    the cwd the subprocess runs in (so ``mngr create`` picks up the local
+    repo's ``.mngr/`` settings); IMBUE_CLOUD passes ``None`` because the
+    pool host has its own pre-baked ``.mngr/`` and the local repo is
+    irrelevant.
 
     Returns the generated API key for the agent.
     Raises MngrCommandError if the command fails.
@@ -550,7 +604,25 @@ def run_mngr_create(
         agent_id,
         host_env_file=host_env_file,
         latchkey_gateway_url=latchkey_gateway_url,
+        imbue_cloud_account=imbue_cloud_account,
+        imbue_cloud_repo_url=imbue_cloud_repo_url,
+        imbue_cloud_branch_or_tag=imbue_cloud_branch_or_tag,
+        imbue_cloud_anthropic_api_key=imbue_cloud_anthropic_api_key,
+        imbue_cloud_anthropic_base_url=imbue_cloud_anthropic_base_url,
     )
+
+    # Build the subprocess env from the parent's env + any IMBUE_CLOUD
+    # secrets we inject for ``--pass-host-env`` to forward. Mutating
+    # ``os.environ`` directly would leak the LiteLLM key into the desktop
+    # client's other subprocesses, so we keep the override scoped to this
+    # invocation.
+    subprocess_env: dict[str, str] | None = None
+    if launch_mode is LaunchMode.IMBUE_CLOUD and (imbue_cloud_anthropic_api_key or imbue_cloud_anthropic_base_url):
+        subprocess_env = dict(os.environ)
+        if imbue_cloud_anthropic_api_key:
+            subprocess_env["ANTHROPIC_API_KEY"] = imbue_cloud_anthropic_api_key
+        if imbue_cloud_anthropic_base_url:
+            subprocess_env["ANTHROPIC_BASE_URL"] = imbue_cloud_anthropic_base_url
 
     logger.info("Running: {}", " ".join(mngr_command))
 
@@ -561,6 +633,7 @@ def run_mngr_create(
             cwd=workspace_dir,
             is_checked_after=False,
             on_output=on_output,
+            env=subprocess_env,
         )
 
     if result.returncode != 0:
@@ -598,10 +671,12 @@ class AgentCreator(MutableModel):
         default=None,
         frozen=True,
         description=(
-            "Wrapper around `mngr imbue_cloud …`. When provided, IMBUE_CLOUD-mode creations "
-            "delegate to `mngr imbue_cloud claim` (lease + rename + label + env injection + "
-            "start) and minds no longer maintains its own SuperTokens session, host pool, or "
-            "LiteLLM key code. Other launch modes do not consult this client."
+            "Wrapper around `mngr imbue_cloud …`. Used by IMBUE_CLOUD-mode creations to mint "
+            "a LiteLLM virtual key before the standard ``mngr create`` invocation, and by "
+            "destruction to release the lease. The lease + SSH bootstrap + agent rename "
+            "themselves run inside the plugin's ``ImbueCloudProvider.create_host``, so minds "
+            "no longer maintains its own SuperTokens session, host pool, or LiteLLM key code. "
+            "Other launch modes do not consult this client."
         ),
     )
     latchkey: Latchkey | None = Field(
@@ -660,10 +735,13 @@ class AgentCreator(MutableModel):
         via ``--host-env-file`` so local secrets reach the new agent's host.
         The flag is ignored for git URLs (since ``.env`` is gitignored).
 
-        For ``LaunchMode.IMBUE_CLOUD``, the entire flow (lease + rename + label +
-        env injection + start) runs synchronously in the background thread by
-        delegating to ``mngr imbue_cloud claim`` via ``imbue_cloud_cli``. The
-        plugin owns the SuperTokens session, so minds only needs to know which
+        For ``LaunchMode.IMBUE_CLOUD``, the LiteLLM virtual key is minted via
+        ``imbue_cloud_cli.create_litellm_key`` and then ``mngr create`` is
+        invoked against the ``imbue_cloud_<account-slug>`` provider; the
+        plugin's ``ImbueCloudProvider.create_host`` runs the lease + SSH
+        bootstrap and the rest of mngr's create pipeline adopts the
+        pool host's pre-baked agent under the requested name. The plugin
+        owns the SuperTokens session, so minds only needs to know which
         account to ask for.
 
         When ``on_created`` is provided, it is called with the agent ID after the
@@ -904,97 +982,116 @@ class AgentCreator(MutableModel):
         branch_or_tag: str = "",
         on_created: Callable[[AgentId], None] | None = None,
     ) -> None:
-        """Background thread that resolves the repo source and creates an mngr agent."""
+        """Background thread that resolves the repo source and creates an mngr agent.
+
+        IMBUE_CLOUD mode mints a LiteLLM key first (via the plugin CLI) and
+        passes it as ``ANTHROPIC_API_KEY``/``ANTHROPIC_BASE_URL`` host-env
+        flags on ``mngr create``. The plugin's provider backend handles the
+        lease + SSH bootstrap inside ``create_host``, after which the
+        canonical agent id is read back via ``mngr list`` (the lease
+        determines the id, not the caller).
+        """
         aid = str(agent_id)
         emit_log = make_log_callback(log_queue)
         host_env_file: Path | None = None
+        workspace_dir: Path | None = None
         try:
-            if launch_mode is LaunchMode.IMBUE_CLOUD:
-                self._claim_imbue_cloud_agent(
-                    agent_id=agent_id,
-                    agent_name=agent_name,
-                    log_queue=log_queue,
-                    emit_log=emit_log,
-                    account_email=account_email,
-                    repo_source=repo_source,
-                    branch_or_tag=branch_or_tag,
-                    on_created=on_created,
-                )
-                return
-
             with log_span(
                 "Creating agent {} from {} (mode: {})",
                 agent_id,
                 _redact_url_credentials(repo_source),
                 launch_mode,
             ):
-                if _is_local_path(repo_source):
-                    resolved_path = Path(os.path.expanduser(repo_source)).resolve()
-                    if not resolved_path.is_dir():
-                        raise MngrCommandError("Local path does not exist: {}".format(resolved_path))
-                    if include_env_file:
-                        candidate = resolved_path / ".env"
-                        if candidate.is_file():
-                            host_env_file = candidate
-                            log_queue.put("[minds] Including .env file: {}".format(candidate))
-                        else:
-                            log_queue.put(
-                                "[minds] No .env file found at {}; skipping --host-env-file".format(candidate)
-                            )
+                key_material: LiteLLMKeyMaterial | None = None
+                if launch_mode is LaunchMode.IMBUE_CLOUD:
+                    if self.imbue_cloud_cli is None:
+                        raise MngrCommandError("IMBUE_CLOUD mode requires imbue_cloud_cli to be configured")
+                    if not account_email:
+                        raise MngrCommandError("IMBUE_CLOUD mode requires an account_email to be supplied")
+                    parsed_name = AgentName(agent_name)
+                    log_queue.put(f"[minds] Minting LiteLLM virtual key for account {account_email}...")
+                    try:
+                        key_material = self.imbue_cloud_cli.create_litellm_key(
+                            account=account_email,
+                            alias=None,
+                            max_budget=100.0,
+                            budget_duration="1d",
+                            metadata={"agent_name": str(parsed_name)},
+                        )
+                    except ImbueCloudCliError as exc:
+                        raise MngrCommandError(f"Failed to create LiteLLM key: {exc}") from exc
+                    log_queue.put("[minds] LiteLLM key minted.")
+                else:
+                    if _is_local_path(repo_source):
+                        resolved_path = Path(os.path.expanduser(repo_source)).resolve()
+                        if not resolved_path.is_dir():
+                            raise MngrCommandError("Local path does not exist: {}".format(resolved_path))
+                        if include_env_file:
+                            candidate = resolved_path / ".env"
+                            if candidate.is_file():
+                                host_env_file = candidate
+                                log_queue.put("[minds] Including .env file: {}".format(candidate))
+                            else:
+                                log_queue.put(
+                                    "[minds] No .env file found at {}; skipping --host-env-file".format(candidate)
+                                )
 
-                    if _is_git_worktree(resolved_path):
-                        # Worktrees have a .git file pointing to the parent repo's
-                        # .git/worktrees/ dir, which breaks when copied into Docker.
-                        # Clone locally to get a standalone repo. Use file:// protocol
-                        # so --depth 1 is honored (git ignores --depth for local paths).
-                        # Use a stable path based on repo name so Docker layer caching works.
-                        log_queue.put("[minds] Cloning local worktree: {}".format(resolved_path))
+                        if _is_git_worktree(resolved_path):
+                            # Worktrees have a .git file pointing to the parent repo's
+                            # .git/worktrees/ dir, which breaks when copied into Docker.
+                            # Clone locally to get a standalone repo. Use file:// protocol
+                            # so --depth 1 is honored (git ignores --depth for local paths).
+                            # Use a stable path based on repo name so Docker layer caching works.
+                            log_queue.put("[minds] Cloning local worktree: {}".format(resolved_path))
+                            repo_name = extract_repo_name(repo_source)
+                            clone_target = Path(tempfile.gettempdir()) / "minds-clone-{}".format(repo_name)
+                            if clone_target.exists():
+                                shutil.rmtree(clone_target)
+                            file_url = GitUrl("file://{}".format(resolved_path))
+                            clone_git_repo(
+                                file_url,
+                                clone_target,
+                                on_output=emit_log,
+                                is_shallow=True,
+                                parent_cg=self.root_concurrency_group,
+                            )
+                            # The shallow clone only contains committed content. Rsync
+                            # the worktree's working directory over so that uncommitted
+                            # changes (e.g. a locally-rsynced vendor/mngr/) are included
+                            # in the Docker build context.
+                            _rsync_worktree_over_clone(
+                                resolved_path,
+                                clone_target,
+                                on_output=emit_log,
+                                parent_cg=self.root_concurrency_group,
+                            )
+                            workspace_dir = clone_target
+                        else:
+                            workspace_dir = resolved_path
+                            log_queue.put("[minds] Using local directory: {}".format(workspace_dir))
+                    else:
                         repo_name = extract_repo_name(repo_source)
                         clone_target = Path(tempfile.gettempdir()) / "minds-clone-{}".format(repo_name)
                         if clone_target.exists():
                             shutil.rmtree(clone_target)
-                        file_url = GitUrl("file://{}".format(resolved_path))
+                        log_queue.put("[minds] Cloning {}...".format(_redact_url_credentials(repo_source)))
                         clone_git_repo(
-                            file_url,
+                            GitUrl(repo_source),
                             clone_target,
                             on_output=emit_log,
                             is_shallow=True,
                             parent_cg=self.root_concurrency_group,
                         )
-                        # The shallow clone only contains committed content. Rsync
-                        # the worktree's working directory over so that uncommitted
-                        # changes (e.g. a locally-rsynced vendor/mngr/) are included
-                        # in the Docker build context.
-                        _rsync_worktree_over_clone(
-                            resolved_path, clone_target, on_output=emit_log, parent_cg=self.root_concurrency_group
-                        )
                         workspace_dir = clone_target
-                    else:
-                        workspace_dir = resolved_path
-                        log_queue.put("[minds] Using local directory: {}".format(workspace_dir))
-                else:
-                    repo_name = extract_repo_name(repo_source)
-                    clone_target = Path(tempfile.gettempdir()) / "minds-clone-{}".format(repo_name)
-                    if clone_target.exists():
-                        shutil.rmtree(clone_target)
-                    log_queue.put("[minds] Cloning {}...".format(_redact_url_credentials(repo_source)))
-                    clone_git_repo(
-                        GitUrl(repo_source),
-                        clone_target,
-                        on_output=emit_log,
-                        is_shallow=True,
-                        parent_cg=self.root_concurrency_group,
-                    )
-                    workspace_dir = clone_target
 
-                if branch:
-                    log_queue.put("[minds] Checking out branch '{}'...".format(branch))
-                    checkout_branch(
-                        workspace_dir,
-                        GitBranch(branch),
-                        on_output=emit_log,
-                        parent_cg=self.root_concurrency_group,
-                    )
+                    if branch:
+                        log_queue.put("[minds] Checking out branch '{}'...".format(branch))
+                        checkout_branch(
+                            workspace_dir,
+                            GitBranch(branch),
+                            on_output=emit_log,
+                            parent_cg=self.root_concurrency_group,
+                        )
 
                 with self._lock:
                     self._statuses[aid] = AgentCreationStatus.CREATING
@@ -1016,17 +1113,38 @@ class AgentCreator(MutableModel):
                     on_output=emit_log,
                     host_env_file=host_env_file,
                     latchkey_gateway_url=latchkey_gateway_url,
+                    imbue_cloud_account=account_email if launch_mode is LaunchMode.IMBUE_CLOUD else None,
+                    imbue_cloud_repo_url=(
+                        repo_source if launch_mode is LaunchMode.IMBUE_CLOUD and repo_source else None
+                    ),
+                    imbue_cloud_branch_or_tag=(
+                        branch_or_tag if launch_mode is LaunchMode.IMBUE_CLOUD and branch_or_tag else None
+                    ),
+                    imbue_cloud_anthropic_api_key=(
+                        key_material.key.get_secret_value() if key_material is not None else None
+                    ),
+                    imbue_cloud_anthropic_base_url=(str(key_material.base_url) if key_material is not None else None),
                     parent_cg=self.root_concurrency_group,
                 )
 
-                # Persist the API key hash
+                # The pool host's pre-baked agent_id is the canonical mngr
+                # id, not the caller-generated UUID; look it up via mngr
+                # list so the API key hash and redirect URL key on the right
+                # value. For non-IMBUE_CLOUD modes the caller's --id flag
+                # pinned the agent's id, so we just trust ``agent_id``.
+                if launch_mode is LaunchMode.IMBUE_CLOUD:
+                    canonical_id = self._lookup_canonical_agent_id(parsed_name)
+                else:
+                    canonical_id = agent_id
+
+                # Persist the API key hash under the canonical id.
                 key_hash = hash_api_key(api_key)
-                save_api_key_hash(self.paths.data_dir, agent_id, key_hash)
+                save_api_key_hash(self.paths.data_dir, canonical_id, key_hash)
                 log_queue.put("[minds] API key generated and hash stored.")
 
                 log_queue.put("[minds] Agent created successfully.")
 
-                redirect_url = "/goto/{}/".format(agent_id)
+                redirect_url = "/goto/{}/".format(canonical_id)
 
                 # Set DONE before invoking on_created so the UI can redirect as
                 # soon as the agent is usable. ``on_created`` is expected to
@@ -1037,7 +1155,7 @@ class AgentCreator(MutableModel):
                     self._redirect_urls[aid] = redirect_url
 
                 if on_created is not None:
-                    on_created(agent_id)
+                    on_created(canonical_id)
 
         except (GitCloneError, GitOperationError, MngrCommandError, ImbueCloudCliError, ValueError, OSError) as e:
             logger.opt(exception=e).error("Failed to create agent {}", agent_id)
@@ -1052,6 +1170,45 @@ class AgentCreator(MutableModel):
                 self.latchkey.stop_gateway_for_agent(agent_id)
         finally:
             log_queue.put(LOG_SENTINEL)
+
+    def _lookup_canonical_agent_id(self, agent_name: AgentName) -> AgentId:
+        """Find the canonical mngr agent id for the agent we just created.
+
+        ``mngr create`` against the imbue_cloud provider returns an agent
+        whose id is the pool host's pre-baked one, not the
+        minds-side UUID we use to key in-memory creation state. We tag every
+        minds-managed agent with ``is_primary=true`` and ``workspace=<name>``,
+        so a single ``mngr list`` lookup against those labels uniquely
+        identifies the row.
+        """
+        cg = _make_child_cg("mngr-list-canonical-id", self.root_concurrency_group)
+        with cg:
+            result = cg.run_process_to_completion(
+                command=[
+                    MNGR_BINARY,
+                    "list",
+                    "--include",
+                    f'name == "{agent_name}" and labels.is_primary == "true"',
+                    "--format",
+                    "json",
+                ],
+                is_checked_after=False,
+            )
+        if result.returncode != 0:
+            raise MngrCommandError(
+                "mngr list (post-create canonical id lookup) failed (exit {}):\n{}".format(
+                    result.returncode,
+                    result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
+                )
+            )
+        try:
+            data = json.loads(result.stdout)
+            agents = data.get("agents", [])
+        except json.JSONDecodeError as exc:
+            raise MngrCommandError(f"mngr list returned non-JSON output: {exc}") from exc
+        if not agents:
+            raise MngrCommandError(f"No agent named {agent_name!r} with is_primary=true was found post-create")
+        return AgentId(agents[0]["id"])
 
     def _maybe_start_latchkey_gateway(
         self,
@@ -1081,98 +1238,3 @@ class AgentCreator(MutableModel):
         url = _build_latchkey_gateway_url(launch_mode, info)
         log_queue.put(f"[minds] Latchkey gateway for this agent: {url}")
         return url
-
-    def _claim_imbue_cloud_agent(
-        self,
-        agent_id: AgentId,
-        agent_name: str,
-        log_queue: queue.Queue[str],
-        emit_log: OutputCallback,
-        account_email: str,
-        repo_source: str,
-        branch_or_tag: str,
-        on_created: Callable[[AgentId], None] | None = None,
-    ) -> None:
-        """Claim a pre-baked agent from the imbue_cloud pool via `mngr imbue_cloud claim`.
-
-        The plugin's claim command does the entire flow in 2 SSH round trips:
-        lease, rename + labels, env injection, and (optionally) start. We mint
-        the per-agent LiteLLM key first via `mngr imbue_cloud keys litellm
-        create` and pass it through as ANTHROPIC_API_KEY/ANTHROPIC_BASE_URL on
-        the claim invocation -- the architect spec requires keys to exist
-        before the agent boots so it never sees a placeholder.
-        """
-        if self.imbue_cloud_cli is None:
-            raise MngrCommandError("IMBUE_CLOUD mode requires imbue_cloud_cli to be configured")
-        if not account_email:
-            raise MngrCommandError("IMBUE_CLOUD mode requires an account_email to be supplied")
-
-        aid = str(agent_id)
-        cli = self.imbue_cloud_cli
-        parsed_name = AgentName(agent_name)
-
-        with self._lock:
-            self._statuses[aid] = AgentCreationStatus.CREATING
-
-        log_queue.put(f"[minds] Minting LiteLLM virtual key for account {account_email}...")
-        try:
-            key_material: LiteLLMKeyMaterial = cli.create_litellm_key(
-                account=account_email,
-                alias=None,
-                max_budget=100.0,
-                budget_duration="1d",
-                metadata={"agent_name": str(parsed_name)},
-            )
-        except ImbueCloudCliError as exc:
-            raise MngrCommandError(f"Failed to create LiteLLM key: {exc}") from exc
-        log_queue.put("[minds] LiteLLM key minted.")
-
-        api_key = generate_api_key()
-        log_queue.put(
-            f"[minds] Claiming pool host for agent '{parsed_name}' "
-            f"(repo={_redact_url_credentials(repo_source) or '<not specified>'}, "
-            f"branch_or_tag={branch_or_tag or '<not specified>'})..."
-        )
-        try:
-            claim_info: ClaimedAgentInfo = cli.claim(
-                account=account_email,
-                agent_name=str(parsed_name),
-                attributes={
-                    "repo_url": repo_source if repo_source else None,
-                    "repo_branch_or_tag": branch_or_tag or None,
-                },
-                labels={
-                    "workspace": str(parsed_name),
-                    "user_created": "true",
-                    "is_primary": "true",
-                },
-                env=None,
-                minds_api_key=api_key,
-                anthropic_api_key=key_material.key.get_secret_value(),
-                anthropic_base_url=str(key_material.base_url),
-                mngr_prefix=os.environ.get("MNGR_PREFIX") or None,
-                start=True,
-                on_output=emit_log,
-            )
-        except ImbueCloudUnavailableError as exc:
-            log_queue.put(f"[minds] No matching pool host available: {exc}")
-            raise MngrCommandError(str(exc)) from exc
-
-        # The pool host's pre-baked agent_id (which the plugin renamed in
-        # place to `parsed_name`) is the id mngr knows about. minds's own
-        # agent_id is only used to key the in-memory creation-status dicts.
-        canonical_agent_id = AgentId(claim_info.agent_id)
-        key_hash = hash_api_key(api_key)
-        save_api_key_hash(self.paths.data_dir, canonical_agent_id, key_hash)
-        log_queue.put(
-            f"[minds] Leased host {claim_info.vps_ip}:{claim_info.container_ssh_port}, "
-            f"claimed agent {canonical_agent_id}."
-        )
-
-        redirect_url = "/goto/{}/".format(canonical_agent_id)
-        with self._lock:
-            self._statuses[aid] = AgentCreationStatus.DONE
-            self._redirect_urls[aid] = redirect_url
-
-        if on_created is not None:
-            on_created(canonical_agent_id)

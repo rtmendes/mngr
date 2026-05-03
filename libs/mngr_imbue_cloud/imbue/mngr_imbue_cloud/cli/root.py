@@ -4,7 +4,6 @@ import click
 
 from imbue.mngr_imbue_cloud.cli.admin import admin
 from imbue.mngr_imbue_cloud.cli.auth import auth
-from imbue.mngr_imbue_cloud.cli.claim import claim
 from imbue.mngr_imbue_cloud.cli.hosts import hosts
 from imbue.mngr_imbue_cloud.cli.keys import keys
 from imbue.mngr_imbue_cloud.cli.tunnels import tunnels
@@ -20,4 +19,3 @@ imbue_cloud.add_command(hosts)
 imbue_cloud.add_command(keys)
 imbue_cloud.add_command(tunnels)
 imbue_cloud.add_command(admin)
-imbue_cloud.add_command(claim)

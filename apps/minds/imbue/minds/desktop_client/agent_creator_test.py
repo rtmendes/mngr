@@ -1,10 +1,14 @@
 """Unit tests for agent_creator.
 
-Most LEASED-mode tests were removed when the inline lease flow was replaced
-with a delegation to ``imbue_cloud_cli.claim()`` (which subprocesses
-``mngr imbue_cloud claim``). The flow is now exercised by the plugin's own
-test suite plus end-to-end tests in ``test_desktop_client_e2e.py``.
+IMBUE_CLOUD-mode lease/rename/env-injection no longer happens in this
+module: it runs inside ``ImbueCloudProvider.create_host``, reached
+through the standard ``mngr create`` invocation. The plugin's own test
+suite (``libs/mngr_imbue_cloud``) covers the lease + adopt path; this
+file covers minds' command-building and helpers.
 """
+
+from datetime import datetime
+from datetime import timezone
 
 from imbue.minds.desktop_client.agent_creator import _build_latchkey_gateway_url
 from imbue.minds.desktop_client.agent_creator import _build_mngr_create_command
@@ -55,9 +59,6 @@ def test_make_host_name_appends_host_suffix() -> None:
 
 
 def _make_gateway_info(host: str = "127.0.0.1", port: int = 12345) -> LatchkeyGatewayInfo:
-    from datetime import datetime
-    from datetime import timezone
-
     return LatchkeyGatewayInfo(
         host=host,
         port=port,
@@ -94,6 +95,44 @@ def test_build_mngr_create_command_uses_main_template_and_omits_message_arg() ->
     assert "--message" not in command
     assert api_key
     assert f"--id\n{agent_id}".replace("\n", " ") in " ".join(command)
+
+
+def test_build_mngr_create_command_imbue_cloud_targets_account_provider() -> None:
+    agent_id = AgentId.generate()
+    command, api_key = _build_mngr_create_command(
+        launch_mode=LaunchMode.IMBUE_CLOUD,
+        agent_name=AgentName("hello"),
+        agent_id=agent_id,
+        imbue_cloud_account="alice@imbue.com",
+        imbue_cloud_repo_url="https://github.com/imbue-ai/forever-claude-template",
+        imbue_cloud_branch_or_tag="v1.2.3",
+        imbue_cloud_anthropic_api_key="sk-test",
+        imbue_cloud_anthropic_base_url="https://litellm.example.com",
+    )
+    joined = " ".join(command)
+    # Address points at the imbue_cloud_<slug> provider so mngr routes
+    # create_host to ImbueCloudProvider.
+    assert "@hello-host.imbue_cloud_alice-imbue-com" in joined
+    # IMBUE_CLOUD does not pass --id (the lease determines the canonical id),
+    # nor --reuse / --update (each lease is one-shot).
+    assert "--id" not in command
+    assert "--reuse" not in command
+    assert "--update" not in command
+    # Lease attributes flow through --build-arg.
+    assert "-b" in command
+    assert "repo_url=https://github.com/imbue-ai/forever-claude-template" in command
+    assert "repo_branch_or_tag=v1.2.3" in command
+    # ANTHROPIC_API_KEY / BASE_URL flow via --pass-host-env (the values
+    # land in the subprocess env, not the command line, so the LiteLLM
+    # key isn't visible in `ps` or in mngr's logs).
+    assert "ANTHROPIC_API_KEY=sk-test" not in command
+    assert "ANTHROPIC_BASE_URL=https://litellm.example.com" not in command
+    assert "--pass-host-env" in command
+    assert "ANTHROPIC_API_KEY" in command
+    assert "ANTHROPIC_BASE_URL" in command
+    # IMBUE_CLOUD does not run a local template; the pool host has its own.
+    assert "--template" not in command
+    assert api_key
 
 
 def test_is_git_worktree_returns_false_for_nonexistent_path(tmp_path) -> None:

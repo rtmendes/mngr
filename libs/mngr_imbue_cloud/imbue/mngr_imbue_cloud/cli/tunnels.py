@@ -11,7 +11,7 @@ from imbue.mngr_imbue_cloud.cli._common import fail_with_json
 from imbue.mngr_imbue_cloud.cli._common import handle_imbue_cloud_errors
 from imbue.mngr_imbue_cloud.cli._common import make_connector_client
 from imbue.mngr_imbue_cloud.cli._common import make_session_store
-from imbue.mngr_imbue_cloud.cli._common import parse_account
+from imbue.mngr_imbue_cloud.cli._common import resolve_account_or_active
 from imbue.mngr_imbue_cloud.data_types import AuthPolicy
 
 
@@ -35,7 +35,7 @@ def _parse_policy_arg(policy_json: str | None) -> AuthPolicy | None:
 
 @tunnels.command(name="create")
 @click.argument("agent_id")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option(
     "--policy",
     default=None,
@@ -43,12 +43,12 @@ def _parse_policy_arg(policy_json: str | None) -> AuthPolicy | None:
 )
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
-def create_tunnel(agent_id: str, account: str, policy: str | None, connector_url: str | None) -> None:
+def create_tunnel(agent_id: str, account: str | None, policy: str | None, connector_url: str | None) -> None:
     """Create a Cloudflare tunnel for the given agent."""
-    parsed_account = parse_account(account)
     parsed_policy = _parse_policy_arg(policy)
     client = make_connector_client(connector_url)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     token = get_active_token(store, client, parsed_account)
     info = client.create_tunnel(token, agent_id, parsed_policy)
     emit_json(
@@ -62,14 +62,14 @@ def create_tunnel(agent_id: str, account: str, policy: str | None, connector_url
 
 
 @tunnels.command(name="list")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
-def list_tunnels(account: str, connector_url: str | None) -> None:
+def list_tunnels(account: str | None, connector_url: str | None) -> None:
     """List all tunnels owned by this account."""
-    parsed_account = parse_account(account)
     client = make_connector_client(connector_url)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     token = get_active_token(store, client, parsed_account)
     items = client.list_tunnels(token)
     emit_json(
@@ -86,14 +86,14 @@ def list_tunnels(account: str, connector_url: str | None) -> None:
 
 @tunnels.command(name="delete")
 @click.argument("tunnel_name")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
-def delete_tunnel(tunnel_name: str, account: str, connector_url: str | None) -> None:
+def delete_tunnel(tunnel_name: str, account: str | None, connector_url: str | None) -> None:
     """Delete a tunnel and cascade-clean its DNS, ingress, and KV entries."""
-    parsed_account = parse_account(account)
     client = make_connector_client(connector_url)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     token = get_active_token(store, client, parsed_account)
     client.delete_tunnel(token, tunnel_name)
     emit_json({"deleted": True, "tunnel_name": tunnel_name})
@@ -108,20 +108,20 @@ def services() -> None:
 @click.argument("tunnel_name")
 @click.argument("service_name")
 @click.argument("service_url")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
 def add_service(
     tunnel_name: str,
     service_name: str,
     service_url: str,
-    account: str,
+    account: str | None,
     connector_url: str | None,
 ) -> None:
     """Add a service to a tunnel (creates DNS + Access app)."""
-    parsed_account = parse_account(account)
     client = make_connector_client(connector_url)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     token = get_active_token(store, client, parsed_account)
     info = client.add_service(token, tunnel_name, service_name, service_url)
     emit_json(
@@ -135,14 +135,14 @@ def add_service(
 
 @services.command(name="list")
 @click.argument("tunnel_name")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
-def list_services(tunnel_name: str, account: str, connector_url: str | None) -> None:
+def list_services(tunnel_name: str, account: str | None, connector_url: str | None) -> None:
     """List services configured on a tunnel."""
-    parsed_account = parse_account(account)
     client = make_connector_client(connector_url)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     token = get_active_token(store, client, parsed_account)
     items = client.list_services(token, tunnel_name)
     emit_json([entry.model_dump(mode="json") for entry in items])
@@ -151,19 +151,19 @@ def list_services(tunnel_name: str, account: str, connector_url: str | None) -> 
 @services.command(name="remove")
 @click.argument("tunnel_name")
 @click.argument("service_name")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
 def remove_service(
     tunnel_name: str,
     service_name: str,
-    account: str,
+    account: str | None,
     connector_url: str | None,
 ) -> None:
     """Remove a service (deletes its DNS + Access app)."""
-    parsed_account = parse_account(account)
     client = make_connector_client(connector_url)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     token = get_active_token(store, client, parsed_account)
     client.remove_service(token, tunnel_name, service_name)
     emit_json({"removed": True, "tunnel_name": tunnel_name, "service_name": service_name})
@@ -176,7 +176,7 @@ def tunnel_auth() -> None:
 
 @tunnel_auth.command(name="get")
 @click.argument("tunnel_name")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option(
     "--service",
     default=None,
@@ -186,14 +186,14 @@ def tunnel_auth() -> None:
 @handle_imbue_cloud_errors
 def get_auth(
     tunnel_name: str,
-    account: str,
+    account: str | None,
     service: str | None,
     connector_url: str | None,
 ) -> None:
     """Get the default tunnel policy or the policy for a specific service."""
-    parsed_account = parse_account(account)
     client = make_connector_client(connector_url)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     token = get_active_token(store, client, parsed_account)
     if service is None:
         policy = client.get_tunnel_auth(token, tunnel_name)
@@ -205,7 +205,7 @@ def get_auth(
 @tunnel_auth.command(name="set")
 @click.argument("tunnel_name")
 @click.argument("policy_json")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option(
     "--service",
     default=None,
@@ -216,7 +216,7 @@ def get_auth(
 def set_auth(
     tunnel_name: str,
     policy_json: str,
-    account: str,
+    account: str | None,
     service: str | None,
     connector_url: str | None,
 ) -> None:
@@ -224,7 +224,6 @@ def set_auth(
 
     POLICY_JSON is a JSON object with optional emails / email_domains / require_idp keys.
     """
-    parsed_account = parse_account(account)
     parsed_policy = _parse_policy_arg(policy_json)
     # _parse_policy_arg returns None only when its input is None; we passed a
     # required positional argument, so this is just a safety belt for the type
@@ -233,6 +232,7 @@ def set_auth(
         fail_with_json("Policy cannot be empty", error_class="UsageError")
     client = make_connector_client(connector_url)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     token = get_active_token(store, client, parsed_account)
     if service is None:
         client.set_tunnel_auth(token, tunnel_name, parsed_policy)

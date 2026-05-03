@@ -1,7 +1,10 @@
 """`mngr imbue_cloud hosts ...` subcommands.
 
-Lease creation goes through `mngr imbue_cloud claim` (not these commands)
-because claiming runs the full rename/relabel/env-injection sequence.
+Lease creation goes through ``mngr create --provider imbue_cloud_<account>
+--new-host -b <attr>=<val> ...``; the provider implementation issues the
+lease, runs the SSH bootstrap, and returns a host that the standard mngr
+create pipeline finishes adopting under the caller's chosen agent name.
+These subcommands are listing + release helpers on top of that flow.
 """
 
 import click
@@ -12,7 +15,7 @@ from imbue.mngr_imbue_cloud.cli._common import fail_with_json
 from imbue.mngr_imbue_cloud.cli._common import handle_imbue_cloud_errors
 from imbue.mngr_imbue_cloud.cli._common import make_connector_client
 from imbue.mngr_imbue_cloud.cli._common import make_session_store
-from imbue.mngr_imbue_cloud.cli._common import parse_account
+from imbue.mngr_imbue_cloud.cli._common import resolve_account_or_active
 
 
 @click.group(name="hosts")
@@ -21,14 +24,14 @@ def hosts() -> None:
 
 
 @hosts.command(name="list")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
-def list_hosts(account: str, connector_url: str | None) -> None:
+def list_hosts(account: str | None, connector_url: str | None) -> None:
     """List all hosts currently leased by this account."""
-    parsed_account = parse_account(account)
     client = make_connector_client(connector_url)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     token = get_active_token(store, client, parsed_account)
     leased = client.list_hosts(token)
     payload = [
@@ -50,14 +53,14 @@ def list_hosts(account: str, connector_url: str | None) -> None:
 
 @hosts.command(name="release")
 @click.argument("host_db_id")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
-def release_host(host_db_id: str, account: str, connector_url: str | None) -> None:
+def release_host(host_db_id: str, account: str | None, connector_url: str | None) -> None:
     """Release a leased host back to the pool."""
-    parsed_account = parse_account(account)
     client = make_connector_client(connector_url)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     token = get_active_token(store, client, parsed_account)
     is_released = client.release_host(token, host_db_id)
     if not is_released:

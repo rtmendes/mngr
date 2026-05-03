@@ -15,7 +15,6 @@ parses those into typed pydantic objects.
 import json as _json
 from collections.abc import Mapping
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -60,20 +59,6 @@ class ImbueCloudAuthSession(FrozenModel):
     email: str
     display_name: str | None = None
     needs_email_verification: bool = False
-
-
-class ClaimedAgentInfo(FrozenModel):
-    """Result of `mngr imbue_cloud claim`."""
-
-    host_db_id: str
-    host_id: str
-    agent_id: str
-    agent_name: str
-    vps_ip: str
-    container_ssh_port: int
-    ssh_user: str
-    private_key_path: Path
-    started: bool
 
 
 class LeasedHost(FrozenModel):
@@ -261,72 +246,6 @@ class ImbueCloudCli(MutableModel):
             _short(result.stderr or result.stdout),
         )
         return False
-
-    # ------------------------------------------------------------------
-    # Claim flow (lease + rename + label + env injection + start)
-    # ------------------------------------------------------------------
-
-    def claim(
-        self,
-        *,
-        account: str,
-        agent_name: str,
-        attributes: Mapping[str, Any] | None = None,
-        labels: Mapping[str, str] | None = None,
-        env: Mapping[str, str] | None = None,
-        minds_api_key: str | None = None,
-        anthropic_api_key: str | None = None,
-        anthropic_base_url: str | None = None,
-        mngr_prefix: str | None = None,
-        instance_name: str | None = None,
-        start: bool = True,
-        on_output: Any = None,
-    ) -> ClaimedAgentInfo:
-        """Run `mngr imbue_cloud claim` and return the parsed result.
-
-        Raises ``ImbueCloudUnavailableError`` if the connector responds 503
-        (no matching pool host).
-        """
-        args: list[str] = ["claim", agent_name, "--account", account]
-        if attributes:
-            attribute_flag_map = {
-                "repo_url": "--repo-url",
-                "repo_branch_or_tag": "--repo-branch-or-tag",
-                "cpus": "--cpus",
-                "memory_gb": "--memory-gb",
-                "gpu_count": "--gpu-count",
-            }
-            for key, flag in attribute_flag_map.items():
-                if key in attributes and attributes[key] is not None:
-                    args.extend([flag, str(attributes[key])])
-        for key, value in (labels or {}).items():
-            args.extend(["--label", f"{key}={value}"])
-        for key, value in (env or {}).items():
-            args.extend(["--env", f"{key}={value}"])
-        if minds_api_key is not None:
-            args.extend(["--minds-api-key", minds_api_key])
-        if anthropic_api_key is not None:
-            args.extend(["--anthropic-api-key", anthropic_api_key])
-        if anthropic_base_url is not None:
-            args.extend(["--anthropic-base-url", anthropic_base_url])
-        if mngr_prefix is not None:
-            args.extend(["--mngr-prefix", mngr_prefix])
-        if instance_name is not None:
-            args.extend(["--instance-name", instance_name])
-        args.append("--start" if start else "--no-start")
-
-        result = self._run(
-            args,
-            cg_name="imbue-cloud-claim",
-            timeout_seconds=_LEASE_TIMEOUT_SECONDS,
-            on_output=on_output,
-        )
-        body = self._expect_success(
-            result,
-            "imbue_cloud claim",
-            unavailable_signal="ImbueCloudLeaseUnavailableError",
-        )
-        return ClaimedAgentInfo.model_validate(body)
 
     # ------------------------------------------------------------------
     # LiteLLM keys

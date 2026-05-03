@@ -1,15 +1,41 @@
 """Host class for imbue_cloud-leased agents.
 
-Subclasses mngr's Host to remember the pre-baked agent id so the claim
-flow (rename + relabel + env injection) can target it directly.
+Subclasses mngr's ``Host`` so the standard ``mngr create --provider
+imbue_cloud_<account> --new-host`` pipeline can adopt a pool host's
+pre-baked agent under the caller's chosen name when one exists, and
+fall back to mngr's standard create flow when it doesn't (e.g. after
+``mngr destroy`` has wiped the previous agent's state on the leased
+container). Adoption is purely an optimization that skips a slow
+file-transfer + provisioning round when we can.
+
+Overrides:
+
+- ``set_env_vars`` always merges into the pre-baked ``/mngr/env``
+  (clobbering would lose ``MNGR_HOST_DIR``/``MNGR_PREFIX``/etc. that
+  the pool baking wrote).
+- ``create_agent_state`` always pins ``options.agent_id`` to
+  ``pre_baked_agent_id`` so the lease's canonical id stays stable
+  across destroy/recreate cycles, regardless of whether on-disk state
+  survives. The parent's ``data.json`` write then runs as usual.
+- ``create_agent_work_dir`` and ``provision_agent`` short-circuit to a
+  no-transfer + minimal-provision path *only* when the pre-baked
+  agent's ``data.json`` is still on disk; otherwise they delegate to
+  ``super()`` and let mngr do a full create + provision.
 """
 
+import json as _json
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
-from typing import Mapping
 
 from pydantic import Field
 
+from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.hosts.host import Host
+from imbue.mngr.interfaces.agent import AgentInterface
+from imbue.mngr.interfaces.host import CreateAgentOptions
+from imbue.mngr.interfaces.host import CreateWorkDirResult
+from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
 
@@ -17,9 +43,8 @@ from imbue.mngr.primitives import AgentName
 class ImbueCloudHost(Host):
     """A leased pool host.
 
-    The pre-baked agent's id is captured at lease time so the plugin's claim
-    command can do its rename + label + env-injection sequence on the right
-    agent. Outside the claim flow this field is informational.
+    The pre-baked agent's id is captured at lease time so ``create_agent_state``
+    can adopt that agent under the caller's name instead of generating a new id.
     """
 
     pre_baked_agent_id: AgentId | None = Field(
@@ -35,6 +60,119 @@ class ImbueCloudHost(Host):
         frozen=True,
         description="Database id of this lease (UUID returned by /hosts/lease).",
     )
+
+    def set_env_vars(self, env: Mapping[str, str]) -> None:
+        """Merge ``env`` into the pre-baked ``/mngr/env`` instead of overwriting.
+
+        The pool host's host env file already contains values that the agent
+        runtime needs (``MNGR_HOST_DIR``, ``MNGR_PREFIX``, etc.). The standard
+        ``Host.set_env_vars`` would clobber them, so we read-modify-write to
+        keep the pre-baked entries that the caller didn't override.
+        """
+        if not env:
+            return
+        existing = self.get_env_vars()
+        existing.update(env)
+        super().set_env_vars(existing)
+
+    def _read_pre_baked_data(self) -> dict[str, Any] | None:
+        """Try to read the pre-baked agent's ``data.json`` from the leased container.
+
+        Returns the parsed dict when present, ``None`` when this host has
+        no ``pre_baked_agent_id`` (constructed outside the lease flow) or
+        the file is missing on disk (e.g. ``mngr destroy`` deleted the
+        agent state on a previous lease cycle). Callers use this to
+        decide whether the optimized adopt path is available; ``None``
+        means "fall back to mngr's standard create flow".
+        """
+        if self.pre_baked_agent_id is None:
+            return None
+        data_path = self.host_dir / "agents" / str(self.pre_baked_agent_id) / "data.json"
+        try:
+            return _json.loads(self.read_text_file(data_path))
+        except FileNotFoundError:
+            return None
+
+    def create_agent_work_dir(
+        self,
+        host: OnlineHostInterface,
+        path: Path,
+        options: CreateAgentOptions,
+    ) -> CreateWorkDirResult:
+        """Adopt the pre-baked work_dir when one is on disk, otherwise transfer normally.
+
+        When the pre-baked agent's ``data.json`` is still present on the
+        leased container (the common case, right after a fresh lease), we
+        skip the file transfer and return the recorded ``work_dir`` -- the
+        FCT template baked it (``target_path = "/code/"`` for the vultr
+        template, etc.) and we just trust whatever was written.
+
+        Otherwise, fall through to mngr's standard ``create_agent_work_dir``
+        which runs the configured transfer mode against ``host`` / ``path``.
+        """
+        data = self._read_pre_baked_data()
+        if data is not None:
+            recorded_work_dir = data.get("work_dir")
+            if isinstance(recorded_work_dir, str) and recorded_work_dir:
+                return CreateWorkDirResult(path=Path(recorded_work_dir))
+        return super().create_agent_work_dir(host, path, options)
+
+    def create_agent_state(
+        self,
+        work_dir_path: Path,
+        options: CreateAgentOptions,
+        created_branch_name: str | None = None,
+    ) -> AgentInterface:
+        """Pin the lease's pre-baked id, then run the standard create flow.
+
+        Forcing ``options.agent_id = pre_baked_agent_id`` (regardless of
+        whether on-disk state survives) keeps the lease's canonical id
+        stable across destroy/recreate cycles, so subsequent commands
+        (``mngr list``, ``mngr connect``, ...) keep targeting the same
+        agent record in the connector's pool DB.
+        """
+        if self.pre_baked_agent_id is not None:
+            if options.agent_id is not None and options.agent_id != self.pre_baked_agent_id:
+                raise ValueError(
+                    f"imbue_cloud agent id is fixed by the lease ({self.pre_baked_agent_id}); "
+                    f"caller requested {options.agent_id}. Drop --id to let the lease decide."
+                )
+            if options.agent_id != self.pre_baked_agent_id:
+                options = options.model_copy(update={"agent_id": self.pre_baked_agent_id})
+        return super().create_agent_state(work_dir_path, options, created_branch_name)
+
+    def provision_agent(
+        self,
+        agent: AgentInterface,
+        options: CreateAgentOptions,
+        mngr_ctx: MngrContext,
+    ) -> None:
+        """Minimal provisioning when the pool host is already provisioned, full otherwise.
+
+        When the pre-baked agent's ``data.json`` is still on disk, the
+        container has all the packages and file transfers the FCT template
+        installed and we only need to (a) write the agent env file (so
+        ``MNGR_AGENT_NAME`` / ``--env`` overrides land) and (b) patch the
+        claude config when ``ANTHROPIC_API_KEY`` is set anywhere in env
+        (the LiteLLM key flows through ``--pass-host-env`` for minds, so
+        we have to look at host env, not just agent env).
+
+        When the pre-baked agent state has been wiped (``mngr destroy``
+        on a previous lease cycle, etc.), fall through to mngr's standard
+        ``provision_agent`` so packages/file transfers/agent-type provisioning
+        run from scratch.
+        """
+        if self._read_pre_baked_data() is None:
+            super().provision_agent(agent, options, mngr_ctx)
+            return
+        agent_env = self._collect_agent_env_vars(agent, options)
+        self._write_agent_env_file(agent, agent_env)
+        anthropic_api_key = agent_env.get("ANTHROPIC_API_KEY") or self.get_env_vars().get("ANTHROPIC_API_KEY")
+        if anthropic_api_key:
+            patch_command = _build_patch_claude_config_command(anthropic_api_key, agent.id)
+            result = self.execute_idempotent_command(patch_command)
+            if not result.success:
+                raise RuntimeError(f"Failed to patch claude config on imbue_cloud host {self.id}: {result.stderr}")
 
 
 def build_combined_inject_command(

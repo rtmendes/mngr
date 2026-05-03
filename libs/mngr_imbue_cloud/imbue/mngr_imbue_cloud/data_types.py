@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -29,6 +30,51 @@ class LeaseAttributes(FrozenModel):
     def to_request_dict(self) -> dict[str, Any]:
         """Drop None values so the connector treats them as 'unconstrained'."""
         return {k: v for k, v in self.model_dump().items() if v is not None}
+
+    @classmethod
+    def from_build_args(cls, build_args: Sequence[str] | None) -> tuple["LeaseAttributes", str | None]:
+        """Parse mngr's ``--build-arg KEY=VALUE`` entries.
+
+        Recognized lease-attribute keys: ``repo_url``, ``repo_branch_or_tag``,
+        ``cpus``, ``memory_gb``, ``gpu_count``. ``account`` is also recognized
+        but is NOT a lease attribute -- it tells the provider which Imbue
+        Cloud session to authenticate with, so it is returned separately.
+        Unknown keys are rejected with a clear ``ValueError`` so a misspelled
+        flag fails fast rather than silently widening the lease match.
+
+        Returns ``(attributes, account_override)`` where ``account_override``
+        is ``None`` if ``-b account=<email>`` was not passed.
+        """
+        if not build_args:
+            return cls(), None
+        parsed: dict[str, Any] = {}
+        account_override: str | None = None
+        attribute_keys = set(cls.model_fields.keys())
+        for entry in build_args:
+            if "=" not in entry:
+                raise ValueError(f"build_args entry must be KEY=VALUE, got: {entry!r}")
+            key, _, value = entry.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                raise ValueError(f"build_args entry has empty key: {entry!r}")
+            if key == "account":
+                if not value:
+                    raise ValueError("build_arg account=<email> requires a non-empty value")
+                account_override = value
+                continue
+            if key not in attribute_keys:
+                raise ValueError(
+                    f"Unknown build_arg key {key!r}; allowed keys are {sorted(attribute_keys | {'account'})}"
+                )
+            if key in {"cpus", "memory_gb", "gpu_count"}:
+                try:
+                    parsed[key] = int(value)
+                except ValueError as exc:
+                    raise ValueError(f"build_arg {key}={value!r} must be an integer") from exc
+            else:
+                parsed[key] = value
+        return cls(**parsed), account_override
 
 
 class LeaseResult(FrozenModel):

@@ -19,9 +19,14 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.responses import Response
 from loguru import logger
+from pydantic import ConfigDict
 from pydantic import Field
 
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.imbue_common.mutable_model import MutableModel
+from imbue.minds.bootstrap import set_imbue_cloud_provider_for_account
+from imbue.minds.bootstrap import unset_imbue_cloud_provider_for_account
+from imbue.minds.desktop_client.backend_resolver import MngrStreamManager
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
 from imbue.minds.desktop_client.minds_config import MindsConfig
@@ -61,7 +66,7 @@ class AuthResult(FrozenModel):
     needs_email_verification: bool = Field(default=False)
 
 
-class _AuthBackendShim:
+class _AuthBackendShim(MutableModel):
     """Adapt ``ImbueCloudCli`` to the API shape the route handlers expect.
 
     The route handlers were originally written against ``AuthBackendClient``;
@@ -71,8 +76,13 @@ class _AuthBackendShim:
     or writes session files, it only maps response shapes.
     """
 
-    def __init__(self, imbue_cloud_cli: ImbueCloudCli) -> None:
-        self._cli = imbue_cloud_cli
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    cli: ImbueCloudCli = Field(frozen=True, description="Subprocess wrapper around the imbue_cloud plugin CLI")
+
+    @property
+    def _cli(self) -> ImbueCloudCli:
+        return self.cli
 
     def signup(self, email: str, password: str) -> AuthResult:
         try:
@@ -118,7 +128,8 @@ class _AuthBackendShim:
 
     def send_verification_email(self, _user_id: str, email: str) -> bool:
         try:
-            self._cli.auth_status(email)  # Touch the session as a smoke check.
+            # Touch the session as a smoke check.
+            self._cli.auth_status(email)
             return True
         except ImbueCloudCliError as exc:
             logger.warning("Could not invoke auth status for {}: {}", email, exc)
@@ -126,7 +137,8 @@ class _AuthBackendShim:
 
     def forgot_password(self, email: str) -> None:
         try:
-            self._cli.auth_status(email)  # Plugin doesn't currently expose forgot-password.
+            # Plugin doesn't currently expose forgot-password.
+            self._cli.auth_status(email)
         except ImbueCloudCliError as exc:
             logger.warning("Forgot-password (placeholder) call failed for {}: {}", email, exc)
 
@@ -158,7 +170,7 @@ def _get_auth_backend(request: Request) -> _AuthBackendShim:
     cli: ImbueCloudCli | None = request.app.state.imbue_cloud_cli
     if cli is None:
         raise AuthBackendError("imbue_cloud_cli is not configured on this app")
-    return _AuthBackendShim(cli)
+    return _AuthBackendShim(cli=cli)
 
 
 def _get_latest_user_info(session_store: MultiAccountSessionStore) -> UserInfo | None:
@@ -189,6 +201,10 @@ def _store_session_from_auth_result(
     account associations survive a restart.
 
     On first login (no default account set), this account becomes the default.
+
+    Also registers a ``[providers.imbue_cloud_<slug>]`` entry in mngr's
+    settings.toml and bounces ``mngr observe`` so the new provider instance
+    becomes immediately usable by ``mngr create``/``list``/etc.
     """
     assert result.user is not None, "AuthResult missing user"
     session_store.add_or_update_session(
@@ -199,6 +215,21 @@ def _store_session_from_auth_result(
     minds_config: MindsConfig | None = request.app.state.minds_config
     if minds_config is not None and minds_config.get_default_account_id() is None:
         minds_config.set_default_account_id(result.user.user_id)
+
+    if set_imbue_cloud_provider_for_account(result.user.email):
+        _bounce_mngr_observe(request)
+
+
+def _bounce_mngr_observe(request: Request) -> None:
+    """Restart ``mngr observe`` so a freshly-written provider entry is visible.
+
+    No-op when no stream manager is registered on this app (e.g. tests that
+    don't bring up the streaming pipeline).
+    """
+    stream_manager: MngrStreamManager | None = request.app.state.stream_manager
+    if stream_manager is None:
+        return
+    stream_manager.restart_observe()
 
 
 def _auth_error_response(exc: AuthBackendError | ImbueCloudCliError) -> Response:
@@ -305,11 +336,15 @@ async def _handle_signout_api(request: Request) -> Response:
         return _json_response({"status": "ERROR", "message": "user_id is required"}, 400)
 
     session = session_store.get_session(str(user_id))
+    signed_out_email: str | None = None
     if session is not None:
-        backend.signout_account(str(session.email))
+        signed_out_email = str(session.email)
+        backend.signout_account(signed_out_email)
     else:
         logger.warning("No mirrored account for user {}; skipping plugin signout", str(user_id)[:8])
     session_store.remove_session(str(user_id))
+    if signed_out_email and unset_imbue_cloud_provider_for_account(signed_out_email):
+        _bounce_mngr_observe(request)
     return _json_response({"status": "OK"})
 
 
@@ -380,9 +415,12 @@ _OAUTH_FLOW_TTL_SECONDS = 10 * 60
 
 
 class _OAuthFlowStatus(FrozenModel):
-    """Status snapshot for a single in-flight OAuth subprocess."""
+    """Status snapshot for a single in-flight OAuth subprocess.
 
-    state: str  # "running" | "done" | "error"
+    ``state`` is one of ``"running"``, ``"done"``, or ``"error"``.
+    """
+
+    state: str
     user_id: str | None = None
     email: str | None = None
     display_name: str | None = None

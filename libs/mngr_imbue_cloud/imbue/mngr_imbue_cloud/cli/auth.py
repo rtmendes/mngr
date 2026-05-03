@@ -18,6 +18,7 @@ from imbue.mngr_imbue_cloud.cli._common import handle_imbue_cloud_errors
 from imbue.mngr_imbue_cloud.cli._common import make_connector_client
 from imbue.mngr_imbue_cloud.cli._common import make_session_store
 from imbue.mngr_imbue_cloud.cli._common import parse_account
+from imbue.mngr_imbue_cloud.cli._common import resolve_account_or_active
 from imbue.mngr_imbue_cloud.client import AuthRawResponse
 from imbue.mngr_imbue_cloud.errors import ImbueCloudAuthError
 from imbue.mngr_imbue_cloud.primitives import ImbueCloudAccount
@@ -78,6 +79,12 @@ def _persist_auth_response(
         refresh_token=refresh_token if isinstance(refresh_token, str) else None,
     )
     store.save(session)
+    # Make the most-recently-touched account the active one. This is what
+    # users expect when they swap between accounts: ``auth signin --account
+    # bob`` then ``mngr create`` should default to bob without an extra
+    # ``auth use`` step. Power users who prefer pinning still have
+    # ``auth use --account <other>`` to override.
+    store.set_active_account(account_from_response)
     return {
         "user_id": str(session.user_id),
         "email": str(session.email),
@@ -161,13 +168,13 @@ def signup(account: str, password: str | None, connector_url: str | None) -> Non
 
 
 @auth.command(name="signout")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
-def signout(account: str, connector_url: str | None) -> None:
+def signout(account: str | None, connector_url: str | None) -> None:
     """Revoke the SuperTokens session and remove local tokens for this account."""
-    parsed_account = parse_account(account)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     session = store.load_by_account(parsed_account)
     if session is None:
         emit_json({"removed": False, "reason": "no session"})
@@ -183,15 +190,25 @@ def signout(account: str, connector_url: str | None) -> None:
 
 
 @auth.command(name="status")
-@click.option("--account", required=True, help="Account email")
+@click.option(
+    "--account",
+    default=None,
+    help="Account email (defaults to the active account; pass to query a different signed-in account).",
+)
 @handle_imbue_cloud_errors
-def status(account: str) -> None:
-    """Print whether a session is on disk for the given account."""
-    parsed_account = parse_account(account)
+def status(account: str | None) -> None:
+    """Print whether a session is on disk for an account.
+
+    With no ``--account``, returns status for the active account (set via
+    ``auth use``, or by the most recent signin). When no account can be
+    resolved, lists known signed-in accounts so the user can pick one.
+    """
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     session = store.load_by_account(parsed_account)
+    active = store.get_active_account()
     if session is None:
-        emit_json({"signed_in": False, "email": str(parsed_account)})
+        emit_json({"signed_in": False, "email": str(parsed_account), "is_active": active == parsed_account})
         return
     near_expiry = store.is_access_token_near_expiry(session)
     emit_json(
@@ -203,15 +220,40 @@ def status(account: str) -> None:
             "access_token_expires_at": session.access_token_expires_at,
             "near_expiry": near_expiry,
             "has_refresh_token": session.refresh_token is not None,
+            "is_active": active == session.email,
         }
     )
 
 
+@auth.command(name="use")
+@click.option(
+    "--account",
+    required=True,
+    help=(
+        "Account email to mark as active. Must already be signed in (run `mngr "
+        "imbue_cloud auth signin --account <email>` first)."
+    ),
+)
+@handle_imbue_cloud_errors
+def use(account: str) -> None:
+    """Pin ``account`` as the active imbue_cloud account.
+
+    The default ``[providers.imbue_cloud]`` provider instance and any
+    ``mngr imbue_cloud ...`` sub-command that omits ``--account`` resolve
+    to this account. Persists across mngr invocations until explicitly
+    changed (or the account signs out).
+    """
+    parsed_account = parse_account(account)
+    store = make_session_store()
+    store.set_active_account(parsed_account)
+    emit_json({"active_account": str(parsed_account)})
+
+
 @auth.command(name="refresh")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
-def refresh(account: str, connector_url: str | None) -> None:
+def refresh(account: str | None, connector_url: str | None) -> None:
     """Force a token refresh now.
 
     Unconditionally calls the connector's refresh endpoint and rotates the
@@ -220,8 +262,8 @@ def refresh(account: str, connector_url: str | None) -> None:
     transparently when the cached token is near expiry, so manual
     invocations of this command are normally unnecessary.
     """
-    parsed_account = parse_account(account)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     client = make_connector_client(connector_url)
     previous = store.load_by_account(parsed_account)
     refreshed_session = force_refresh(store, client, parsed_account)
@@ -395,25 +437,26 @@ def oauth(
 
 
 @auth.command(name="forgot-password")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
-def forgot_password(account: str, connector_url: str | None) -> None:
+def forgot_password(account: str | None, connector_url: str | None) -> None:
     """Send a password-reset email. The connector returns OK regardless to avoid enumeration."""
-    parsed_account = parse_account(account)
+    store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     client = make_connector_client(connector_url)
     client.auth_forgot_password(str(parsed_account))
     emit_json({"sent": True, "email": str(parsed_account)})
 
 
 @auth.command(name="resend-verification")
-@click.option("--account", required=True, help="Account email")
+@click.option("--account", default=None, help="Account email (defaults to the active account)")
 @click.option("--connector-url", default=None, help="Override connector URL")
 @handle_imbue_cloud_errors
-def resend_verification(account: str, connector_url: str | None) -> None:
+def resend_verification(account: str | None, connector_url: str | None) -> None:
     """Re-send the email verification message for the given account."""
-    parsed_account = parse_account(account)
     store = make_session_store()
+    parsed_account = resolve_account_or_active(store, account)
     session = store.load_by_account(parsed_account)
     if session is None:
         fail_with_json(
