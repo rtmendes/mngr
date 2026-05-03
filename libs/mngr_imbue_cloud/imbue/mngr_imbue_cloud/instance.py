@@ -18,8 +18,11 @@ This provider's responsibilities are then:
 
 import json
 import time
+from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 from typing import Final
@@ -32,28 +35,44 @@ from pydantic import PrivateAttr
 from pydantic import SecretStr
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.mngr.errors import HostConnectionError
 from imbue.mngr.errors import HostNotFoundError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import SnapshotsNotSupportedError
+from imbue.mngr.hosts.common import check_agent_type_known
+from imbue.mngr.hosts.common import compute_idle_seconds
+from imbue.mngr.hosts.common import determine_lifecycle_state
+from imbue.mngr.hosts.common import resolve_expected_process_name
+from imbue.mngr.hosts.common import timestamp_to_datetime
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.hosts.offline_host import OfflineHost
+from imbue.mngr.interfaces.agent import AgentInterface
+from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.interfaces.data_types import CpuResources
+from imbue.mngr.interfaces.data_types import HostDetails
 from imbue.mngr.interfaces.data_types import HostLifecycleOptions
 from imbue.mngr.interfaces.data_types import HostResources
 from imbue.mngr.interfaces.data_types import PyinfraConnector
 from imbue.mngr.interfaces.data_types import SnapshotInfo
 from imbue.mngr.interfaces.data_types import VolumeInfo
 from imbue.mngr.interfaces.host import HostInterface
+from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import AgentId
+from imbue.mngr.primitives import AgentName
+from imbue.mngr.primitives import CommandString
+from imbue.mngr.primitives import DiscoveredAgent
 from imbue.mngr.primitives import DiscoveredHost
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import HostState
 from imbue.mngr.primitives import ImageReference
+from imbue.mngr.primitives import SSHInfo
 from imbue.mngr.primitives import SnapshotId
 from imbue.mngr.primitives import SnapshotName
 from imbue.mngr.primitives import VolumeId
 from imbue.mngr.providers.base_provider import BaseProviderInstance
+from imbue.mngr.providers.listing_utils import build_listing_collection_script
+from imbue.mngr.providers.listing_utils import parse_listing_collection_output
 from imbue.mngr.providers.ssh_utils import add_host_to_known_hosts
 from imbue.mngr.providers.ssh_utils import create_pyinfra_host
 from imbue.mngr.providers.ssh_utils import load_or_create_ssh_keypair
@@ -106,6 +125,11 @@ class ImbueCloudProvider(BaseProviderInstance):
     session_store: ImbueCloudSessionStore = Field(frozen=True, description="Shared session store keyed by user_id")
 
     _leased_hosts_cache: list[LeasedHostInfo] | None = PrivateAttr(default=None)
+    # Cache of the parsed listing-script output keyed by host_id, populated by
+    # ``discover_hosts_and_agents`` and consumed by
+    # ``get_host_and_agent_details`` so a single SSH round-trip (per host)
+    # serves both phases of ``mngr list``.
+    _listing_raw_cache: dict[HostId, dict[str, Any]] = PrivateAttr(default_factory=dict)
 
     # ------------------------------------------------------------------
     # Capability flags
@@ -130,6 +154,7 @@ class ImbueCloudProvider(BaseProviderInstance):
     def reset_caches(self) -> None:
         super().reset_caches()
         self._leased_hosts_cache = None
+        self._listing_raw_cache.clear()
 
     # ------------------------------------------------------------------
     # Paths
@@ -255,6 +280,254 @@ class ImbueCloudProvider(BaseProviderInstance):
             )
             for entry in leased
         ]
+
+    # ------------------------------------------------------------------
+    # Optimized listing
+    #
+    # The default ``discover_hosts_and_agents`` and
+    # ``get_host_and_agent_details`` implementations on
+    # ``BaseProviderInstance`` reach out to the leased container many
+    # times per host (``ls``, ``stat``, ``ps``, ``tmux``, ...), so on a
+    # high-RTT remote VPS ``mngr list`` ends up doing ~15 sequential
+    # SSH round-trips per host. The override below collects everything
+    # we need with one ``build_listing_collection_script`` execution per
+    # host and caches the parsed output for the second phase to reuse.
+    # ------------------------------------------------------------------
+
+    def discover_hosts_and_agents(
+        self,
+        cg: ConcurrencyGroup,
+        include_destroyed: bool = False,
+    ) -> dict[DiscoveredHost, list[DiscoveredAgent]]:
+        leased = self._list_leased_hosts_cached()
+        result: dict[DiscoveredHost, list[DiscoveredAgent]] = {}
+        for entry in leased:
+            host_id = HostId(entry.host_id)
+            host_ref = DiscoveredHost(
+                host_id=host_id,
+                host_name=HostName(entry.host_id),
+                provider_name=self.name,
+                host_state=HostState.RUNNING,
+            )
+            try:
+                raw = self._collect_listing_raw(entry)
+            except (HostConnectionError, MngrError) as exc:
+                logger.warning("imbue_cloud[{}] listing collection for {} failed: {}", self.name, host_id, exc)
+                self.on_connection_error(host_id)
+                result[host_ref] = []
+                continue
+            self._listing_raw_cache[host_id] = raw
+            agent_refs: list[DiscoveredAgent] = []
+            for agent_raw in raw.get("agents", []):
+                data = agent_raw.get("data", {})
+                agent_id_str = data.get("id")
+                agent_name_str = data.get("name")
+                if not agent_id_str or not agent_name_str:
+                    logger.debug("imbue_cloud[{}] skipping agent missing id/name: {}", self.name, data)
+                    continue
+                agent_refs.append(
+                    DiscoveredAgent(
+                        agent_id=AgentId(agent_id_str),
+                        agent_name=AgentName(agent_name_str),
+                        host_id=host_id,
+                        provider_name=self.name,
+                    )
+                )
+            result[host_ref] = agent_refs
+        return result
+
+    def _collect_listing_raw(self, lease: LeasedHostInfo) -> dict[str, Any]:
+        """Run ``build_listing_collection_script`` once on the leased host.
+
+        Builds the host (which sets up the pyinfra connector) and runs the
+        shared listing script. Returns the parsed dict; raises
+        ``HostConnectionError`` / ``MngrError`` on SSH or remote failures
+        so the caller can decide to fall back.
+        """
+        host = self._build_host_object(lease)
+        script = build_listing_collection_script(str(host.host_dir), self.mngr_ctx.config.prefix)
+        result = host.execute_idempotent_command(script, timeout_seconds=30.0)
+        if not result.success:
+            raise MngrError(
+                f"imbue_cloud listing script on host {lease.host_id} exited non-zero: {result.stderr.strip()}"
+            )
+        return parse_listing_collection_output(result.stdout)
+
+    def get_host_and_agent_details(
+        self,
+        host_ref: DiscoveredHost,
+        agent_refs: Sequence[DiscoveredAgent],
+        field_generators: Mapping[str, Mapping[str, Callable[[AgentInterface, OnlineHostInterface], Any]]]
+        | None = None,
+        on_error: Callable[[DiscoveredAgent | DiscoveredHost, BaseException], None] | None = None,
+    ) -> tuple[HostDetails, list[AgentDetails]]:
+        """Build HostDetails + AgentDetails from the cached listing output.
+
+        Falls back to the framework's default (per-field SSH) when the
+        cache is cold or the cached entry can't be matched to a current
+        lease (rare; happens if the lease was released between phases).
+        """
+        host_id = host_ref.host_id
+        raw = self._listing_raw_cache.get(host_id)
+        lease = self._find_leased(host_id)
+        if raw is None or lease is None:
+            return super().get_host_and_agent_details(host_ref, agent_refs, field_generators, on_error)
+        try:
+            host = self.get_host(host_id)
+        except HostNotFoundError:
+            return super().get_host_and_agent_details(host_ref, agent_refs, field_generators, on_error)
+        host_details = self._build_host_details_from_raw(host, host_ref, lease, raw)
+        agent_details_list: list[AgentDetails] = []
+        ssh_activity = timestamp_to_datetime(raw.get("ssh_activity_mtime"))
+        ps_output = raw.get("ps_output", "")
+        for agent_raw in raw.get("agents", []):
+            agent_details = self._build_agent_details_from_raw(
+                agent_raw=agent_raw,
+                host_details=host_details,
+                ssh_activity=ssh_activity,
+                ps_output=ps_output,
+            )
+            if agent_details is not None:
+                agent_details_list.append(agent_details)
+        return host_details, agent_details_list
+
+    def _build_host_details_from_raw(
+        self,
+        host: Host,
+        host_ref: DiscoveredHost,
+        lease: LeasedHostInfo,
+        raw: dict[str, Any],
+    ) -> HostDetails:
+        ssh_info: SSHInfo | None = None
+        ssh_connection = host.get_ssh_connection_info()
+        if ssh_connection is not None:
+            user, hostname, port, key_path = ssh_connection
+            ssh_info = SSHInfo(
+                user=user,
+                host=hostname,
+                port=port,
+                key_path=key_path,
+                command=f"ssh -i {key_path} -p {port} {user}@{hostname}",
+            )
+        boot_time = timestamp_to_datetime(raw.get("btime"))
+        uptime_seconds = raw.get("uptime_seconds")
+        lock_mtime = raw.get("lock_mtime")
+        is_locked = lock_mtime is not None
+        locked_time = datetime.fromtimestamp(lock_mtime, tz=timezone.utc) if lock_mtime is not None else None
+        ssh_activity_mtime = raw.get("ssh_activity_mtime")
+        ssh_activity = (
+            datetime.fromtimestamp(ssh_activity_mtime, tz=timezone.utc) if ssh_activity_mtime is not None else None
+        )
+        # ``certified_data`` is the host-level data.json the pool host
+        # baked at provision time. It carries name, image, idle settings,
+        # tags, plugin state, etc. -- richer than what the lease object
+        # alone tells us. Fall back to lease-level defaults when the
+        # remote read produced an empty dict.
+        certified = raw.get("certified_data") or {}
+        host_name_str = certified.get("host_name") or lease.host_id
+        image = certified.get("image", "")
+        tags = dict(certified.get("user_tags", {}))
+        plugin = dict(certified.get("plugin", {}))
+        attributes = lease.attributes or {}
+        cpus_attr = attributes.get("cpus")
+        memory_attr = attributes.get("memory_gb")
+        cpu_count = int(cpus_attr) if isinstance(cpus_attr, (int, float)) else 1
+        memory_gb = float(memory_attr) if isinstance(memory_attr, (int, float)) else 1.0
+        resource = HostResources(cpu=CpuResources(count=cpu_count), memory_gb=memory_gb, disk_gb=None, gpu=None)
+        return HostDetails(
+            id=host.id,
+            name=HostName(host_name_str),
+            provider_name=host_ref.provider_name,
+            state=HostState.RUNNING,
+            image=image,
+            tags=tags,
+            boot_time=boot_time,
+            uptime_seconds=uptime_seconds,
+            resource=resource,
+            ssh=ssh_info,
+            snapshots=[],
+            is_locked=is_locked,
+            locked_time=locked_time,
+            plugin=plugin,
+            ssh_activity_time=ssh_activity,
+            failure_reason=None,
+        )
+
+    def _build_agent_details_from_raw(
+        self,
+        agent_raw: dict[str, Any],
+        host_details: HostDetails,
+        ssh_activity: datetime | None,
+        ps_output: str,
+    ) -> AgentDetails | None:
+        """Construct one ``AgentDetails`` from the parsed listing output.
+
+        Mirrors ``mngr_vps_docker``'s implementation -- the fields are
+        identical because both providers consume the same shared listing
+        script. We pull idle/activity-source metadata off the per-agent
+        ``data.json`` that the script captured rather than off a
+        provider-side cache, so this works for any pool host regardless
+        of how it was originally baked.
+        """
+        agent_data = agent_raw.get("data", {})
+        agent_id_str = agent_data.get("id")
+        agent_name_str = agent_data.get("name")
+        if not agent_id_str or not agent_name_str:
+            logger.warning("imbue_cloud[{}] skipping agent missing id/name in listing data", self.name)
+            return None
+        agent_type = str(agent_data.get("type", "unknown"))
+        command = CommandString(agent_data.get("command", "bash"))
+        create_time_str = agent_data.get("create_time")
+        try:
+            create_time = (
+                datetime.fromisoformat(create_time_str)
+                if create_time_str
+                else datetime(1970, 1, 1, tzinfo=timezone.utc)
+            )
+        except (ValueError, TypeError) as exc:
+            logger.warning("imbue_cloud[{}] failed to parse create_time for {}: {}", self.name, agent_id_str, exc)
+            create_time = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        user_activity = timestamp_to_datetime(agent_raw.get("user_activity_mtime"))
+        agent_activity = timestamp_to_datetime(agent_raw.get("agent_activity_mtime"))
+        start_time = timestamp_to_datetime(agent_raw.get("start_activity_mtime"))
+        now = datetime.now(timezone.utc)
+        runtime_seconds = (now - start_time).total_seconds() if start_time else None
+        idle_seconds = compute_idle_seconds(user_activity, agent_activity, ssh_activity)
+        expected_process_name = resolve_expected_process_name(agent_type, command, self.mngr_ctx.config)
+        is_type_known = check_agent_type_known(agent_type, self.mngr_ctx.config)
+        state = determine_lifecycle_state(
+            tmux_info=agent_raw.get("tmux_info"),
+            is_active=agent_raw.get("is_active", False),
+            expected_process_name=expected_process_name,
+            ps_output=ps_output,
+            is_agent_type_known=is_type_known,
+        )
+        idle_timeout_raw = agent_data.get("idle_timeout_seconds", 800)
+        idle_mode_value = agent_data.get("idle_mode", "DISABLED")
+        activity_sources = tuple(agent_data.get("activity_sources", ()))
+        return AgentDetails(
+            id=AgentId(agent_id_str),
+            name=AgentName(agent_name_str),
+            type=agent_type,
+            command=command,
+            work_dir=Path(agent_data.get("work_dir", "/")),
+            initial_branch=agent_data.get("created_branch_name"),
+            create_time=create_time,
+            start_on_boot=agent_data.get("start_on_boot", False),
+            state=state,
+            url=agent_raw.get("url"),
+            start_time=start_time,
+            runtime_seconds=runtime_seconds,
+            user_activity_time=user_activity,
+            agent_activity_time=agent_activity,
+            idle_seconds=idle_seconds,
+            idle_mode=idle_mode_value,
+            idle_timeout_seconds=int(idle_timeout_raw) if idle_timeout_raw is not None else 800,
+            activity_sources=tuple(str(s) for s in activity_sources),
+            labels=agent_data.get("labels", {}),
+            host=host_details,
+            plugin={},
+        )
 
     def _build_host_object(self, lease: LeasedHostInfo) -> ImbueCloudHost:
         host_id = HostId(lease.host_id)
