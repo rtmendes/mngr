@@ -36,13 +36,17 @@ _KEY_OP_TIMEOUT_SECONDS = 90.0
 
 
 class ImbueCloudCliError(MindError):
-    """Raised when a `mngr imbue_cloud ...` invocation returns a non-zero exit code."""
+    """Raised when a `mngr imbue_cloud ...` invocation returns a non-zero exit code.
 
-    def __init__(self, message: str, *, exit_code: int, stdout: str, stderr: str) -> None:
-        super().__init__(message)
-        self.exit_code = exit_code
-        self.stdout = stdout
-        self.stderr = stderr
+    The plugin emits structured JSON on both stdout (success) and stderr
+    (failure), so we keep both around for debugging. They are populated by
+    the helper that raises this class; default to empty strings so callers
+    that only want the message can use the regular MindError signature.
+    """
+
+    exit_code: int = 1
+    stdout: str = ""
+    stderr: str = ""
 
 
 class ImbueCloudUnavailableError(ImbueCloudCliError):
@@ -144,19 +148,20 @@ class ImbueCloudCli(MutableModel):
     ) -> dict[str, Any]:
         if result.returncode == 0:
             return _parse_stdout_json(result.stdout, command_repr)
+        exit_code = result.returncode if result.returncode is not None else 1
         if unavailable_signal and unavailable_signal in result.stderr:
-            raise ImbueCloudUnavailableError(
-                f"{command_repr}: connector returned 503 (no matching pool host)",
-                exit_code=result.returncode,
-                stdout=result.stdout,
-                stderr=result.stderr,
-            )
-        raise ImbueCloudCliError(
-            f"{command_repr} failed (exit {result.returncode}): {_short(result.stderr or result.stdout)}",
-            exit_code=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
+            exc = ImbueCloudUnavailableError(f"{command_repr}: connector returned 503 (no matching pool host)")
+            exc.exit_code = exit_code
+            exc.stdout = result.stdout
+            exc.stderr = result.stderr
+            raise exc
+        plain_exc = ImbueCloudCliError(
+            f"{command_repr} failed (exit {exit_code}): {_short(result.stderr or result.stdout)}"
         )
+        plain_exc.exit_code = exit_code
+        plain_exc.stdout = result.stdout
+        plain_exc.stderr = result.stderr
+        raise plain_exc
 
     # ------------------------------------------------------------------
     # Auth
@@ -480,22 +485,18 @@ def _parse_stdout_json(stdout: str, command_repr: str) -> Any:
     """
     text = stdout.strip()
     if not text:
-        raise ImbueCloudCliError(
-            f"{command_repr}: empty stdout from plugin",
-            exit_code=0,
-            stdout=stdout,
-            stderr="",
-        )
+        empty_exc = ImbueCloudCliError(f"{command_repr}: empty stdout from plugin")
+        empty_exc.exit_code = 0
+        empty_exc.stdout = stdout
+        raise empty_exc
     try:
         return _json.loads(text)
     except _json.JSONDecodeError as exc:
         logger.error("Failed to parse JSON from {}: {}", command_repr, exc)
-        raise ImbueCloudCliError(
-            f"{command_repr}: stdout was not JSON: {_short(text)}",
-            exit_code=0,
-            stdout=stdout,
-            stderr="",
-        ) from exc
+        bad_json_exc = ImbueCloudCliError(f"{command_repr}: stdout was not JSON: {_short(text)}")
+        bad_json_exc.exit_code = 0
+        bad_json_exc.stdout = stdout
+        raise bad_json_exc from exc
 
 
 def _short(text: str, limit: int = 400) -> str:

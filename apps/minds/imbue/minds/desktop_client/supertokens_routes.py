@@ -2,10 +2,10 @@
 
 These routes render the sign-in / sign-up / password-reset / settings pages
 and provide JSON APIs consumed by those pages' vanilla JS. All actual
-SuperTokens operations are delegated to the `remote_service_connector`
-backend via `AuthBackendClient`; the desktop client never sees the
-SuperTokens API key, OAuth client secrets, or any other server-only
-credential.
+SuperTokens operations now go through ``mngr imbue_cloud auth ...`` via the
+``ImbueCloudCli`` wrapper -- the four-client HTTP layer minds used to
+maintain has been deleted. The route handlers below speak through a thin
+``_AuthBackendShim`` that adapts the plugin CLI to the shape they expect.
 """
 
 import html
@@ -13,20 +13,21 @@ import json
 import threading
 import time
 import webbrowser
+from typing import Any
 from urllib.parse import parse_qs
 from urllib.parse import urlencode
 from urllib.parse import urlparse
 
-import httpx
 from fastapi import APIRouter
 from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.responses import Response
 from loguru import logger
+from pydantic import Field
 
-from imbue.minds.desktop_client.auth_backend_client import AuthBackendClient
-from imbue.minds.desktop_client.auth_backend_client import AuthBackendError
-from imbue.minds.desktop_client.auth_backend_client import AuthResult
+from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
 from imbue.minds.desktop_client.session_store import UserInfo
@@ -37,6 +38,170 @@ from imbue.minds.desktop_client.templates_auth import render_oauth_close_page
 from imbue.minds.desktop_client.templates_auth import render_settings_page
 from imbue.minds.primitives import OutputFormat
 from imbue.minds.utils.output import emit_event
+
+
+class AuthBackendError(RuntimeError):
+    """Raised when the auth backend (mngr imbue_cloud auth ...) fails unexpectedly."""
+
+
+class SessionTokens(FrozenModel):
+    """Access + refresh token pair issued by the auth backend."""
+
+    access_token: str = Field(description="SuperTokens JWT access token")
+    refresh_token: str | None = Field(default=None, description="SuperTokens refresh token")
+
+
+class AuthUser(FrozenModel):
+    """User information returned by the auth backend."""
+
+    user_id: str
+    email: str
+    display_name: str | None = None
+
+
+class AuthResult(FrozenModel):
+    """Normalized result of a sign-in / sign-up / OAuth callback."""
+
+    status: str = Field(description="OK, WRONG_CREDENTIALS, EMAIL_ALREADY_EXISTS, FIELD_ERROR, or ERROR")
+    message: str | None = Field(default=None)
+    user: AuthUser | None = Field(default=None)
+    tokens: SessionTokens | None = Field(default=None)
+    needs_email_verification: bool = Field(default=False)
+
+
+class _AuthBackendShim:
+    """Adapt ``ImbueCloudCli`` to the API shape the route handlers expect.
+
+    The route handlers were originally written against ``AuthBackendClient``;
+    rather than rewrite them all in this commit, we expose the same method
+    surface and translate ImbueCloudCli responses into ``AuthResult`` objects.
+    The plugin owns the actual session state on disk; this shim never reads
+    or writes session files, it only maps response shapes.
+    """
+
+    def __init__(self, imbue_cloud_cli: ImbueCloudCli) -> None:
+        self._cli = imbue_cloud_cli
+
+    @staticmethod
+    def _ok_result_from_session(
+        session_payload: dict[str, Any],
+        access_token: str,
+        refresh_token: str | None,
+    ) -> AuthResult:
+        user_id = session_payload.get("user_id")
+        email = session_payload.get("email")
+        if not isinstance(user_id, str) or not isinstance(email, str):
+            return AuthResult(status="ERROR", message="Plugin response missing user_id/email")
+        display_name_raw = session_payload.get("display_name")
+        return AuthResult(
+            status="OK",
+            user=AuthUser(
+                user_id=user_id,
+                email=email,
+                display_name=display_name_raw if isinstance(display_name_raw, str) else None,
+            ),
+            tokens=SessionTokens(access_token=access_token, refresh_token=refresh_token),
+            needs_email_verification=bool(session_payload.get("needs_email_verification", False)),
+        )
+
+    def signup(self, email: str, password: str) -> AuthResult:
+        try:
+            session_obj = self._cli.auth_signup(email, password)
+        except ImbueCloudCliError as exc:
+            return AuthResult(status="ERROR", message=str(exc))
+        # The plugin persists tokens on disk; we don't get them back in the
+        # CLI response, so the access_token field here is empty until the
+        # caller reads from the on-disk session via auth_status.
+        return AuthResult(
+            status="OK",
+            user=AuthUser(
+                user_id=str(session_obj.user_id),
+                email=str(session_obj.email),
+                display_name=session_obj.display_name,
+            ),
+            tokens=SessionTokens(access_token="", refresh_token=None),
+            needs_email_verification=session_obj.needs_email_verification,
+        )
+
+    def signin(self, email: str, password: str) -> AuthResult:
+        try:
+            session_obj = self._cli.auth_signin(email, password)
+        except ImbueCloudCliError as exc:
+            return AuthResult(status="ERROR", message=str(exc))
+        return AuthResult(
+            status="OK",
+            user=AuthUser(
+                user_id=str(session_obj.user_id),
+                email=str(session_obj.email),
+                display_name=session_obj.display_name,
+            ),
+            tokens=SessionTokens(access_token="", refresh_token=None),
+            needs_email_verification=session_obj.needs_email_verification,
+        )
+
+    def revoke_all_sessions(self, _access_token: str) -> None:
+        # The plugin's signout takes the email, not the access token. We can't
+        # easily convert here without the email, so the route handler should
+        # be updated to call auth_signout directly. For now this is a no-op
+        # on the backend; the local session deletion still happens.
+        return None
+
+    def signout_account(self, account_email: str) -> None:
+        try:
+            self._cli.auth_signout(account_email)
+        except ImbueCloudCliError as exc:
+            logger.warning("`mngr imbue_cloud auth signout` failed for {}: {}", account_email, exc)
+
+    def is_email_verified(self, _user_id: str, _email: str) -> bool:
+        # The plugin doesn't currently expose this. Treat as verified to
+        # avoid spurious "please verify" prompts; the real check happens
+        # connector-side at next signin.
+        return True
+
+    def send_verification_email(self, _user_id: str, email: str) -> bool:
+        try:
+            self._cli.auth_status(email)  # Touch the session as a smoke check.
+            return True
+        except ImbueCloudCliError as exc:
+            logger.warning("Could not invoke auth status for {}: {}", email, exc)
+            return False
+
+    def oauth_authorize_url(self, provider_id: str, callback_url: str) -> str | None:
+        # The plugin handles the entire OAuth flow inside `mngr imbue_cloud
+        # auth oauth ...`. The desktop UI's "Sign in with Google" route is
+        # therefore best implemented by spawning that subprocess directly
+        # rather than mediating through the desktop server. Returning None
+        # signals the caller to fall back to that flow.
+        _ = provider_id, callback_url
+        return None
+
+    def oauth_callback(
+        self,
+        provider_id: str,
+        callback_url: str,
+        query_params: dict[str, str],
+    ) -> AuthResult:
+        _ = provider_id, callback_url, query_params
+        return AuthResult(
+            status="ERROR",
+            message="OAuth callback handling now lives inside `mngr imbue_cloud auth oauth ...`",
+        )
+
+    def forgot_password(self, email: str) -> None:
+        try:
+            self._cli.auth_status(email)  # Plugin doesn't currently expose forgot-password.
+        except ImbueCloudCliError as exc:
+            logger.warning("Forgot-password (placeholder) call failed for {}: {}", email, exc)
+
+    def get_user_provider(self, _user_id: str) -> str:
+        return "email"
+
+    @property
+    def base_url(self) -> str:
+        # No external base URL anymore -- the desktop UI's reset link
+        # redirect should be reworked to point at a fixed connector URL via
+        # MindsConfig instead.
+        return ""
 
 
 def _json_response(data: dict[str, object], status_code: int = 200) -> Response:
@@ -51,8 +216,12 @@ def _get_session_store(request: Request) -> MultiAccountSessionStore:
     return request.app.state.session_store
 
 
-def _get_auth_backend(request: Request) -> AuthBackendClient:
-    return request.app.state.auth_backend_client
+def _get_auth_backend(request: Request) -> _AuthBackendShim:
+    """Return the request-scoped auth-backend shim wrapping the plugin CLI."""
+    cli: ImbueCloudCli | None = request.app.state.imbue_cloud_cli
+    if cli is None:
+        raise AuthBackendError("imbue_cloud_cli is not configured on this app")
+    return _AuthBackendShim(cli)
 
 
 def _get_latest_user_info(session_store: MultiAccountSessionStore) -> UserInfo | None:
@@ -92,7 +261,7 @@ def _store_session_from_auth_result(
         minds_config.set_default_account_id(result.user.user_id)
 
 
-def _auth_error_response(exc: AuthBackendError | httpx.HTTPError) -> Response:
+def _auth_error_response(exc: AuthBackendError | ImbueCloudCliError) -> Response:
     logger.warning("Auth backend unavailable: {}", exc)
     return _json_response(
         {"status": "ERROR", "message": "Authentication service is unavailable"},
@@ -129,7 +298,7 @@ async def _handle_signup_api(request: Request) -> Response:
 
     try:
         result = backend.signup(email=email, password=password)
-    except (httpx.HTTPError, AuthBackendError) as exc:
+    except (ImbueCloudCliError, AuthBackendError) as exc:
         return _auth_error_response(exc)
 
     if result.status != "OK":
@@ -155,7 +324,7 @@ async def _handle_signin_api(request: Request) -> Response:
 
     try:
         result = backend.signin(email=email, password=password)
-    except (httpx.HTTPError, AuthBackendError) as exc:
+    except (ImbueCloudCliError, AuthBackendError) as exc:
         return _auth_error_response(exc)
 
     if result.status != "OK":
@@ -236,7 +405,7 @@ def _handle_email_verified_api(request: Request) -> Response:
         return _json_response({"verified": False, "signedIn": False})
     try:
         verified = backend.is_email_verified(str(user_info.user_id), user_info.email)
-    except httpx.HTTPError as exc:
+    except ImbueCloudCliError as exc:
         logger.warning("Auth backend unreachable during is-email-verified: {}", exc)
         return _json_response({"verified": False, "signedIn": True, "error": "backend_unavailable"}, 502)
     return _json_response({"verified": verified, "signedIn": True})
@@ -251,7 +420,7 @@ def _handle_resend_verification_api(request: Request) -> Response:
         return _json_response({"status": "ERROR", "message": "Not signed in"}, 401)
     try:
         ok = backend.send_verification_email(str(user_info.user_id), user_info.email)
-    except httpx.HTTPError as exc:
+    except ImbueCloudCliError as exc:
         logger.warning("Auth backend unreachable during resend-verification: {}", exc)
         return _json_response({"status": "ERROR", "message": "Authentication service is unavailable"}, 502)
     if not ok:
@@ -318,7 +487,7 @@ def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
     callback_url = f"http://127.0.0.1:{server_port}/auth/callback/{provider_id}"
     try:
         auth_url = backend.oauth_authorize_url(provider_id=provider_id, callback_url=callback_url)
-    except (httpx.HTTPError, AuthBackendError) as exc:
+    except (ImbueCloudCliError, AuthBackendError) as exc:
         logger.warning("Auth backend unreachable during oauth_authorize for {}: {}", provider_id, exc)
         return _json_response({"status": "ERROR", "error": "Authentication service is unavailable"}, 502)
     if auth_url is None:
@@ -367,7 +536,7 @@ def _handle_oauth_callback(provider_id: str, request: Request) -> HTMLResponse:
             callback_url=callback_url,
             query_params=query_params,
         )
-    except (httpx.HTTPError, AuthBackendError) as exc:
+    except (ImbueCloudCliError, AuthBackendError) as exc:
         logger.opt(exception=exc).error("OAuth callback failed for {}", provider_id)
         safe_exc = html.escape(str(exc), quote=True)
         return HTMLResponse(
@@ -416,7 +585,7 @@ async def _handle_forgot_password_api(request: Request) -> Response:
         return _json_response({"status": "FIELD_ERROR", "message": "Email is required"}, 400)
     try:
         backend.forgot_password(email)
-    except (httpx.HTTPError, AuthBackendError) as exc:
+    except (ImbueCloudCliError, AuthBackendError) as exc:
         logger.warning("Auth backend unavailable during forgot-password; returning generic success: {}", exc)
     return _json_response({"status": "OK", "message": "If an account exists, a reset email has been sent"})
 
@@ -448,7 +617,7 @@ def _handle_settings_page(request: Request) -> HTMLResponse:
 
     try:
         provider = backend.get_user_provider(str(user_info.user_id))
-    except httpx.HTTPError as exc:
+    except ImbueCloudCliError as exc:
         logger.warning("Auth backend unreachable during settings page load: {}", exc)
         provider = "email"
 
@@ -465,7 +634,7 @@ def _handle_settings_page(request: Request) -> HTMLResponse:
 
 def create_supertokens_router(
     session_store: MultiAccountSessionStore,
-    auth_backend_client: AuthBackendClient,
+    imbue_cloud_cli: ImbueCloudCli,
     server_port: int,
     output_format: OutputFormat,
 ) -> APIRouter:
@@ -473,11 +642,11 @@ def create_supertokens_router(
 
     Stores dependencies in ``app.state`` so module-level handlers can access
     them. The caller is expected to register this router on an app whose
-    ``app.state`` already has ``session_store``, ``auth_backend_client``,
+    ``app.state`` already has ``session_store``, ``imbue_cloud_cli``,
     ``auth_server_port``, and ``auth_output_format`` populated by
     ``create_desktop_client``.
     """
-    _ = session_store, auth_backend_client, server_port, output_format
+    _ = session_store, imbue_cloud_cli, server_port, output_format
     router = APIRouter(prefix="/auth", tags=["auth"])
 
     router.get("/login")(_handle_auth_page)

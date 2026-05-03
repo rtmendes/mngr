@@ -22,7 +22,6 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.minds.config.data_types import MNGR_BINARY
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.api_key_store import find_agent_by_api_key
-from imbue.minds.desktop_client.cloudflare_client import CloudflareClient
 from imbue.minds.desktop_client.deps import BackendResolverDep
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
@@ -36,6 +35,57 @@ from imbue.minds.telegram.credential_store import load_agent_bot_credentials
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
 from imbue.minds.telegram.setup import TelegramSetupStatus
 from imbue.mngr.primitives import AgentId
+
+
+class CloudflareClient:
+    """Placeholder for the now-deleted minds CloudflareClient.
+
+    The Cloudflare-related endpoints in this file were originally backed by
+    direct HTTP calls to ``remote_service_connector``; that wiring has been
+    removed in favour of the ``mngr_imbue_cloud`` plugin. Until each handler
+    is rewritten to call ``ImbueCloudCli.list_services`` / ``add_service`` /
+    etc., this stub keeps the file importable. ``app.state.cloudflare_client``
+    is permanently ``None``, so the route helper ``get_cf_client_with_auth``
+    always returns 501 and the cloudflare UI is disabled.
+
+    The methods below are stubs that raise NotImplementedError if a handler
+    somehow gets a real instance (which won't happen in production -- they
+    are only here to satisfy the type checker over the unmigrated handlers).
+    """
+
+    supertokens_email: str | None = None
+    connector_url: str | None = None
+
+    def list_services(self, *_a: object, **_k: object) -> dict[str, str] | None:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels services list")
+
+    def add_service(self, *_a: object, **_k: object) -> object:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels services add")
+
+    def remove_service(self, *_a: object, **_k: object) -> object:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels services remove")
+
+    def create_tunnel(self, *_a: object, **_k: object) -> tuple[str | None, str]:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels create")
+
+    def delete_tunnel(self, *_a: object, **_k: object) -> object:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels delete")
+
+    def get_tunnel_auth(self, *_a: object, **_k: object) -> list[object]:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth get")
+
+    def set_tunnel_auth(self, *_a: object, **_k: object) -> object:
+        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth set")
+
+    def get_service_auth(self, *_a: object, **_k: object) -> list[object]:
+        raise NotImplementedError(
+            "CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth get --service ..."
+        )
+
+    def set_service_auth(self, *_a: object, **_k: object) -> object:
+        raise NotImplementedError(
+            "CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth set --service ..."
+        )
 
 
 def _authenticate_api_key(request: Request) -> AgentId:
