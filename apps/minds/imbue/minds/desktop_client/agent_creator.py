@@ -1114,9 +1114,16 @@ class AgentCreator(MutableModel):
                     host_env_file=host_env_file,
                     latchkey_gateway_url=latchkey_gateway_url,
                     imbue_cloud_account=account_email if launch_mode is LaunchMode.IMBUE_CLOUD else None,
-                    imbue_cloud_repo_url=(
-                        repo_source if launch_mode is LaunchMode.IMBUE_CLOUD and repo_source else None
-                    ),
+                    # Don't constrain the lease on ``repo_url`` here:
+                    # ``repo_source`` is whatever the user picked in the UI
+                    # (often a local FCT clone path), but pool hosts are
+                    # operator-baked with whatever ``--attributes`` JSON the
+                    # admin chose -- typically ``cpus``/``memory_gb``/
+                    # ``repo_branch_or_tag`` and not ``repo_url``. Including
+                    # ``repo_url`` here would make every lease request fail
+                    # the JSONB ``@>`` match. Constraining on
+                    # ``repo_branch_or_tag`` (when minds knows it) is enough
+                    # to pick the right pool generation.
                     imbue_cloud_branch_or_tag=(
                         branch_or_tag if launch_mode is LaunchMode.IMBUE_CLOUD and branch_or_tag else None
                     ),
