@@ -282,7 +282,28 @@ AuthResult = AdminAuth | AgentAuth
 
 class LeaseHostRequest(BaseModel):
     ssh_public_key: str = Field(description="SSH public key to authorize on the leased host")
-    version: str = Field(description="Pool host version tag to match (e.g. v0.1.0)")
+    attributes: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Lease-attribute filter. Matches with PostgreSQL '@>' so only fields the request "
+            "explicitly sets are constrained; missing fields are unconstrained. Replaces the "
+            "old 'version' field; pass {'version': 'v1.2.3'} to keep that behavior."
+        ),
+    )
+    version: str | None = Field(
+        default=None,
+        description=(
+            "Deprecated. Legacy clients (minds <= release_v0.1) still pass this field; the "
+            "server folds it into ``attributes['version']`` for backwards compatibility."
+        ),
+    )
+
+    def effective_attributes(self) -> dict[str, Any]:
+        """Merge the deprecated top-level ``version`` into ``attributes`` for SQL match."""
+        merged = dict(self.attributes)
+        if self.version is not None and "version" not in merged:
+            merged["version"] = self.version
+        return merged
 
 
 class LeaseHostResponse(BaseModel):
@@ -293,7 +314,14 @@ class LeaseHostResponse(BaseModel):
     container_ssh_port: int = Field(description="SSH port mapped to the Docker container")
     agent_id: str = Field(description="Pre-provisioned mngr agent ID")
     host_id: str = Field(description="Host ID in the mngr provider")
-    version: str = Field(description="Pool host version tag")
+    attributes: dict[str, Any] = Field(default_factory=dict, description="Attributes the row was matched against")
+    version: str | None = Field(
+        default=None,
+        description=(
+            "Deprecated mirror of attributes['version'] for legacy minds clients still "
+            "validating against the old response shape."
+        ),
+    )
 
 
 class ReleaseHostResponse(BaseModel):
@@ -308,7 +336,11 @@ class LeasedHostInfo(BaseModel):
     container_ssh_port: int = Field(description="SSH port mapped to the Docker container")
     agent_id: str = Field(description="Pre-provisioned mngr agent ID")
     host_id: str = Field(description="Host ID in the mngr provider")
-    version: str = Field(description="Pool host version tag")
+    attributes: dict[str, Any] = Field(default_factory=dict, description="Attributes attached to the lease row")
+    version: str | None = Field(
+        default=None,
+        description="Deprecated mirror of attributes['version'] for legacy clients.",
+    )
     leased_at: str = Field(description="ISO 8601 timestamp when the host was leased")
 
 
@@ -1532,19 +1564,22 @@ def lease_host(request: Request, body: LeaseHostRequest) -> dict[str, object]:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, version "
+                        "SELECT id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, attributes "
                         "FROM pool_hosts "
-                        "WHERE status = 'available' AND version = %s "
+                        "WHERE status = 'available' AND attributes @> %s::jsonb "
                         "ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
-                        (body.version,),
+                        (json.dumps(body.effective_attributes()),),
                     )
                     row = cur.fetchone()
                     if row is None:
                         raise HTTPException(
                             status_code=503,
-                            detail="No pre-created agents are currently ready. Please ask Josh to provision more.",
+                            detail=(
+                                "No pre-created agents match the requested attributes. "
+                                "Please ask Josh to provision more, or relax the attribute filter."
+                            ),
                         )
-                    host_db_id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, version = row
+                    host_db_id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, attributes = row
 
                     # Inject the user's SSH public key on VPS and container
                     management_key_pem = os.environ["POOL_SSH_PRIVATE_KEY"]
@@ -1566,6 +1601,7 @@ def lease_host(request: Request, body: LeaseHostRequest) -> dict[str, object]:
                     )
         finally:
             conn.close()
+        attrs_dict = attributes if isinstance(attributes, dict) else {}
         return LeaseHostResponse(
             host_db_id=host_db_id,
             vps_ip=vps_ip,
@@ -1574,7 +1610,8 @@ def lease_host(request: Request, body: LeaseHostRequest) -> dict[str, object]:
             container_ssh_port=container_ssh_port,
             agent_id=agent_id,
             host_id=host_id,
-            version=version,
+            attributes=attrs_dict,
+            version=attrs_dict.get("version") if isinstance(attrs_dict.get("version"), str) else None,
         ).model_dump()
 
 
@@ -1619,7 +1656,7 @@ def list_leased_hosts(request: Request) -> list[dict[str, object]]:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, version, leased_at "
+                    "SELECT id, vps_ip, ssh_port, ssh_user, container_ssh_port, agent_id, host_id, attributes, leased_at "
                     "FROM pool_hosts "
                     "WHERE status = 'leased' AND leased_to_user = %s",
                     (admin.username,),
@@ -1636,7 +1673,10 @@ def list_leased_hosts(request: Request) -> list[dict[str, object]]:
                 container_ssh_port=r[4],
                 agent_id=r[5],
                 host_id=r[6],
-                version=r[7],
+                attributes=r[7] if isinstance(r[7], dict) else {},
+                version=(
+                    r[7].get("version") if isinstance(r[7], dict) and isinstance(r[7].get("version"), str) else None
+                ),
                 leased_at=str(r[8]) if r[8] is not None else "",
             ).model_dump()
             for r in rows
