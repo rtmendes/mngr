@@ -1463,24 +1463,36 @@ class AgentCreator(MutableModel):
                 agent_id=agent_id,
             )
 
+        # Glue all the env/credential mutations into ONE bash command so they
+        # ride a single SSH connection (one mngr exec) instead of three or
+        # four parallel SSH round-trips. They're sequenced with `&&` so a
+        # failure halts the rest -- the previous parallel layout could leave
+        # the agent in a half-injected state where one credential was
+        # written and another silently failed.
+        inject_pieces: list[str] = [inject_minds_key_command]
+        if inject_anthropic_command is not None:
+            inject_pieces.append(inject_anthropic_command)
+        if patch_claude_config_command is not None:
+            inject_pieces.append(patch_claude_config_command)
+        if inject_prefix_command is not None:
+            inject_pieces.append(inject_prefix_command)
+        combined_inject_command = " && ".join(inject_pieces)
+
         cg = _make_child_cg("mngr-leased-setup", self.root_concurrency_group)
         try:
             with cg:
-                # Step 1: rename
-                log_queue.put("[minds] Renaming agent to '{}'...".format(parsed_name))
+                # Step 1: rename + apply labels in a single atomic data.json
+                # write (mngr rename --label). Doing both in one mngr-side
+                # operation avoids the discovery-stream race where an
+                # observer briefly saw the agent under its new name without
+                # the workspace/is_primary labels.
+                log_queue.put("[minds] Renaming agent to '{}' and applying labels...".format(parsed_name))
                 cg.run_process_to_completion(
-                    command=[MNGR_BINARY, "rename", address, str(parsed_name)],
-                    is_checked_after=True,
-                    on_output=emit_log,
-                )
-
-                # Step 2: parallel label + inject keys
-                log_queue.put("[minds] Applying labels and injecting credentials in parallel...")
-                label_proc = cg.run_process_in_background(
                     command=[
                         MNGR_BINARY,
-                        "label",
+                        "rename",
                         address,
+                        str(parsed_name),
                         "-l",
                         "workspace={}".format(parsed_name),
                         "-l",
@@ -1488,47 +1500,18 @@ class AgentCreator(MutableModel):
                         "-l",
                         "is_primary=true",
                     ],
-                    is_checked_by_group=True,
-                    on_output=emit_log,
-                )
-                minds_key_proc = cg.run_process_in_background(
-                    command=[MNGR_BINARY, "exec", address, inject_minds_key_command],
-                    is_checked_by_group=True,
+                    is_checked_after=True,
                     on_output=emit_log,
                 )
 
-                anthropic_proc = None
-                if inject_anthropic_command is not None:
-                    anthropic_proc = cg.run_process_in_background(
-                        command=[MNGR_BINARY, "exec", address, inject_anthropic_command],
-                        is_checked_by_group=True,
-                        on_output=emit_log,
-                    )
-
-                claude_config_proc = None
-                if patch_claude_config_command is not None:
-                    claude_config_proc = cg.run_process_in_background(
-                        command=[MNGR_BINARY, "exec", address, patch_claude_config_command],
-                        is_checked_by_group=True,
-                        on_output=emit_log,
-                    )
-
-                prefix_proc = None
-                if inject_prefix_command is not None:
-                    prefix_proc = cg.run_process_in_background(
-                        command=[MNGR_BINARY, "exec", address, inject_prefix_command],
-                        is_checked_by_group=True,
-                        on_output=emit_log,
-                    )
-
-                label_proc.wait()
-                minds_key_proc.wait()
-                if anthropic_proc is not None:
-                    anthropic_proc.wait()
-                if claude_config_proc is not None:
-                    claude_config_proc.wait()
-                if prefix_proc is not None:
-                    prefix_proc.wait()
+                # Step 2: inject MINDS_API_KEY + ANTHROPIC creds + claude
+                # config + MNGR_PREFIX in a single SSH-bound mngr exec.
+                log_queue.put("[minds] Injecting credentials...")
+                cg.run_process_to_completion(
+                    command=[MNGR_BINARY, "exec", address, combined_inject_command],
+                    is_checked_after=True,
+                    on_output=emit_log,
+                )
 
                 # Step 3: start
                 log_queue.put("[minds] Starting agent '{}'...".format(parsed_name))
