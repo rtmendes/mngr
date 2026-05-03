@@ -12,7 +12,6 @@ from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.agent_creator import AgentCreationStatus
 from imbue.minds.desktop_client.agent_creator import AgentCreator
-from imbue.minds.desktop_client.agent_creator import PLACEHOLDER_ANTHROPIC_API_KEY
 from imbue.minds.desktop_client.agent_creator import _RedactingOutputCallback
 from imbue.minds.desktop_client.agent_creator import _build_inject_anthropic_command
 from imbue.minds.desktop_client.agent_creator import _build_latchkey_gateway_url
@@ -1137,14 +1136,6 @@ def test_is_git_worktree_returns_false_when_no_git(tmp_path: Path) -> None:
 def test_make_host_name_appends_host_suffix() -> None:
     result = _make_host_name(AgentName("my-agent"))
     assert result == "my-agent-host"
-
-
-def test_placeholder_anthropic_api_key_has_correct_prefix() -> None:
-    assert PLACEHOLDER_ANTHROPIC_API_KEY.startswith("sk-ant-api03-")
-
-
-def test_placeholder_anthropic_api_key_has_realistic_length() -> None:
-    assert len(PLACEHOLDER_ANTHROPIC_API_KEY) >= 100
 
 
 def test_agent_creator_accepts_litellm_key_client(

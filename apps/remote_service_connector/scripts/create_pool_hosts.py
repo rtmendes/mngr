@@ -34,19 +34,13 @@ import psycopg2
 import psycopg2.extras
 from loguru import logger
 
+from imbue.imbue_common.pool_host_constants import PLACEHOLDER_ANTHROPIC_API_KEY
+
 _DEFAULT_REGION: Final[str] = "ewr"
 _DEFAULT_PLAN: Final[str] = "vc2-2c-4gb"
 _CONTAINER_SSH_PORT: Final[int] = 2222
 _MNGR_COMMAND_TIMEOUT_SECONDS: Final[int] = 1800
 _SSH_COMMAND_TIMEOUT_SECONDS: Final[int] = 60
-
-# Placeholder ANTHROPIC_API_KEY injected into pool hosts at creation time so
-# that mngr provisioning writes it into the agent env file and claude config.
-# During lease setup the placeholder is sed-replaced with the real LiteLLM
-# virtual key.
-_PLACEHOLDER_ANTHROPIC_API_KEY: Final[str] = (
-    "sk-ant-api03-PLACEHOLDER000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-)
 
 
 def _run_mngr_command(
@@ -317,7 +311,7 @@ def _create_single_pool_host(
 
     # Set the placeholder ANTHROPIC_API_KEY in the environment so that
     # --pass-host-env picks it up and writes it to /mngr/env on the host.
-    create_env = dict(os.environ, ANTHROPIC_API_KEY=_PLACEHOLDER_ANTHROPIC_API_KEY)
+    create_env = dict(os.environ, ANTHROPIC_API_KEY=PLACEHOLDER_ANTHROPIC_API_KEY)
 
     # Run mngr create from the template directory so it picks up the
     # template's .mngr/settings.toml (workspace server, services, etc.).
