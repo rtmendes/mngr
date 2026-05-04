@@ -273,7 +273,12 @@ def _filter_snapshot(
     include: tuple[str, ...],
     exclude: tuple[str, ...],
 ) -> Any:
-    """Apply CEL include/exclude filters to a `mngr list` snapshot."""
+    """Apply CEL include/exclude filters to a `mngr list` snapshot.
+
+    The CEL context shape matches ``ForwardStreamManager._agent_passes_filter``
+    so the same ``--agent-include`` / ``--agent-exclude`` expressions evaluate
+    identically in both observe and ``--no-observe`` modes.
+    """
     from imbue.mngr.utils.cel_utils import apply_cel_filters_to_context
     from imbue.mngr.utils.cel_utils import compile_cel_filters
     from imbue.mngr_forward.data_types import ForwardListSnapshot
@@ -283,7 +288,15 @@ def _filter_snapshot(
     compiled_includes, compiled_excludes = compile_cel_filters(list(include), list(exclude))
     kept = []
     for entry in snapshot.agents:
-        context = {"agent": {"id": str(entry.agent_id), "labels": dict(entry.labels)}}
+        context = {
+            "agent": {
+                "id": str(entry.agent_id),
+                "name": entry.agent_name,
+                "host_id": entry.host_id,
+                "provider_name": entry.provider_name,
+                "labels": dict(entry.labels),
+            }
+        }
         if apply_cel_filters_to_context(
             context=context,
             include_filters=compiled_includes,

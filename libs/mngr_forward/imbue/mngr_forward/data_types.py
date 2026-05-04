@@ -105,12 +105,31 @@ ForwardStrategy = ForwardServiceStrategy | ForwardPortStrategy
 
 
 class ForwardAgentSnapshot(FrozenModel):
-    """One agent's row in a snapshot returned from ``mngr_list_snapshot``."""
+    """One agent's row in a snapshot returned from ``mngr_list_snapshot``.
+
+    Carries the same fields the observe-stream context exposes for CEL
+    filtering (``agent.id`` / ``agent.name`` / ``agent.host_id`` /
+    ``agent.provider_name`` / ``agent.labels``) so ``--agent-include`` /
+    ``--agent-exclude`` evaluate identically in both observe and
+    ``--no-observe`` modes.
+    """
 
     agent_id: AgentId = Field(description="Agent ID")
     ssh_info: RemoteSSHInfo | None = Field(
         default=None,
         description="SSH info if the agent is on a remote host; None for local agents",
+    )
+    agent_name: str = Field(
+        default="",
+        description="Agent name from mngr list output, used for client-side CEL filtering",
+    )
+    host_id: str = Field(
+        default="",
+        description="Host ID from mngr list output, used for client-side CEL filtering",
+    )
+    provider_name: str = Field(
+        default="",
+        description="Provider name from mngr list output, used for client-side CEL filtering",
     )
     labels: dict[str, str] = Field(
         default_factory=dict,

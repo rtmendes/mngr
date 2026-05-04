@@ -93,9 +93,35 @@ def _parse_snapshot(json_output: str) -> ForwardListSnapshot:
             continue
         ssh_info = _parse_ssh_info(raw)
         labels = _parse_labels(raw)
-        agents.append(ForwardAgentSnapshot(agent_id=agent_id, ssh_info=ssh_info, labels=labels))
+        agent_name = _parse_str_field(raw, "name")
+        host = raw.get("host") if isinstance(raw.get("host"), dict) else {}
+        host_id = _parse_str_field(host, "id")
+        provider_name = _parse_str_field(host, "provider_name")
+        agents.append(
+            ForwardAgentSnapshot(
+                agent_id=agent_id,
+                ssh_info=ssh_info,
+                agent_name=agent_name,
+                host_id=host_id,
+                provider_name=provider_name,
+                labels=labels,
+            )
+        )
 
     return ForwardListSnapshot(agents=tuple(agents))
+
+
+def _parse_str_field(raw: dict[str, Any] | Any, key: str) -> str:
+    """Pull ``key`` out of ``raw`` as a string, defaulting to empty.
+
+    Tolerates missing keys, non-dict containers, and non-string values so a
+    partial ``mngr list --format json`` payload (e.g. an older mngr version
+    that doesn't carry one of these fields) doesn't break snapshot parsing.
+    """
+    if not isinstance(raw, dict):
+        return ""
+    value = raw.get(key)
+    return str(value) if value is not None else ""
 
 
 def _parse_ssh_info(raw: dict[str, Any]) -> RemoteSSHInfo | None:

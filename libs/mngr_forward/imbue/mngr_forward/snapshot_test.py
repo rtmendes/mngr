@@ -62,3 +62,45 @@ def test_parse_snapshot_skips_agents_without_id() -> None:
     result = _parse_snapshot(payload)
     assert len(result.agents) == 1
     assert result.agents[0].agent_id == TEST_AGENT_ID_2
+
+
+def test_parse_snapshot_extracts_name_host_id_provider_name() -> None:
+    payload = json.dumps(
+        {
+            "agents": [
+                {
+                    "id": str(TEST_AGENT_ID_1),
+                    "name": "my-agent",
+                    "host": {
+                        "id": "host-1",
+                        "provider_name": "modal",
+                    },
+                    "labels": {},
+                }
+            ]
+        }
+    )
+    result = _parse_snapshot(payload)
+    [entry] = result.agents
+    assert entry.agent_name == "my-agent"
+    assert entry.host_id == "host-1"
+    assert entry.provider_name == "modal"
+
+
+def test_parse_snapshot_defaults_missing_filter_fields_to_empty_string() -> None:
+    """An older mngr list payload that lacks the filter fields still parses."""
+    payload = json.dumps(
+        {
+            "agents": [
+                {
+                    "id": str(TEST_AGENT_ID_1),
+                    "labels": {},
+                }
+            ]
+        }
+    )
+    result = _parse_snapshot(payload)
+    [entry] = result.agents
+    assert entry.agent_name == ""
+    assert entry.host_id == ""
+    assert entry.provider_name == ""

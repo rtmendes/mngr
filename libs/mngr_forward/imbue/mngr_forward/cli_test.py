@@ -103,3 +103,46 @@ def test_parse_reverse_specs_rejects_negative() -> None:
 def test_parse_reverse_specs_rejects_non_integer() -> None:
     with pytest.raises(click.UsageError):
         _parse_reverse_specs(("abc:8420",))
+
+
+def test_filter_snapshot_supports_provider_name_filter() -> None:
+    """`--agent-include` / `--agent-exclude` must work the same in --no-observe mode
+
+    as they do in observe mode, so a CEL expression referencing
+    ``agent.provider_name`` (which observe mode populates) must also be
+    available against the snapshot.
+    """
+    from imbue.mngr_forward.cli import _filter_snapshot
+    from imbue.mngr_forward.data_types import ForwardAgentSnapshot
+    from imbue.mngr_forward.data_types import ForwardListSnapshot
+    from imbue.mngr_forward.testing import TEST_AGENT_ID_1
+    from imbue.mngr_forward.testing import TEST_AGENT_ID_2
+
+    snapshot = ForwardListSnapshot(
+        agents=(
+            ForwardAgentSnapshot(agent_id=TEST_AGENT_ID_1, provider_name="modal"),
+            ForwardAgentSnapshot(agent_id=TEST_AGENT_ID_2, provider_name="docker"),
+        )
+    )
+    filtered = _filter_snapshot(snapshot, include=("agent.provider_name == 'modal'",), exclude=())
+    assert tuple(entry.agent_id for entry in filtered.agents) == (TEST_AGENT_ID_1,)
+
+
+def test_filter_snapshot_supports_host_id_and_name_filter() -> None:
+    """All four observe-mode CEL fields are available against the snapshot."""
+    from imbue.mngr_forward.cli import _filter_snapshot
+    from imbue.mngr_forward.data_types import ForwardAgentSnapshot
+    from imbue.mngr_forward.data_types import ForwardListSnapshot
+    from imbue.mngr_forward.testing import TEST_AGENT_ID_1
+    from imbue.mngr_forward.testing import TEST_AGENT_ID_2
+
+    snapshot = ForwardListSnapshot(
+        agents=(
+            ForwardAgentSnapshot(agent_id=TEST_AGENT_ID_1, host_id="host-a", agent_name="alpha"),
+            ForwardAgentSnapshot(agent_id=TEST_AGENT_ID_2, host_id="host-b", agent_name="beta"),
+        )
+    )
+    by_host = _filter_snapshot(snapshot, include=("agent.host_id == 'host-a'",), exclude=())
+    assert tuple(entry.agent_id for entry in by_host.agents) == (TEST_AGENT_ID_1,)
+    by_name = _filter_snapshot(snapshot, include=(), exclude=("agent.name == 'alpha'",))
+    assert tuple(entry.agent_id for entry in by_name.agents) == (TEST_AGENT_ID_2,)
