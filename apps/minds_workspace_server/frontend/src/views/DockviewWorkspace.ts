@@ -91,7 +91,6 @@ let dockview: DockviewComponent | null = null;
 let dockviewContainer: HTMLElement | null = null;
 const panelParams = new Map<string, PanelParams>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
-let _layoutChangeDisposable: { dispose: () => void } | null = null;
 let _refreshServiceListener: RefreshServiceListener | null = null;
 let initialized = false;
 
@@ -686,17 +685,28 @@ function initializeDockview(parentElement: HTMLElement): void {
   dockview = dv;
 
   // Listen for layout changes and auto-save
-  _layoutChangeDisposable = dv.api.onDidLayoutChange(() => {
+  dv.api.onDidLayoutChange(() => {
     scheduleSave();
   });
 
   // Listen for panel removal to clean up params. If the user closes the
   // last remaining tab the dockview would otherwise be a blank screen with
   // no recovery path, so reopen the primary agent's chat tab.
+  //
+  // The re-add is deferred to a microtask: when the user closes the primary
+  // chat itself, adding a panel with the same id synchronously inside the
+  // remove listener races with dockview's own teardown of the just-removed
+  // panel and produces a tab that appears to "stay open" but with a blank
+  // (white) content area. Deferring lets dockview finish disposing before we
+  // add the replacement.
   dv.api.onDidRemovePanel((panel) => {
     panelParams.delete(panel.id);
     if (dv.panels.length === 0) {
-      openPrimaryAgentChat();
+      queueMicrotask(() => {
+        if (dv.panels.length === 0) {
+          openPrimaryAgentChat();
+        }
+      });
     }
   });
 
