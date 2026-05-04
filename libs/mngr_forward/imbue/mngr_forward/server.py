@@ -506,13 +506,16 @@ def _handle_login(
     env: Environment,
     preauth_cookie_value: str | None,
 ) -> Response:
-    code = OneTimeCode(one_time_code)
     if _is_authenticated(
         cookies=request.cookies,
         auth_store=auth_store,
         preauth_cookie_value=preauth_cookie_value,
     ):
         return Response(status_code=307, headers={"Location": "/"})
+    if not one_time_code or not one_time_code.strip():
+        html = _render_auth_error_page(env, message="This login code is invalid or has already been used.")
+        return HTMLResponse(content=html, status_code=403)
+    code = OneTimeCode(one_time_code)
     html = _render_login_redirect_page(env, code)
     return HTMLResponse(content=html)
 
@@ -524,6 +527,9 @@ def _handle_authenticate(
     env: Environment,
 ) -> Response:
     del request
+    if not one_time_code or not one_time_code.strip():
+        html = _render_auth_error_page(env, message="This login code is invalid or has already been used.")
+        return HTMLResponse(content=html, status_code=403)
     code = OneTimeCode(one_time_code)
     is_valid = auth_store.validate_and_consume_code(code=code)
     if not is_valid:

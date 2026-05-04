@@ -85,6 +85,33 @@ def test_invalid_otp_returns_403(
     assert response.status_code == 403
 
 
+def test_empty_otp_on_authenticate_returns_403_not_500(
+    app_setup: tuple[TestClient, FileAuthStore, ForwardResolver],
+) -> None:
+    """Empty `?one_time_code=` must produce a clean 403, not a 500 from OneTimeCode validation."""
+    client, _store, _resolver = app_setup
+    response = client.get("/authenticate?one_time_code=")
+    assert response.status_code == 403
+
+
+def test_empty_otp_on_login_returns_403_not_500(
+    app_setup: tuple[TestClient, FileAuthStore, ForwardResolver],
+) -> None:
+    """Empty `?one_time_code=` against /login must produce a clean 403, not a 500."""
+    client, _store, _resolver = app_setup
+    response = client.get("/login?one_time_code=")
+    assert response.status_code == 403
+
+
+def test_whitespace_otp_on_authenticate_returns_403_not_500(
+    app_setup: tuple[TestClient, FileAuthStore, ForwardResolver],
+) -> None:
+    """Whitespace-only `?one_time_code=   ` must produce a clean 403, not a 500."""
+    client, _store, _resolver = app_setup
+    response = client.get("/authenticate?one_time_code=%20%20%20")
+    assert response.status_code == 403
+
+
 def test_bare_origin_authenticated_renders_debug_index(
     app_setup: tuple[TestClient, FileAuthStore, ForwardResolver],
 ) -> None:
