@@ -597,13 +597,15 @@ def test_unintentional_subprocess_crash_dispatches_notification() -> None:
     dispatcher = _make_recording_dispatcher()
     consumer = EnvelopeStreamConsumer(resolver=resolver, notification_dispatcher=dispatcher)
     fake = _FakeProcess(pid=4242)
-    fake.returncode = 17  # arbitrary non-zero crash exit code
+    # Arbitrary non-zero crash exit code.
+    fake.returncode = 17
     _attach_fake(consumer, fake)
 
     consumer._wait_and_notify_on_exit()
 
     assert len(dispatcher.recorded) == 1
     request, agent_display_name = dispatcher.recorded[0]
+    assert request.title is not None
     assert "died" in request.title.lower()
     assert agent_display_name == "Minds"
 
