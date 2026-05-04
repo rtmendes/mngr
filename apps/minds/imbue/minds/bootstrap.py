@@ -8,6 +8,7 @@ Kept intentionally minimal -- only stdlib and loguru -- so it stays cheap to
 import and cannot accidentally pull in mngr before translation happens.
 """
 
+import json
 import os
 import re
 import shutil
@@ -175,6 +176,15 @@ def apply_bootstrap() -> None:
     than the bootstrap wrote to. When ``MINDS_ROOT_NAME`` is not set,
     the defaults are written via ``setdefault`` so test fixtures and
     advanced users who pin ``MNGR_HOST_DIR`` directly can still do so.
+
+    Also reconciles the imbue_cloud provider entries in mngr's settings.toml
+    against the persistent session list so a user with a still-valid
+    SuperTokens cookie always has a usable ``[providers.imbue_cloud_<slug>]``
+    block for ``mngr create`` -- previously the entry was only written by
+    a fresh signin event, so any drift (older bootstrap bug, manual edit,
+    deleted-then-recreated settings.toml, etc.) left the user able to
+    sign in but unable to create a workspace until they explicitly
+    signed out and back in.
     """
     is_root_name_explicit = MINDS_ROOT_NAME_ENV_VAR in os.environ
     root_name = resolve_minds_root_name()
@@ -185,6 +195,60 @@ def apply_bootstrap() -> None:
         os.environ.setdefault("MNGR_HOST_DIR", str(mngr_host_dir_for(root_name)))
         os.environ.setdefault("MNGR_PREFIX", mngr_prefix_for(root_name))
     _ensure_mngr_settings(root_name)
+    _reconcile_imbue_cloud_providers_from_sessions(root_name)
+
+
+def _reconcile_imbue_cloud_providers_from_sessions(root_name: str) -> None:
+    """Re-register ``[providers.imbue_cloud_<slug>]`` for every active session.
+
+    minds' SuperTokens session is persistent: the auth cookie + the entry
+    in ``<minds_data_dir>/sessions.json`` outlive any individual minds
+    process. The mngr-side provider-instance registration in settings.toml
+    isn't persistent the same way -- it's only written by the signin
+    *event*, which doesn't fire on cookie-resumed startups. So it's
+    possible (and was observed) for the on-disk state to drift to "user
+    is signed in per sessions.json, but settings.toml has no
+    [providers.imbue_cloud_<email-slug>] block", at which point
+    ``mngr create mindtest@<host>.imbue_cloud_<slug>`` fails with
+    ``Unknown provider backend``.
+
+    Walking sessions.json on every minds startup and ensuring each email
+    has a registered provider entry costs essentially nothing
+    (``set_imbue_cloud_provider_for_account`` is a no-op when the entry
+    already matches) and makes the bootstrap idempotent over arbitrary
+    settings.toml drift.
+
+    No-op when sessions.json doesn't exist yet (e.g. a fresh install
+    where the user hasn't signed in at all).
+    """
+    sessions_path = minds_data_dir_for(root_name) / "sessions.json"
+    if not sessions_path.is_file():
+        return
+    try:
+        raw = sessions_path.read_text()
+    except OSError as e:
+        logger.warning("Could not read minds sessions file {}: {}", sessions_path, e)
+        return
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        logger.warning("Malformed minds sessions file {}: {}", sessions_path, e)
+        return
+    if not isinstance(data, dict):
+        return
+    for entry in data.values():
+        if not isinstance(entry, dict):
+            continue
+        email = entry.get("email")
+        if not isinstance(email, str) or not email:
+            continue
+        try:
+            set_imbue_cloud_provider_for_account(email, root_name=root_name)
+        except BootstrapError as e:
+            # Bad email format (e.g. ``""``) -- log and keep going so a
+            # single corrupt session entry doesn't block reconciliation
+            # for the others.
+            logger.warning("Skipping imbue_cloud provider registration for {!r}: {}", email, e)
 
 
 _IMBUE_CLOUD_BACKEND_NAME: Final[str] = "imbue_cloud"
