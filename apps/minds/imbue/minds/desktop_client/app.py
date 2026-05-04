@@ -242,6 +242,17 @@ async def _managed_lifespan(
             logger.info("Stopping stream manager subprocesses...")
             stream_manager.stop()
             logger.info("Stream manager stopped.")
+        # Stop the new envelope-stream path's spawned ``mngr forward``
+        # subprocess. Same reasoning as ``stream_manager``: uvicorn re-raises
+        # SIGTERM after lifespan shutdown, so a ``try/finally`` around
+        # ``uvicorn.run`` never runs on the normal shutdown path.
+        # ``object | None`` type avoids the circular import with
+        # ``forward_cli`` -- duck-type ``.terminate()`` here.
+        envelope_stream_consumer = inner_app.state.envelope_stream_consumer
+        if envelope_stream_consumer is not None:
+            logger.info("Terminating mngr forward subprocess...")
+            envelope_stream_consumer.terminate()
+            logger.info("mngr forward subprocess terminated.")
         # Latchkey has no shutdown step: spawned ``latchkey gateway``
         # subprocesses are detached and intentionally outlive the desktop
         # client so in-flight container/VM agents keep working.
