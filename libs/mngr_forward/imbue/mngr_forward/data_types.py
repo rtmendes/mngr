@@ -138,7 +138,7 @@ class ForwardAgentSnapshot(FrozenModel):
 
 
 class ForwardListSnapshot(FrozenModel):
-    """Result of running ``mngr list --format jsonl`` once."""
+    """Result of running ``mngr list --format json`` once."""
 
     agents: tuple[ForwardAgentSnapshot, ...] = Field(
         default=(),

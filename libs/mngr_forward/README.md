@@ -43,7 +43,7 @@ in a `forward.reverse_tunnel_established` envelope event.
 
 ## Manual mode
 
-`--no-observe --forward-port REMOTE_PORT` runs `mngr list --format jsonl` once and
+`--no-observe --forward-port REMOTE_PORT` runs `mngr list --format json` once and
 forwards a fixed snapshot. `--no-observe` is invalid with `--service NAME`.
 
 ## Sub-process integration
