@@ -1,3 +1,4 @@
+import asyncio
 import json
 import queue
 import threading
@@ -48,19 +49,42 @@ class WebSocketBroadcaster(MutableModel):
     # successful enqueue. A client is only disconnected once its counter reaches
     # ``_MAX_CONSECUTIVE_QUEUE_FULL`` -- a brief stall is tolerated.
     _consecutive_queue_full_by_id: dict[int, int] = PrivateAttr(default_factory=dict)
+    # Per-client (handler_task, loop) recorded by ``register`` so the broadcaster
+    # can cancel a wedged WS handler from its background broadcast threads.
+    # Cancellation is the mechanism that frees a coroutine blocked in
+    # ``await websocket.send_text(...)`` on a half-dead TCP connection: there is
+    # no per-send wall-clock timeout. Tradeoff: if the handler is wedged but no
+    # broadcasts arrive, the consecutive-overflow threshold never trips and the
+    # coroutine stays parked. Acceptable in practice because state-change
+    # broadcasts are continuous in normal operation.
+    _handler_by_id: dict[int, tuple[asyncio.Task[Any], asyncio.AbstractEventLoop]] = PrivateAttr(default_factory=dict)
 
-    def register(self) -> queue.Queue[str | None]:
-        """Register a new WebSocket client. Returns a queue to drain for messages."""
+    def register(
+        self,
+        *,
+        handler_task: asyncio.Task[Any] | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+    ) -> queue.Queue[str | None]:
+        """Register a new WebSocket client. Returns a queue to drain for messages.
+
+        When both ``handler_task`` and ``loop`` are supplied, the broadcaster
+        will cancel the handler's task on eviction (via ``call_soon_threadsafe``
+        from the broadcast thread). Callers without an asyncio context can omit
+        them; eviction then only drops the queue.
+        """
         q: queue.Queue[str | None] = queue.Queue(maxsize=_CLIENT_QUEUE_MAX_SIZE)
         with self._lock:
             self._client_queues.append(q)
             self._consecutive_queue_full_by_id[id(q)] = 0
+            if handler_task is not None and loop is not None:
+                self._handler_by_id[id(q)] = (handler_task, loop)
         return q
 
     def unregister(self, client_queue: queue.Queue[str | None]) -> None:
         """Remove a WebSocket client's queue."""
         with self._lock:
             self._consecutive_queue_full_by_id.pop(id(client_queue), None)
+            self._handler_by_id.pop(id(client_queue), None)
             try:
                 self._client_queues.remove(client_queue)
             except ValueError:
@@ -84,17 +108,17 @@ class WebSocketBroadcaster(MutableModel):
                 self._disconnect_locked(dead_queue)
 
     def _disconnect_locked(self, dead_queue: queue.Queue[str | None]) -> None:
-        """Drain ``dead_queue``, signal shutdown, and remove it. Caller must hold ``self._lock``."""
-        _drain_queue(dead_queue)
-        try:
-            dead_queue.put_nowait(None)
-        except queue.Full:
-            pass
+        """Drop ``dead_queue`` and cancel its handler task. Caller must hold ``self._lock``."""
+        handler = self._handler_by_id.pop(id(dead_queue), None)
+        self._consecutive_queue_full_by_id.pop(id(dead_queue), None)
         try:
             self._client_queues.remove(dead_queue)
         except ValueError:
             pass
-        self._consecutive_queue_full_by_id.pop(id(dead_queue), None)
+        _drain_queue(dead_queue)
+        if handler is not None:
+            task, loop = handler
+            loop.call_soon_threadsafe(task.cancel)
         _loguru_logger.warning(
             "Disconnected unresponsive WebSocket client after {} consecutive queue-full broadcasts",
             _MAX_CONSECUTIVE_QUEUE_FULL,
@@ -152,3 +176,4 @@ class WebSocketBroadcaster(MutableModel):
                     pass
             self._client_queues.clear()
             self._consecutive_queue_full_by_id.clear()
+            self._handler_by_id.clear()

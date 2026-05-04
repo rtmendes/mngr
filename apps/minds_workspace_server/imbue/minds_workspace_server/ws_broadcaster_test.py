@@ -1,5 +1,6 @@
 """Tests for the WebSocket broadcaster."""
 
+import asyncio
 import json
 import queue
 
@@ -143,12 +144,12 @@ def test_broadcast_disconnects_client_after_consecutive_queue_full_threshold() -
         broadcaster.broadcast({"index": index})
         received_by_live_client.append(json.loads(_get_message(live_queue)))
 
-    # The stuck client receives a None sentinel telling its handler to exit;
-    # its previously-buffered messages are dropped to make room.
-    drained_messages: list[str | None] = []
-    while not stuck_queue.empty():
-        drained_messages.append(stuck_queue.get_nowait())
-    assert drained_messages == [None]
+    # The stuck queue is drained and removed from the broadcaster's roster.
+    # No registered handler task was attached, so cancellation is a no-op and
+    # the queue is simply dropped -- a subsequent broadcast must not touch it.
+    assert stuck_queue.empty()
+    broadcaster.broadcast({"after": "evict"})
+    assert stuck_queue.empty()
 
     # The live client got every broadcast -- the eviction did not interrupt it.
     assert len(received_by_live_client) == _BROADCASTS_TO_TRIGGER_DISCONNECT
@@ -209,8 +210,7 @@ def test_broadcast_after_disconnect_does_not_touch_dead_queue() -> None:
     for index in range(_BROADCASTS_TO_TRIGGER_DISCONNECT):
         broadcaster.broadcast({"index": index})
 
-    # Drain the sentinel so we can see whether subsequent broadcasts add anything.
-    assert stuck_queue.get_nowait() is None
+    # The eviction path drains the queue; subsequent broadcasts must not touch it.
     assert stuck_queue.empty()
 
     broadcaster.broadcast({"after": "disconnect"})
@@ -246,6 +246,42 @@ def test_broadcast_disconnect_unregisters_queue_so_unregister_is_idempotent() ->
     # though the broadcaster already removed the queue when it evicted the client.
     broadcaster.unregister(stuck_queue)
     broadcaster.unregister(stuck_queue)
+
+
+def test_broadcast_cancels_registered_handler_task_on_eviction() -> None:
+    """When a handler task is registered, eviction cancels it via the loop's call_soon_threadsafe."""
+
+    async def _drive() -> tuple[bool, bool]:
+        broadcaster = WebSocketBroadcaster()
+        loop = asyncio.get_running_loop()
+
+        async def _wedged_handler() -> None:
+            # Stand-in for a coroutine wedged in ``await websocket.send_text(...)``.
+            await asyncio.Event().wait()
+
+        handler_task = asyncio.create_task(_wedged_handler())
+        client_queue = broadcaster.register(handler_task=handler_task, loop=loop)
+        # Yield once so the handler task starts and parks on the Event.
+        await asyncio.sleep(0)
+
+        # Drive the broadcaster past the consecutive-overflow threshold from
+        # the same loop. Each broadcast is synchronous; ``call_soon_threadsafe``
+        # schedules the cancel to fire on the next loop iteration.
+        for index in range(_BROADCASTS_TO_TRIGGER_DISCONNECT):
+            broadcaster.broadcast({"index": index})
+
+        cancelled = False
+        try:
+            await handler_task
+        except asyncio.CancelledError:
+            cancelled = True
+
+        # The queue was drained by the eviction path and the handler dict cleared.
+        return cancelled, client_queue.empty()
+
+    cancelled, queue_empty = asyncio.run(_drive())
+    assert cancelled
+    assert queue_empty
 
 
 def test_shutdown_delivers_sentinel_even_to_full_queue() -> None:
