@@ -254,6 +254,14 @@ deploy-all env="production": (push-secrets env) (deploy-connector env) (deploy-l
 minds-start agent_name="mindtest" branch="":
     #!/bin/bash
     set -ueo pipefail
+    if [ -z "${MINDS_ROOT_NAME:-}" ]; then
+        echo "error: MINDS_ROOT_NAME is not set." >&2
+        echo "       Add \`export MINDS_ROOT_NAME=devminds\` (or your chosen root name) to your ~/.bashrc" >&2
+        echo "       so that minds bootstrap can derive MNGR_HOST_DIR / MNGR_PREFIX correctly." >&2
+        echo "       Without an explicit MINDS_ROOT_NAME, an inherited MNGR_HOST_DIR from the parent" >&2
+        echo "       shell wins and minds reads a different mngr settings.toml than its bootstrap writes." >&2
+        exit 2
+    fi
     pid_file="/tmp/minds-start-$(echo -n "$PWD" | sha1sum | cut -c1-12).pid"
     if [ -f "$pid_file" ]; then
         existing=$(cat "$pid_file" 2>/dev/null || echo "")
