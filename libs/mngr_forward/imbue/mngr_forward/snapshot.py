@@ -13,7 +13,6 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
-from typing import Final
 
 from loguru import logger
 
@@ -21,9 +20,8 @@ from imbue.mngr.primitives import AgentId
 from imbue.mngr_forward.data_types import ForwardAgentSnapshot
 from imbue.mngr_forward.data_types import ForwardListSnapshot
 from imbue.mngr_forward.errors import ForwardSubprocessError
+from imbue.mngr_forward.primitives import MNGR_BINARY
 from imbue.mngr_forward.ssh_tunnel import RemoteSSHInfo
-
-MNGR_BINARY: Final[str] = "mngr"
 
 
 def mngr_list_snapshot(

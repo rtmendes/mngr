@@ -46,8 +46,8 @@ from imbue.mngr.primitives import DiscoveredAgent
 from imbue.mngr.utils.cel_utils import apply_cel_filters_to_context
 from imbue.mngr.utils.cel_utils import compile_cel_filters
 from imbue.mngr_forward.envelope import EnvelopeWriter
+from imbue.mngr_forward.primitives import MNGR_BINARY
 from imbue.mngr_forward.resolver import ForwardResolver
-from imbue.mngr_forward.snapshot import MNGR_BINARY
 from imbue.mngr_forward.ssh_tunnel import RemoteSSHInfo
 
 _SERVICES_SOURCE = "services"

@@ -24,6 +24,8 @@ class CookieSigningKey(SecretStr):
 
 MNGR_FORWARD_SESSION_COOKIE_NAME: Final[str] = "mngr_forward_session"
 
+MNGR_BINARY: Final[str] = "mngr"
+
 # Strict subdomain pattern: only ``agent-<hex>.localhost(:port)?`` and the
 # ``127.0.0.1`` synonym are accepted by the host-header middleware.
 FORWARD_SUBDOMAIN_PATTERN: Final[re.Pattern[str]] = re.compile(

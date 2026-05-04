@@ -38,9 +38,10 @@ class ReverseTunnelHandler(MutableModel):
     )
 
     # Tracks which agents requested each plugin-managed tunnel so the repair
-    # callback can re-emit one envelope per agent. Key is
-    # ``(ssh_host, ssh_port, local_port)`` -- the same triple that uniquely
-    # identifies a ReverseTunnelInfo for the plugin's purposes.
+    # callback can re-emit one envelope per agent. Key is the
+    # ``(ssh_host, ssh_port, local_port)`` triple, cast to plain ``int``s so
+    # equality works against ``ReverseTunnelInfo.{ssh_info.host,
+    # ssh_info.port, local_port}``.
     _agents_by_tunnel_key: dict[tuple[str, int, int], set[AgentId]] = PrivateAttr(default_factory=dict)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
@@ -92,7 +93,7 @@ class ReverseTunnelHandler(MutableModel):
                 e,
             )
             return
-        self._track_agent(agent_id=agent_id, ssh_info=ssh_info, local_port=int(spec.local_port))
+        self._track_agent(agent_id=agent_id, ssh_info=ssh_info, local_port=spec.local_port)
         self.envelope_writer.emit_reverse_tunnel_established(
             ReverseTunnelEstablishedPayload(
                 agent_id=agent_id,
@@ -103,8 +104,8 @@ class ReverseTunnelHandler(MutableModel):
             )
         )
 
-    def _track_agent(self, agent_id: AgentId, ssh_info: RemoteSSHInfo, local_port: int) -> None:
-        key = (ssh_info.host, ssh_info.port, local_port)
+    def _track_agent(self, agent_id: AgentId, ssh_info: RemoteSSHInfo, local_port: PositiveInt) -> None:
+        key = (ssh_info.host, ssh_info.port, int(local_port))
         with self._lock:
             self._agents_by_tunnel_key.setdefault(key, set()).add(agent_id)
 

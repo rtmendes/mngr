@@ -46,7 +46,8 @@ def test_signing_key_generated_then_reused(tmp_path: Path) -> None:
     assert store_b.get_signing_key().get_secret_value() == key_a.get_secret_value()
 
 
-def test_signing_key_unreadable_raises(tmp_path: Path) -> None:
+def test_signing_key_empty_file_raises(tmp_path: Path) -> None:
+    """An empty signing-key file is treated as a broken store rather than silently regenerated."""
     key_path = tmp_path / "signing_key"
     key_path.write_text("")
     store = FileAuthStore(data_directory=tmp_path)

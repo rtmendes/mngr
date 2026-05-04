@@ -14,7 +14,6 @@ from imbue.mngr_forward.cli import _parse_reverse_specs
 from imbue.mngr_forward.cli import _validate_options
 from imbue.mngr_forward.data_types import ForwardPortStrategy
 from imbue.mngr_forward.data_types import ForwardServiceStrategy
-from imbue.mngr_forward.errors import ForwardManualConfigError
 from imbue.mngr_forward.primitives import ReverseTunnelSpec
 
 
@@ -42,7 +41,7 @@ def test_validation_rejects_both_targets() -> None:
 
 
 def test_validation_rejects_no_observe_with_service() -> None:
-    with pytest.raises(ForwardManualConfigError):
+    with pytest.raises(click.UsageError):
         _validate_options(_opts(service="system_interface", no_observe=True))
 
 

@@ -53,6 +53,7 @@ from imbue.mngr_forward.primitives import FORWARD_SUBDOMAIN_PATTERN
 from imbue.mngr_forward.primitives import MNGR_FORWARD_SESSION_COOKIE_NAME
 from imbue.mngr_forward.primitives import OneTimeCode
 from imbue.mngr_forward.resolver import ForwardResolver
+from imbue.mngr_forward.ssh_tunnel import RemoteSSHInfo
 from imbue.mngr_forward.ssh_tunnel import SSHTunnelError
 from imbue.mngr_forward.ssh_tunnel import SSHTunnelManager
 from imbue.mngr_forward.ssh_tunnel import parse_url_host_port
@@ -205,13 +206,13 @@ async def _forward_backend_to_client(
 def _get_tunnel_socket_path(
     tunnel_manager: SSHTunnelManager,
     backend_url: str,
-    ssh_info: object | None,
+    ssh_info: RemoteSSHInfo | None,
 ) -> Path | None:
     if ssh_info is None:
         return None
     remote_host, remote_port = parse_url_host_port(backend_url)
     return tunnel_manager.get_tunnel_socket_path(
-        ssh_info=ssh_info,  # type: ignore[arg-type]
+        ssh_info=ssh_info,
         remote_host=remote_host,
         remote_port=remote_port,
     )
@@ -220,7 +221,7 @@ def _get_tunnel_socket_path(
 def _get_tunnel_http_client(
     tunnel_manager: SSHTunnelManager,
     backend_url: str,
-    ssh_info: object | None,
+    ssh_info: RemoteSSHInfo | None,
     ssh_http_clients: dict[str, httpx.AsyncClient],
     ssh_http_clients_lock: threading.Lock,
 ) -> httpx.AsyncClient | None:
@@ -548,11 +549,9 @@ def _handle_login(
 
 def _handle_authenticate(
     one_time_code: str,
-    request: Request,
     auth_store: AuthStoreInterface,
     env: Environment,
 ) -> Response:
-    del request
     if not one_time_code or not one_time_code.strip():
         html = _render_auth_error_page(env, message="This login code is invalid or has already been used.")
         return HTMLResponse(content=html, status_code=403)
@@ -721,10 +720,9 @@ def create_forward_app(
         )
 
     @app.get("/authenticate")
-    def _authenticate(one_time_code: str, request: Request) -> Response:
+    def _authenticate(one_time_code: str) -> Response:
         return _handle_authenticate(
             one_time_code=one_time_code,
-            request=request,
             auth_store=auth_store,
             env=env,
         )

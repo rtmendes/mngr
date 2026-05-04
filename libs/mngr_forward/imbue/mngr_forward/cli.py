@@ -1,8 +1,8 @@
 """Click entry point for ``mngr forward``."""
 
-import os
 import secrets
 import signal
+import subprocess
 import threading
 import time
 import webbrowser
@@ -14,6 +14,7 @@ import click
 import uvicorn
 from loguru import logger
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.primitives import NonNegativeInt
 from imbue.imbue_common.primitives import PositiveInt
 from imbue.mngr.cli.common_opts import add_common_options
@@ -21,12 +22,17 @@ from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.cli.help_formatter import CommandHelpMetadata
 from imbue.mngr.cli.help_formatter import add_pager_help_option
 from imbue.mngr.config.data_types import CommonCliOptions
+from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.utils.cel_utils import apply_cel_filters_to_context
+from imbue.mngr.utils.cel_utils import compile_cel_filters
 from imbue.mngr.utils.parent_process import start_parent_death_watcher
 from imbue.mngr_forward.auth import FileAuthStore
+from imbue.mngr_forward.data_types import ForwardListSnapshot
 from imbue.mngr_forward.data_types import ForwardPortStrategy
 from imbue.mngr_forward.data_types import ForwardServiceStrategy
 from imbue.mngr_forward.envelope import EnvelopeWriter
 from imbue.mngr_forward.errors import ForwardManualConfigError
+from imbue.mngr_forward.errors import ForwardSubprocessError
 from imbue.mngr_forward.primitives import ForwardPort
 from imbue.mngr_forward.primitives import OneTimeCode
 from imbue.mngr_forward.primitives import ReverseTunnelSpec
@@ -170,21 +176,13 @@ def forward(ctx: click.Context, **kwargs: Any) -> None:
     )
 
     if opts.no_observe:
-        snapshot = mngr_list_snapshot()
-        kept = _filter_snapshot(snapshot, opts.agent_include, opts.agent_exclude)
-        if not kept.agents:
-            raise ForwardManualConfigError(
-                "`mngr list` returned no matching agents in --no-observe mode; nothing to forward."
-            )
-        agent_ids = tuple(entry.agent_id for entry in kept.agents)
-        resolver.update_known_agents(agent_ids)
-        for entry in kept.agents:
-            if entry.ssh_info is not None:
-                resolver.update_ssh_info(entry.agent_id, entry.ssh_info)
-        if reverse_specs:
-            reverse_handler.setup_for_snapshot(
-                tuple((entry.agent_id, entry.ssh_info) for entry in kept.agents if entry.ssh_info is not None)
-            )
+        kept = _seed_resolver_from_snapshot(
+            resolver=resolver,
+            reverse_handler=reverse_handler,
+            opts=opts,
+            require_non_empty=True,
+        )
+        del kept  # used internally by the helper
         stream_manager: ForwardStreamManager | None = None
     else:
         stream_manager = ForwardStreamManager(
@@ -199,14 +197,16 @@ def forward(ctx: click.Context, **kwargs: Any) -> None:
             stream_manager.add_on_agent_discovered_callback(reverse_handler)
         stream_manager.start()
 
-    tunnel_manager.start_reverse_tunnel_health_check()
+    if reverse_specs:
+        tunnel_manager.start_reverse_tunnel_health_check()
 
     plugin_state_dir = _resolve_plugin_state_dir(_resolve_mngr_host_dir(mngr_ctx))
     auth_store = FileAuthStore(data_directory=plugin_state_dir)
 
     one_time_code = OneTimeCode(secrets.token_urlsafe(_OTP_LENGTH))
     auth_store.add_one_time_code(code=one_time_code)
-    login_url = f"http://localhost:{opts.port}/login?one_time_code={one_time_code}"
+    login_host = "localhost" if opts.host in {"127.0.0.1", "0.0.0.0", "::1", "::"} else opts.host
+    login_url = f"http://{login_host}:{opts.port}/login?one_time_code={one_time_code}"
 
     logger.info("Login URL (one-time use): {}", login_url)
     envelope_writer.emit_login_url(login_url)
@@ -258,7 +258,9 @@ def _validate_options(opts: ForwardCliOptions) -> None:
     if opts.service is not None and opts.forward_port is not None:
         raise click.UsageError("--service and --forward-port are mutually exclusive.")
     if opts.no_observe and opts.service is not None:
-        raise ForwardManualConfigError(
+        # Spec calls this a "CLI usage error" — use click.UsageError for
+        # consistency with the other mutex checks above.
+        raise click.UsageError(
             "--no-observe is only valid with --forward-port REMOTE_PORT (service URLs are not in `mngr list` output)."
         )
 
@@ -271,20 +273,16 @@ def _build_strategy(opts: ForwardCliOptions) -> ForwardServiceStrategy | Forward
 
 
 def _filter_snapshot(
-    snapshot: Any,
+    snapshot: ForwardListSnapshot,
     include: tuple[str, ...],
     exclude: tuple[str, ...],
-) -> Any:
+) -> ForwardListSnapshot:
     """Apply CEL include/exclude filters to a `mngr list` snapshot.
 
     The CEL context shape matches ``ForwardStreamManager._agent_passes_filter``
     so the same ``--agent-include`` / ``--agent-exclude`` expressions evaluate
     identically in both observe and ``--no-observe`` modes.
     """
-    from imbue.mngr.utils.cel_utils import apply_cel_filters_to_context
-    from imbue.mngr.utils.cel_utils import compile_cel_filters
-    from imbue.mngr_forward.data_types import ForwardListSnapshot
-
     if not include and not exclude:
         return snapshot
     compiled_includes, compiled_excludes = compile_cel_filters(list(include), list(exclude))
@@ -309,17 +307,46 @@ def _filter_snapshot(
     return ForwardListSnapshot(agents=tuple(kept))
 
 
-def _resolve_mngr_host_dir(mngr_ctx: Any) -> Path:
-    """Best-effort lookup of the mngr host dir from the CLI context."""
-    config = getattr(mngr_ctx, "config", None)
-    if config is not None:
-        host_dir = getattr(config, "default_host_dir", None)
-        if host_dir is not None:
-            return Path(host_dir).expanduser()
-    env_value = os.environ.get("MNGR_HOST_DIR")
-    if env_value:
-        return Path(env_value).expanduser()
-    return Path.home() / ".mngr"
+def _resolve_mngr_host_dir(mngr_ctx: MngrContext) -> Path:
+    """Resolve the mngr host dir from the CLI context.
+
+    ``MngrContext.config.default_host_dir`` is always populated by
+    ``setup_command_context``; we just expand ``~`` if present.
+    """
+    return mngr_ctx.config.default_host_dir.expanduser()
+
+
+def _seed_resolver_from_snapshot(
+    resolver: ForwardResolver,
+    reverse_handler: ReverseTunnelHandler,
+    opts: "ForwardCliOptions",
+    require_non_empty: bool,
+) -> ForwardListSnapshot:
+    """Run ``mngr list`` once and seed the resolver + reverse handler.
+
+    Used both at startup (``require_non_empty=True``: raises
+    ``ForwardManualConfigError`` if the post-filter snapshot is empty) and
+    on ``SIGHUP`` (``require_non_empty=False``: keeps the previous set on an
+    empty snapshot, treating it as a transient).
+    """
+    snapshot = mngr_list_snapshot()
+    kept = _filter_snapshot(snapshot, opts.agent_include, opts.agent_exclude)
+    if not kept.agents:
+        if require_non_empty:
+            raise ForwardManualConfigError(
+                "`mngr list` returned no matching agents in --no-observe mode; nothing to forward."
+            )
+        logger.warning("SIGHUP re-snapshot returned no agents; keeping previous set rather than emptying.")
+        return kept
+    agent_ids = tuple(entry.agent_id for entry in kept.agents)
+    resolver.update_known_agents(agent_ids)
+    for entry in kept.agents:
+        if entry.ssh_info is not None:
+            resolver.update_ssh_info(entry.agent_id, entry.ssh_info)
+    reverse_handler.setup_for_snapshot(
+        tuple((entry.agent_id, entry.ssh_info) for entry in kept.agents if entry.ssh_info is not None)
+    )
+    return kept
 
 
 def _install_sighup_handler(
@@ -327,7 +354,7 @@ def _install_sighup_handler(
     opts: ForwardCliOptions,
     resolver: ForwardResolver,
     reverse_handler: ReverseTunnelHandler,
-    concurrency_group: Any,
+    concurrency_group: ConcurrencyGroup,
 ) -> None:
     """Install a SIGHUP handler that bounces observe (or re-snapshots in --no-observe mode).
 
@@ -374,30 +401,19 @@ def _resnapshot_no_observe(
 ) -> None:
     """Re-run `mngr list` snapshot in --no-observe mode after SIGHUP.
 
-    Updates the resolver's known agents + per-host SSH info, and re-invokes
-    ``reverse_handler.setup_for_snapshot`` so any agents that were not in the
-    original boot snapshot get their reverse tunnels established (and a
-    ``reverse_tunnel_established`` envelope event emitted). Calls for
-    already-established tunnels short-circuit inside ``SSHTunnelManager``,
-    so re-emission for previously-tunneled agents is idempotent.
+    Delegates to ``_seed_resolver_from_snapshot`` with
+    ``require_non_empty=False`` so an empty snapshot is treated as transient
+    (the spec says startup-empty is fatal but mid-flight-empty is not).
     """
     try:
-        snapshot = mngr_list_snapshot()
-    except Exception as e:  # noqa: BLE001 - logged, not re-raised
+        _seed_resolver_from_snapshot(
+            resolver=resolver,
+            reverse_handler=reverse_handler,
+            opts=opts,
+            require_non_empty=False,
+        )
+    except (ForwardSubprocessError, OSError, subprocess.SubprocessError) as e:
         logger.warning("SIGHUP re-snapshot failed: {}", e)
-        return
-    kept = _filter_snapshot(snapshot, opts.agent_include, opts.agent_exclude)
-    if not kept.agents:
-        logger.warning("SIGHUP re-snapshot returned no agents; keeping previous set rather than emptying.")
-        return
-    agent_ids = tuple(entry.agent_id for entry in kept.agents)
-    resolver.update_known_agents(agent_ids)
-    for entry in kept.agents:
-        if entry.ssh_info is not None:
-            resolver.update_ssh_info(entry.agent_id, entry.ssh_info)
-    reverse_handler.setup_for_snapshot(
-        tuple((entry.agent_id, entry.ssh_info) for entry in kept.agents if entry.ssh_info is not None)
-    )
 
 
 def _sleep_then_open_browser(url: str, delay: float = 1.0) -> None:
