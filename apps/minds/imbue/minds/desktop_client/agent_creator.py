@@ -44,12 +44,14 @@ from imbue.minds.desktop_client.imbue_cloud_cli import LiteLLMKeyMaterial
 from imbue.minds.desktop_client.latchkey.core import AGENT_SIDE_LATCHKEY_PORT
 from imbue.minds.desktop_client.latchkey.core import Latchkey
 from imbue.minds.desktop_client.latchkey.core import LatchkeyError
+from imbue.minds.desktop_client.latchkey.core import PendingLatchkeyGateway
 from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.errors import GitCloneError
 from imbue.minds.errors import GitOperationError
 from imbue.minds.errors import MngrCommandError
 from imbue.minds.primitives import AgentName
+from imbue.minds.primitives import CreationId
 from imbue.minds.primitives import GitBranch
 from imbue.minds.primitives import GitUrl
 from imbue.minds.primitives import LaunchMode
@@ -98,9 +100,24 @@ class AgentDestructionStatus(UpperCaseStrEnum):
 
 
 class AgentCreationInfo(FrozenModel):
-    """Snapshot of agent creation state, returned to callers for status polling."""
+    """Snapshot of agent creation state, returned to callers for status polling.
 
-    agent_id: AgentId = Field(description="ID of the agent being created")
+    The agent creation flow is keyed by ``creation_id`` (a minds-internal
+    handle returned synchronously from :py:meth:`AgentCreator.start_creation`)
+    because the canonical ``AgentId`` is only known *after* the inner
+    ``mngr create`` returns -- for imbue_cloud agents the id is dictated
+    by the leased pool host's pre-baked agent, not by minds. ``agent_id``
+    is therefore ``None`` until the inner ``mngr create`` emits its
+    ``"event": "created"`` JSONL line; consumers that need to redirect
+    to ``/goto/<agent_id>/`` should poll ``redirect_url`` instead, which
+    is populated atomically with the ``DONE`` status.
+    """
+
+    creation_id: CreationId = Field(description="Minds-internal handle for this in-flight creation")
+    agent_id: AgentId | None = Field(
+        default=None,
+        description="Canonical mngr agent id; populated once ``mngr create`` returns, ``None`` while in-flight",
+    )
     status: AgentCreationStatus = Field(description="Current creation status")
     redirect_url: str | None = Field(default=None, description="URL to redirect to when creation is done")
     error: str | None = Field(default=None, description="Error message, set when status is FAILED")
@@ -331,7 +348,10 @@ def _make_host_name(agent_name: AgentName) -> str:
     return f"{agent_name}-host"
 
 
-def _build_latchkey_gateway_url(launch_mode: LaunchMode, info: LatchkeyGatewayInfo) -> str:
+def _build_latchkey_gateway_url(
+    launch_mode: LaunchMode,
+    gateway: PendingLatchkeyGateway | LatchkeyGatewayInfo,
+) -> str:
     """Return the ``LATCHKEY_GATEWAY`` URL the agent should see in its environment.
 
     DEV agents run on the bare host and reach the gateway on its dynamic host
@@ -339,10 +359,15 @@ def _build_latchkey_gateway_url(launch_mode: LaunchMode, info: LatchkeyGatewayIn
     runs inside an isolated runtime whose own loopback is bridged to the
     host-side gateway via an SSH reverse tunnel bound to a fixed remote port,
     so the URL is the same constant for every such agent.
+
+    Accepts either kind of gateway record: ``PendingLatchkeyGateway``
+    pre-bind (while we still don't know the canonical ``AgentId``) and
+    ``LatchkeyGatewayInfo`` post-bind. They share the ``host`` + ``port``
+    fields used here.
     """
     match launch_mode:
         case LaunchMode.DEV:
-            return f"http://{info.host}:{info.port}"
+            return f"http://{gateway.host}:{gateway.port}"
         case LaunchMode.LOCAL | LaunchMode.LIMA | LaunchMode.CLOUD | LaunchMode.IMBUE_CLOUD:
             return f"http://127.0.0.1:{AGENT_SIDE_LATCHKEY_PORT}"
         case _ as unreachable:
@@ -352,7 +377,6 @@ def _build_latchkey_gateway_url(launch_mode: LaunchMode, info: LatchkeyGatewayIn
 def _build_mngr_create_command(
     launch_mode: LaunchMode,
     agent_name: AgentName,
-    agent_id: AgentId,
     host_env_file: Path | None = None,
     latchkey_gateway_url: str | None = None,
     imbue_cloud_account: str | None = None,
@@ -364,7 +388,12 @@ def _build_mngr_create_command(
     """Build the mngr create command and generate an API key for the agent.
 
     Returns (command_list, api_key) where api_key is a UUID4 string injected
-    as MINDS_API_KEY into the agent's environment via --env.
+    as MINDS_API_KEY into the agent's environment via --env. ``--format jsonl``
+    is appended so the caller can parse the canonical ``AgentId`` out of
+    the trailing ``"event": "created"`` line; minds no longer pre-generates
+    an id because for imbue_cloud the lease forces it back to the pool
+    host's pre-baked id anyway, and pre-generating one led to bugs (e.g.
+    keying gateway state under a fictional id).
 
     DEV mode: --template main --template dev (runs in-place on local provider)
     LOCAL mode: --template main --template docker (runs in Docker container)
@@ -377,9 +406,10 @@ def _build_mngr_create_command(
 
     For modes that create a separate host (LOCAL, LIMA, CLOUD, IMBUE_CLOUD),
     the agent address uses ``agent_name@{agent_name}-host`` so hosts are
-    clearly attributable. ``--reuse`` and ``--update`` are passed so
-    re-deploying resets the agent on the same host instead of failing
-    (omitted for IMBUE_CLOUD since each lease is one-shot).
+    clearly attributable. ``--reuse`` and ``--update`` are passed for the
+    non-IMBUE_CLOUD modes so re-deploying resets the agent on the same
+    host instead of failing on a duplicate name (IMBUE_CLOUD's lease
+    flow is one-shot per pool host, so reuse is not meaningful there).
 
     When ``host_env_file`` is supplied, its contents are loaded into the host
     environment via ``--host-env-file`` so secrets from a local ``.env`` reach
@@ -410,11 +440,16 @@ def _build_mngr_create_command(
 
     # The `/welcome` initial message is now baked into the FCT template's
     # [create_templates.main] section, so we no longer pass `--message` here.
+    # ``--format jsonl`` makes mngr emit ``{"event": "created", "agent_id": ..., "host_id": ...}``
+    # as the final stdout line; ``run_mngr_create`` parses that to recover
+    # the canonical agent id.
     mngr_command: list[str] = [
         MNGR_BINARY,
         "create",
         address,
         "--no-connect",
+        "--format",
+        "jsonl",
         "--label",
         f"workspace={agent_name}",
         "--env",
@@ -429,12 +464,11 @@ def _build_mngr_create_command(
     match launch_mode:
         case LaunchMode.IMBUE_CLOUD:
             # Each lease is one-shot, so --reuse / --update would be confusing.
-            # The id is dictated by the pool's pre-baked agent (the plugin's
-            # create_agent_state rejects a conflicting --id), so we don't pass
-            # --id either; the canonical id is read back via mngr list.
+            # The id is dictated by the pool's pre-baked agent and read back
+            # from the JSONL "created" event below.
             pass
         case _:
-            mngr_command.extend(["--id", str(agent_id), "--reuse", "--update"])
+            mngr_command.extend(["--reuse", "--update"])
 
     match launch_mode:
         case LaunchMode.DEV:
@@ -570,11 +604,56 @@ def resolve_template_version(
     return latest
 
 
+class _CreateEventCapture(MutableModel):
+    """Forwards each child-process line to ``on_output`` while sniffing for ``mngr create``'s JSONL ``created`` event.
+
+    ``mngr create --format jsonl`` writes structured event records to stdout
+    -- the final one being ``{"event": "created", "agent_id": "...", "host_id": "..."}``.
+    Each line still goes through to the caller's ``on_output`` so log
+    streaming behaviour is unchanged; this wrapper just records the
+    canonical agent id when it sees the matching event so the caller can
+    return it without a follow-up ``mngr list`` lookup.
+    """
+
+    inner_on_output: OutputCallback | None = Field(
+        default=None,
+        description="Caller's per-line callback that gets every stdout/stderr line, regardless of parsing",
+    )
+    canonical_agent_id: AgentId | None = Field(
+        default=None,
+        description="Populated when a JSONL ``created`` event is seen on stdout",
+    )
+    canonical_host_id: str | None = Field(
+        default=None,
+        description="Populated alongside ``canonical_agent_id`` from the same JSONL event",
+    )
+
+    def __call__(self, line: str, is_stdout: bool) -> None:
+        if self.inner_on_output is not None:
+            self.inner_on_output(line, is_stdout)
+        if not is_stdout:
+            return
+        stripped = line.strip()
+        if not stripped or not stripped.startswith("{"):
+            return
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(event, dict) or event.get("event") != "created":
+            return
+        agent_id_raw = event.get("agent_id")
+        if isinstance(agent_id_raw, str) and agent_id_raw:
+            self.canonical_agent_id = AgentId(agent_id_raw)
+        host_id_raw = event.get("host_id")
+        if isinstance(host_id_raw, str) and host_id_raw:
+            self.canonical_host_id = host_id_raw
+
+
 def run_mngr_create(
     launch_mode: LaunchMode,
     workspace_dir: Path | None,
     agent_name: AgentName,
-    agent_id: AgentId,
     on_output: OutputCallback | None = None,
     host_env_file: Path | None = None,
     latchkey_gateway_url: str | None = None,
@@ -585,8 +664,8 @@ def run_mngr_create(
     imbue_cloud_anthropic_base_url: str | None = None,
     *,
     parent_cg: ConcurrencyGroup | None = None,
-) -> str:
-    """Create an mngr agent via ``mngr create``.
+) -> tuple[str, AgentId]:
+    """Create an mngr agent via ``mngr create --format jsonl``.
 
     The repo's own ``.mngr/settings.toml`` defines agent types, templates,
     environment variables, and all other configuration. ``workspace_dir`` is
@@ -595,13 +674,16 @@ def run_mngr_create(
     pool host has its own pre-baked ``.mngr/`` and the local repo is
     irrelevant.
 
-    Returns the generated API key for the agent.
-    Raises MngrCommandError if the command fails.
+    Returns ``(api_key, canonical_agent_id)``. The canonical id is parsed
+    out of the ``"event": "created"`` JSONL line that ``mngr create``
+    emits as its final stdout record.
+
+    Raises ``MngrCommandError`` if the command fails or never emits a
+    ``created`` event (e.g. crashed before final-output stage).
     """
     mngr_command, api_key = _build_mngr_create_command(
         launch_mode,
         agent_name,
-        agent_id,
         host_env_file=host_env_file,
         latchkey_gateway_url=latchkey_gateway_url,
         imbue_cloud_account=imbue_cloud_account,
@@ -626,13 +708,14 @@ def run_mngr_create(
 
     logger.info("Running: {}", " ".join(mngr_command))
 
+    capture = _CreateEventCapture(inner_on_output=on_output)
     cg = _make_child_cg("mngr-create", parent_cg)
     with cg:
         result = cg.run_process_to_completion(
             command=mngr_command,
             cwd=workspace_dir,
             is_checked_after=False,
-            on_output=on_output,
+            on_output=capture,
             env=subprocess_env,
         )
 
@@ -644,7 +727,17 @@ def run_mngr_create(
             )
         )
 
-    return api_key
+    if capture.canonical_agent_id is None:
+        # Exit-zero without a created event almost certainly means the
+        # JSONL output got mangled or some pre-emit error path took over.
+        # Fail loudly rather than fall through with a sentinel id.
+        raise MngrCommandError(
+            "mngr create exited 0 but did not emit a JSONL 'created' event; stdout tail:\n{}".format(
+                result.stdout.strip()[-2000:]
+            )
+        )
+
+    return api_key, capture.canonical_agent_id
 
 
 class AgentCreator(MutableModel):
@@ -708,7 +801,13 @@ class AgentCreator(MutableModel):
         ),
     )
 
+    # In-flight creation state is keyed by ``str(CreationId)`` because the
+    # canonical ``AgentId`` doesn't exist until ``mngr create`` returns.
+    # Once it does, the corresponding ``CreationId`` row in
+    # ``_canonical_agent_ids`` gets populated and ``AgentCreationInfo``
+    # snapshots include the new ``agent_id`` field.
     _statuses: dict[str, AgentCreationStatus] = PrivateAttr(default_factory=dict)
+    _canonical_agent_ids: dict[str, AgentId] = PrivateAttr(default_factory=dict)
     _redirect_urls: dict[str, str] = PrivateAttr(default_factory=dict)
     _errors: dict[str, str] = PrivateAttr(default_factory=dict)
     _log_queues: dict[str, queue.Queue[str]] = PrivateAttr(default_factory=dict)
@@ -727,7 +826,7 @@ class AgentCreator(MutableModel):
         account_email: str = "",
         branch_or_tag: str = "",
         on_created: Callable[[AgentId], None] | None = None,
-    ) -> AgentId:
+    ) -> CreationId:
         """Start creating an agent from a git URL or local path in a background thread.
 
         When ``include_env_file`` is true and ``repo_source`` resolves to a local
@@ -744,26 +843,33 @@ class AgentCreator(MutableModel):
         owns the SuperTokens session, so minds only needs to know which
         account to ask for.
 
-        When ``on_created`` is provided, it is called with the agent ID after the
-        agent has been successfully created (but before the status is set to DONE).
+        When ``on_created`` is provided, it is called with the canonical
+        ``AgentId`` once ``mngr create`` returns (immediately before the
+        status flips to ``DONE``). The id is parsed from the inner
+        ``mngr create``'s JSONL ``"event": "created"`` line, not pre-generated;
+        for imbue_cloud agents it's the leased pool host's pre-baked id.
 
-        Returns the agent ID immediately. Use get_creation_info() to poll status,
-        or iter_log_lines() to stream creation logs.
+        Returns a ``CreationId`` immediately for tracking the in-flight
+        creation. Use ``get_creation_info()`` to poll status (and read
+        ``info.agent_id`` once it's populated) or ``get_log_queue()`` to
+        stream creation logs. The minds-internal ``CreationId`` and the
+        canonical ``AgentId`` are different namespaces by design (different
+        ``RandomId`` prefixes) so they can never accidentally be swapped.
         """
         log_queue: queue.Queue[str] = queue.Queue()
         effective_name = agent_name.strip() if agent_name.strip() else extract_repo_name(repo_source)
         effective_branch = branch.strip()
 
-        agent_id = AgentId()
+        creation_id = CreationId()
 
         with self._lock:
-            self._statuses[str(agent_id)] = AgentCreationStatus.CLONING
-            self._log_queues[str(agent_id)] = log_queue
+            self._statuses[str(creation_id)] = AgentCreationStatus.CLONING
+            self._log_queues[str(creation_id)] = log_queue
 
         thread = threading.Thread(
             target=self._create_agent_background,
             args=(
-                agent_id,
+                creation_id,
                 repo_source,
                 effective_name,
                 effective_branch,
@@ -775,12 +881,12 @@ class AgentCreator(MutableModel):
                 on_created,
             ),
             daemon=True,
-            name="agent-creator-{}".format(agent_id),
+            name="agent-creator-{}".format(creation_id),
         )
         thread.start()
         with self._lock:
             self._threads.append(thread)
-        return agent_id
+        return creation_id
 
     def wait_for_all(self, timeout: float = 10.0) -> None:
         """Wait for all background creation threads to finish."""
@@ -789,23 +895,32 @@ class AgentCreator(MutableModel):
         for t in threads:
             t.join(timeout=timeout)
 
-    def get_creation_info(self, agent_id: AgentId) -> AgentCreationInfo | None:
-        """Get the current creation status for an agent, or None if not tracked."""
+    def get_creation_info(self, creation_id: CreationId) -> AgentCreationInfo | None:
+        """Get the current creation status for an in-flight creation, or None if not tracked.
+
+        ``info.agent_id`` is ``None`` until the inner ``mngr create``
+        returns and emits its JSONL ``"event": "created"`` line, after
+        which it's populated with the canonical mngr id. ``info.redirect_url``
+        is populated atomically with ``DONE``, so the UI doesn't need to
+        wait for ``agent_id`` to know where to redirect.
+        """
+        cid_str = str(creation_id)
         with self._lock:
-            status = self._statuses.get(str(agent_id))
+            status = self._statuses.get(cid_str)
             if status is None:
                 return None
             return AgentCreationInfo(
-                agent_id=agent_id,
+                creation_id=creation_id,
+                agent_id=self._canonical_agent_ids.get(cid_str),
                 status=status,
-                redirect_url=self._redirect_urls.get(str(agent_id)),
-                error=self._errors.get(str(agent_id)),
+                redirect_url=self._redirect_urls.get(cid_str),
+                error=self._errors.get(cid_str),
             )
 
-    def get_log_queue(self, agent_id: AgentId) -> queue.Queue[str] | None:
-        """Get the log queue for an agent creation, or None if not tracked."""
+    def get_log_queue(self, creation_id: CreationId) -> queue.Queue[str] | None:
+        """Get the log queue for an in-flight creation, or None if not tracked."""
         with self._lock:
-            return self._log_queues.get(str(agent_id))
+            return self._log_queues.get(str(creation_id))
 
     def release_imbue_cloud_host(self, agent_id: AgentId, account_email: str) -> None:
         """Release the imbue_cloud lease backing an agent, if any.
@@ -971,7 +1086,7 @@ class AgentCreator(MutableModel):
 
     def _create_agent_background(
         self,
-        agent_id: AgentId,
+        creation_id: CreationId,
         repo_source: str,
         agent_name: str,
         branch: str,
@@ -987,18 +1102,19 @@ class AgentCreator(MutableModel):
         IMBUE_CLOUD mode mints a LiteLLM key first (via the plugin CLI) and
         passes it as ``ANTHROPIC_API_KEY``/``ANTHROPIC_BASE_URL`` host-env
         flags on ``mngr create``. The plugin's provider backend handles the
-        lease + SSH bootstrap inside ``create_host``, after which the
-        canonical agent id is read back via ``mngr list`` (the lease
-        determines the id, not the caller).
+        lease + SSH bootstrap inside ``create_host``; the canonical agent
+        id is parsed from ``mngr create``'s JSONL ``"event": "created"``
+        line (no follow-up ``mngr list`` lookup -- which used to fail when
+        the SSH provider had stale dynamic_hosts entries).
         """
-        aid = str(agent_id)
+        cid_str = str(creation_id)
         emit_log = make_log_callback(log_queue)
         host_env_file: Path | None = None
         workspace_dir: Path | None = None
         try:
             with log_span(
-                "Creating agent {} from {} (mode: {})",
-                agent_id,
+                "Creating agent for creation {} from {} (mode: {})",
+                creation_id,
                 _redact_url_credentials(repo_source),
                 launch_mode,
             ):
@@ -1094,22 +1210,25 @@ class AgentCreator(MutableModel):
                         )
 
                 with self._lock:
-                    self._statuses[aid] = AgentCreationStatus.CREATING
+                    self._statuses[cid_str] = AgentCreationStatus.CREATING
 
-                # Pre-spawn a Latchkey gateway for every agent so we can
-                # inject ``LATCHKEY_GATEWAY`` at ``mngr create`` time. For
-                # container/VM/VPS agents the URL points at a constant
-                # agent-side port that is bridged back to the host-side
-                # gateway via an SSH reverse tunnel set up on discovery.
-                latchkey_gateway_url = self._maybe_start_latchkey_gateway(agent_id, launch_mode, log_queue)
+                # Allocate a Latchkey gateway under the creation_id (no
+                # canonical AgentId yet -- mngr create generates that and
+                # we read it out of its JSONL ``created`` event below). We
+                # need the URL *before* invoking ``mngr create`` so it can
+                # be injected via ``--env LATCHKEY_GATEWAY=...``; spawn
+                # state lives in ``pending-gateways/<creation_id>/`` and is
+                # renamed into ``agents/<agent_id>/`` after we bind.
+                pending_gateway, latchkey_gateway_url = self._allocate_latchkey_gateway(
+                    creation_id, launch_mode, log_queue
+                )
 
                 parsed_name = AgentName(agent_name)
                 log_queue.put("[minds] Creating agent '{}' (mode: {})...".format(agent_name, launch_mode.value))
-                api_key = run_mngr_create(
+                api_key, canonical_id = run_mngr_create(
                     launch_mode=launch_mode,
                     workspace_dir=workspace_dir,
                     agent_name=parsed_name,
-                    agent_id=agent_id,
                     on_output=emit_log,
                     host_env_file=host_env_file,
                     latchkey_gateway_url=latchkey_gateway_url,
@@ -1134,17 +1253,24 @@ class AgentCreator(MutableModel):
                     parent_cg=self.root_concurrency_group,
                 )
 
-                # The pool host's pre-baked agent_id is the canonical mngr
-                # id, not the caller-generated UUID; look it up via mngr
-                # list so the API key hash and redirect URL key on the right
-                # value. For non-IMBUE_CLOUD modes the caller's --id flag
-                # pinned the agent's id, so we just trust ``agent_id``.
-                if launch_mode is LaunchMode.IMBUE_CLOUD:
-                    canonical_id = self._lookup_canonical_agent_id(parsed_name)
-                else:
-                    canonical_id = agent_id
+                # Bind the previously-allocated gateway to the canonical id
+                # so it's discoverable through the regular per-agent paths
+                # (``agents/<agent_id>/...``). On bind failure we don't
+                # block the create flow -- the agent is up and the gateway
+                # process is fine, just not registered under the right key.
+                if pending_gateway is not None and self.latchkey is not None:
+                    try:
+                        self.latchkey.bind_gateway_to_agent(creation_id, canonical_id)
+                    except LatchkeyError as exc:
+                        logger.warning(
+                            "Failed to bind Latchkey gateway for creation {} -> agent {}: {}",
+                            creation_id,
+                            canonical_id,
+                            exc,
+                        )
 
-                # Persist the API key hash under the canonical id.
+                # Persist the API key hash under the canonical id so future
+                # ``/api/<agent_id>`` requests authenticate against it.
                 key_hash = hash_api_key(api_key)
                 save_api_key_hash(self.paths.data_dir, canonical_id, key_hash)
                 log_queue.put("[minds] API key generated and hash stored.")
@@ -1153,101 +1279,60 @@ class AgentCreator(MutableModel):
 
                 redirect_url = "/goto/{}/".format(canonical_id)
 
-                # Set DONE before invoking on_created so the UI can redirect as
-                # soon as the agent is usable. ``on_created`` is expected to
-                # return quickly (it only schedules background work -- see
-                # ``_OnCreatedCallbackFactory``).
+                # Publish the canonical id + DONE atomically so the UI sees
+                # both at once. ``on_created`` runs after publication so any
+                # downstream consumer (e.g. ``_OnCreatedCallbackFactory``,
+                # which kicks off the Cloudflare tunnel + workspace
+                # association) can rely on the canonical id.
                 with self._lock:
-                    self._statuses[aid] = AgentCreationStatus.DONE
-                    self._redirect_urls[aid] = redirect_url
+                    self._canonical_agent_ids[cid_str] = canonical_id
+                    self._statuses[cid_str] = AgentCreationStatus.DONE
+                    self._redirect_urls[cid_str] = redirect_url
 
                 if on_created is not None:
                     on_created(canonical_id)
 
         except (GitCloneError, GitOperationError, MngrCommandError, ImbueCloudCliError, ValueError, OSError) as e:
-            logger.opt(exception=e).error("Failed to create agent {}", agent_id)
+            logger.opt(exception=e).error("Failed to create agent for creation {}", creation_id)
             log_queue.put("[minds] ERROR: {}".format(e))
             with self._lock:
-                self._statuses[aid] = AgentCreationStatus.FAILED
-                self._errors[aid] = str(e)
-            # A gateway we pre-spawned for this agent is now orphaned (the
-            # agent never came into existence), so tear it down to avoid a
-            # leaked subprocess + record.
+                self._statuses[cid_str] = AgentCreationStatus.FAILED
+                self._errors[cid_str] = str(e)
+            # The pre-spawned gateway is orphaned now; tear it down so the
+            # subprocess + ``pending-gateways/<creation_id>/`` directory
+            # don't leak on retry.
             if self.latchkey is not None:
-                self.latchkey.stop_gateway_for_agent(agent_id)
+                self.latchkey.discard_unbound_gateway(creation_id)
         finally:
             log_queue.put(LOG_SENTINEL)
 
-    def _lookup_canonical_agent_id(self, agent_name: AgentName) -> AgentId:
-        """Find the canonical mngr agent id for the agent we just created.
-
-        ``mngr create`` against the imbue_cloud provider returns an agent
-        whose id is the pool host's pre-baked one, not the
-        minds-side UUID we use to key in-memory creation state. We tag every
-        minds-managed agent with ``is_primary=true`` and ``workspace=<name>``,
-        so a single ``mngr list`` lookup against those labels uniquely
-        identifies the row.
-        """
-        # Two ``--include`` flags are ANDed by ``build_agent_filter_cel`` --
-        # joining them with Python's ``and`` produces a CEL parse error
-        # (CEL uses ``&&``). Splitting also matches how mngr's own
-        # alias flags compose multiple clauses.
-        cg = _make_child_cg("mngr-list-canonical-id", self.root_concurrency_group)
-        with cg:
-            result = cg.run_process_to_completion(
-                command=[
-                    MNGR_BINARY,
-                    "list",
-                    "--include",
-                    f'name == "{agent_name}"',
-                    "--include",
-                    'labels.is_primary == "true"',
-                    "--format",
-                    "json",
-                ],
-                is_checked_after=False,
-            )
-        if result.returncode != 0:
-            raise MngrCommandError(
-                "mngr list (post-create canonical id lookup) failed (exit {}):\n{}".format(
-                    result.returncode,
-                    result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
-                )
-            )
-        try:
-            data = json.loads(result.stdout)
-            agents = data.get("agents", [])
-        except json.JSONDecodeError as exc:
-            raise MngrCommandError(f"mngr list returned non-JSON output: {exc}") from exc
-        if not agents:
-            raise MngrCommandError(f"No agent named {agent_name!r} with is_primary=true was found post-create")
-        return AgentId(agents[0]["id"])
-
-    def _maybe_start_latchkey_gateway(
+    def _allocate_latchkey_gateway(
         self,
-        agent_id: AgentId,
+        creation_id: CreationId,
         launch_mode: LaunchMode,
         log_queue: queue.Queue[str],
-    ) -> str | None:
-        """Pre-spawn a Latchkey gateway for this agent and return the URL to inject.
+    ) -> tuple[PendingLatchkeyGateway | None, str | None]:
+        """Allocate a Latchkey gateway *before* the canonical AgentId is known.
 
-        The URL depends on ``launch_mode``: DEV agents see the gateway on its
-        dynamic host port directly; containerized/VM/VPS agents see it on a
-        constant port on their own loopback, which is bridged back to the host
-        by a reverse SSH tunnel established when the agent is discovered (see
-        ``LatchkeyGatewayDiscoveryHandler``).
+        The gateway URL is needed up front because it gets injected as
+        ``--env LATCHKEY_GATEWAY=<url>`` on ``mngr create``, but the
+        gateway can't yet be associated with an AgentId (mngr generates
+        that). Spawn state lives under ``pending-gateways/<creation_id>/``
+        until ``Latchkey.bind_gateway_to_agent`` migrates it after
+        ``mngr create`` returns the canonical id.
 
-        Returns ``None`` (and logs a warning) when gateway spawning fails so
-        agent creation can still proceed without a gateway URL.
+        Returns ``(pending_gateway, url)``; both are ``None`` (and a
+        warning is logged) when latchkey is unconfigured or spawn fails,
+        so agent creation can proceed without a gateway URL.
         """
         if self.latchkey is None:
-            return None
+            return None, None
         try:
-            info = self.latchkey.ensure_gateway_started(agent_id)
+            pending = self.latchkey.allocate_gateway(creation_id)
         except LatchkeyError as e:
-            logger.warning("Pre-spawning Latchkey gateway for agent {} failed: {}", agent_id, e)
+            logger.warning("Pre-spawning Latchkey gateway for creation {} failed: {}", creation_id, e)
             log_queue.put(f"[minds] Warning: Latchkey gateway could not be started for this agent: {e}")
-            return None
-        url = _build_latchkey_gateway_url(launch_mode, info)
+            return None, None
+        url = _build_latchkey_gateway_url(launch_mode, pending)
         log_queue.put(f"[minds] Latchkey gateway for this agent: {url}")
-        return url
+        return pending, url

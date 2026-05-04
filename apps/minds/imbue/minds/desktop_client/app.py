@@ -85,6 +85,7 @@ from imbue.minds.desktop_client.templates import render_welcome_page
 from imbue.minds.desktop_client.templates import render_workspace_settings
 from imbue.minds.desktop_client.templates import workspace_accent
 from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token as _save_tunnel_token
+from imbue.minds.primitives import CreationId
 from imbue.minds.primitives import LaunchMode
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import OutputFormat
@@ -847,12 +848,20 @@ def _notify_tunnel_failure(
 
 
 class _OnCreatedCallbackFactory(MutableModel):
-    """Callable that schedules Cloudflare tunnel setup as a detached background task.
+    """Callable that records the workspace<->account association and schedules Cloudflare tunnel setup.
 
-    ``__call__`` returns immediately after spawning a thread on the root
-    ``ConcurrencyGroup``; the actual ``create_tunnel`` + token inject work runs
-    asynchronously. This keeps ``_setup_and_start_leased_agent`` and
-    ``_create_agent_background`` off the critical path for the user redirect.
+    ``__call__`` is the single hook that runs once the inner ``mngr create``
+    has returned the canonical ``AgentId`` -- before this refactor minds
+    pre-generated an id and associated it with the account synchronously
+    in the route handler, but for imbue_cloud agents that pre-generated
+    id is fictional (the lease forces it back to the pool host's pre-baked
+    id), so the association ended up keyed under a phantom row. We now
+    do the ``associate_workspace`` call here, where ``agent_id`` is
+    guaranteed canonical.
+
+    The tunnel-setup work is scheduled on a detached thread on the root
+    ``ConcurrencyGroup`` so the agent-creation thread can flip status to
+    ``DONE`` without waiting on a multi-second Cloudflare round-trip.
     """
 
     session_store: MultiAccountSessionStore = Field(frozen=True, description="Session store for account lookup")
@@ -869,10 +878,26 @@ class _OnCreatedCallbackFactory(MutableModel):
         frozen=True,
         description="Dispatcher for surfacing tunnel-setup failures as OS notifications.",
     )
+    account_id: str = Field(
+        frozen=True,
+        default="",
+        description=(
+            "Account that owns this workspace. Empty when no account is selected (private "
+            "workspace), in which case no association is recorded and no tunnel is set up."
+        ),
+    )
 
     def __call__(self, agent_id: AgentId) -> None:
+        if not self.account_id:
+            return
+        # Bind the workspace to the account using the canonical agent id --
+        # this is what later ``get_account_for_workspace`` lookups (e.g. for
+        # the destruction handler) expect to find.
+        self.session_store.associate_workspace(self.account_id, str(agent_id))
         account = self.session_store.get_account_for_workspace(str(agent_id))
         if account is None:
+            # The account vanished between selection and now (logout?). The
+            # association above is still in place; we just skip the tunnel.
             return
         # ``_build_on_created_callback`` doesn't have easy access to the
         # user-chosen name at this point (see ``backend_resolver``), so fall
@@ -932,6 +957,7 @@ def _build_on_created_callback(
         paths=paths,
         root_concurrency_group=root_concurrency_group,
         notification_dispatcher=notification_dispatcher,
+        account_id=account_id,
     )
 
 
@@ -986,7 +1012,12 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
     # Build a post-creation callback that injects the tunnel token
     on_created = _build_on_created_callback(request, account_id)
 
-    agent_id = agent_creator.start_creation(
+    # ``start_creation`` returns a CreationId (minds-internal handle for
+    # tracking the in-flight create) -- the canonical AgentId only exists
+    # after ``mngr create`` returns. Workspace<->account association is now
+    # done from the on_created callback (which fires post-canonical-id) so
+    # the association is keyed under the right id.
+    creation_id = agent_creator.start_creation(
         git_url,
         agent_name=agent_name,
         branch=branch,
@@ -997,13 +1028,7 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
         on_created=on_created,
     )
 
-    # Associate the workspace with the selected account before creation completes
-    if account_id:
-        session_store_assoc: MultiAccountSessionStore | None = request.app.state.session_store
-        if session_store_assoc:
-            session_store_assoc.associate_workspace(account_id, str(agent_id))
-
-    creating_url = "/creating/{}".format(agent_id)
+    creating_url = "/creating/{}".format(creation_id)
     if launch_mode is LaunchMode.IMBUE_CLOUD:
         creating_url += "?mode=IMBUE_CLOUD"
     return Response(status_code=303, headers={"Location": creating_url})
@@ -1071,15 +1096,19 @@ async def _handle_create_agent_api(request: Request, auth_store: AuthStoreDep) -
             media_type="application/json",
         )
 
-    agent_id = agent_creator.start_creation(
+    creation_id = agent_creator.start_creation(
         git_url,
         agent_name=agent_name,
         branch=branch,
         launch_mode=launch_mode,
         include_env_file=include_env_file,
     )
+    # API contract: the JSON field stays named ``agent_id`` for backwards
+    # compatibility with existing API clients, but the value is now a
+    # CreationId (minds-internal in-flight handle, distinct prefix from a
+    # canonical AgentId). The status-polling endpoints accept either.
     return Response(
-        content=json.dumps({"agent_id": str(agent_id), "status": "CLONING"}),
+        content=json.dumps({"agent_id": str(creation_id), "status": "CLONING"}),
         media_type="application/json",
     )
 
@@ -1097,8 +1126,12 @@ def _handle_creation_status_api(
     if agent_creator is None:
         return Response(status_code=501, content="Agent creation not configured")
 
-    parsed_id = AgentId(agent_id)
-    info = agent_creator.get_creation_info(parsed_id)
+    # The URL parameter is named ``agent_id`` for legacy API compatibility
+    # but it actually carries a ``CreationId`` (minds-internal in-flight
+    # handle). The canonical mngr ``AgentId`` is reported back through
+    # ``info.agent_id`` once ``mngr create`` returns.
+    creation_id = CreationId(agent_id)
+    info = agent_creator.get_creation_info(creation_id)
     if info is None:
         return Response(
             status_code=404,
@@ -1106,7 +1139,12 @@ def _handle_creation_status_api(
             media_type="application/json",
         )
 
-    result = {"agent_id": str(info.agent_id), "status": str(info.status)}
+    result: dict[str, str] = {
+        "creation_id": str(info.creation_id),
+        "status": str(info.status),
+    }
+    if info.agent_id is not None:
+        result["agent_id"] = str(info.agent_id)
     if info.redirect_url is not None:
         result["redirect_url"] = info.redirect_url
     if info.error is not None:
@@ -1127,8 +1165,10 @@ def _handle_creating_page(
     if agent_creator is None:
         return Response(status_code=501, content="Agent creation not configured")
 
-    parsed_id = AgentId(agent_id)
-    info = agent_creator.get_creation_info(parsed_id)
+    # ``agent_id`` route param is actually a CreationId (see comment in
+    # ``_handle_creation_status_api``).
+    creation_id = CreationId(agent_id)
+    info = agent_creator.get_creation_info(creation_id)
     if info is None:
         return Response(status_code=404, content="Unknown agent creation")
 
@@ -1140,14 +1180,14 @@ def _handle_creating_page(
         creating_launch_mode = LaunchMode(mode_param) if mode_param else LaunchMode.LOCAL
     except ValueError:
         creating_launch_mode = LaunchMode.LOCAL
-    html = render_creating_page(agent_id=parsed_id, info=info, launch_mode=creating_launch_mode)
+    html = render_creating_page(creation_id=creation_id, info=info, launch_mode=creating_launch_mode)
     return HTMLResponse(content=html)
 
 
 async def _stream_creation_logs(
     log_queue: queue.Queue[str],
     agent_creator: AgentCreator,
-    agent_id: AgentId,
+    creation_id: CreationId,
 ) -> AsyncGenerator[str, None]:
     """Async generator that yields SSE events from a creation log queue."""
     streaming = True
@@ -1160,7 +1200,7 @@ async def _stream_creation_logs(
 
         if line == LOG_SENTINEL:
             streaming = False
-            info = agent_creator.get_creation_info(agent_id)
+            info = agent_creator.get_creation_info(creation_id)
             if info is not None:
                 result = {"status": str(info.status)}
                 if info.redirect_url is not None:
@@ -1189,13 +1229,15 @@ async def _handle_creation_logs_sse(
     if agent_creator is None:
         return Response(status_code=501, content="Agent creation not configured")
 
-    parsed_id = AgentId(agent_id)
-    log_queue = agent_creator.get_log_queue(parsed_id)
+    # ``agent_id`` route param carries a CreationId (see comment in
+    # ``_handle_creation_status_api``).
+    creation_id = CreationId(agent_id)
+    log_queue = agent_creator.get_log_queue(creation_id)
     if log_queue is None:
         return Response(status_code=404, content="Unknown agent creation")
 
     return StreamingResponse(
-        _stream_creation_logs(log_queue, agent_creator, parsed_id),
+        _stream_creation_logs(log_queue, agent_creator, creation_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

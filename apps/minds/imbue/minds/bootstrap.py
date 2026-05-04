@@ -10,6 +10,7 @@ import and cannot accidentally pull in mngr before translation happens.
 
 import os
 import re
+import shutil
 import sys
 import tomllib
 from pathlib import Path
@@ -55,28 +56,33 @@ def mngr_prefix_for(root_name: str) -> str:
 def _ensure_mngr_settings(root_name: str) -> None:
     """Ensure the mngr settings.toml has minds-side overrides configured.
 
-    Two responsibilities, both idempotent:
+    Disables the ``recursive`` plugin for every ``mngr`` subprocess minds
+    spawns. ``mngr_recursive``'s ``on_host_created`` hook injects the
+    calling user's local ``~/.claude/`` and ``~/.mngr/`` deploy files
+    into the workspace, which contradicts the contract that the repo
+    (whatever git URL/branch the user picked) is the full definition
+    of the workspace. minds runs inside its own ``MNGR_HOST_DIR``
+    profile, so flipping the plugin off here only affects
+    minds-spawned subprocesses; CLI-side mngr usage from other
+    host_dirs is unaffected.
 
-    1. Make sure the SSH provider is registered with the dynamic-hosts
-       file that the leased-host flow writes; without this provider,
-       ``mngr rename`` / ``mngr start`` can't discover agents on leased
-       hosts.
+    The TOML key under ``[plugins]`` must match the pluggy entry-point
+    name (``recursive``), not the package name (``mngr_recursive``).
+    ``mngr/libs/mngr/imbue/mngr/config/pre_readers.py`` reads section
+    names verbatim and ``pm.set_blocked`` matches by the exact
+    registered name.
 
-    2. Disable the ``recursive`` plugin for every ``mngr`` subprocess
-       minds spawns. ``mngr_recursive``'s ``on_host_created`` hook
-       injects the calling user's local ``~/.claude/`` and ``~/.mngr/``
-       deploy files into the workspace, which contradicts the contract
-       that the repo (whatever git URL/branch the user picked) is the
-       full definition of the workspace. minds runs inside its own
-       ``MNGR_HOST_DIR`` profile, so flipping the plugin off here only
-       affects minds-spawned subprocesses; CLI-side mngr usage from
-       other host_dirs is unaffected.
-
-       The TOML key under ``[plugins]`` must match the pluggy
-       entry-point name (``recursive``), not the package name
-       (``mngr_recursive``). ``mngr/libs/mngr/imbue/mngr/config/
-       pre_readers.py`` reads section names verbatim and
-       ``pm.set_blocked`` matches by the exact registered name.
+    Also tears down any vestige of the older "leased-host SSH dance":
+    a previous version of minds wrote a ``[providers.ssh]`` block here
+    pointing at a ``dynamic_hosts.toml`` populated by the lease flow.
+    The imbue_cloud provider plugin owns that path now (it talks to
+    the connector service directly, not through an SSH-provider side
+    channel), so the SSH provider block + dynamic_hosts.toml are pure
+    leak: stale entries in dynamic_hosts.toml caused ``mngr list``
+    discovery to time out trying to ssh-connect to long-destroyed VPS
+    IPs. We remove the section here so ``mngr list`` only fans out to
+    real providers, and delete the stale data file (and its associated
+    leased-host SSH key dir) so even direct readers see a clean slate.
 
     Skips silently when mngr hasn't been initialized in this host_dir
     yet (no ``config.toml`` / no profile dir) -- there's nothing to
@@ -95,40 +101,29 @@ def _ensure_mngr_settings(root_name: str) -> None:
         return
     settings_path = settings_dir / "settings.toml"
 
-    data_dir = minds_data_dir_for(root_name)
-    expected_dynamic_hosts_file = str(data_dir / "ssh" / "dynamic_hosts.toml")
-
     if settings_path.exists():
         existing = tomllib.loads(settings_path.read_text())
         providers = existing.get("providers", {})
-        ssh_config = providers.get("ssh", {})
         plugins = existing.get("plugins", {})
         recursive_plugin = plugins.get("recursive", {})
-        if (
-            ssh_config.get("backend") == "ssh"
-            and ssh_config.get("dynamic_hosts_file") == expected_dynamic_hosts_file
-            and ssh_config.get("host_dir") == "/mngr"
-            and recursive_plugin.get("enabled") is False
-        ):
+        if recursive_plugin.get("enabled") is False and "ssh" not in providers:
+            # Already in the desired shape -- recursive disabled, no stale
+            # ssh provider section, no need to rewrite + fsync.
+            _cleanup_legacy_dynamic_hosts(root_name)
             return
         doc = tomlkit.loads(settings_path.read_text())
     else:
         doc = tomlkit.document()
 
-    providers_section = doc.setdefault("providers", tomlkit.table())
-    ssh_block = tomlkit.table()
-    ssh_block["backend"] = "ssh"
-    ssh_block["host_dir"] = "/mngr"
-    ssh_block["dynamic_hosts_file"] = expected_dynamic_hosts_file
-    providers_section["ssh"] = ssh_block
+    # Remove the legacy ``[providers.ssh]`` block, if present, so ``mngr list``
+    # discovery doesn't fan out to that provider's stale dynamic_hosts entries.
+    providers_section = doc.get("providers")
+    if isinstance(providers_section, dict) and "ssh" in providers_section:
+        del providers_section["ssh"]
 
     plugins_section = doc.setdefault("plugins", tomlkit.table())
     recursive_block = tomlkit.table()
     recursive_block["enabled"] = False
-    # The pluggy entry-point name in libs/mngr_recursive/pyproject.toml is
-    # ``recursive`` (the ``mngr_`` prefix is stripped at registration time),
-    # so this key has to match. ``[plugins.mngr_recursive]`` would be
-    # silently ignored by ``read_disabled_plugins`` / ``set_blocked``.
     plugins_section["recursive"] = recursive_block
 
     settings_dir.mkdir(parents=True, exist_ok=True)
@@ -136,6 +131,36 @@ def _ensure_mngr_settings(root_name: str) -> None:
     tmp_path.write_text(tomlkit.dumps(doc))
     tmp_path.rename(settings_path)
     logger.debug("Updated mngr settings at {} with minds-side overrides", settings_path)
+    _cleanup_legacy_dynamic_hosts(root_name)
+
+
+def _cleanup_legacy_dynamic_hosts(root_name: str) -> None:
+    """Remove the stale ``ssh/dynamic_hosts.toml`` file + ``ssh/keys/leased_host/`` dir.
+
+    Both are vestigial: the imbue_cloud provider replaces the leased-host
+    SSH-provider mechanism entirely, but minds installations from before
+    that refactor still have these files lying around. The
+    ``dynamic_hosts.toml`` file in particular contains entries pointing
+    at long-destroyed VPS IPs, and any code path that reads it would
+    block on TCP timeouts. Best-effort: log + continue on any FS error.
+    """
+    data_dir = minds_data_dir_for(root_name)
+    legacy_paths = (
+        data_dir / "ssh" / "dynamic_hosts.toml",
+        data_dir / "ssh" / "keys" / "leased_host",
+    )
+    for path in legacy_paths:
+        if not path.exists():
+            continue
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except OSError as e:
+            logger.warning("Could not remove legacy minds-leased-host artifact {}: {}", path, e)
+        else:
+            logger.info("Removed legacy minds-leased-host artifact {}", path)
 
 
 def apply_bootstrap() -> None:

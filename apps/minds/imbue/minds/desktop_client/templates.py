@@ -19,6 +19,7 @@ from jinja2 import select_autoescape
 
 from imbue.imbue_common.pure import pure
 from imbue.minds.desktop_client.agent_creator import AgentCreationInfo
+from imbue.minds.primitives import CreationId
 from imbue.minds.primitives import LaunchMode
 from imbue.minds.primitives import OneTimeCode
 from imbue.mngr.primitives import AgentId
@@ -146,11 +147,19 @@ _STATUS_TEXT_IMBUE_CLOUD: Final[dict[str, str]] = {
 
 @pure
 def render_creating_page(
-    agent_id: AgentId,
+    creation_id: CreationId,
     info: AgentCreationInfo,
     launch_mode: LaunchMode = LaunchMode.LOCAL,
 ) -> str:
-    """Render the progress page shown while an agent is being created."""
+    """Render the progress page shown while an agent is being created.
+
+    The page is keyed by ``creation_id`` (minds-internal in-flight handle)
+    rather than ``agent_id`` because the canonical agent id only comes
+    into existence once the inner ``mngr create`` returns -- the page
+    needs a stable handle to poll status from the moment the user kicks
+    off the form. The template's status-poll URL still includes this id
+    so SSE/log-streaming endpoints can find the right ``log_queue``.
+    """
     text_map = _STATUS_TEXT_IMBUE_CLOUD if launch_mode is LaunchMode.IMBUE_CLOUD else _STATUS_TEXT_DEFAULT
     if str(info.status) == "FAILED":
         status_text = "Failed: {}".format(info.error or "unknown error")
@@ -158,9 +167,9 @@ def render_creating_page(
         status_text = text_map.get(str(info.status), "Working...")
     template = JINJA_ENV.get_template("creating.html")
     return template.render(
-        agent_id=agent_id,
+        agent_id=creation_id,
         status_text=status_text,
-        accent=workspace_accent(str(agent_id)),
+        accent=workspace_accent(str(creation_id)),
     )
 
 

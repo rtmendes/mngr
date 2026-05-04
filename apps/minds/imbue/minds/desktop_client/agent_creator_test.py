@@ -82,11 +82,9 @@ def test_build_latchkey_gateway_url_uses_constant_loopback_for_remote() -> None:
 
 
 def test_build_mngr_create_command_uses_main_template_and_omits_message_arg() -> None:
-    agent_id = AgentId.generate()
     command, api_key = _build_mngr_create_command(
         launch_mode=LaunchMode.LOCAL,
         agent_name=AgentName("hello"),
-        agent_id=agent_id,
     )
     assert "--template" in command
     assert "main" in command
@@ -94,15 +92,23 @@ def test_build_mngr_create_command_uses_main_template_and_omits_message_arg() ->
     # [create_templates.main] section, so the explicit --message arg is gone.
     assert "--message" not in command
     assert api_key
-    assert f"--id\n{agent_id}".replace("\n", " ") in " ".join(command)
+    # minds no longer pre-generates an agent id; mngr generates one and we
+    # parse it out of the JSONL ``created`` event in run_mngr_create.
+    assert "--id" not in command
+    # ``--reuse --update`` keeps re-deploys of the same workspace name
+    # idempotent on local-host modes.
+    assert "--reuse" in command
+    assert "--update" in command
+    # We always emit JSONL so the canonical agent id can be parsed from the
+    # trailing ``"event": "created"`` line.
+    assert "--format" in command
+    assert "jsonl" in command
 
 
 def test_build_mngr_create_command_imbue_cloud_targets_account_provider() -> None:
-    agent_id = AgentId.generate()
     command, api_key = _build_mngr_create_command(
         launch_mode=LaunchMode.IMBUE_CLOUD,
         agent_name=AgentName("hello"),
-        agent_id=agent_id,
         imbue_cloud_account="alice@imbue.com",
         imbue_cloud_repo_url="https://github.com/imbue-ai/forever-claude-template",
         imbue_cloud_branch_or_tag="v1.2.3",
@@ -113,11 +119,12 @@ def test_build_mngr_create_command_imbue_cloud_targets_account_provider() -> Non
     # Address points at the imbue_cloud_<slug> provider so mngr routes
     # create_host to ImbueCloudProvider.
     assert "@hello-host.imbue_cloud_alice-imbue-com" in joined
-    # IMBUE_CLOUD does not pass --id (the lease determines the canonical id),
-    # nor --reuse / --update (each lease is one-shot).
+    # IMBUE_CLOUD does not pass --reuse / --update (each lease is one-shot)
+    # nor --id (the canonical id is parsed from the JSONL ``created`` event).
     assert "--id" not in command
     assert "--reuse" not in command
     assert "--update" not in command
+    assert api_key
     # Lease attributes flow through --build-arg.
     assert "-b" in command
     assert "repo_url=https://github.com/imbue-ai/forever-claude-template" in command

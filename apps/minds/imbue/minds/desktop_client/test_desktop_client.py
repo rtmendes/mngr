@@ -31,6 +31,7 @@ from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
+from imbue.minds.primitives import CreationId
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import ServiceName
 from imbue.mngr.primitives import AgentId
@@ -483,7 +484,10 @@ def test_creation_status_returns_404_for_unknown_agent(tmp_path: Path) -> None:
     """GET /api/create-agent/{id}/status returns 404 for unknown creation."""
     client, _, _ = _create_test_server_with_agent_creator(tmp_path)
 
-    unknown_id = AgentId()
+    # The URL handle is a ``CreationId`` (minds-internal in-flight handle),
+    # not a canonical mngr ``AgentId``; passing an AgentId-prefixed string
+    # would now fail to parse and never even reach the not-tracked check.
+    unknown_id = CreationId()
     response = client.get("/api/create-agent/{}/status".format(unknown_id))
     assert response.status_code == 404
 
@@ -683,7 +687,7 @@ def test_creating_page_returns_404_for_unknown(tmp_path: Path) -> None:
     """GET /creating/{agent_id} returns 404 for unknown agent creation."""
     client, _, _ = _create_test_server_with_agent_creator(tmp_path)
 
-    response = client.get("/creating/{}".format(AgentId()))
+    response = client.get("/creating/{}".format(CreationId()))
     assert response.status_code == 404
 
 
@@ -691,12 +695,16 @@ def test_creation_status_api_returns_status_for_tracked_agent(tmp_path: Path) ->
     """GET /api/create-agent/{id}/status returns a valid status for a tracked creation."""
     client, _, agent_creator = _create_test_server_with_agent_creator(tmp_path)
 
-    agent_id = agent_creator.start_creation("file:///nonexistent-repo")
+    creation_id = agent_creator.start_creation("file:///nonexistent-repo")
 
-    response = client.get("/api/create-agent/{}/status".format(agent_id))
+    response = client.get("/api/create-agent/{}/status".format(creation_id))
     assert response.status_code == 200
     data = response.json()
-    assert data["agent_id"] == str(agent_id)
+    # The status response now reports both ``creation_id`` (always present)
+    # and ``agent_id`` (only once mngr create returns a canonical id). For
+    # this test the create runs against a nonexistent repo so it may never
+    # produce an agent_id; just check that the creation_id round-trips.
+    assert data["creation_id"] == str(creation_id)
     assert data["status"] in ("CLONING", "CREATING", "DONE", "FAILED")
     agent_creator.wait_for_all()
 
@@ -815,7 +823,7 @@ def test_creation_logs_sse_returns_404_for_unknown(tmp_path: Path) -> None:
     """GET /api/create-agent/{id}/logs returns 404 for unknown agent."""
     client, _, _ = _create_test_server_with_agent_creator(tmp_path)
 
-    response = client.get("/api/create-agent/{}/logs".format(AgentId()))
+    response = client.get("/api/create-agent/{}/logs".format(CreationId()))
     assert response.status_code == 404
 
 
