@@ -652,9 +652,7 @@ async def _run_proto_agent_logs_loop(
     creation, capped by the bounded log queue).
     """
     if log_queue is None:
-        await websocket.send_text(
-            json.dumps({"done": True, "success": False, "error": "Proto-agent not found"})
-        )
+        await websocket.send_text(json.dumps({"done": True, "success": False, "error": "Proto-agent not found"}))
         await websocket.close()
         return
 
