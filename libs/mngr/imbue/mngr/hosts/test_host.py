@@ -182,7 +182,8 @@ def test_run_command_local_from_worker_thread(
     Linux these watchers can only attach to the *default* event loop, so
     running a local command from a worker thread previously raised
     "child watchers are only available on the default loop". Host now bypasses
-    pyinfra for local hosts and uses subprocess directly.
+    pyinfra for local hosts and runs commands via the ConcurrencyGroup process
+    runner instead.
     """
     host, _ = host_with_temp_dir
     with mngr_executor(parent_cg=active_concurrency_group, name="local-cmd-thread", max_workers=2) as executor:
