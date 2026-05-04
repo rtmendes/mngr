@@ -80,6 +80,20 @@ class ForwardStreamManager(MutableModel):
         frozen=True,
         description="Source streams to follow per-agent (passed to ``mngr event``)",
     )
+    event_include: tuple[str, ...] = Field(
+        default=(),
+        frozen=True,
+        description=(
+            "CEL include filters for which event source streams are followed. "
+            "Evaluated against context ``{'event': {'source': <source_name>}}``. "
+            "Default: empty -- include every source in ``event_sources``."
+        ),
+    )
+    event_exclude: tuple[str, ...] = Field(
+        default=(),
+        frozen=True,
+        description="CEL exclude filters for which event source streams are followed.",
+    )
 
     _cg: ConcurrencyGroup = PrivateAttr(default_factory=lambda: ConcurrencyGroup(name="mngr-forward-stream"))
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
@@ -93,6 +107,9 @@ class ForwardStreamManager(MutableModel):
     _on_agent_destroyed_callbacks: list[OnAgentDestroyedCallback] = PrivateAttr(default_factory=list)
     _compiled_includes: list[Any] = PrivateAttr(default_factory=list)
     _compiled_excludes: list[Any] = PrivateAttr(default_factory=list)
+    _compiled_event_includes: list[Any] = PrivateAttr(default_factory=list)
+    _compiled_event_excludes: list[Any] = PrivateAttr(default_factory=list)
+    _filtered_event_sources: tuple[str, ...] = PrivateAttr(default=())
 
     def model_post_init(self, __context: Any) -> None:
         compiled_includes, compiled_excludes = compile_cel_filters(
@@ -101,6 +118,37 @@ class ForwardStreamManager(MutableModel):
         )
         self._compiled_includes = compiled_includes
         self._compiled_excludes = compiled_excludes
+        compiled_event_includes, compiled_event_excludes = compile_cel_filters(
+            list(self.event_include),
+            list(self.event_exclude),
+        )
+        self._compiled_event_includes = compiled_event_includes
+        self._compiled_event_excludes = compiled_event_excludes
+        # Resolve the per-source filter once at startup: the source list is
+        # static (just the strings in ``event_sources``), so we don't need to
+        # re-evaluate the CEL programs per spawn.
+        self._filtered_event_sources = self._resolve_event_sources()
+
+    def _resolve_event_sources(self) -> tuple[str, ...]:
+        """Apply ``--event-include`` / ``--event-exclude`` to ``event_sources``.
+
+        Called once from ``model_post_init``; the result is cached on
+        ``_filtered_event_sources`` and read by ``_start_events_stream`` for
+        every per-agent spawn.
+        """
+        if not self._compiled_event_includes and not self._compiled_event_excludes:
+            return self.event_sources
+        kept: list[str] = []
+        for source in self.event_sources:
+            context = {"event": {"source": source}}
+            if apply_cel_filters_to_context(
+                context=context,
+                include_filters=self._compiled_event_includes,
+                exclude_filters=self._compiled_event_excludes,
+                error_context_description=f"event source {source}",
+            ):
+                kept.append(source)
+        return tuple(kept)
 
     # -- callback registration --------------------------------------------
 
@@ -351,14 +399,16 @@ class ForwardStreamManager(MutableModel):
     def _start_events_stream(self, agent_id: AgentId) -> None:
         if self._cg.is_shutting_down():
             return
-        if not self.event_sources:
+        if not self._filtered_event_sources:
+            # Either ``event_sources`` was empty to begin with, or every
+            # source was filtered out by ``--event-include`` / ``--event-exclude``.
             return
         aid_str = str(agent_id)
         with self._lock:
             if aid_str in self._events_processes:
                 return
             self._events_services[aid_str] = {}
-        sources: Sequence[str] = self.event_sources
+        sources: Sequence[str] = self._filtered_event_sources
         try:
             process = self._cg.run_process_in_background(
                 command=[

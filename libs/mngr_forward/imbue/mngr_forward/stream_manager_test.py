@@ -300,6 +300,43 @@ def test_callbacks_isolated_per_failure(
     assert fired == [TEST_AGENT_ID_1]
 
 
+def test_event_include_filters_event_sources_at_startup() -> None:
+    """`--event-include 'event.source == "services"'` keeps only the services source."""
+    resolver = ForwardResolver(strategy=ForwardServiceStrategy(service_name="system_interface"))
+    writer = EnvelopeWriter(output=io.StringIO())
+    manager = ForwardStreamManager(
+        resolver=resolver,
+        envelope_writer=writer,
+        event_include=("event.source == 'services'",),
+    )
+    # The compiled filter should keep only the services source.
+    assert manager._filtered_event_sources == ("services",)  # noqa: SLF001 - asserts internal state
+
+
+def test_event_exclude_filters_event_sources_at_startup() -> None:
+    """`--event-exclude 'event.source == "requests"'` drops only the requests source."""
+    resolver = ForwardResolver(strategy=ForwardServiceStrategy(service_name="system_interface"))
+    writer = EnvelopeWriter(output=io.StringIO())
+    manager = ForwardStreamManager(
+        resolver=resolver,
+        envelope_writer=writer,
+        event_exclude=("event.source == 'requests'",),
+    )
+    assert manager._filtered_event_sources == ("services", "refresh")  # noqa: SLF001 - asserts internal state
+
+
+def test_event_filters_unset_keeps_all_sources() -> None:
+    """No event-include / event-exclude flags = every default source is kept."""
+    resolver = ForwardResolver(strategy=ForwardServiceStrategy(service_name="system_interface"))
+    writer = EnvelopeWriter(output=io.StringIO())
+    manager = ForwardStreamManager(resolver=resolver, envelope_writer=writer)
+    assert manager._filtered_event_sources == (  # noqa: SLF001 - asserts internal state
+        "services",
+        "requests",
+        "refresh",
+    )
+
+
 def test_multiple_observe_lines_serialize_through_envelope(
     setup: tuple[ForwardStreamManager, ForwardResolver, io.StringIO, list[int]],
 ) -> None:

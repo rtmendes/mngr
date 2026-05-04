@@ -192,6 +192,8 @@ def forward(ctx: click.Context, **kwargs: Any) -> None:
             envelope_writer=envelope_writer,
             agent_include=tuple(opts.agent_include),
             agent_exclude=tuple(opts.agent_exclude),
+            event_include=tuple(opts.event_include),
+            event_exclude=tuple(opts.event_exclude),
         )
         if reverse_specs:
             stream_manager.add_on_agent_discovered_callback(reverse_handler)
