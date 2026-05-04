@@ -120,7 +120,16 @@ class WebSocketBroadcaster(MutableModel):
         _drain_queue(dead_queue)
         if handler is not None:
             task, loop = handler
-            loop.call_soon_threadsafe(task.cancel)
+            try:
+                loop.call_soon_threadsafe(task.cancel)
+            except RuntimeError as e:
+                # The loop has already been closed (eg. during process
+                # shutdown). The handler task is no longer reachable from
+                # this thread; the WS connection will be torn down with the
+                # loop. Log at debug since this is a benign termination race.
+                _loguru_logger.debug(
+                    "Skipped cancel of evicted WebSocket handler: loop closed ({})", e
+                )
         _loguru_logger.warning(
             "Disconnected unresponsive WebSocket client after {} consecutive queue-full broadcasts",
             _MAX_CONSECUTIVE_QUEUE_FULL,
