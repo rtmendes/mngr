@@ -5,11 +5,13 @@ import json
 import queue
 from pathlib import Path
 from typing import Generator
+from typing import cast
 from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocket
 
 from imbue.minds_workspace_server.agent_discovery import AgentInfo
 from imbue.minds_workspace_server.agent_manager import AgentManager
@@ -383,11 +385,11 @@ def test_run_ws_broadcast_loop_cancelled_by_broadcaster_when_send_hangs(
 
     async def _drive() -> _HangingWebSocket:
         fake_websocket = _HangingWebSocket()
-        # The fake websocket is intentionally not a starlette ``WebSocket`` --
-        # ``ty: ignore`` is needed because we pass a duck-typed test double.
+        # ``cast`` documents that ``fake_websocket`` is a duck-typed stand-in
+        # for the subset of ``WebSocket`` the broadcast loop actually uses.
         handler_task = asyncio.create_task(
             _run_ws_broadcast_loop(
-                websocket=fake_websocket,  # ty: ignore[invalid-argument-type]
+                websocket=cast(WebSocket, fake_websocket),
                 agent_manager=agent_manager,
                 ws_broadcaster=broadcaster,
             )
@@ -430,7 +432,7 @@ def test_run_proto_agent_logs_loop_not_found_sends_error_and_closes() -> None:
 
     asyncio.run(
         _run_proto_agent_logs_loop(
-            websocket=fake_websocket,  # ty: ignore[invalid-argument-type]
+            websocket=cast(WebSocket, fake_websocket),
             log_queue=None,
         )
     )
@@ -452,7 +454,7 @@ def test_run_proto_agent_logs_loop_streams_messages_until_sentinel() -> None:
 
     asyncio.run(
         _run_proto_agent_logs_loop(
-            websocket=fake_websocket,  # ty: ignore[invalid-argument-type]
+            websocket=cast(WebSocket, fake_websocket),
             log_queue=log_queue,
         )
     )
