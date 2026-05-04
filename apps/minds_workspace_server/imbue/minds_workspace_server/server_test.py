@@ -1,27 +1,19 @@
 """Tests for the FastAPI server."""
 
-import asyncio
 import json
 import queue
 from pathlib import Path
 from typing import Generator
-from typing import cast
 from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocket
 
 from imbue.minds_workspace_server.agent_discovery import AgentInfo
 from imbue.minds_workspace_server.agent_manager import AgentManager
 from imbue.minds_workspace_server.config import Config
-from imbue.minds_workspace_server.server import _run_proto_agent_logs_loop
-from imbue.minds_workspace_server.server import _run_ws_broadcast_loop
 from imbue.minds_workspace_server.server import create_application
-from imbue.minds_workspace_server.ws_broadcaster import WebSocketBroadcaster
-from imbue.minds_workspace_server.ws_broadcaster import _CLIENT_QUEUE_MAX_SIZE
-from imbue.minds_workspace_server.ws_broadcaster import _MAX_CONSECUTIVE_QUEUE_FULL
 
 # Placeholder client-side port used by the refresh-service broadcast tests.
 # Only the host portion of the TestClient ``client`` tuple is inspected by the
@@ -343,124 +335,34 @@ def test_refresh_service_broadcast_rejects_non_loopback(app: FastAPI) -> None:
     assert response.status_code == 403
 
 
-class _HangingWebSocket:
-    """Test double for ``WebSocket`` whose ``send_text`` never returns."""
-
-    def __init__(self) -> None:
-        self.send_attempt_count = 0
-        self.close_call_count = 0
-
-    async def send_text(self, text: str) -> None:
-        self.send_attempt_count += 1
-        # Hang indefinitely until the awaiting task is cancelled by the broadcaster.
-        await asyncio.Event().wait()
-
-    async def close(self, code: int = 1000, reason: str | None = None) -> None:
-        self.close_call_count += 1
-
-
-class _RecordingWebSocket:
-    """Test double for ``WebSocket`` that records sent payloads and close calls."""
-
-    def __init__(self) -> None:
-        self.sent: list[str] = []
-        self.close_call_count = 0
-
-    async def send_text(self, text: str) -> None:
-        self.sent.append(text)
-
-    async def close(self, code: int = 1000, reason: str | None = None) -> None:
-        self.close_call_count += 1
-
-
 @pytest.mark.timeout(5)
-def test_run_ws_broadcast_loop_cancelled_by_broadcaster_when_send_hangs(
-    broadcaster: WebSocketBroadcaster,
-    agent_manager: AgentManager,
-) -> None:
-    """The broadcaster cancels a wedged WS handler once its queue racks up the consecutive-overflow threshold."""
-    broadcasts_to_trigger_eviction = _CLIENT_QUEUE_MAX_SIZE + _MAX_CONSECUTIVE_QUEUE_FULL
-
-    async def _drive() -> _HangingWebSocket:
-        fake_websocket = _HangingWebSocket()
-        # ``cast`` documents that ``fake_websocket`` is a duck-typed stand-in
-        # for the subset of ``WebSocket`` the broadcast loop actually uses.
-        handler_task = asyncio.create_task(
-            _run_ws_broadcast_loop(
-                websocket=cast(WebSocket, fake_websocket),
-                agent_manager=agent_manager,
-                ws_broadcaster=broadcaster,
-            )
-        )
-        # Yield so the handler registers and parks on the first send_text.
-        await asyncio.sleep(0)
-
-        for index in range(broadcasts_to_trigger_eviction):
-            broadcaster.broadcast({"index": index})
-
-        try:
-            await handler_task
-        except asyncio.CancelledError:
-            pass
-        return fake_websocket
-
-    fake_websocket = asyncio.run(_drive())
-
-    # Only the first send was attempted (it hung). The handler does not call
-    # ``close`` itself -- FastAPI's WS infrastructure handles that when the
-    # coroutine returns or raises CancelledError.
-    assert fake_websocket.send_attempt_count == 1
-    assert fake_websocket.close_call_count == 0
-
-    # The handler's ``finally`` block must have unregistered its queue. We
-    # verify behaviorally: a freshly-registered queue receives any subsequent
-    # broadcast exactly once -- no zombie queue is also receiving.
-    fresh_queue = broadcaster.register()
-    broadcaster.broadcast({"type": "after_eviction"})
-    received = fresh_queue.get_nowait()
-    assert received is not None
-    assert json.loads(received) == {"type": "after_eviction"}
-    assert fresh_queue.empty()
-
-
-@pytest.mark.timeout(5)
-def test_run_proto_agent_logs_loop_not_found_sends_error_and_closes() -> None:
-    """When the proto-agent is missing, the loop sends a structured not-found message and closes."""
-    fake_websocket = _RecordingWebSocket()
-
-    asyncio.run(
-        _run_proto_agent_logs_loop(
-            websocket=cast(WebSocket, fake_websocket),
-            log_queue=None,
-        )
-    )
-
-    assert len(fake_websocket.sent) == 1
-    payload = json.loads(fake_websocket.sent[0])
+def test_proto_agent_logs_endpoint_not_found_sends_error_and_closes(client: TestClient) -> None:
+    """When the proto-agent is missing, the endpoint sends a structured not-found message and closes."""
+    with client.websocket_connect("/api/proto-agents/missing-agent/logs") as ws:
+        payload = json.loads(ws.receive_text())
     assert payload == {"done": True, "success": False, "error": "Proto-agent not found"}
-    assert fake_websocket.close_call_count == 1
 
 
 @pytest.mark.timeout(5)
-def test_run_proto_agent_logs_loop_streams_messages_until_sentinel() -> None:
-    """The loop forwards real log lines and exits when the queue yields ``None``."""
-    fake_websocket = _RecordingWebSocket()
+def test_proto_agent_logs_endpoint_streams_messages_until_sentinel(app: FastAPI) -> None:
+    """The endpoint forwards real log lines and closes when the queue yields ``None``."""
     log_queue: queue.Queue[str | None] = queue.Queue()
     log_queue.put(json.dumps({"line": "starting"}))
     log_queue.put(json.dumps({"line": "still going"}))
     log_queue.put(None)
 
-    asyncio.run(
-        _run_proto_agent_logs_loop(
-            websocket=cast(WebSocket, fake_websocket),
-            log_queue=log_queue,
-        )
-    )
+    with TestClient(app) as test_client:
+        # The TestClient context manager triggers the lifespan startup that
+        # populates ``app.state.agent_manager``; inject the queue afterwards.
+        agent_manager: AgentManager = app.state.agent_manager
+        agent_manager._log_queues["proto-1"] = log_queue
 
-    assert [json.loads(line) for line in fake_websocket.sent] == [
-        {"line": "starting"},
-        {"line": "still going"},
-    ]
+        with test_client.websocket_connect("/api/proto-agents/proto-1/logs") as ws:
+            first = json.loads(ws.receive_text())
+            second = json.loads(ws.receive_text())
+
+    assert first == {"line": "starting"}
+    assert second == {"line": "still going"}
 
 
 def test_request_event_endpoint_writes_latchkey_permission_event(

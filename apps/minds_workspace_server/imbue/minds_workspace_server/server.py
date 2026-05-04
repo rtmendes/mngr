@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import queue
@@ -584,21 +583,14 @@ async def _run_ws_broadcast_loop(
     """Stream broadcaster messages to ``websocket`` until the client disconnects.
 
     A wedged ``websocket.send_text`` (eg. a half-dead TCP connection) is freed
-    by the broadcaster: when this client's queue racks up enough consecutive
-    overflow broadcasts, the broadcaster cancels this task via
+    by the broadcaster: ``register`` captures the current asyncio Task and
+    loop, and when this client's queue racks up enough consecutive overflow
+    broadcasts the broadcaster cancels the task via
     ``loop.call_soon_threadsafe``. ``CancelledError`` propagates into the
     blocked send and unwinds through the ``finally`` below, which unregisters
     the queue. There is no per-send wall-clock timeout.
     """
-    handler_task = asyncio.current_task()
-    if handler_task is None:
-        # ``current_task()`` returns None only outside any task. This coroutine
-        # is invoked by FastAPI from inside a task, so None signals a runtime
-        # invariant violation -- raise rather than silently falling back to a
-        # registration that disables broadcaster-driven cancellation.
-        raise RuntimeError("_run_ws_broadcast_loop must be invoked from within an asyncio Task")
-    loop = asyncio.get_running_loop()
-    client_queue = ws_broadcaster.register(handler_task=handler_task, loop=loop)
+    client_queue = ws_broadcaster.register()
     try:
         await websocket.send_text(
             json.dumps(

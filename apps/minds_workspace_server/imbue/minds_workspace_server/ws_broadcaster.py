@@ -49,29 +49,31 @@ class WebSocketBroadcaster(MutableModel):
     # successful enqueue. A client is only disconnected once its counter reaches
     # ``_MAX_CONSECUTIVE_QUEUE_FULL`` -- a brief stall is tolerated.
     _consecutive_queue_full_by_id: dict[int, int] = PrivateAttr(default_factory=dict)
-    # Per-client (handler_task, loop) recorded by ``register`` so the broadcaster
-    # can cancel a wedged WS handler from its background broadcast threads.
-    # Cancellation is the mechanism that frees a coroutine blocked in
-    # ``await websocket.send_text(...)`` on a half-dead TCP connection: there is
-    # no per-send wall-clock timeout. Tradeoff: if the handler is wedged but no
-    # broadcasts arrive, the consecutive-overflow threshold never trips and the
-    # coroutine stays parked. Acceptable in practice because state-change
-    # broadcasts are continuous in normal operation.
+    # Per-client (handler_task, loop) recorded by ``register`` when called from
+    # an asyncio Task, so the broadcaster can cancel a wedged WS handler from
+    # its background broadcast threads. Cancellation is the mechanism that
+    # frees a coroutine blocked in ``await websocket.send_text(...)`` on a
+    # half-dead TCP connection: there is no per-send wall-clock timeout.
+    # Tradeoff: if the handler is wedged but no broadcasts arrive, the
+    # consecutive-overflow threshold never trips and the coroutine stays
+    # parked. Acceptable in practice because state-change broadcasts are
+    # continuous in normal operation.
     _handler_by_id: dict[int, tuple[asyncio.Task[Any], asyncio.AbstractEventLoop]] = PrivateAttr(default_factory=dict)
 
-    def register(
-        self,
-        *,
-        handler_task: asyncio.Task[Any] | None = None,
-        loop: asyncio.AbstractEventLoop | None = None,
-    ) -> queue.Queue[str | None]:
+    def register(self) -> queue.Queue[str | None]:
         """Register a new WebSocket client. Returns a queue to drain for messages.
 
-        When both ``handler_task`` and ``loop`` are supplied, the broadcaster
-        will cancel the handler's task on eviction (via ``call_soon_threadsafe``
-        from the broadcast thread). Callers without an asyncio context can omit
-        them; eviction then only drops the queue.
+        When called from inside an asyncio Task, the broadcaster captures that
+        task and its loop so eviction can cancel the wedged handler via
+        ``loop.call_soon_threadsafe(task.cancel)``. When called from a sync
+        context (no running loop), eviction simply drops the queue.
         """
+        try:
+            loop = asyncio.get_running_loop()
+            handler_task = asyncio.current_task()
+        except RuntimeError:
+            loop = None
+            handler_task = None
         q: queue.Queue[str | None] = queue.Queue(maxsize=_CLIENT_QUEUE_MAX_SIZE)
         with self._lock:
             self._client_queues.append(q)
