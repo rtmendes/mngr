@@ -1188,6 +1188,10 @@ class AgentCreator(MutableModel):
         so a single ``mngr list`` lookup against those labels uniquely
         identifies the row.
         """
+        # Two ``--include`` flags are ANDed by ``build_agent_filter_cel`` --
+        # joining them with Python's ``and`` produces a CEL parse error
+        # (CEL uses ``&&``). Splitting also matches how mngr's own
+        # alias flags compose multiple clauses.
         cg = _make_child_cg("mngr-list-canonical-id", self.root_concurrency_group)
         with cg:
             result = cg.run_process_to_completion(
@@ -1195,7 +1199,9 @@ class AgentCreator(MutableModel):
                     MNGR_BINARY,
                     "list",
                     "--include",
-                    f'name == "{agent_name}" and labels.is_primary == "true"',
+                    f'name == "{agent_name}"',
+                    "--include",
+                    'labels.is_primary == "true"',
                     "--format",
                     "json",
                 ],
