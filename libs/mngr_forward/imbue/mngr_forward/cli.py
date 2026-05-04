@@ -217,7 +217,7 @@ def forward(ctx: click.Context, **kwargs: Any) -> None:
             name="open-browser",
         ).start()
 
-    _install_sighup_handler(stream_manager, opts, resolver, mngr_ctx.concurrency_group)
+    _install_sighup_handler(stream_manager, opts, resolver, reverse_handler, mngr_ctx.concurrency_group)
 
     listen_port = ForwardPort(opts.port)
 
@@ -324,6 +324,7 @@ def _install_sighup_handler(
     stream_manager: ForwardStreamManager | None,
     opts: ForwardCliOptions,
     resolver: ForwardResolver,
+    reverse_handler: ReverseTunnelHandler,
     concurrency_group: Any,
 ) -> None:
     """Install a SIGHUP handler that bounces observe (or re-snapshots in --no-observe mode).
@@ -352,7 +353,7 @@ def _install_sighup_handler(
                 if stream_manager is not None:
                     stream_manager.bounce_observe()
                 else:
-                    _resnapshot_no_observe(resolver, opts)
+                    _resnapshot_no_observe(resolver, reverse_handler, opts)
             except (OSError, RuntimeError) as e:
                 logger.warning("SIGHUP dispatch failed: {}", e)
 
@@ -364,8 +365,20 @@ def _install_sighup_handler(
     )
 
 
-def _resnapshot_no_observe(resolver: ForwardResolver, opts: ForwardCliOptions) -> None:
-    """Re-run `mngr list` snapshot in --no-observe mode after SIGHUP."""
+def _resnapshot_no_observe(
+    resolver: ForwardResolver,
+    reverse_handler: ReverseTunnelHandler,
+    opts: ForwardCliOptions,
+) -> None:
+    """Re-run `mngr list` snapshot in --no-observe mode after SIGHUP.
+
+    Updates the resolver's known agents + per-host SSH info, and re-invokes
+    ``reverse_handler.setup_for_snapshot`` so any agents that were not in the
+    original boot snapshot get their reverse tunnels established (and a
+    ``reverse_tunnel_established`` envelope event emitted). Calls for
+    already-established tunnels short-circuit inside ``SSHTunnelManager``,
+    so re-emission for previously-tunneled agents is idempotent.
+    """
     try:
         snapshot = mngr_list_snapshot()
     except Exception as e:  # noqa: BLE001 - logged, not re-raised
@@ -380,6 +393,9 @@ def _resnapshot_no_observe(resolver: ForwardResolver, opts: ForwardCliOptions) -
     for entry in kept.agents:
         if entry.ssh_info is not None:
             resolver.update_ssh_info(entry.agent_id, entry.ssh_info)
+    reverse_handler.setup_for_snapshot(
+        tuple((entry.agent_id, entry.ssh_info) for entry in kept.agents if entry.ssh_info is not None)
+    )
 
 
 def _sleep_then_open_browser(url: str, delay: float = 1.0) -> None:
