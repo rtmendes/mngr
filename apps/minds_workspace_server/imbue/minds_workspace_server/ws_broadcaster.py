@@ -24,7 +24,7 @@ _MAX_CONSECUTIVE_QUEUE_FULL = 50
 
 
 def _drain_queue(client_queue: queue.Queue[str | None]) -> None:
-    """Remove all pending items from ``client_queue`` so a sentinel can be enqueued."""
+    """Remove all pending items from ``client_queue`` so it ends up empty."""
     is_drained = False
     while not is_drained:
         try:
