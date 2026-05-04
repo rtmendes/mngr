@@ -62,15 +62,21 @@ def _ensure_mngr_settings(root_name: str) -> None:
        ``mngr rename`` / ``mngr start`` can't discover agents on leased
        hosts.
 
-    2. Disable ``mngr_recursive`` for every ``mngr`` subprocess minds
-       spawns. ``mngr_recursive``'s ``on_host_created`` hook injects the
-       calling user's local ``~/.claude/`` and ``~/.mngr/`` deploy files
-       into the workspace, which contradicts the contract that the repo
-       (whatever git URL/branch the user picked) is the full definition
-       of the workspace. minds runs inside its own ``MNGR_HOST_DIR``
-       profile, so flipping the plugin off here only affects
-       minds-spawned subprocesses; CLI-side mngr usage from other
-       host_dirs is unaffected.
+    2. Disable the ``recursive`` plugin for every ``mngr`` subprocess
+       minds spawns. ``mngr_recursive``'s ``on_host_created`` hook
+       injects the calling user's local ``~/.claude/`` and ``~/.mngr/``
+       deploy files into the workspace, which contradicts the contract
+       that the repo (whatever git URL/branch the user picked) is the
+       full definition of the workspace. minds runs inside its own
+       ``MNGR_HOST_DIR`` profile, so flipping the plugin off here only
+       affects minds-spawned subprocesses; CLI-side mngr usage from
+       other host_dirs is unaffected.
+
+       The TOML key under ``[plugins]`` must match the pluggy
+       entry-point name (``recursive``), not the package name
+       (``mngr_recursive``). ``mngr/libs/mngr/imbue/mngr/config/
+       pre_readers.py`` reads section names verbatim and
+       ``pm.set_blocked`` matches by the exact registered name.
 
     Skips silently when mngr hasn't been initialized in this host_dir
     yet (no ``config.toml`` / no profile dir) -- there's nothing to
@@ -97,7 +103,7 @@ def _ensure_mngr_settings(root_name: str) -> None:
         providers = existing.get("providers", {})
         ssh_config = providers.get("ssh", {})
         plugins = existing.get("plugins", {})
-        recursive_plugin = plugins.get("mngr_recursive", {})
+        recursive_plugin = plugins.get("recursive", {})
         if (
             ssh_config.get("backend") == "ssh"
             and ssh_config.get("dynamic_hosts_file") == expected_dynamic_hosts_file
@@ -119,7 +125,11 @@ def _ensure_mngr_settings(root_name: str) -> None:
     plugins_section = doc.setdefault("plugins", tomlkit.table())
     recursive_block = tomlkit.table()
     recursive_block["enabled"] = False
-    plugins_section["mngr_recursive"] = recursive_block
+    # The pluggy entry-point name in libs/mngr_recursive/pyproject.toml is
+    # ``recursive`` (the ``mngr_`` prefix is stripped at registration time),
+    # so this key has to match. ``[plugins.mngr_recursive]`` would be
+    # silently ignored by ``read_disabled_plugins`` / ``set_blocked``.
+    plugins_section["recursive"] = recursive_block
 
     settings_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = settings_path.with_suffix(".tmp")
