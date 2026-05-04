@@ -34,6 +34,30 @@ What you get:
   stay alive — used by `minds run` to make a freshly-written
   `[providers.imbue_cloud_<slug>]` block in `settings.toml` take effect.
 
-This is Phase 1: the plugin is fully functional standalone, and
-`apps/minds/` is unchanged. Phase 2 will rewire the desktop client to
-spawn `mngr forward` as a subprocess and remove the now-duplicated code.
+# minds run
+
+A new `minds run` command rewires the minds desktop client to spawn
+`mngr forward` as a subprocess instead of running the same forwarding
+logic in-process:
+
+```bash
+minds run --port 8420 --mngr-forward-port 8421
+```
+
+- Spawns `mngr forward --service system_interface --preauth-cookie ...`
+  and consumes its envelope JSONL stream on stdout.
+- Serves the slimmed minds bare-origin UI on `--port` (default 8420);
+  agent subdomains are served by the spawned `mngr forward` on
+  `--mngr-forward-port` (default 8421).
+- Emits a `mngr_forward_started` JSONL event on stdout carrying the
+  preauth cookie value so the Electron shell can pre-set
+  `mngr_forward_session=<value>` on `localhost:<mngr-forward-port>`
+  before the first agent-subdomain navigation.
+- Sends `SIGHUP` to the plugin's PID after a freshly-written
+  `[providers.imbue_cloud_<slug>]` block in `settings.toml` so the new
+  provider becomes visible without restarting the plugin.
+
+The legacy `minds forward` command and its in-process forwarding /
+auth / subdomain code are intentionally unchanged in this branch and
+keep working. A follow-up branch will delete the now-duplicated
+in-process paths.
