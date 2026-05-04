@@ -587,6 +587,12 @@ async def _run_ws_broadcast_loop(
     the queue. There is no per-send wall-clock timeout.
     """
     handler_task = asyncio.current_task()
+    if handler_task is None:
+        # ``current_task()`` returns None only outside any task. This coroutine
+        # is invoked by FastAPI from inside a task, so None signals a runtime
+        # invariant violation -- raise rather than silently falling back to a
+        # registration that disables broadcaster-driven cancellation.
+        raise RuntimeError("_run_ws_broadcast_loop must be invoked from within an asyncio Task")
     loop = asyncio.get_running_loop()
     client_queue = ws_broadcaster.register(handler_task=handler_task, loop=loop)
     try:
