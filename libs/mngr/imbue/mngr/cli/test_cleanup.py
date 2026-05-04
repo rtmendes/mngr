@@ -1,9 +1,7 @@
 """Integration tests for the cleanup CLI command."""
 
-import faulthandler
 import json
 import shlex
-import sys
 import time
 from contextlib import ExitStack
 from pathlib import Path
@@ -295,7 +293,6 @@ def test_cleanup_stop_action_with_real_agent(
 
 @pytest.mark.tmux
 @pytest.mark.flaky
-@pytest.mark.timeout(30, method="thread")
 def test_cleanup_destroy_multiple_agents(
     cli_runner: CliRunner,
     temp_work_dir: Path,
@@ -303,22 +300,6 @@ def test_cleanup_destroy_multiple_agents(
     plugin_manager: pluggy.PluginManager,
 ) -> None:
     """Test that cleanup --yes destroys multiple agents at once."""
-    # PROBE: dump all-threads stack every 8s so CI logs show whether a hang is
-    # in the worker thread's poll loop (gevent SIGCHLD contamination) or just
-    # slow accumulation. Remove once root cause is known.
-    faulthandler.dump_traceback_later(8.0, repeat=True, file=sys.stderr, exit=False)
-    try:
-        _run_destroy_multiple_agents_body(cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager)
-    finally:
-        faulthandler.cancel_dump_traceback_later()
-
-
-def _run_destroy_multiple_agents_body(
-    cli_runner: CliRunner,
-    temp_work_dir: Path,
-    mngr_test_prefix: str,
-    plugin_manager: pluggy.PluginManager,
-) -> None:
     timestamp = int(time.time())
     agent_name1 = f"test-cleanup-multi1-{timestamp}"
     agent_name2 = f"test-cleanup-multi2-{timestamp}"
