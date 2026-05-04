@@ -292,9 +292,7 @@ def _construct_and_discover_all_providers(
     """Run `_construct_and_discover_for_provider` for every provider in parallel.
 
     Returns the merged host/agent map plus the providers that completed
-    successfully. Per-provider failures honor `params.error_behavior` (recorded
-    as `ProviderErrorInfo` in CONTINUE mode, re-raised in ABORT mode), so a
-    single broken provider does not drop the rest of the listing.
+    successfully.
     """
     agents_by_host: dict[DiscoveredHost, list[DiscoveredAgent]] = {}
     providers: list[ProviderInstanceInterface] = []
