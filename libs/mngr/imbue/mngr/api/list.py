@@ -255,9 +255,7 @@ def _construct_and_discover_for_provider(
         provider = get_provider_instance(provider_name, mngr_ctx)
         if reset_caches:
             provider.reset_caches()
-        provider_results = provider.discover_hosts_and_agents(
-            cg=mngr_ctx.concurrency_group, include_destroyed=True
-        )
+        provider_results = provider.discover_hosts_and_agents(cg=mngr_ctx.concurrency_group, include_destroyed=True)
     except Exception as e:
         if params.error_behavior == ErrorBehavior.ABORT:
             if isinstance(e, MngrError):
