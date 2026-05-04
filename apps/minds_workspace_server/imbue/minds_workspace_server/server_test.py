@@ -349,7 +349,6 @@ class _HangingWebSocket:
     def __init__(self) -> None:
         self.send_attempt_count = 0
         self.close_call_count = 0
-        self.close_codes: list[int] = []
 
     async def send_text(self, text: str) -> None:
         self.send_attempt_count += 1
@@ -358,7 +357,6 @@ class _HangingWebSocket:
 
     async def close(self, code: int = 1000, reason: str | None = None) -> None:
         self.close_call_count += 1
-        self.close_codes.append(code)
 
 
 class _RecordingWebSocket:
