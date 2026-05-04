@@ -220,16 +220,30 @@ def _get_tunnel_http_client(
     tunnel_manager: SSHTunnelManager,
     backend_url: str,
     ssh_info: object | None,
+    ssh_http_clients: dict[str, httpx.AsyncClient],
 ) -> httpx.AsyncClient | None:
+    """Return a cached httpx client tied to the per-tunnel Unix socket, or None for direct.
+
+    The client is cached on ``ssh_http_clients`` (owned by the FastAPI app's
+    lifespan) keyed by the tunnel socket path, so its connection pool is reused
+    across requests and aclose'd exactly once on shutdown. Constructing a new
+    client per request would leak the underlying transport + pool every call.
+    """
     socket_path = _get_tunnel_socket_path(tunnel_manager, backend_url, ssh_info)
     if socket_path is None:
         return None
-    transport = httpx.AsyncHTTPTransport(uds=str(socket_path))
-    return httpx.AsyncClient(
+    socket_path_str = str(socket_path)
+    cached = ssh_http_clients.get(socket_path_str)
+    if cached is not None:
+        return cached
+    transport = httpx.AsyncHTTPTransport(uds=socket_path_str)
+    client = httpx.AsyncClient(
         transport=transport,
         follow_redirects=False,
         timeout=_PROXY_TIMEOUT_SECONDS,
     )
+    ssh_http_clients[socket_path_str] = client
+    return client
 
 
 # -- HTTP forwarding -------------------------------------------------------
@@ -363,6 +377,7 @@ async def _handle_workspace_forward_http(
     resolver: ForwardResolver,
     tunnel_manager: SSHTunnelManager,
     http_client: httpx.AsyncClient,
+    ssh_http_clients: dict[str, httpx.AsyncClient],
     preauth_cookie_value: str | None,
     listen_port: int,
 ) -> Response:
@@ -393,6 +408,7 @@ async def _handle_workspace_forward_http(
             tunnel_manager,
             backend_url,
             target.ssh_info,
+            ssh_http_clients,
         )
     except (SSHTunnelError, paramiko.SSHException, OSError) as e:
         logger.warning("SSH tunnel setup failed for {}: {}", agent_id, e)
@@ -594,6 +610,11 @@ async def _managed_lifespan(
     on_listening: Callable[[], None] | None,
 ) -> AsyncGenerator[None, None]:
     inner_app.state.http_client = httpx.AsyncClient(follow_redirects=False, timeout=_PROXY_TIMEOUT_SECONDS)
+    # Per-tunnel httpx clients are cached here so they outlive a single request
+    # and their connection pools are reused. Lifespan teardown aclose's them
+    # all; without this every request to a remote agent would leak a fresh
+    # AsyncClient + AsyncHTTPTransport.
+    inner_app.state.ssh_http_clients = {}
     if on_listening is not None:
         try:
             on_listening()
@@ -602,6 +623,12 @@ async def _managed_lifespan(
     try:
         yield
     finally:
+        for ssh_client in inner_app.state.ssh_http_clients.values():
+            try:
+                await ssh_client.aclose()
+            except (OSError, RuntimeError) as e:
+                logger.trace("Error closing per-tunnel httpx client: {}", e)
+        inner_app.state.ssh_http_clients.clear()
         await inner_app.state.http_client.aclose()
 
 
@@ -642,6 +669,7 @@ def create_forward_app(
             resolver=resolver,
             tunnel_manager=tunnel_manager,
             http_client=app.state.http_client,
+            ssh_http_clients=app.state.ssh_http_clients,
             preauth_cookie_value=preauth_cookie_value,
             listen_port=listen_port,
         )
