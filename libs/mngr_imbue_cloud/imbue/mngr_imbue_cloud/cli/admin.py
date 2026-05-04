@@ -14,6 +14,7 @@ provisioning at all.
 
 import json as _json
 import shlex
+import sys
 from pathlib import Path
 from typing import Any
 from typing import Final
@@ -60,14 +61,39 @@ def pool() -> None:
     """Pool host provisioning (Vultr + Neon)."""
 
 
+def _stream_subprocess_line(line: str, is_stdout: bool) -> None:
+    """Mirror a child-process line to our stderr in real time.
+
+    Used as the ``on_output`` callback for streaming ``mngr`` invocations
+    so a multi-minute pool-host bake isn't a silent black box. The child
+    mngr already routes its own ``logger.*`` traffic to its events.jsonl;
+    this surfaces the same lines (plus any plain stdout/stderr writes)
+    in the parent's terminal as the bake progresses.
+    """
+    suffix = "" if line.endswith("\n") else "\n"
+    sys.stderr.write(line + suffix)
+    sys.stderr.flush()
+
+
 def _run_mngr_command(
     args: list[str],
     cwd: Path | None = None,
     timeout: int = _MNGR_COMMAND_TIMEOUT_SECONDS,
+    is_streaming: bool = False,
 ) -> FinishedProcess:
-    """Run a mngr CLI command and return the result."""
+    """Run a mngr CLI command and return the result.
+
+    When ``is_streaming=True`` the child's stdout and stderr are mirrored
+    to our stderr line-by-line via ``_stream_subprocess_line`` (and still
+    captured in the returned ``FinishedProcess``). Use this for the
+    inner ``mngr create`` during pool baking -- the run takes 8-15
+    minutes and otherwise produces no visible output until completion,
+    which makes diagnosing pool-bake failures (or just confirming that
+    provisioning is making progress) difficult.
+    """
     full_command = ["mngr"] + args
     logger.info("  Running: {}", " ".join(full_command))
+    on_output = _stream_subprocess_line if is_streaming else None
     cg = ConcurrencyGroup(name="pool-mngr")
     with cg:
         return cg.run_process_to_completion(
@@ -75,6 +101,7 @@ def _run_mngr_command(
             timeout=float(timeout),
             is_checked_after=False,
             cwd=cwd,
+            on_output=on_output,
         )
 
 
@@ -214,7 +241,7 @@ def _create_single_pool_host(
         "MNGR_PREFIX",
     ]
 
-    create_result = _run_mngr_command(mngr_command, cwd=workspace_dir)
+    create_result = _run_mngr_command(mngr_command, cwd=workspace_dir, is_streaming=True)
     if create_result.returncode != 0:
         logger.error("mngr create failed: {}", create_result.stderr)
         return False
