@@ -22,6 +22,7 @@ spawning code; this file replaces them with a thin consumer that:
 import json
 import os
 import secrets
+import shlex
 import shutil
 import signal
 import subprocess
@@ -543,9 +544,9 @@ class MindsApiUrlWriter(MutableModel):
             logger.warning("MindsApiUrlWriter: SSH connect failed for {}: {}", info.agent_id, e)
             return
         try:
-            command = (
-                f"mkdir -p \"{agent_state_dir}\" && printf '%s' {_shell_quote(url)} > {agent_state_dir}/minds_api_url"
-            )
+            quoted_dir = shlex.quote(agent_state_dir)
+            quoted_url = shlex.quote(url)
+            command = f"mkdir -p {quoted_dir} && printf '%s' {quoted_url} > {quoted_dir}/minds_api_url"
             try:
                 _stdin, stdout, _stderr = client.exec_command(command, timeout=10.0)
                 _stdin.close()
@@ -563,12 +564,6 @@ class MindsApiUrlWriter(MutableModel):
                 client.close()
             except (paramiko.SSHException, OSError) as e:
                 logger.trace("Error closing SSH client after url write: {}", e)
-
-
-def _shell_quote(value: str) -> str:
-    """Single-quote a shell argument, escaping any embedded single quotes."""
-    escaped = value.replace("'", "'\"'\"'")
-    return f"'{escaped}'"
 
 
 class LocalAgentDiscoveryHandler(MutableModel):
