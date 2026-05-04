@@ -18,6 +18,7 @@ from typing import Any
 from typing import cast
 
 import pytest
+from pydantic import PrivateAttr
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.event_envelope import EventId
@@ -29,6 +30,8 @@ from imbue.minds.desktop_client.forward_cli import LocalAgentDiscoveryHandler
 from imbue.minds.desktop_client.forward_cli import MindsApiUrlWriter
 from imbue.minds.desktop_client.forward_cli import ReverseTunnelEstablishedInfo
 from imbue.minds.desktop_client.forward_cli import _redact_secrets
+from imbue.minds.desktop_client.notification import NotificationDispatcher
+from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.minds.primitives import ServiceName
 from imbue.mngr.api.discovery_events import AgentDestroyedEvent
@@ -530,6 +533,79 @@ def test_terminate_calls_terminate_then_returns(consumer: EnvelopeStreamConsumer
 def test_terminate_is_no_op_when_no_process_attached(consumer: EnvelopeStreamConsumer) -> None:
     # Must not raise even with no attached process.
     consumer.terminate()
+
+
+# --- intentional vs unintentional exit notification ---------------------------
+
+
+class _RecordingNotificationDispatcher(NotificationDispatcher):
+    """Test-only NotificationDispatcher that records dispatch calls instead of dispatching.
+
+    Records into the ``recorded`` list passed at construction time. We cannot
+    use a Pydantic ``PrivateAttr`` because the parent class is a ``FrozenModel``
+    and we want to keep the test fixture self-contained; the list is held via
+    a closure on the subclass-defined ``dispatch`` override below.
+    """
+
+    _recorded: list[tuple[NotificationRequest, str]] = PrivateAttr(default_factory=list)
+
+    def dispatch(
+        self,
+        request: NotificationRequest,
+        agent_display_name: str,
+    ) -> None:
+        self._recorded.append((request, agent_display_name))
+
+    @property
+    def recorded(self) -> list[tuple[NotificationRequest, str]]:
+        return self._recorded
+
+
+def _make_recording_dispatcher() -> _RecordingNotificationDispatcher:
+    return _RecordingNotificationDispatcher(is_electron=False, is_macos=False)
+
+
+def test_intentional_terminate_suppresses_subprocess_died_notification() -> None:
+    """After consumer.terminate(), the lifecycle watcher must not surface the
+    resulting non-zero exit code as a CRITICAL "Forwarding subprocess died"
+    notification -- minds itself asked the subprocess to stop.
+    """
+    resolver = MngrCliBackendResolver()
+    dispatcher = _make_recording_dispatcher()
+    consumer = EnvelopeStreamConsumer(resolver=resolver, notification_dispatcher=dispatcher)
+    fake = _FakeProcess(pid=4242)
+    # Simulate SIGTERM -> exit code -15 after terminate() is called.
+    fake.returncode = -15
+    _attach_fake(consumer, fake)
+
+    consumer.terminate()
+    # Drive the lifecycle watcher synchronously; in production this runs on a
+    # ConcurrencyGroup thread that calls process.wait().
+    consumer._wait_and_notify_on_exit()
+
+    assert dispatcher.recorded == [], (
+        f"Intentional shutdown should not dispatch a notification, got: {dispatcher.recorded!r}"
+    )
+
+
+def test_unintentional_subprocess_crash_dispatches_notification() -> None:
+    """If the subprocess exits non-zero without minds calling terminate(),
+    the lifecycle watcher must still surface a CRITICAL notification so the
+    user knows agent traffic is no longer being forwarded.
+    """
+    resolver = MngrCliBackendResolver()
+    dispatcher = _make_recording_dispatcher()
+    consumer = EnvelopeStreamConsumer(resolver=resolver, notification_dispatcher=dispatcher)
+    fake = _FakeProcess(pid=4242)
+    fake.returncode = 17  # arbitrary non-zero crash exit code
+    _attach_fake(consumer, fake)
+
+    consumer._wait_and_notify_on_exit()
+
+    assert len(dispatcher.recorded) == 1
+    request, agent_display_name = dispatcher.recorded[0]
+    assert "died" in request.title.lower()
+    assert agent_display_name == "Minds"
 
 
 def test_attach_twice_raises(consumer: EnvelopeStreamConsumer) -> None:

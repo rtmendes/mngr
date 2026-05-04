@@ -133,6 +133,7 @@ class EnvelopeStreamConsumer(MutableModel):
     )
     _process: subprocess.Popen[bytes] | None = PrivateAttr(default=None)
     _has_notified_exit: bool = PrivateAttr(default=False)
+    _intentional_shutdown: bool = PrivateAttr(default=False)
 
     # -- Public callback registration -------------------------------------
 
@@ -213,10 +214,17 @@ class EnvelopeStreamConsumer(MutableModel):
             logger.warning("bounce_observe: failed to send SIGHUP to {}: {}", process.pid, e)
 
     def terminate(self) -> None:
-        """Stop the plugin subprocess (SIGTERM, then SIGKILL on timeout)."""
+        """Stop the plugin subprocess (SIGTERM, then SIGKILL on timeout).
+
+        Sets ``_intentional_shutdown`` *before* signalling the subprocess
+        so the lifecycle watcher (``_wait_and_notify_on_exit``) does not
+        surface the resulting non-zero exit code as a CRITICAL "Forwarding
+        subprocess died" notification.
+        """
         process = self._process
         if process is None:
             return
+        self._intentional_shutdown = True
         try:
             process.terminate()
             try:
@@ -251,7 +259,14 @@ class EnvelopeStreamConsumer(MutableModel):
         if process is None:
             return
         exit_code = process.wait()
-        # Drain any remaining stderr after the streams close.
+        # If minds asked the subprocess to stop (lifespan shutdown), the
+        # non-zero exit code is the expected SIGTERM/SIGKILL signal, not a
+        # crash. Surfacing it as a CRITICAL notification on every clean
+        # shutdown trains the user to ignore the notification entirely,
+        # which defeats its purpose for the crash-on-its-own case.
+        if self._intentional_shutdown:
+            logger.debug("mngr forward exited with code {} after intentional shutdown", exit_code)
+            return
         if exit_code != 0 and not self._has_notified_exit:
             self._has_notified_exit = True
             logger.error("mngr forward exited with code {}", exit_code)
