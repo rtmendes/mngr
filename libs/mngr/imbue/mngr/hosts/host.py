@@ -382,9 +382,7 @@ class Host(BaseHost, OnlineHostInterface):
             # default loop". We don't need gevent here, so we run the command
             # via the ConcurrencyGroup's process runner instead.
             if _su_user is not None or _sudo or _doas:
-                raise NotImplementedError(
-                    "Local host shell command bypass does not support _su_user, _sudo, or _doas"
-                )
+                raise NotImplementedError("Local host shell command bypass does not support _su_user, _sudo, or _doas")
             return self._run_shell_command_local(
                 command,
                 _timeout=_timeout,
