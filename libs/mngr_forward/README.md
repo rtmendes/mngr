@@ -5,7 +5,7 @@ Auth + subdomain-forwarding plugin for `mngr`.
 `mngr forward` runs a local proxy that serves
 `<agent-id>.localhost:<port>/*` and byte-forwards each request to a service
 URL discovered for that agent (`--service NAME`, the default workflow) or
-a fixed remote port (`--port REMOTE_PORT`, manual mode). Remote agents are
+a fixed remote port (`--forward-port REMOTE_PORT`, manual mode). Remote agents are
 reached via a per-host SSH tunnel (Unix-domain socket on the local side,
 paramiko `direct-tcpip` channel on the SSH side).
 
@@ -43,7 +43,7 @@ in a `forward.reverse_tunnel_established` envelope event.
 
 ## Manual mode
 
-`--no-observe --port REMOTE_PORT` runs `mngr list --format jsonl` once and
+`--no-observe --forward-port REMOTE_PORT` runs `mngr list --format jsonl` once and
 forwards a fixed snapshot. `--no-observe` is invalid with `--service NAME`.
 
 ## Sub-process integration
