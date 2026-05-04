@@ -16,6 +16,7 @@ import threading
 from typing import Any
 from typing import IO
 
+from loguru import logger
 from pydantic import PrivateAttr
 
 from imbue.imbue_common.mutable_model import MutableModel
@@ -107,10 +108,12 @@ class EnvelopeWriter(MutableModel):
             return None
         try:
             parsed = json.loads(stripped)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             # Pass non-JSON lines through as a string payload so consumers
-            # can still see them; this keeps debugging viable when an
-            # upstream tool unexpectedly logs prose to stdout.
+            # can still see them, but log so the corruption is visible:
+            # an upstream tool emitting prose to stdout is almost always a
+            # real bug worth chasing.
+            logger.warning("Non-JSON line on envelope stream ({}): {!r}", e, stripped[:200])
             return {"raw": stripped}
         if not isinstance(parsed, dict):
             return {"raw": stripped}

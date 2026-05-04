@@ -8,13 +8,20 @@ helpers. End-to-end CLI invocation is exercised by the acceptance test.
 import click
 import pytest
 
+from imbue.imbue_common.primitives import NonNegativeInt
+from imbue.imbue_common.primitives import PositiveInt
 from imbue.mngr_forward.cli import ForwardCliOptions
 from imbue.mngr_forward.cli import _build_strategy
+from imbue.mngr_forward.cli import _filter_snapshot
 from imbue.mngr_forward.cli import _parse_reverse_specs
 from imbue.mngr_forward.cli import _validate_options
+from imbue.mngr_forward.data_types import ForwardAgentSnapshot
+from imbue.mngr_forward.data_types import ForwardListSnapshot
 from imbue.mngr_forward.data_types import ForwardPortStrategy
 from imbue.mngr_forward.data_types import ForwardServiceStrategy
 from imbue.mngr_forward.primitives import ReverseTunnelSpec
+from imbue.mngr_forward.testing import TEST_AGENT_ID_1
+from imbue.mngr_forward.testing import TEST_AGENT_ID_2
 
 
 def _opts(**overrides: object) -> ForwardCliOptions:
@@ -62,17 +69,11 @@ def test_build_strategy_port() -> None:
 
 
 def test_parse_reverse_specs_dynamic_remote() -> None:
-    from imbue.imbue_common.primitives import NonNegativeInt
-    from imbue.imbue_common.primitives import PositiveInt
-
     specs = _parse_reverse_specs(("0:8420",))
     assert specs == (ReverseTunnelSpec(remote_port=NonNegativeInt(0), local_port=PositiveInt(8420)),)
 
 
 def test_parse_reverse_specs_fixed_remote() -> None:
-    from imbue.imbue_common.primitives import NonNegativeInt
-    from imbue.imbue_common.primitives import PositiveInt
-
     specs = _parse_reverse_specs(("1989:7777",))
     assert specs == (ReverseTunnelSpec(remote_port=NonNegativeInt(1989), local_port=PositiveInt(7777)),)
 
@@ -111,12 +112,6 @@ def test_filter_snapshot_supports_provider_name_filter() -> None:
     ``agent.provider_name`` (which observe mode populates) must also be
     available against the snapshot.
     """
-    from imbue.mngr_forward.cli import _filter_snapshot
-    from imbue.mngr_forward.data_types import ForwardAgentSnapshot
-    from imbue.mngr_forward.data_types import ForwardListSnapshot
-    from imbue.mngr_forward.testing import TEST_AGENT_ID_1
-    from imbue.mngr_forward.testing import TEST_AGENT_ID_2
-
     snapshot = ForwardListSnapshot(
         agents=(
             ForwardAgentSnapshot(agent_id=TEST_AGENT_ID_1, provider_name="modal"),
@@ -129,12 +124,6 @@ def test_filter_snapshot_supports_provider_name_filter() -> None:
 
 def test_filter_snapshot_supports_host_id_and_name_filter() -> None:
     """All four observe-mode CEL fields are available against the snapshot."""
-    from imbue.mngr_forward.cli import _filter_snapshot
-    from imbue.mngr_forward.data_types import ForwardAgentSnapshot
-    from imbue.mngr_forward.data_types import ForwardListSnapshot
-    from imbue.mngr_forward.testing import TEST_AGENT_ID_1
-    from imbue.mngr_forward.testing import TEST_AGENT_ID_2
-
     snapshot = ForwardListSnapshot(
         agents=(
             ForwardAgentSnapshot(agent_id=TEST_AGENT_ID_1, host_id="host-a", agent_name="alpha"),

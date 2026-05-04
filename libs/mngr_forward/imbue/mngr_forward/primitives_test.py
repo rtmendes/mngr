@@ -1,5 +1,7 @@
 import pytest
 
+from imbue.imbue_common.primitives import NonNegativeInt
+from imbue.imbue_common.primitives import PositiveInt
 from imbue.mngr_forward.primitives import FORWARD_SUBDOMAIN_PATTERN
 from imbue.mngr_forward.primitives import ForwardPort
 from imbue.mngr_forward.primitives import MNGR_FORWARD_SESSION_COOKIE_NAME
@@ -50,16 +52,11 @@ def test_subdomain_pattern_rejects_invalid_hosts(host: str) -> None:
 
 
 def test_reverse_tunnel_spec_allows_zero_remote() -> None:
-    from imbue.imbue_common.primitives import NonNegativeInt
-    from imbue.imbue_common.primitives import PositiveInt
-
     spec = ReverseTunnelSpec(remote_port=NonNegativeInt(0), local_port=PositiveInt(8420))
     assert spec.remote_port == 0
     assert spec.local_port == 8420
 
 
 def test_reverse_tunnel_spec_rejects_zero_local() -> None:
-    from imbue.imbue_common.primitives import NonNegativeInt
-
     with pytest.raises(ValueError):
         ReverseTunnelSpec(remote_port=NonNegativeInt(8420), local_port=0)  # type: ignore[arg-type]
