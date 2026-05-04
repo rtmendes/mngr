@@ -30,7 +30,6 @@ from typing import Final
 import click
 import uvicorn
 from loguru import logger
-from pydantic import SecretStr
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.minds.bootstrap import minds_data_dir_for
@@ -160,7 +159,6 @@ def run(
     mngr_host_dir = Path(mngr_host_dir_str).expanduser() if mngr_host_dir_str else (Path.home() / ".mngr")
     forward_config = ForwardSubprocessConfig(
         port=mngr_forward_port,
-        preauth_cookie=SecretStr("placeholder-overridden-by-start_mngr_forward"),
         reverse_specs=(f"0:{port}",),
         mngr_host_dir=mngr_host_dir,
     )

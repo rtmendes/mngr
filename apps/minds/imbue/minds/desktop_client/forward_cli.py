@@ -35,7 +35,6 @@ import paramiko
 from loguru import logger
 from pydantic import Field
 from pydantic import PrivateAttr
-from pydantic import SecretStr
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.frozen_model import FrozenModel
@@ -85,10 +84,16 @@ class ReverseTunnelEstablishedInfo(FrozenModel):
 
 
 class ForwardSubprocessConfig(FrozenModel):
-    """Args for the ``mngr forward`` subprocess that ``minds run`` spawns."""
+    """Args for the ``mngr forward`` subprocess that ``minds run`` spawns.
+
+    Note: the preauth cookie is *not* a configurable field. It is freshly
+    generated inside ``start_mngr_forward`` (so each run has a fresh
+    secret) and returned to the caller as the second element of the
+    tuple. Callers hand it to the Electron shell, which pre-sets
+    ``mngr_forward_session=<value>`` on ``localhost:<port>``.
+    """
 
     port: int = Field(description="Plugin bind port (e.g. 8421)")
-    preauth_cookie: SecretStr = Field(description="Pre-shared cookie value Electron will set")
     service: str = Field(default="system_interface", description="Service name to forward")
     agent_include: tuple[str, ...] = Field(
         default=("has(agent.labels.workspace) && has(agent.labels.is_primary)",),
