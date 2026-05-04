@@ -58,12 +58,12 @@ from imbue.mngr.providers.ssh.instance import SSHHostConfig
 from imbue.mngr.providers.ssh.instance import SSHProviderInstance
 from imbue.mngr.utils.polling import poll_until
 from imbue.mngr.utils.polling import wait_for
-from imbue.mngr.utils.thread_cleanup import mngr_executor
 from imbue.mngr.utils.testing import build_test_known_hosts_file
 from imbue.mngr.utils.testing import capture_tmux_pane_contents
 from imbue.mngr.utils.testing import generate_ssh_keypair
 from imbue.mngr.utils.testing import local_sshd
 from imbue.mngr.utils.testing import tmux_session_cleanup
+from imbue.mngr.utils.thread_cleanup import mngr_executor
 
 
 @pytest.fixture
