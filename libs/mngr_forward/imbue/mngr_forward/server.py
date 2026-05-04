@@ -15,6 +15,7 @@ stay in minds; the plugin only handles:
 
 import asyncio
 import socket as socket_module
+import threading
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -221,6 +222,7 @@ def _get_tunnel_http_client(
     backend_url: str,
     ssh_info: object | None,
     ssh_http_clients: dict[str, httpx.AsyncClient],
+    ssh_http_clients_lock: threading.Lock,
 ) -> httpx.AsyncClient | None:
     """Return a cached httpx client tied to the per-tunnel Unix socket, or None for direct.
 
@@ -228,22 +230,30 @@ def _get_tunnel_http_client(
     lifespan) keyed by the tunnel socket path, so its connection pool is reused
     across requests and aclose'd exactly once on shutdown. Constructing a new
     client per request would leak the underlying transport + pool every call.
+
+    The lookup-and-insert is guarded by ``ssh_http_clients_lock`` because the
+    function runs in the default executor's thread pool (via
+    ``run_in_executor``), so two concurrent requests to the same backend would
+    otherwise both miss the cache, both construct a fresh ``AsyncClient``, and
+    one of the clients would be orphaned and never ``aclose``'d on shutdown --
+    leaking its transport + connection pool.
     """
     socket_path = _get_tunnel_socket_path(tunnel_manager, backend_url, ssh_info)
     if socket_path is None:
         return None
     socket_path_str = str(socket_path)
-    cached = ssh_http_clients.get(socket_path_str)
-    if cached is not None:
-        return cached
-    transport = httpx.AsyncHTTPTransport(uds=socket_path_str)
-    client = httpx.AsyncClient(
-        transport=transport,
-        follow_redirects=False,
-        timeout=_PROXY_TIMEOUT_SECONDS,
-    )
-    ssh_http_clients[socket_path_str] = client
-    return client
+    with ssh_http_clients_lock:
+        cached = ssh_http_clients.get(socket_path_str)
+        if cached is not None:
+            return cached
+        transport = httpx.AsyncHTTPTransport(uds=socket_path_str)
+        client = httpx.AsyncClient(
+            transport=transport,
+            follow_redirects=False,
+            timeout=_PROXY_TIMEOUT_SECONDS,
+        )
+        ssh_http_clients[socket_path_str] = client
+        return client
 
 
 # -- HTTP forwarding -------------------------------------------------------
@@ -378,6 +388,7 @@ async def _handle_workspace_forward_http(
     tunnel_manager: SSHTunnelManager,
     http_client: httpx.AsyncClient,
     ssh_http_clients: dict[str, httpx.AsyncClient],
+    ssh_http_clients_lock: threading.Lock,
     preauth_cookie_value: str | None,
     listen_port: int,
 ) -> Response:
@@ -409,6 +420,7 @@ async def _handle_workspace_forward_http(
             backend_url,
             target.ssh_info,
             ssh_http_clients,
+            ssh_http_clients_lock,
         )
     except (SSHTunnelError, paramiko.SSHException, OSError) as e:
         logger.warning("SSH tunnel setup failed for {}: {}", agent_id, e)
@@ -619,8 +631,13 @@ async def _managed_lifespan(
     # Per-tunnel httpx clients are cached here so they outlive a single request
     # and their connection pools are reused. Lifespan teardown aclose's them
     # all; without this every request to a remote agent would leak a fresh
-    # AsyncClient + AsyncHTTPTransport.
+    # AsyncClient + AsyncHTTPTransport. The lock guards the cache's
+    # check-then-set against concurrent executor threads (the cache lookup
+    # runs via run_in_executor) so two concurrent requests to the same
+    # backend don't both construct + insert their own AsyncClient and
+    # orphan one of them.
     inner_app.state.ssh_http_clients = {}
+    inner_app.state.ssh_http_clients_lock = threading.Lock()
     if on_listening is not None:
         try:
             on_listening()
@@ -676,6 +693,7 @@ def create_forward_app(
             tunnel_manager=tunnel_manager,
             http_client=app.state.http_client,
             ssh_http_clients=app.state.ssh_http_clients,
+            ssh_http_clients_lock=app.state.ssh_http_clients_lock,
             preauth_cookie_value=preauth_cookie_value,
             listen_port=listen_port,
         )
