@@ -2126,6 +2126,7 @@ def create_desktop_client(
     paths: WorkspacePaths | None = None,
     minds_config: MindsConfig | None = None,
     stream_manager: MngrStreamManager | None = None,
+    envelope_stream_consumer: object | None = None,
     session_store: MultiAccountSessionStore | None = None,
     request_inbox: RequestInbox | None = None,
     request_event_handlers: tuple[RequestEventHandler, ...] = (),
@@ -2184,6 +2185,7 @@ def create_desktop_client(
     app.state.tunnel_manager = tunnel_manager
     app.state.latchkey = latchkey
     app.state.stream_manager = stream_manager
+    app.state.envelope_stream_consumer = envelope_stream_consumer
     app.state.agent_creator = agent_creator
     app.state.imbue_cloud_cli = imbue_cloud_cli
     app.state.telegram_orchestrator = telegram_orchestrator

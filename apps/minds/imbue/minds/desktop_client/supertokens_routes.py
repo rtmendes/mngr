@@ -223,9 +223,16 @@ def _store_session_from_auth_result(
 def _bounce_mngr_observe(request: Request) -> None:
     """Restart ``mngr observe`` so a freshly-written provider entry is visible.
 
-    No-op when no stream manager is registered on this app (e.g. tests that
-    don't bring up the streaming pipeline).
+    Prefers the new ``EnvelopeStreamConsumer`` (Phase 2 path: ``minds run``
+    spawns ``mngr forward`` and we send ``SIGHUP`` to its PID). Falls back
+    to the legacy in-process ``MngrStreamManager.restart_observe()`` for
+    tests / older entry points that haven't migrated yet. No-op when
+    neither is registered.
     """
+    envelope_stream_consumer = getattr(request.app.state, "envelope_stream_consumer", None)
+    if envelope_stream_consumer is not None:
+        envelope_stream_consumer.bounce_observe()
+        return
     stream_manager: MngrStreamManager | None = request.app.state.stream_manager
     if stream_manager is None:
         return
