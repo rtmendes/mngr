@@ -67,7 +67,7 @@ mngr imbue_cloud auth signout [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud auth status
@@ -83,7 +83,22 @@ mngr imbue_cloud auth status [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account; pass to query a different signed-in account). | None |
+
+## mngr imbue_cloud auth use
+
+**Usage:**
+
+```text
+mngr imbue_cloud auth use [OPTIONS]
+```
+**Options:**
+
+## Other Options
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--account` | text | Account email to mark as active. Must already be signed in (run `mngr imbue_cloud auth signin --account <email>` first). | None |
 
 ## mngr imbue_cloud auth refresh
 
@@ -98,7 +113,7 @@ mngr imbue_cloud auth refresh [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud auth oauth
@@ -132,7 +147,7 @@ mngr imbue_cloud auth forgot-password [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud auth resend-verification
@@ -148,7 +163,7 @@ mngr imbue_cloud auth resend-verification [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud hosts
@@ -174,7 +189,7 @@ mngr imbue_cloud hosts list [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud hosts release
@@ -190,7 +205,7 @@ mngr imbue_cloud hosts release [OPTIONS] HOST_DB_ID
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud keys
@@ -226,7 +241,7 @@ mngr imbue_cloud keys litellm create [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--alias` | text | Optional human-readable alias for the key | None |
 | `--max-budget` | float | Max spend in USD | None |
 | `--budget-duration` | text | Budget reset duration (e.g. '1d', '30d') | None |
@@ -246,7 +261,7 @@ mngr imbue_cloud keys litellm list [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud keys litellm show
@@ -262,7 +277,7 @@ mngr imbue_cloud keys litellm show [OPTIONS] KEY_ID
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud keys litellm budget
@@ -278,7 +293,7 @@ mngr imbue_cloud keys litellm budget [OPTIONS] KEY_ID
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--max-budget` | float | New max budget in USD | None |
 | `--budget-duration` | text | New budget reset duration (optional) | None |
 | `--connector-url` | text | Override connector URL | None |
@@ -296,7 +311,7 @@ mngr imbue_cloud keys litellm delete [OPTIONS] KEY_ID
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud tunnels
@@ -322,7 +337,7 @@ mngr imbue_cloud tunnels create [OPTIONS] AGENT_ID
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--policy` | text | Default Cloudflare Access policy as JSON, e.g. '{"emails":["a@example.com"]}' | None |
 | `--connector-url` | text | Override connector URL | None |
 
@@ -339,7 +354,7 @@ mngr imbue_cloud tunnels list [OPTIONS]
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud tunnels delete
@@ -355,7 +370,7 @@ mngr imbue_cloud tunnels delete [OPTIONS] TUNNEL_NAME
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud tunnels services
@@ -381,7 +396,7 @@ mngr imbue_cloud tunnels services add [OPTIONS] TUNNEL_NAME SERVICE_NAME SERVICE
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud tunnels services list
@@ -397,7 +412,7 @@ mngr imbue_cloud tunnels services list [OPTIONS] TUNNEL_NAME
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud tunnels services remove
@@ -413,7 +428,7 @@ mngr imbue_cloud tunnels services remove [OPTIONS] TUNNEL_NAME SERVICE_NAME
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--connector-url` | text | Override connector URL | None |
 
 ## mngr imbue_cloud tunnels auth
@@ -439,7 +454,7 @@ mngr imbue_cloud tunnels auth get [OPTIONS] TUNNEL_NAME
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--service` | text | If set, fetch the policy for this service instead of the tunnel default | None |
 | `--connector-url` | text | Override connector URL | None |
 
@@ -456,7 +471,7 @@ mngr imbue_cloud tunnels auth set [OPTIONS] TUNNEL_NAME POLICY_JSON
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--account` | text | Account email | None |
+| `--account` | text | Account email (defaults to the active account) | None |
 | `--service` | text | If set, set the policy for this service instead of the tunnel default | None |
 | `--connector-url` | text | Override connector URL | None |
 

@@ -4,6 +4,7 @@ import threading
 
 import pytest
 
+from imbue.imbue_common.primitives import PositiveInt
 from imbue.mngr_forward.data_types import ReverseTunnelEstablishedPayload
 from imbue.mngr_forward.envelope import EnvelopeWriter
 from imbue.mngr_forward.primitives import ForwardPort
@@ -63,10 +64,10 @@ def test_emit_reverse_tunnel_established(buffer_writer: tuple[EnvelopeWriter, io
     writer.emit_reverse_tunnel_established(
         ReverseTunnelEstablishedPayload(
             agent_id=TEST_AGENT_ID_1,
-            remote_port=12345,
-            local_port=8420,
+            remote_port=PositiveInt(12345),
+            local_port=PositiveInt(8420),
             ssh_host="example.modal.run",
-            ssh_port=22,
+            ssh_port=PositiveInt(22),
         )
     )
     [envelope] = _read_lines(buf)

@@ -14,6 +14,7 @@ from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.mutable_model import MutableModel
+from imbue.imbue_common.primitives import PositiveInt
 from imbue.mngr.primitives import AgentId
 from imbue.mngr_forward.data_types import ReverseTunnelEstablishedPayload
 from imbue.mngr_forward.envelope import EnvelopeWriter
@@ -85,10 +86,10 @@ class ReverseTunnelHandler(MutableModel):
         self.envelope_writer.emit_reverse_tunnel_established(
             ReverseTunnelEstablishedPayload(
                 agent_id=agent_id,
-                remote_port=assigned_remote_port,
+                remote_port=PositiveInt(assigned_remote_port),
                 local_port=spec.local_port,
                 ssh_host=ssh_info.host,
-                ssh_port=ssh_info.port,
+                ssh_port=PositiveInt(ssh_info.port),
             )
         )
 
@@ -118,10 +119,10 @@ class ReverseTunnelHandler(MutableModel):
         self.envelope_writer.emit_reverse_tunnel_established(
             ReverseTunnelEstablishedPayload(
                 agent_id=agent_id,
-                remote_port=info.remote_port,
-                local_port=info.local_port,
+                remote_port=PositiveInt(info.remote_port),
+                local_port=PositiveInt(info.local_port),
                 ssh_host=info.ssh_info.host,
-                ssh_port=info.ssh_info.port,
+                ssh_port=PositiveInt(info.ssh_info.port),
             )
         )
 

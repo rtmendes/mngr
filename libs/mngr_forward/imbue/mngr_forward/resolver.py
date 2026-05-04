@@ -24,6 +24,7 @@ from pydantic import PrivateAttr
 from imbue.imbue_common.errors import SwitchError
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.mngr.primitives import AgentId
+from imbue.mngr_forward.data_types import BackendUrl
 from imbue.mngr_forward.data_types import ForwardPortStrategy
 from imbue.mngr_forward.data_types import ForwardServiceStrategy
 from imbue.mngr_forward.data_types import ForwardStrategy
@@ -107,13 +108,13 @@ class ForwardResolver(MutableModel):
                 url = services.get(service_name)
                 if url is None:
                     return None
-                return ProxyTarget(url=url, ssh_info=ssh_info)
+                return ProxyTarget(url=BackendUrl(url), ssh_info=ssh_info)
             case ForwardPortStrategy(remote_port=remote_port):
                 # Manual mode: target ``127.0.0.1:<remote_port>`` on the agent's
                 # host. Local agents reach this directly; remote agents go via
                 # an SSH ``direct-tcpip`` tunnel.
                 url = f"http://127.0.0.1:{remote_port}"
-                return ProxyTarget(url=url, ssh_info=ssh_info)
+                return ProxyTarget(url=BackendUrl(url), ssh_info=ssh_info)
             case _ as unreachable:  # pragma: no cover
                 assert_never(unreachable)
                 raise SwitchError(f"Unknown forwarding strategy: {unreachable}")

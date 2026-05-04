@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from imbue.imbue_common.primitives import PositiveInt
 from imbue.mngr_forward.data_types import ForwardPortStrategy
 from imbue.mngr_forward.data_types import ForwardServiceStrategy
 from imbue.mngr_forward.resolver import ForwardResolver
@@ -52,7 +53,7 @@ def test_resolve_service_strategy_includes_ssh_info(ssh_info: RemoteSSHInfo) -> 
 
 
 def test_resolve_port_strategy_returns_fixed_url(ssh_info: RemoteSSHInfo) -> None:
-    resolver = ForwardResolver(strategy=ForwardPortStrategy(remote_port=8080))
+    resolver = ForwardResolver(strategy=ForwardPortStrategy(remote_port=PositiveInt(8080)))
     resolver.add_known_agent(TEST_AGENT_ID_1)
     resolver.update_ssh_info(TEST_AGENT_ID_1, ssh_info)
     target = resolver.resolve(TEST_AGENT_ID_1)

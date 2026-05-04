@@ -14,6 +14,8 @@ import click
 import uvicorn
 from loguru import logger
 
+from imbue.imbue_common.primitives import NonNegativeInt
+from imbue.imbue_common.primitives import PositiveInt
 from imbue.mngr.cli.common_opts import add_common_options
 from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.cli.help_formatter import CommandHelpMetadata
@@ -72,7 +74,12 @@ def _parse_reverse_specs(raw: tuple[str, ...]) -> tuple[ReverseTunnelSpec, ...]:
             raise click.UsageError(f"--reverse remote port must be >= 0, got {remote}")
         if local <= 0:
             raise click.UsageError(f"--reverse local port must be > 0, got {local}")
-        parsed.append(ReverseTunnelSpec(remote_port=remote, local_port=local))
+        parsed.append(
+            ReverseTunnelSpec(
+                remote_port=NonNegativeInt(remote),
+                local_port=PositiveInt(local),
+            )
+        )
     return tuple(parsed)
 
 
@@ -258,7 +265,7 @@ def _build_strategy(opts: ForwardCliOptions) -> ForwardServiceStrategy | Forward
     if opts.service is not None:
         return ForwardServiceStrategy(service_name=opts.service)
     assert opts.forward_port is not None  # validated above
-    return ForwardPortStrategy(remote_port=opts.forward_port)
+    return ForwardPortStrategy(remote_port=PositiveInt(opts.forward_port))
 
 
 def _filter_snapshot(

@@ -17,19 +17,18 @@ from imbue.mngr_forward.data_types import ForwardServiceStrategy
 from imbue.mngr_forward.errors import ForwardManualConfigError
 from imbue.mngr_forward.primitives import ReverseTunnelSpec
 
-_BASE_FIELDS: dict[str, object] = {
-    "output_format": "human",
-    "quiet": False,
-    "verbose": 0,
-    "log_file": None,
-    "log_commands": None,
-    "plugin": (),
-    "disable_plugin": (),
-}
-
 
 def _opts(**overrides: object) -> ForwardCliOptions:
-    return ForwardCliOptions(**{**_BASE_FIELDS, **overrides})
+    return ForwardCliOptions(
+        output_format="human",
+        quiet=False,
+        verbose=0,
+        log_file=None,
+        log_commands=None,
+        plugin=(),
+        disable_plugin=(),
+        **overrides,  # type: ignore[arg-type]
+    )
 
 
 def test_validation_requires_one_target() -> None:
@@ -64,13 +63,19 @@ def test_build_strategy_port() -> None:
 
 
 def test_parse_reverse_specs_dynamic_remote() -> None:
+    from imbue.imbue_common.primitives import NonNegativeInt
+    from imbue.imbue_common.primitives import PositiveInt
+
     specs = _parse_reverse_specs(("0:8420",))
-    assert specs == (ReverseTunnelSpec(remote_port=0, local_port=8420),)
+    assert specs == (ReverseTunnelSpec(remote_port=NonNegativeInt(0), local_port=PositiveInt(8420)),)
 
 
 def test_parse_reverse_specs_fixed_remote() -> None:
+    from imbue.imbue_common.primitives import NonNegativeInt
+    from imbue.imbue_common.primitives import PositiveInt
+
     specs = _parse_reverse_specs(("1989:7777",))
-    assert specs == (ReverseTunnelSpec(remote_port=1989, local_port=7777),)
+    assert specs == (ReverseTunnelSpec(remote_port=NonNegativeInt(1989), local_port=PositiveInt(7777)),)
 
 
 def test_parse_reverse_specs_repeated() -> None:

@@ -313,21 +313,24 @@ class ForwardStreamManager(MutableModel):
             )
 
     def _handle_agent_destroyed(self, event: AgentDestroyedEvent) -> None:
-        aid_str = str(event.agent_id)
+        self._destroy_agent(event.agent_id)
+
+    def _handle_host_destroyed(self, event: HostDestroyedEvent) -> None:
+        for agent_id in event.agent_ids:
+            self._destroy_agent(agent_id)
+        with self._lock:
+            self._ssh_by_host_id.pop(str(event.host_id), None)
+
+    def _destroy_agent(self, agent_id: AgentId) -> None:
+        aid_str = str(agent_id)
         with self._lock:
             self._discovered_agents.pop(aid_str, None)
             self._agent_host_map.pop(aid_str, None)
             self._events_services.pop(aid_str, None)
-        self.resolver.remove_known_agent(event.agent_id)
-        self._stop_events_stream(event.agent_id)
+        self.resolver.remove_known_agent(agent_id)
+        self._stop_events_stream(agent_id)
         for callback in self._on_agent_destroyed_callbacks:
-            self._safely_call(callback, event.agent_id, name="on_agent_destroyed")
-
-    def _handle_host_destroyed(self, event: HostDestroyedEvent) -> None:
-        for agent_id in event.agent_ids:
-            self._handle_agent_destroyed(AgentDestroyedEvent(agent_id=agent_id, host_id=event.host_id))
-        with self._lock:
-            self._ssh_by_host_id.pop(str(event.host_id), None)
+            self._safely_call(callback, agent_id, name="on_agent_destroyed")
 
     def _ssh_for_agent(self, agent_id: AgentId) -> RemoteSSHInfo | None:
         with self._lock:

@@ -1,5 +1,6 @@
 import json
 
+from imbue.imbue_common.primitives import PositiveInt
 from imbue.mngr_forward.data_types import ForwardEnvelope
 from imbue.mngr_forward.data_types import ListeningPayload
 from imbue.mngr_forward.data_types import LoginUrlPayload
@@ -27,10 +28,10 @@ def test_listening_payload_round_trip() -> None:
 def test_reverse_tunnel_payload_round_trip() -> None:
     payload = ReverseTunnelEstablishedPayload(
         agent_id=TEST_AGENT_ID_1,
-        remote_port=12345,
-        local_port=8420,
+        remote_port=PositiveInt(12345),
+        local_port=PositiveInt(8420),
         ssh_host="example.modal.run",
-        ssh_port=22,
+        ssh_port=PositiveInt(22),
     )
     serialized = payload.model_dump(mode="json")
     parsed = ReverseTunnelEstablishedPayload.model_validate(serialized)

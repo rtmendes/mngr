@@ -1,20 +1,24 @@
 from typing import Any
 from typing import Literal
 
-from pydantic import AnyUrl
 from pydantic import Field
 
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.imbue_common.primitives import NonEmptyStr
 from imbue.imbue_common.primitives import PositiveInt
 from imbue.mngr.primitives import AgentId
 from imbue.mngr_forward.primitives import ForwardPort
 from imbue.mngr_forward.ssh_tunnel import RemoteSSHInfo
 
 
+class BackendUrl(NonEmptyStr):
+    """A resolved HTTP(S) backend URL the plugin should byte-forward to."""
+
+
 class ProxyTarget(FrozenModel):
     """The resolved backend a request to ``<agent-id>.localhost`` should hit."""
 
-    url: AnyUrl = Field(description="Backend URL")
+    url: BackendUrl = Field(description="Backend URL")
     ssh_info: RemoteSSHInfo | None = Field(
         default=None,
         description="SSH info for tunneling; None for local agents",

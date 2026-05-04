@@ -58,6 +58,7 @@ SECONDARY_COMMANDS = {
     "config",
     "event",
     "file",
+    "forward",
     "gc",
     "help",
     "imbue_cloud",
