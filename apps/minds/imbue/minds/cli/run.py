@@ -163,7 +163,6 @@ def run(
         mngr_host_dir=mngr_host_dir,
     )
     consumer, preauth_cookie = start_mngr_forward(
-        concurrency_group=root_concurrency_group,
         config=forward_config,
         resolver=backend_resolver,
         notification_dispatcher=notification_dispatcher,
@@ -188,6 +187,13 @@ def run(
     reconcile_callback = LatchkeyReconcileCallback(latchkey=latchkey, resolver=backend_resolver)
     backend_resolver.add_on_change_callback(reconcile_callback)
     tunnel_manager.start_reverse_tunnel_health_check()
+
+    # All callbacks registered -- now safe to start the envelope reader
+    # threads. Doing this earlier (e.g. inside ``start_mngr_forward``)
+    # would open a race window where envelopes arriving before the
+    # callbacks were registered would be dispatched against an empty
+    # callback list and silently dropped.
+    consumer.start(root_concurrency_group)
 
     # Emit the started event so Electron can pre-set the cookie before the
     # first navigation. ``minds run`` itself does not open the browser at

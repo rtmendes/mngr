@@ -137,21 +137,42 @@ class EnvelopeStreamConsumer(MutableModel):
 
     def add_on_agent_discovered_callback(self, callback: OnAgentDiscoveredCallback) -> None:
         """Register a callback fired for every observe-stream agent discovery."""
-        self._on_agent_discovered_callbacks.append(callback)
+        with self._lock:
+            self._on_agent_discovered_callbacks.append(callback)
 
     def add_on_agent_destroyed_callback(self, callback: OnAgentDestroyedCallback) -> None:
         """Register a callback fired for every observe-stream agent destruction."""
-        self._on_agent_destroyed_callbacks.append(callback)
+        with self._lock:
+            self._on_agent_destroyed_callbacks.append(callback)
 
     def add_on_reverse_tunnel_established_callback(self, callback: OnReverseTunnelEstablishedCallback) -> None:
         """Register a callback fired for each ``reverse_tunnel_established`` envelope."""
-        self._on_reverse_tunnel_established_callbacks.append(callback)
+        with self._lock:
+            self._on_reverse_tunnel_established_callbacks.append(callback)
 
     # -- Subprocess lifecycle ---------------------------------------------
 
-    def attach(self, process: subprocess.Popen[bytes], concurrency_group: ConcurrencyGroup) -> None:
-        """Attach to a freshly-spawned plugin subprocess and start the reader threads."""
+    def attach(self, process: subprocess.Popen[bytes]) -> None:
+        """Store a freshly-spawned plugin subprocess.
+
+        Reader threads are *not* started here -- callers must register
+        every callback they need first, then call ``start()`` to begin
+        consuming the envelope stream. This avoids a race where envelopes
+        arriving between thread start and callback registration would be
+        dispatched against an empty callback list.
+        """
+        if self._process is not None:
+            raise RuntimeError("EnvelopeStreamConsumer.attach already called")
         self._process = process
+
+    def start(self, concurrency_group: ConcurrencyGroup) -> None:
+        """Start the reader / lifecycle threads for the attached subprocess.
+
+        Must be called after ``attach()`` and after any callbacks that
+        need to see the very first envelope have been registered.
+        """
+        if self._process is None:
+            raise RuntimeError("EnvelopeStreamConsumer.start called before attach")
         concurrency_group.start_new_thread(
             target=self._read_stdout_loop,
             name="mngr-forward-stdout-reader",
@@ -416,14 +437,18 @@ class EnvelopeStreamConsumer(MutableModel):
         ssh_info: RemoteSSHInfo | None,
         provider_name: str,
     ) -> None:
-        for callback in self._on_agent_discovered_callbacks:
+        with self._lock:
+            callbacks = list(self._on_agent_discovered_callbacks)
+        for callback in callbacks:
             try:
                 callback(agent_id, ssh_info, provider_name)
             except (OSError, RuntimeError, ValueError) as e:
                 logger.warning("on_agent_discovered callback failed for {}: {}", agent_id, e)
 
     def _fire_destroyed(self, agent_id: AgentId) -> None:
-        for callback in self._on_agent_destroyed_callbacks:
+        with self._lock:
+            callbacks = list(self._on_agent_destroyed_callbacks)
+        for callback in callbacks:
             try:
                 callback(agent_id)
             except (OSError, RuntimeError, ValueError) as e:
@@ -474,7 +499,9 @@ class EnvelopeStreamConsumer(MutableModel):
             except (KeyError, ValueError, TypeError) as e:
                 logger.warning("Could not parse reverse_tunnel_established payload: {}", e)
                 return
-            for callback in self._on_reverse_tunnel_established_callbacks:
+            with self._lock:
+                callbacks = list(self._on_reverse_tunnel_established_callbacks)
+            for callback in callbacks:
                 try:
                     callback(info)
                 except (OSError, RuntimeError, paramiko.SSHException) as e:
@@ -597,20 +624,27 @@ class LocalAgentDiscoveryHandler(MutableModel):
 
 
 def start_mngr_forward(
-    concurrency_group: ConcurrencyGroup,
     config: ForwardSubprocessConfig,
     resolver: MngrCliBackendResolver,
     notification_dispatcher: NotificationDispatcher | None = None,
 ) -> tuple[EnvelopeStreamConsumer, str]:
     """Spawn the ``mngr forward`` subprocess and attach an envelope consumer.
 
-    Returns ``(consumer, preauth_cookie_value)``. The caller is expected to:
+    Returns ``(consumer, preauth_cookie_value)``. The reader threads are
+    *not* started yet -- the caller MUST:
 
-    - register its on_agent_discovered / on_agent_destroyed /
-      on_reverse_tunnel_established handlers on the consumer;
-    - hand the preauth cookie to the Electron shell so it can pre-set
-      ``mngr_forward_session=<value>`` on ``localhost:<port>`` before the
-      first agent-subdomain navigation.
+    1. register its on_agent_discovered / on_agent_destroyed /
+       on_reverse_tunnel_established handlers on the consumer;
+    2. call ``consumer.start(concurrency_group)`` to begin consuming
+       envelopes;
+    3. hand the preauth cookie to the Electron shell so it can pre-set
+       ``mngr_forward_session=<value>`` on ``localhost:<port>`` before the
+       first agent-subdomain navigation.
+
+    Splitting attach (here) from start (caller) avoids a race where
+    envelopes arriving before the caller has registered its callbacks
+    would be dispatched against an empty callback list and silently
+    dropped.
     """
     binary = _resolve_mngr_binary(config.mngr_binary)
     preauth_cookie = secrets.token_urlsafe(_PREAUTH_TOKEN_LENGTH)
@@ -650,7 +684,7 @@ def start_mngr_forward(
         resolver=resolver,
         notification_dispatcher=notification_dispatcher,
     )
-    consumer.attach(process, concurrency_group)
+    consumer.attach(process)
     return consumer, preauth_cookie
 
 
