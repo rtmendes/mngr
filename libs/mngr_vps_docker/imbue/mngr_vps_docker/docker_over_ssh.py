@@ -282,7 +282,7 @@ class DockerOverSsh(MutableModel):
             logger.debug("Docker not ready on VPS {}: {}", self.vps_ip, e)
             return False
 
-    def upload_directory(self, local_path: Path, remote_path: str, timeout_seconds: float = 600.0) -> None:
+    def upload_directory(self, local_path: Path, remote_path: str, timeout_seconds: float = 900.0) -> None:
         """Upload a local directory to the VPS via rsync over SSH.
 
         Retries connection-class failures (broken pipe, RST, ssh-disconnect)
