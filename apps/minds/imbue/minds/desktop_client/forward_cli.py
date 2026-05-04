@@ -53,7 +53,7 @@ from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
-from imbue.minds.desktop_client.ssh_tunnel import _create_ssh_client  # noqa: PLC2701
+from imbue.minds.desktop_client.ssh_tunnel import open_ssh_client
 from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
 from imbue.mngr.api.discovery_events import AgentDestroyedEvent
 from imbue.mngr.api.discovery_events import AgentDiscoveryEvent
@@ -296,6 +296,13 @@ class EnvelopeStreamConsumer(MutableModel):
             logger.warning(
                 "Discovery error from {}: {} ({})", event.source_name, event.error_message, event.error_type
             )
+        else:
+            # parse_discovery_event_line returns the union we already
+            # exhaustively enumerated above; an unknown event type means
+            # mngr added a new discovery type the plugin still passes
+            # through. Log once at trace-level so it's visible without
+            # being noisy.
+            logger.trace("Ignoring unknown discovery event: {}", type(event).__name__)
 
     def _handle_full_snapshot(self, event: FullDiscoverySnapshotEvent) -> None:
         agent_ids: list[AgentId] = []
@@ -423,10 +430,12 @@ class EnvelopeStreamConsumer(MutableModel):
         source = payload.get("source", "")
         aid_str = str(agent_id)
         if source == REQUESTS_EVENT_SOURCE_NAME:
-            self.resolver._fire_on_request(aid_str, json.dumps(payload, separators=(",", ":")))  # noqa: SLF001
+            raw_line = json.dumps(payload, separators=(",", ":"))
+            self.resolver.fire_on_request(aid_str, raw_line)
             return
         if source == REFRESH_EVENT_SOURCE_NAME:
-            self.resolver._fire_on_refresh(aid_str, json.dumps(payload, separators=(",", ":")))  # noqa: SLF001
+            raw_line = json.dumps(payload, separators=(",", ":"))
+            self.resolver.fire_on_refresh(aid_str, raw_line)
             return
         if source != SERVICES_EVENT_SOURCE_NAME:
             return
@@ -497,7 +506,7 @@ class MindsApiUrlWriter(MutableModel):
         url = f"http://127.0.0.1:{info.remote_port}"
         agent_state_dir = f"{_REMOTE_HOST_DIR}/agents/{info.agent_id}"
         try:
-            client = _create_ssh_client(ssh_info)
+            client = open_ssh_client(ssh_info)
         except (paramiko.SSHException, OSError) as e:
             logger.warning("MindsApiUrlWriter: SSH connect failed for {}: {}", info.agent_id, e)
             return
@@ -621,7 +630,9 @@ def start_mngr_forward(
     env = dict(os.environ)
     env["MNGR_HOST_DIR"] = str(config.mngr_host_dir)
     logger.info("Spawning `mngr forward` subprocess: {}", " ".join(command))
-    process = subprocess.Popen(  # noqa: S603 - command is fully controlled
+    # noqa: S603 — command is fully controlled (mngr binary + the args we
+    # build above), no untrusted input reaches the argv list.
+    process = subprocess.Popen(  # noqa: S603
         command,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,

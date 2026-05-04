@@ -421,8 +421,12 @@ class MngrCliBackendResolver(BackendResolverInterface):
             except ValueError:
                 pass
 
-    def _fire_on_request(self, agent_id_str: str, raw_line: str) -> None:
-        """Invoke all registered request event callbacks."""
+    def fire_on_request(self, agent_id_str: str, raw_line: str) -> None:
+        """Invoke all registered request event callbacks.
+
+        Public dispatch entry point used by both the legacy in-process
+        ``MngrStreamManager`` and the new ``EnvelopeStreamConsumer``.
+        """
         with self._lock:
             callbacks = list(self._on_request_callbacks)
         for callback in callbacks:
@@ -430,6 +434,10 @@ class MngrCliBackendResolver(BackendResolverInterface):
                 callback(agent_id_str, raw_line)
             except (OSError, RuntimeError) as e:
                 logger.warning("Request event callback failed: {}", e)
+
+    def _fire_on_request(self, agent_id_str: str, raw_line: str) -> None:
+        """Internal alias for ``fire_on_request`` retained for backward compatibility."""
+        self.fire_on_request(agent_id_str, raw_line)
 
     def add_on_refresh_callback(self, callback: Callable[[str, str], None]) -> None:
         """Register a callback invoked when a refresh event arrives.
@@ -448,8 +456,12 @@ class MngrCliBackendResolver(BackendResolverInterface):
             except ValueError:
                 pass
 
-    def _fire_on_refresh(self, agent_id_str: str, raw_line: str) -> None:
-        """Invoke all registered refresh event callbacks."""
+    def fire_on_refresh(self, agent_id_str: str, raw_line: str) -> None:
+        """Invoke all registered refresh event callbacks.
+
+        Public dispatch entry point used by both the legacy in-process
+        ``MngrStreamManager`` and the new ``EnvelopeStreamConsumer``.
+        """
         with self._lock:
             callbacks = list(self._on_refresh_callbacks)
         for callback in callbacks:
@@ -457,6 +469,10 @@ class MngrCliBackendResolver(BackendResolverInterface):
                 callback(agent_id_str, raw_line)
             except (OSError, RuntimeError) as e:
                 logger.warning("Refresh event callback failed: {}", e)
+
+    def _fire_on_refresh(self, agent_id_str: str, raw_line: str) -> None:
+        """Internal alias for ``fire_on_refresh`` retained for backward compatibility."""
+        self.fire_on_refresh(agent_id_str, raw_line)
 
 
 # -- MngrStreamManager --

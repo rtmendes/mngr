@@ -228,8 +228,12 @@ def _bounce_mngr_observe(request: Request) -> None:
     to the legacy in-process ``MngrStreamManager.restart_observe()`` for
     tests / older entry points that haven't migrated yet. No-op when
     neither is registered.
+
+    ``app.state.envelope_stream_consumer`` is always set (to either the
+    consumer or ``None``) by ``create_desktop_client``, so direct attribute
+    access is safe — no defensive ``getattr`` required.
     """
-    envelope_stream_consumer = getattr(request.app.state, "envelope_stream_consumer", None)
+    envelope_stream_consumer = request.app.state.envelope_stream_consumer
     if envelope_stream_consumer is not None:
         envelope_stream_consumer.bounce_observe()
         return

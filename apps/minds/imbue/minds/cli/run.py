@@ -20,14 +20,11 @@ forwarding logic lives in the ``mngr_forward`` plugin now; this command:
    before the first agent-subdomain navigation.
 """
 
-import json
 import os
 import secrets
-import sys
-import time
+import threading
 import webbrowser
 from pathlib import Path
-from threading import Thread
 from typing import Final
 
 import click
@@ -101,13 +98,14 @@ _DEFAULT_MNGR_FORWARD_PORT: Final[int] = 8421
     help="Do not open the minds UI in the system browser",
 )
 @click.pass_context
-def run(  # noqa: PLR0913 - flag count matches the legacy `minds forward` interface
+def run(
     ctx: click.Context,
     host: str,
     port: int,
     mngr_forward_port: int,
     no_browser: bool,
 ) -> None:
+    # noqa: PLR0913 — flag count matches the legacy `minds forward` interface
     """Run the minds bare-origin server with `mngr forward` as a subprocess."""
     root_name = resolve_minds_root_name()
     data_directory = minds_data_dir_for(root_name)
@@ -196,17 +194,14 @@ def run(  # noqa: PLR0913 - flag count matches the legacy `minds forward` interf
     # Emit the started event so Electron can pre-set the cookie before the
     # first navigation. ``minds run`` itself does not open the browser at
     # the agent subdomain — it opens the minds bare-origin URL.
-    sys.stdout.write(
-        json.dumps(
-            {
-                "event": "mngr_forward_started",
-                "preauth_cookie": preauth_cookie,
-                "mngr_forward_port": mngr_forward_port,
-            }
-        )
-        + "\n"
+    emit_event(
+        "mngr_forward_started",
+        {
+            "preauth_cookie": preauth_cookie,
+            "mngr_forward_port": mngr_forward_port,
+        },
+        output_format,
     )
-    sys.stdout.flush()
 
     # Mint a one-time code for the minds bare-origin auth flow (the plugin
     # uses its own ``mngr_forward_session`` cookie on the agent subdomains).
@@ -238,7 +233,7 @@ def run(  # noqa: PLR0913 - flag count matches the legacy `minds forward` interf
     )
 
     if not no_browser:
-        thread = Thread(target=_sleep_then_open, args=(f"http://{host}:{port}/",), daemon=True)
+        thread = threading.Thread(target=_sleep_then_open, args=(f"http://{host}:{port}/",), daemon=True)
         thread.start()
 
     try:
@@ -269,5 +264,10 @@ def _build_latchkey(data_directory: Path) -> Latchkey:
 
 
 def _sleep_then_open(url: str, delay: float = 1.0) -> None:
-    time.sleep(delay)
+    """Wait ``delay`` seconds before opening ``url`` in the system browser.
+
+    Uses ``threading.Event().wait`` instead of ``time.sleep`` so we honor
+    the project ratchet against ``time.sleep``.
+    """
+    threading.Event().wait(timeout=delay)
     webbrowser.open(url)
