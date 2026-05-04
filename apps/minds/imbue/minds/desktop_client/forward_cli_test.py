@@ -28,6 +28,7 @@ from imbue.minds.desktop_client.forward_cli import EnvelopeStreamConsumer
 from imbue.minds.desktop_client.forward_cli import LocalAgentDiscoveryHandler
 from imbue.minds.desktop_client.forward_cli import MindsApiUrlWriter
 from imbue.minds.desktop_client.forward_cli import ReverseTunnelEstablishedInfo
+from imbue.minds.desktop_client.forward_cli import _redact_secrets
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.minds.primitives import ServiceName
 from imbue.mngr.api.discovery_events import AgentDestroyedEvent
@@ -594,3 +595,46 @@ def test_minds_api_url_writer_skips_when_no_ssh_info_for_agent() -> None:
     )
     # Must not raise (no SSH connect attempted).
     writer(info)
+
+
+# --- _redact_secrets ------------------------------------------------------
+
+
+def test_redact_secrets_masks_preauth_cookie_value() -> None:
+    """The argv we log when spawning the plugin must not leak --preauth-cookie."""
+    command = [
+        "/usr/bin/mngr",
+        "forward",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8421",
+        "--service",
+        "system_interface",
+        "--preauth-cookie",
+        "this-is-a-secret-value",
+        "--format",
+        "jsonl",
+    ]
+    redacted = _redact_secrets(command)
+    assert "this-is-a-secret-value" not in " ".join(redacted)
+    assert "***" in redacted
+    # The flag name itself must remain so the log retains diagnostic value.
+    assert "--preauth-cookie" in redacted
+    # Other args must be untouched.
+    assert "system_interface" in redacted
+    assert "8421" in redacted
+
+
+def test_redact_secrets_is_a_no_op_when_flag_missing() -> None:
+    """If --preauth-cookie is absent (e.g. future caller), redact passes the command through."""
+    command = ["/usr/bin/mngr", "forward", "--port", "8421"]
+    assert _redact_secrets(command) == command
+
+
+def test_redact_secrets_does_not_mutate_input() -> None:
+    """Must return a copy -- the caller still uses the original argv to spawn Popen."""
+    command = ["mngr", "forward", "--preauth-cookie", "secret"]
+    original = list(command)
+    _redact_secrets(command)
+    assert command == original

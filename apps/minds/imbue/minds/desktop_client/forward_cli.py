@@ -663,7 +663,7 @@ def start_mngr_forward(
         command.extend(["--reverse", spec])
     env = dict(os.environ)
     env["MNGR_HOST_DIR"] = str(config.mngr_host_dir)
-    logger.info("Spawning `mngr forward` subprocess: {}", " ".join(command))
+    logger.info("Spawning `mngr forward` subprocess: {}", " ".join(_redact_secrets(command)))
     # noqa: S603 — command is fully controlled (mngr binary + the args we
     # build above), no untrusted input reaches the argv list.
     process = subprocess.Popen(  # noqa: S603
@@ -692,3 +692,26 @@ def _resolve_mngr_binary(candidate: str) -> str:
         # Best-effort: trust the bare name. Popen will raise if it's missing.
         return candidate
     return resolved
+
+
+def _redact_secrets(command: list[str]) -> list[str]:
+    """Return a copy of ``command`` with secret-bearing argument values masked.
+
+    Used only for logging. The actual ``Popen`` call uses the unredacted
+    list so the plugin still receives the real values. Today we redact the
+    ``--preauth-cookie`` value (a freshly-minted shared secret between
+    minds, the plugin, and the Electron shell); future secret-bearing
+    flags can be added to ``_SECRET_BEARING_FLAGS``.
+    """
+    redacted = list(command)
+    for flag in _SECRET_BEARING_FLAGS:
+        try:
+            idx = redacted.index(flag)
+        except ValueError:
+            continue
+        if idx + 1 < len(redacted):
+            redacted[idx + 1] = "***"
+    return redacted
+
+
+_SECRET_BEARING_FLAGS: Final[tuple[str, ...]] = ("--preauth-cookie",)
