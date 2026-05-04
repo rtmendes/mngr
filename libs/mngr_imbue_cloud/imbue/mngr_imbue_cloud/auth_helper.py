@@ -6,38 +6,81 @@ that an expired (but refreshable) token is transparently rotated before the
 real call is made.
 """
 
+import fcntl
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
 from pydantic import SecretStr
 
 from imbue.mngr_imbue_cloud.client import ImbueCloudConnectorClient
 from imbue.mngr_imbue_cloud.data_types import AuthSession
 from imbue.mngr_imbue_cloud.errors import ImbueCloudAuthError
 from imbue.mngr_imbue_cloud.primitives import ImbueCloudAccount
+from imbue.mngr_imbue_cloud.primitives import SuperTokensUserId
 from imbue.mngr_imbue_cloud.session_store import ImbueCloudSessionStore
 from imbue.mngr_imbue_cloud.session_store import _decode_jwt_exp
 
 
-def force_refresh(
+def _refresh_lock_path(sessions_dir: Path, user_id: SuperTokensUserId) -> Path:
+    """Return the cross-process lock file path for a user's refresh sequence.
+
+    Lives next to the session JSON so a stale minds install with a different
+    sessions_dir won't accidentally share the same lock.
+    """
+    return sessions_dir / f"{user_id}.refresh.lock"
+
+
+@contextmanager
+def _refresh_lock(sessions_dir: Path, user_id: SuperTokensUserId) -> Iterator[None]:
+    """Hold an exclusive cross-process flock around a refresh-rotate-save sequence.
+
+    Why this matters: SuperTokens treats *any* re-use of the same refresh
+    token as token theft and revokes the entire session family. Without
+    serialization, two processes (e.g. the minds Python server's first
+    discovery + the ``mngr observe`` subprocess started shortly after,
+    both holding the same refresh_token from the persisted session JSON)
+    can race their ``auth_refresh_session`` calls; the second to arrive
+    sends the already-rotated old refresh_token and trips the heuristic
+    -- after which every subsequent refresh for that user fails until
+    they sign in again. ``fcntl.flock`` is advisory but every refresh
+    path goes through this helper, so the advisory contract is binding
+    in practice.
+
+    The lock fd is opened ``O_RDWR | O_CREAT`` (via ``"a+"`` mode -- which
+    creates the file but doesn't truncate, so concurrent openers all get
+    the same inode) and explicitly unlocked + closed on context exit so
+    a crashed holder doesn't keep the lock indefinitely.
+    """
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = _refresh_lock_path(sessions_dir, user_id)
+    # ``a+`` opens for read+write without truncating an existing file, and
+    # creates one if it doesn't exist. We never write to the lock file --
+    # its contents don't matter; the inode is the synchronization primitive.
+    with open(lock_path, "a+") as lock_fd:
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+
+
+def _refresh_locked(
     store: ImbueCloudSessionStore,
     client: ImbueCloudConnectorClient,
-    account: ImbueCloudAccount,
+    session: AuthSession,
 ) -> AuthSession:
-    """Unconditionally rotate this account's access + refresh tokens.
+    """Perform the actual refresh + save. Caller MUST hold the per-user refresh lock.
 
-    Calls the connector's refresh endpoint regardless of whether the
-    cached access token is near expiry, persists the new tokens to disk,
-    and returns the rotated AuthSession. Raises ImbueCloudAuthError if the
-    session is missing, has no refresh token, or the connector refuses to
-    rotate.
+    Split out so ``force_refresh`` and ``get_active_token`` can both
+    re-load the session under the lock and only then decide whether
+    they still need to rotate (avoiding redundant work after another
+    process won the race and already rotated).
     """
-    session = store.load_by_account(account)
-    if session is None:
-        raise ImbueCloudAuthError(
-            f"No imbue_cloud session for account {account!s}. "
-            f"Run `mngr imbue_cloud auth signin --account {account}` first."
-        )
     if session.refresh_token is None:
         raise ImbueCloudAuthError(
-            f"No refresh token stored for {account!s}. Run `mngr imbue_cloud auth signin --account {account}` again."
+            f"No refresh token stored for {session.email!s}. "
+            f"Run `mngr imbue_cloud auth signin --account {session.email}` again."
         )
     refreshed = client.auth_refresh_session(session.refresh_token)
     if refreshed.get("status") not in (None, "OK"):
@@ -66,6 +109,38 @@ def force_refresh(
     return refreshed_session
 
 
+def force_refresh(
+    store: ImbueCloudSessionStore,
+    client: ImbueCloudConnectorClient,
+    account: ImbueCloudAccount,
+) -> AuthSession:
+    """Unconditionally rotate this account's access + refresh tokens.
+
+    Holds an exclusive cross-process file lock for the duration of the
+    refresh-rotate-save cycle so concurrent callers don't race each
+    other into a SuperTokens "token theft" revoke.
+    """
+    session = store.load_by_account(account)
+    if session is None:
+        raise ImbueCloudAuthError(
+            f"No imbue_cloud session for account {account!s}. "
+            f"Run `mngr imbue_cloud auth signin --account {account}` first."
+        )
+    with _refresh_lock(store.sessions_dir, session.user_id):
+        # Re-load after acquiring the lock: another process may have just
+        # rotated. ``force_refresh`` semantically means "rotate now", but
+        # racing with ourselves is what tripped the theft detector in the
+        # first place; rotating off the just-rotated tokens is fine and
+        # avoids the race.
+        latest = store.load_by_account(account)
+        if latest is None:
+            raise ImbueCloudAuthError(
+                f"No imbue_cloud session for account {account!s} after lock acquisition. "
+                f"Was the session removed concurrently?"
+            )
+        return _refresh_locked(store, client, latest)
+
+
 def get_active_token(
     store: ImbueCloudSessionStore,
     client: ImbueCloudConnectorClient,
@@ -83,5 +158,18 @@ def get_active_token(
         )
     if not store.is_access_token_near_expiry(session):
         return session.access_token
-    refreshed_session = force_refresh(store, client, account)
-    return refreshed_session.access_token
+    # Take the refresh lock and re-check expiry: another process may have
+    # already refreshed while we were waiting, in which case we should use
+    # *their* fresh token rather than refreshing again (which would race
+    # them into a theft-detection revoke).
+    with _refresh_lock(store.sessions_dir, session.user_id):
+        latest = store.load_by_account(account)
+        if latest is None:
+            raise ImbueCloudAuthError(
+                f"No imbue_cloud session for account {account!s} after lock acquisition. "
+                f"Was the session removed concurrently?"
+            )
+        if not store.is_access_token_near_expiry(latest):
+            return latest.access_token
+        refreshed_session = _refresh_locked(store, client, latest)
+        return refreshed_session.access_token
