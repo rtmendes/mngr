@@ -878,6 +878,13 @@ def _write_generated_files(
     For local hosts, writes files directly. For remote hosts, stages
     files to a local temp dir and rsyncs them in a single call.
     """
+    file_summary = sorted((str(rel), len(content)) for rel, content in generated_files.items())
+    logger.info(
+        "_write_generated_files: host.is_local={}, config_dir={}, files={}",
+        host.is_local,
+        config_dir,
+        file_summary,
+    )
     if host.is_local:
         for relative, content in generated_files.items():
             dest = config_dir / relative
@@ -896,7 +903,33 @@ def _write_generated_files(
                 staged = Path(staging) / relative
                 staged.parent.mkdir(parents=True, exist_ok=True)
                 staged.write_text(content)
-            host.copy_directory(local_host, Path(staging), config_dir)
+            staged_listing = sorted(p.relative_to(staging).as_posix() for p in Path(staging).rglob("*") if p.is_file())
+            logger.info(
+                "_write_generated_files: staged {} file(s) in {} -> {}",
+                len(staged_listing),
+                staging,
+                staged_listing,
+            )
+            try:
+                host.copy_directory(local_host, Path(staging), config_dir)
+            except MngrError as exc:
+                logger.opt(exception=exc).error(
+                    "_write_generated_files: copy_directory failed (staging={}, config_dir={})",
+                    staging,
+                    config_dir,
+                )
+                raise
+        # Verify the rsync deposited what we expected -- if files end up missing
+        # at config_dir despite a clean copy_directory return, we want loud
+        # evidence in the bake/provisioning logs (vs. the silent no-op pattern
+        # that surfaced as a FileNotFoundError much later in patch-claude-config).
+        ls_result = host.execute_idempotent_command(f"ls -la {shlex.quote(str(config_dir))}", timeout_seconds=10.0)
+        logger.info(
+            "_write_generated_files: post-rsync ls of {} (success={}): stdout={!r}",
+            config_dir,
+            ls_result.success,
+            ls_result.stdout.strip(),
+        )
 
 
 def _sync_user_resources(host: OnlineHostInterface, config_dir: Path, *, symlink: bool) -> None:
@@ -1754,6 +1787,16 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
         config = self.agent_config
         config_dir = self.get_claude_config_dir()
         source_claude_dir = get_user_claude_config_dir()
+        logger.info(
+            "_setup_per_agent_config_dir: agent={} host.is_local={} config_dir={} "
+            "sync_home_settings={} sync_claude_json={} sync_claude_credentials={}",
+            self.id,
+            host.is_local,
+            config_dir,
+            config.sync_home_settings,
+            config.sync_claude_json,
+            config.sync_claude_credentials,
+        )
 
         # Build runtime context
         copy_project_config_from: Path | None = None
