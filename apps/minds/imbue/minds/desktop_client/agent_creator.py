@@ -470,6 +470,11 @@ def _build_mngr_create_command(
         case _:
             mngr_command.extend(["--reuse", "--update"])
 
+    # Per-mode template + per-mode runtime flags. All modes use
+    # ``--template main --template <mode>``; the per-mode template provides
+    # the provider-specific knobs (idle_mode, pass_host_env, build_arg, ...)
+    # while runtime-only knobs that vary per-invocation (``--new-host``,
+    # ``-b lease_attributes``, ``--host-env-file <path>``) stay inline.
     match launch_mode:
         case LaunchMode.DEV:
             # Local (same-machine) mode: the agent inherits the bootstrap-set
@@ -477,39 +482,28 @@ def _build_mngr_create_command(
             # host-env plumbing is needed.
             mngr_command.extend(["--template", "main", "--template", "dev"])
         case LaunchMode.LOCAL:
-            mngr_command.extend(
-                ["--new-host", "--idle-mode", "disabled", "--template", "main", "--template", "docker"]
-            )
+            mngr_command.extend(["--new-host", "--template", "main", "--template", "docker"])
             mngr_command.extend(_remote_host_env_flags())
         case LaunchMode.LIMA:
-            mngr_command.extend(["--new-host", "--idle-mode", "disabled", "--template", "main", "--template", "lima"])
+            mngr_command.extend(["--new-host", "--template", "main", "--template", "lima"])
             mngr_command.extend(_remote_host_env_flags())
         case LaunchMode.CLOUD:
-            mngr_command.extend(["--new-host", "--idle-mode", "disabled", "--template", "main", "--template", "vultr"])
+            mngr_command.extend(["--new-host", "--template", "main", "--template", "vultr"])
             mngr_command.extend(_remote_host_env_flags())
         case LaunchMode.IMBUE_CLOUD:
-            # The pool host already has the repo + agent baked in, so no
-            # template is applied here. ``-b`` flags become LeaseAttributes
-            # the connector matches against the pool host's attributes JSONB.
-            #
-            # ``ANTHROPIC_API_KEY`` and ``ANTHROPIC_BASE_URL`` flow via
-            # ``--pass-host-env`` (read from the calling shell's env) rather
-            # than ``--host-env KEY=VALUE`` so the LiteLLM key never appears
-            # in the mngr command line (where it would be visible in ``ps``
-            # and in mngr's logs). The caller sets these env vars in the
-            # subprocess env dict it hands ``run_mngr_create``; see
-            # ``_create_agent_background``.
-            mngr_command.extend(["--new-host", "--idle-mode", "disabled"])
+            # imbue_cloud follows the same shape as the other modes: the
+            # ``main`` + ``imbue_cloud`` templates set ``idle_mode = disabled``
+            # + ``pass_host_env`` for the LiteLLM creds, and the runtime-only
+            # lease-attribute ``-b`` flags stay inline because they vary per
+            # invocation. ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL (LiteLLM
+            # creds) are forwarded via the template's ``pass_host_env`` --
+            # ``run_mngr_create`` writes them into the subprocess env so the
+            # host actually has them when ``--pass-host-env`` reads.
+            mngr_command.extend(["--new-host", "--template", "main", "--template", "imbue_cloud"])
             if imbue_cloud_repo_url:
                 mngr_command.extend(["-b", f"repo_url={imbue_cloud_repo_url}"])
             if imbue_cloud_branch_or_tag:
                 mngr_command.extend(["-b", f"repo_branch_or_tag={imbue_cloud_branch_or_tag}"])
-            if imbue_cloud_anthropic_api_key:
-                mngr_command.extend(["--pass-host-env", "ANTHROPIC_API_KEY"])
-            if imbue_cloud_anthropic_base_url:
-                mngr_command.extend(["--pass-host-env", "ANTHROPIC_BASE_URL"])
-            if os.environ.get("MNGR_PREFIX"):
-                mngr_command.extend(["--pass-host-env", "MNGR_PREFIX"])
         case _ as unreachable:
             assert_never(unreachable)
 
@@ -1118,13 +1112,94 @@ class AgentCreator(MutableModel):
                 _redact_url_credentials(repo_source),
                 launch_mode,
             ):
+                # Resolve / clone the repo locally for *every* launch mode so
+                # ``mngr create``'s cwd is a checkout of the template repo
+                # (which has the ``[create_templates.<mode>]`` blocks). For
+                # IMBUE_CLOUD this clone is "wasted" in the sense that the
+                # leased pool host has its own pre-baked checkout, but it's
+                # what gives the local mngr a place to read the per-mode
+                # template + agent_types from -- the alternative was minds
+                # inlining all those flags as command-line args, which let
+                # the imbue_cloud command-construction drift from the other
+                # modes' (and was hard to keep in sync with the bake's view
+                # of the same config).
+                if _is_local_path(repo_source):
+                    resolved_path = Path(os.path.expanduser(repo_source)).resolve()
+                    if not resolved_path.is_dir():
+                        raise MngrCommandError("Local path does not exist: {}".format(resolved_path))
+                    if include_env_file:
+                        candidate = resolved_path / ".env"
+                        if candidate.is_file():
+                            host_env_file = candidate
+                            log_queue.put("[minds] Including .env file: {}".format(candidate))
+                        else:
+                            log_queue.put(
+                                "[minds] No .env file found at {}; skipping --host-env-file".format(candidate)
+                            )
+
+                    if _is_git_worktree(resolved_path):
+                        # Worktrees have a .git file pointing to the parent repo's
+                        # .git/worktrees/ dir, which breaks when copied into Docker.
+                        # Clone locally to get a standalone repo. Use file:// protocol
+                        # so --depth 1 is honored (git ignores --depth for local paths).
+                        # Use a stable path based on repo name so Docker layer caching works.
+                        log_queue.put("[minds] Cloning local worktree: {}".format(resolved_path))
+                        repo_name = extract_repo_name(repo_source)
+                        clone_target = Path(tempfile.gettempdir()) / "minds-clone-{}".format(repo_name)
+                        if clone_target.exists():
+                            shutil.rmtree(clone_target)
+                        file_url = GitUrl("file://{}".format(resolved_path))
+                        clone_git_repo(
+                            file_url,
+                            clone_target,
+                            on_output=emit_log,
+                            is_shallow=True,
+                            parent_cg=self.root_concurrency_group,
+                        )
+                        # The shallow clone only contains committed content. Rsync
+                        # the worktree's working directory over so that uncommitted
+                        # changes (e.g. a locally-rsynced vendor/mngr/) are included
+                        # in the Docker build context.
+                        _rsync_worktree_over_clone(
+                            resolved_path,
+                            clone_target,
+                            on_output=emit_log,
+                            parent_cg=self.root_concurrency_group,
+                        )
+                        workspace_dir = clone_target
+                    else:
+                        workspace_dir = resolved_path
+                        log_queue.put("[minds] Using local directory: {}".format(workspace_dir))
+                else:
+                    repo_name = extract_repo_name(repo_source)
+                    clone_target = Path(tempfile.gettempdir()) / "minds-clone-{}".format(repo_name)
+                    if clone_target.exists():
+                        shutil.rmtree(clone_target)
+                    log_queue.put("[minds] Cloning {}...".format(_redact_url_credentials(repo_source)))
+                    clone_git_repo(
+                        GitUrl(repo_source),
+                        clone_target,
+                        on_output=emit_log,
+                        is_shallow=True,
+                        parent_cg=self.root_concurrency_group,
+                    )
+                    workspace_dir = clone_target
+
+                if branch:
+                    log_queue.put("[minds] Checking out branch '{}'...".format(branch))
+                    checkout_branch(
+                        workspace_dir,
+                        GitBranch(branch),
+                        on_output=emit_log,
+                        parent_cg=self.root_concurrency_group,
+                    )
+
                 key_material: LiteLLMKeyMaterial | None = None
                 if launch_mode is LaunchMode.IMBUE_CLOUD:
                     if self.imbue_cloud_cli is None:
                         raise MngrCommandError("IMBUE_CLOUD mode requires imbue_cloud_cli to be configured")
                     if not account_email:
                         raise MngrCommandError("IMBUE_CLOUD mode requires an account_email to be supplied")
-                    parsed_name = AgentName(agent_name)
                     log_queue.put(f"[minds] Minting LiteLLM virtual key for account {account_email}...")
                     try:
                         key_material = self.imbue_cloud_cli.create_litellm_key(
@@ -1132,82 +1207,11 @@ class AgentCreator(MutableModel):
                             alias=None,
                             max_budget=100.0,
                             budget_duration="1d",
-                            metadata={"agent_name": str(parsed_name)},
+                            metadata={"agent_name": agent_name},
                         )
                     except ImbueCloudCliError as exc:
                         raise MngrCommandError(f"Failed to create LiteLLM key: {exc}") from exc
                     log_queue.put("[minds] LiteLLM key minted.")
-                else:
-                    if _is_local_path(repo_source):
-                        resolved_path = Path(os.path.expanduser(repo_source)).resolve()
-                        if not resolved_path.is_dir():
-                            raise MngrCommandError("Local path does not exist: {}".format(resolved_path))
-                        if include_env_file:
-                            candidate = resolved_path / ".env"
-                            if candidate.is_file():
-                                host_env_file = candidate
-                                log_queue.put("[minds] Including .env file: {}".format(candidate))
-                            else:
-                                log_queue.put(
-                                    "[minds] No .env file found at {}; skipping --host-env-file".format(candidate)
-                                )
-
-                        if _is_git_worktree(resolved_path):
-                            # Worktrees have a .git file pointing to the parent repo's
-                            # .git/worktrees/ dir, which breaks when copied into Docker.
-                            # Clone locally to get a standalone repo. Use file:// protocol
-                            # so --depth 1 is honored (git ignores --depth for local paths).
-                            # Use a stable path based on repo name so Docker layer caching works.
-                            log_queue.put("[minds] Cloning local worktree: {}".format(resolved_path))
-                            repo_name = extract_repo_name(repo_source)
-                            clone_target = Path(tempfile.gettempdir()) / "minds-clone-{}".format(repo_name)
-                            if clone_target.exists():
-                                shutil.rmtree(clone_target)
-                            file_url = GitUrl("file://{}".format(resolved_path))
-                            clone_git_repo(
-                                file_url,
-                                clone_target,
-                                on_output=emit_log,
-                                is_shallow=True,
-                                parent_cg=self.root_concurrency_group,
-                            )
-                            # The shallow clone only contains committed content. Rsync
-                            # the worktree's working directory over so that uncommitted
-                            # changes (e.g. a locally-rsynced vendor/mngr/) are included
-                            # in the Docker build context.
-                            _rsync_worktree_over_clone(
-                                resolved_path,
-                                clone_target,
-                                on_output=emit_log,
-                                parent_cg=self.root_concurrency_group,
-                            )
-                            workspace_dir = clone_target
-                        else:
-                            workspace_dir = resolved_path
-                            log_queue.put("[minds] Using local directory: {}".format(workspace_dir))
-                    else:
-                        repo_name = extract_repo_name(repo_source)
-                        clone_target = Path(tempfile.gettempdir()) / "minds-clone-{}".format(repo_name)
-                        if clone_target.exists():
-                            shutil.rmtree(clone_target)
-                        log_queue.put("[minds] Cloning {}...".format(_redact_url_credentials(repo_source)))
-                        clone_git_repo(
-                            GitUrl(repo_source),
-                            clone_target,
-                            on_output=emit_log,
-                            is_shallow=True,
-                            parent_cg=self.root_concurrency_group,
-                        )
-                        workspace_dir = clone_target
-
-                    if branch:
-                        log_queue.put("[minds] Checking out branch '{}'...".format(branch))
-                        checkout_branch(
-                            workspace_dir,
-                            GitBranch(branch),
-                            on_output=emit_log,
-                            parent_cg=self.root_concurrency_group,
-                        )
 
                 with self._lock:
                     self._statuses[cid_str] = AgentCreationStatus.CREATING

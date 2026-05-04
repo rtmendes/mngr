@@ -129,16 +129,24 @@ def test_build_mngr_create_command_imbue_cloud_targets_account_provider() -> Non
     assert "-b" in command
     assert "repo_url=https://github.com/imbue-ai/forever-claude-template" in command
     assert "repo_branch_or_tag=v1.2.3" in command
-    # ANTHROPIC_API_KEY / BASE_URL flow via --pass-host-env (the values
-    # land in the subprocess env, not the command line, so the LiteLLM
-    # key isn't visible in `ps` or in mngr's logs).
+    # The actual ANTHROPIC_API_KEY / BASE_URL values are never on the
+    # command line -- they land in the subprocess env that
+    # ``run_mngr_create`` builds, and the template's ``pass_host_env``
+    # forwards them onto the host. ``--pass-host-env`` itself isn't
+    # inlined here either; the ``imbue_cloud`` template owns it.
     assert "ANTHROPIC_API_KEY=sk-test" not in command
     assert "ANTHROPIC_BASE_URL=https://litellm.example.com" not in command
-    assert "--pass-host-env" in command
-    assert "ANTHROPIC_API_KEY" in command
-    assert "ANTHROPIC_BASE_URL" in command
-    # IMBUE_CLOUD does not run a local template; the pool host has its own.
-    assert "--template" not in command
+    assert "--pass-host-env" not in command
+    # IMBUE_CLOUD now uses the symmetric ``--template main --template imbue_cloud``
+    # shape (mirroring how DEV/LOCAL/LIMA/CLOUD use ``--template main --template <provider>``).
+    # The provider-specific knobs (idle_mode, pass_host_env) live in the
+    # ``imbue_cloud`` template instead of being inlined here.
+    assert "--template" in command
+    template_args = [command[i + 1] for i, arg in enumerate(command) if arg == "--template" and i + 1 < len(command)]
+    assert "main" in template_args
+    assert "imbue_cloud" in template_args
+    # ``--idle-mode disabled`` also moved into the template.
+    assert "--idle-mode" not in command
     assert api_key
 
 

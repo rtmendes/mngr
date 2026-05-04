@@ -49,7 +49,30 @@ from imbue.mngr.primitives import AgentId
 
 _ONE_TIME_CODE_LENGTH: Final[int] = 32
 
-_DEFAULT_MNGR_HOST_DIR: Final[Path] = Path.home() / ".mngr"
+
+def _resolve_default_mngr_host_dir() -> Path:
+    """Return the same ``MNGR_HOST_DIR`` minds is bootstrapped with.
+
+    Hard-coding ``~/.mngr`` would silently spread phantom local-agent state
+    into the wrong host_dir whenever ``minds.bootstrap.apply_bootstrap`` has
+    pointed mngr at e.g. ``~/.devminds/mngr`` (the dev-flow root). Reading
+    the env here keeps the discovery handler's writes consistent with
+    every other minds-spawned mngr subprocess.
+    """
+    env_value = os.environ.get("MNGR_HOST_DIR")
+    if env_value:
+        return Path(env_value).expanduser()
+    return Path.home() / ".mngr"
+
+
+# Local-provider agents are the only ones that *should* take the
+# write-locally-to-MNGR_HOST_DIR path. Every other provider is by
+# definition remote, even when ``ssh_info`` hasn't arrived yet at
+# discovery time -- discovery + host SSH info are separate events
+# and used to race, surfacing a brief "agent has no ssh_info"
+# window during which the previous code wrote phantom local-agent
+# state for what was actually a remote agent.
+_LOCAL_PROVIDER_NAME: Final[str] = "local"
 
 
 _REMOTE_HOST_DIR: Final[str] = "/mngr"
@@ -61,19 +84,41 @@ class AgentDiscoveryHandler(FrozenModel):
     tunnel_manager: SSHTunnelManager = Field(description="SSH tunnel manager for reverse tunnels")
     server_port: int = Field(description="Local server port to forward")
     mngr_host_dir: Path = Field(
-        default_factory=lambda: _DEFAULT_MNGR_HOST_DIR,
-        description="Base mngr host directory for local agents (defaults to ~/.mngr)",
+        default_factory=_resolve_default_mngr_host_dir,
+        description=(
+            "Base mngr host directory for local agents. Defaults to the value of "
+            "``MNGR_HOST_DIR`` in the environment (set by ``minds.bootstrap.apply_bootstrap``), "
+            "falling back to ``~/.mngr`` only when nothing is in the env."
+        ),
     )
     data_dir: Path = Field(
-        default_factory=lambda: _DEFAULT_MNGR_HOST_DIR.parent / ".minds",
+        default_factory=lambda: _resolve_default_mngr_host_dir().parent / ".minds",
         description="Minds data directory for looking up stored tunnel tokens",
     )
 
     def __call__(self, agent_id: AgentId, ssh_info: RemoteSSHInfo | None, provider_name: str) -> None:
-        if ssh_info is not None:
-            self._handle_remote_agent(agent_id, ssh_info)
-        else:
+        # Dispatch on provider name, not on whether ssh_info has arrived yet.
+        # ``MngrCliBackendResolver`` fires this callback both when the agent
+        # is first discovered (often before ssh-info arrives) and again when
+        # ssh-info shows up. The previous ``ssh_info is None`` branch
+        # mishandled the first call for remote-provider agents -- it took
+        # the local path and wrote phantom ``minds_api_url`` state under
+        # ``mngr_host_dir/agents/<id>/`` for an agent that was never local.
+        if provider_name == _LOCAL_PROVIDER_NAME:
             self._handle_local_agent(agent_id)
+            return
+        if ssh_info is None:
+            # Remote-provider agent whose host ssh-info hasn't surfaced yet.
+            # The resolver will re-fire this callback once it has, so just
+            # wait quietly -- nothing useful to do without the connection
+            # info, and the local path would be wrong here.
+            logger.debug(
+                "Skipping discovery handler for {} on provider {} until ssh_info arrives",
+                agent_id,
+                provider_name,
+            )
+            return
+        self._handle_remote_agent(agent_id, ssh_info)
 
     @staticmethod
     def _remote_host_dir() -> str:

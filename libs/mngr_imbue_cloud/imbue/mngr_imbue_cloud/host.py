@@ -25,11 +25,14 @@ Overrides:
 
 import json as _json
 from collections.abc import Mapping
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
 from pydantic import Field
 
+from imbue.mngr.config.agent_config_registry import resolve_agent_type
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.interfaces.agent import AgentInterface
@@ -38,6 +41,23 @@ from imbue.mngr.interfaces.host import CreateWorkDirResult
 from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
+from imbue.mngr.primitives import AgentTypeName
+
+
+def _parse_create_time(value: Any) -> datetime:
+    """Parse a ``create_time`` ISO string from a serialized ``data.json``.
+
+    Returns the parsed datetime. Falls back to ``datetime.now()`` when the
+    field is missing or malformed; both cases are unexpected on a healthy
+    pool host but still leave us with a usable agent rather than crashing
+    create_agent_state.
+    """
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
 
 
 class ImbueCloudHost(Host):
@@ -123,23 +143,106 @@ class ImbueCloudHost(Host):
         options: CreateAgentOptions,
         created_branch_name: str | None = None,
     ) -> AgentInterface:
-        """Pin the lease's pre-baked id, then run the standard create flow.
+        """Adopt the pre-baked agent's state instead of writing a fresh ``data.json``.
 
-        Forcing ``options.agent_id = pre_baked_agent_id`` (regardless of
-        whether on-disk state survives) keeps the lease's canonical id
-        stable across destroy/recreate cycles, so subsequent commands
-        (``mngr list``, ``mngr connect``, ...) keep targeting the same
-        agent record in the connector's pool DB.
+        When ``pre_baked_agent_id`` is set (i.e. this is the leased-pool-host
+        path), we *load* the existing ``data.json`` from the host -- which the
+        bake wrote with ``--template main --template vultr`` and therefore
+        already contains the ``additional_commands`` that start
+        ``minds-workspace-server``, ``cloudflared``, etc. -- and patch only
+        the minds-driven fields in place: ``name``, ``labels.workspace``,
+        and ``command`` (regenerated via ``assemble_command`` so the embedded
+        ``<MNGR_PREFIX><name>`` tmux session reference matches the new name).
+        Everything else (``additional_commands``, ``create_time``, ``work_dir``,
+        ``agent_type``, the agent UUID baked into the ``--session-id``
+        fallback) is preserved verbatim from the bake.
+
+        The previous version of this method just pinned ``options.agent_id``
+        and called ``super().create_agent_state``, which unconditionally
+        wrote a brand-new ``data.json`` from ``CreateAgentOptions``. For the
+        adopt path that clobbered the bake's ``additional_commands`` (so
+        the workspace server never started on lease) and was incompatible
+        with minds' newer "don't pre-generate an agent id" model anyway
+        (``options.agent_id`` is now always ``None`` from the minds side).
+
+        Falls back to ``super()`` when ``pre_baked_agent_id`` is unset or
+        the on-disk ``data.json`` is missing -- e.g. after ``mngr destroy``
+        wiped the previous lease cycle's state and we need a full create.
         """
-        if self.pre_baked_agent_id is not None:
-            if options.agent_id is not None and options.agent_id != self.pre_baked_agent_id:
-                raise ValueError(
-                    f"imbue_cloud agent id is fixed by the lease ({self.pre_baked_agent_id}); "
-                    f"caller requested {options.agent_id}. Drop --id to let the lease decide."
-                )
-            if options.agent_id != self.pre_baked_agent_id:
-                options = options.model_copy(update={"agent_id": self.pre_baked_agent_id})
-        return super().create_agent_state(work_dir_path, options, created_branch_name)
+        if self.pre_baked_agent_id is None:
+            return super().create_agent_state(work_dir_path, options, created_branch_name)
+        if options.agent_id is not None and options.agent_id != self.pre_baked_agent_id:
+            raise ValueError(
+                f"imbue_cloud agent id is fixed by the lease ({self.pre_baked_agent_id}); "
+                f"caller requested {options.agent_id}. Drop --id to let the lease decide."
+            )
+
+        existing = self._read_pre_baked_data()
+        if existing is None:
+            # Lease said pre-baked, but the file is gone -- previous cycle's
+            # ``mngr destroy`` cleaned the agent state. Fall through to the
+            # standard create path so mngr writes a fresh ``data.json`` (this
+            # path will lose the bake's ``additional_commands``; if that
+            # matters here we want a louder failure mode, but that's a
+            # different conversation than the lease-adopt happy path).
+            options_with_id = options.model_copy(update={"agent_id": self.pre_baked_agent_id})
+            return super().create_agent_state(work_dir_path, options_with_id, created_branch_name)
+
+        # Hydrate the agent class so we can re-run ``assemble_command`` against
+        # the user-supplied name + the bake's UUID-derived session-id fallback.
+        agent_type = AgentTypeName(str(existing.get("type", "claude")))
+        resolved = resolve_agent_type(agent_type, self.mngr_ctx.config)
+        baked_work_dir = Path(str(existing.get("work_dir", str(work_dir_path))))
+        create_time = _parse_create_time(existing.get("create_time"))
+        new_name = options.name or AgentName(str(existing["name"]))
+
+        agent = resolved.agent_class(
+            id=self.pre_baked_agent_id,
+            name=new_name,
+            agent_type=agent_type,
+            work_dir=baked_work_dir,
+            create_time=create_time,
+            host_id=self.id,
+            host=self,
+            mngr_ctx=self.mngr_ctx,
+            agent_config=resolved.agent_config,
+        )
+        new_command = agent.assemble_command(
+            host=self,
+            agent_args=options.agent_args,
+            command_override=options.command,
+            initial_message=options.initial_message,
+        )
+
+        # Merge labels: bake's defaults + minds' user-supplied (latter wins).
+        # Update ``workspace`` to track the new name so the minds UI's "agents
+        # for workspace foo" lookup finds this agent.
+        merged_labels: dict[str, str] = dict(existing.get("labels") or {})
+        merged_labels.update(options.label_options.labels)
+        merged_labels["workspace"] = str(new_name)
+
+        # Build the new data dict by patching the existing one in place. Any
+        # bake-time fields we don't explicitly touch (``additional_commands``,
+        # ``permissions``, ``start_on_boot``, ``initial_message`` /
+        # ``resume_message`` / ``ready_timeout_seconds`` if minds didn't
+        # supply replacements, etc.) survive untouched. ``agent_id`` stays
+        # the bake's pre-baked id by construction.
+        patched: dict[str, Any] = dict(existing)
+        patched["name"] = str(new_name)
+        patched["command"] = str(new_command)
+        patched["labels"] = merged_labels
+        if options.initial_message is not None:
+            patched["initial_message"] = options.initial_message
+        if options.resume_message is not None:
+            patched["resume_message"] = options.resume_message
+        if options.ready_timeout_seconds is not None:
+            patched["ready_timeout_seconds"] = options.ready_timeout_seconds
+        if created_branch_name is not None:
+            patched["created_branch_name"] = created_branch_name
+
+        data_path = self.host_dir / "agents" / str(self.pre_baked_agent_id) / "data.json"
+        self.write_text_file(data_path, _json.dumps(patched, indent=2))
+        return agent
 
     def provision_agent(
         self,
