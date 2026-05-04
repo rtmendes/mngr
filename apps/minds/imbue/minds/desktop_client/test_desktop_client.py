@@ -1516,6 +1516,8 @@ def test_subdomain_forward_websocket_loopback_url_without_tunnel_closes_with_101
 
     assert exc_info.value.code == 1013
     assert "loopback" in (exc_info.value.reason or "")
+
+
 def _create_pending_subdomain_test_client(tmp_path: Path, agent_id: AgentId) -> tuple[TestClient, FileAuthStore]:
     """Build a desktop client where the given agent is a known workspace whose
     workspace_server URL has not yet been registered (service_logs is empty).
