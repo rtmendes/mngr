@@ -36,7 +36,7 @@ class _StubSSHTunnelManager(SSHTunnelManager):
     _next_assigned_remote_port: int = PrivateAttr(default=33333)
     _repair_callbacks: list[Callable[[ReverseTunnelInfo], None]] = PrivateAttr(default_factory=list)
 
-    def setup_reverse_tunnel(  # type: ignore[override]
+    def setup_reverse_tunnel(
         self,
         ssh_info: RemoteSSHInfo,
         local_port: int,
@@ -53,7 +53,7 @@ class _StubSSHTunnelManager(SSHTunnelManager):
         self._next_assigned_remote_port += 1
         return assigned
 
-    def add_on_tunnel_repaired_callback(  # type: ignore[override]
+    def add_on_tunnel_repaired_callback(
         self,
         callback: Callable[[ReverseTunnelInfo], None],
     ) -> None:
