@@ -90,10 +90,6 @@ def _is_streaming_eligible(is_sort_explicit: bool) -> bool:
     Streaming requires no explicit sort (needs all results before sorting). A limit is
     compatible with streaming -- it simply caps output at the first N agents to arrive,
     which is non-deterministic.
-
-    --on-error abort/continue is orthogonal to streaming: an abort during streaming
-    surfaces as a non-zero exit code, which downstream consumers (with pipefail) use
-    to decide whether to trust the partial output.
     """
     return not is_sort_explicit
 
