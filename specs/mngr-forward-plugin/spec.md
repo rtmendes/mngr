@@ -5,10 +5,11 @@
 - Move the auth + subdomain-forwarding logic out of `apps/minds/`'s desktop client into a new `mngr_forward` plugin so the same forwarding works without running the Electron app.
 - `mngr forward` exposes a long-running local proxy that serves `<agent-id>.localhost:<port>/*` and byte-forwards each request to the workspace's `system_interface` URL (the workspace_server entry point), via SSH tunnels for remote agents.
 - Discovery is driven by spawning `mngr observe --discovery-only` and per-agent `mngr event --follow` subprocesses. Their lines pass through to the plugin's stdout as a merged JSONL stream wrapped in a `{stream, agent_id?, payload}` envelope, so consumers (notably minds) can drive their own state from one stream.
-- Manual operation is supported via `--service` / `--port` (mutually exclusive, exactly one required), `--no-observe` (single `mngr list --format jsonl` snapshot, no event subprocesses), and `--reverse <remote>:<local>` (auto-set up reverse tunnels per agent, repeatable). There is no `--ssh` flag — SSH info always comes from mngr.
+- Manual operation is supported via `--service` / `--port` (mutually exclusive, exactly one required), `--no-observe` (single `mngr list --format jsonl` snapshot, no event subprocesses; only valid with `--port REMOTE_PORT`, not with `--service`, because service URLs aren't in `mngr list` output and the events stream that resolves them is suppressed in this mode), and `--reverse <remote>:<local>` (auto-set up reverse tunnels per agent, repeatable; `<remote>` may be `0` to request a dynamically-assigned port from sshd). Agent filtering uses `--agent-include` / `--agent-exclude` for which agents the plugin forwards (default: empty — every discovered agent), and `--event-include` / `--event-exclude` for which `mngr event` sources are followed per agent. There is no `--ssh` flag — SSH info always comes from mngr.
 - Authentication reuses the existing one-time-code + signed-cookie + subdomain-auth-bridge design, plus `--preauth-cookie <value>` so the Electron host can pre-set a session before the first navigation. The plugin's session cookie is renamed `mngr_forward_session`; minds keeps `minds_session` for its own bare-origin server. The signing key file is persisted across plugin restarts so cookies issued by previous runs continue to verify.
 - The plugin handles `SIGHUP` by bouncing only its `mngr observe` child subprocess; SSH tunnels, per-agent `mngr event` subprocesses, browser sessions, and the FastAPI app stay alive. This replaces today's `MngrStreamManager.restart_observe()` path that minds calls after writing a new `[providers.imbue_cloud_<slug>]` block on sign-in. With the move, minds sends `SIGHUP` to the `mngr forward` child instead of bouncing observe directly.
-- Implementation is two-phase: Phase 1 lands the plugin standalone (minds untouched, duplicated functionality during this phase). Phase 2 switches `minds forward` over to spawning `mngr forward` as a child, parses the envelope JSONL, renames the CLI command to `minds run`, and **fully removes** the now-duplicated forwarding/auth/SSH-tunnel code from minds.
+- Implementation is two-phase: Phase 1 lands the plugin standalone (minds untouched, duplicated functionality during this phase). Phase 2 switches `minds forward` over to spawning `mngr forward` as a child, parses the envelope JSONL, renames the CLI command to `minds run`, and **fully removes** the now-duplicated forwarding/auth code from minds.
+- Latchkey gateway tunneling is **out of scope** for this spec. Minds' `desktop_client/ssh_tunnel.py` and its `SSHTunnelManager` are NOT deleted in Phase 2 because the surviving `LatchkeyDiscoveryHandler` still needs per-agent reverse tunnels for the dynamic-port latchkey gateway. A separate, follow-up spec will migrate Latchkey to a single fixed-per-host gateway with in-band per-agent routing (likely via an agent API key); only after that lands can the plugin's static `--reverse 1989:<fixed>` subsume the latchkey tunnels and minds' `ssh_tunnel.py` finally be deleted.
 
 ## Expected Behavior
 
@@ -21,7 +22,7 @@
   - Spawns `mngr observe --discovery-only --quiet` as a child and proxies its lines to stdout under `stream: "observe"`.
   - Spawns one `mngr event <agent-id> services requests refresh --follow --quiet` per agent that passes `--agent-include`/`--agent-exclude`, and proxies their lines under `stream: "event"`.
 - The browser visits the login URL → the plugin sets a `mngr_forward_session` cookie on the bare origin and redirects to `/`.
-- The bare-origin `/` debug index (only used outside Electron — minds doesn't touch it) lists known agent IDs as a flat list. Each link goes through `/goto/<agent-id>/`, which mints a short-lived signed token, redirects to `http://<agent-id>.localhost:8421/_subdomain_auth?token=…&next=/`, the subdomain handler validates the token, sets a per-subdomain `mngr_forward_session` cookie, and lands the user on the proxied content.
+- The bare-origin `/` debug index (only used outside Electron — minds doesn't touch it) lists every known agent ID as a flat list, including agents that the resolver can't yet route (no service URL discovered yet, or no SSH info on a remote agent). Unresolved entries are visually de-emphasized (greyed-out link) and annotated with the reason (e.g. `(no system_interface URL yet)`). Each resolved link goes through `/goto/<agent-id>/`, which mints a short-lived signed token, redirects to `http://<agent-id>.localhost:8421/_subdomain_auth?token=…&next=/`, the subdomain handler validates the token, sets a per-subdomain `mngr_forward_session` cookie, and lands the user on the proxied content.
 - HTTP and WebSocket traffic to `<agent-id>.localhost:8421/*` is byte-forwarded to the agent's resolved backend URL (the URL of `--service` for that agent in observe-driven mode; `127.0.0.1:<remote-port>` on the agent's host when `--port` is in effect). For remote agents, the forward goes through a paramiko SSH tunnel (Unix-domain socket on the local side, direct-tcpip channel on the SSH side).
 - When the configured `--service`'s URL isn't yet known for an agent, or the agent's host has no SSH info, the plugin returns 503 with a small auto-refreshing HTML page for `text/html` requests, plain `503` body otherwise — same shape as the current minds desktop client behavior.
 - `--open-browser` additionally opens the printed login URL in the system browser; default is print-only.
@@ -37,12 +38,13 @@
   {"stream":"forward","agent_id":"<id>","payload":{"type":"reverse_tunnel_established","agent_id":"<id>","remote_port":<int>,"local_port":<int>,"ssh_host":"<host>","ssh_port":<int>}}
   ```
 - Tunnels are health-checked every ~30s; broken tunnels are re-established and re-emit the same payload (with a possibly new `remote_port` if sshd reassigned it). Idempotent for the consumer.
-- Both numbers must be real positive integers — no dynamic-port `0` sentinel in this version.
+- The local port must be a positive integer. The remote port may be `0`, in which case the plugin asks sshd for a dynamically-assigned port; the actual bound port is reported in the `reverse_tunnel_established` event, so consumers (e.g. minds writing `minds_api_url`) wire up after-the-fact rather than relying on a fixed pre-known value. A non-zero `<remote>` is bound verbatim and is what enables minds to skip the URL-write step entirely once Latchkey-style fixed ports are adopted everywhere.
 
 ### `mngr forward --no-observe --port 8080 --reverse 7777:7777`
 
 - Plugin runs `mngr list --format jsonl` once at startup, parses agents and SSH info from the output, applies `--agent-include` / `--agent-exclude` CEL filters client-side, and starts forwarding the resulting set.
 - Auto-discovery / `mngr event` subprocesses don't run.
+- `--no-observe` is only valid in combination with `--port REMOTE_PORT`. `--no-observe --service NAME` is rejected as a CLI usage error during option validation, because `mngr list --format jsonl` doesn't carry per-service URLs and the events stream that resolves `--service` to a backend URL is suppressed in this mode.
 - If the post-filter snapshot is empty, `mngr forward` exits non-zero with a clear error (manual mode is supposed to be deterministic).
 - `--reverse` still sets up tunnels for every snapshot agent at startup; no rediscovery.
 
@@ -59,15 +61,15 @@
 - `minds run` spawns `mngr forward` via `ConcurrencyGroup.run_process_in_background`, passing:
   - `--port <minds-supplied>` (default 8421, overridable via `minds run --mngr-forward-port`).
   - `--service system_interface`.
-  - `--agent-include 'has(agent.labels.workspace)'` (matches today's behavior).
+  - `--agent-include 'has(agent.labels.workspace) && has(agent.labels.is_primary)'` (matches today's `MngrCliBackendResolver.list_known_workspace_ids` filter; non-primary workspaces and non-workspace agents are not forwarded by minds).
   - `--preauth-cookie <opaque-base64-token>`.
   - `--format jsonl`.
   - `--reverse <minds-api-port>:<minds-api-port>` so agents can reach minds' bare-origin API back through the SSH transport.
-- `minds run` parses each stdout line as `{"stream": "observe"|"event"|"forward", ["agent_id": ...,] "payload": ...}`. Lines for `observe` / `event` feed the surviving in-process `MngrCliBackendResolver` via the existing `parse_discovery_event_line(...)` and `parse_service_log_record(...)` helpers. Lines for `forward.reverse_tunnel_established` trigger the `minds_api_url` write directly (the SSH info is in the payload, no plugin coordination needed).
+- `minds run` parses each stdout line as `{"stream": "observe"|"event"|"forward", ["agent_id": ...,] "payload": ...}`. Lines for `observe` / `event` feed the surviving in-process `MngrCliBackendResolver` via the existing `parse_discovery_event_line(...)` and `parse_service_log_record(...)` helpers. `observe` events for new agents additionally fan out to any `on_agent_discovered` callbacks registered on the `EnvelopeStreamConsumer` (this is where minds' light replacement for the deleted `AgentDiscoveryHandler` hooks in — see "Changes in `apps/minds/`" below). Lines for `forward.reverse_tunnel_established` trigger the `minds_api_url` write directly (the SSH info is in the payload, no plugin coordination needed); the writer overwrites unconditionally on every event so a port reassignment after a tunnel-repair is reflected without any diff bookkeeping.
 - `minds run` separately runs the minds-side bare-origin FastAPI app on its own port (default `8420`), serving `/`, `/welcome`, `/create*`, `/api/create-agent*`, `/creating/*`, `/accounts*`, `/workspace/*`, `/sharing/*`, `/_chrome*`, `/requests*`, `/api/agents/*/telegram/*`, `/api/destroy-agent/*`. Cookies are `minds_session` (origin-scoped to `localhost:8420`).
 - The browser visits minds' UI at `localhost:8420`; minds' templates link / iframe across to `<agent-id>.localhost:8421/...`. Electron pre-sets `mngr_forward_session=<preauth-cookie-value>` on `localhost:8421` (bare origin) before the first agent-subdomain navigation; the existing `/goto/<agent>/` → `/_subdomain_auth?token=…` bridge mints the per-subdomain cookie on first visit just like today.
 - Plugin death is detected via the `RunningProcess` wrapper that `ConcurrencyGroup` returns (plus envelope JSONL EOF as a backup). On detected exit, minds captures plugin stderr + exit code, surfaces both via `NotificationDispatcher` + a logged error line, and exits non-zero. Graceful restart is deferred.
-- `EnvelopeStreamConsumer` exposes `bounce_observe()`, which sends `SIGHUP` to the plugin's PID (looked up via `RunningProcess`) so that `settings.toml` changes (e.g. a new `[providers.imbue_cloud_<slug>]` block written when a user signs in) take effect without restarting the whole plugin. Today's `_bounce_mngr_observe` path in `apps/minds/imbue/minds/desktop_client/supertokens_routes.py` is rewritten to call this method instead of `MngrStreamManager.restart_observe()`.
+- `EnvelopeStreamConsumer` exposes `bounce_observe()`, which sends `SIGHUP` to the plugin's PID (looked up via `RunningProcess`) so that `settings.toml` changes (e.g. a new `[providers.imbue_cloud_<slug>]` block written when a user signs in) take effect without restarting the whole plugin. Today's `_bounce_mngr_observe` path in `apps/minds/imbue/minds/desktop_client/supertokens_routes.py` is rewritten to call this method instead of `MngrStreamManager.restart_observe()`. The consumer also exposes `add_on_agent_discovered_callback(cb: Callable[[AgentId, RemoteSSHInfo | None, str], None])` and `add_on_agent_destroyed_callback(cb: Callable[[AgentId], None])` — same shapes as today's `MngrStreamManager` callbacks — so minds can register the light replacement for the deleted `AgentDiscoveryHandler` (writes local `minds_api_url`, re-injects stored Cloudflare tunnel tokens) and the existing `LatchkeyDiscoveryHandler` / `LatchkeyDestructionHandler`.
 
 ### Naming, packaging, defaults
 
@@ -107,9 +109,10 @@ Source files under `libs/mngr_forward/imbue/mngr_forward/`:
 - **`cli.py`**: the `forward` click command. Options:
   - `--host` (default `127.0.0.1`), `--port` (default `8421`).
   - Mutually-exclusive forwarding-target group (exactly one required): `--service <remote-service-name>` or `--port <remote-port>`. (Click's `cloup` or a manual check enforces mutual exclusion.)
-  - `--reverse <remote-port>:<local-port>` (multiple).
-  - `--no-observe` (flag).
-  - `--agent-include` / `--agent-exclude` / `--event-include` / `--event-exclude` (multiple, CEL strings).
+  - `--reverse <remote-port>:<local-port>` (multiple). `<remote-port>` of `0` means "ask sshd to assign one"; `<local-port>` must be a positive integer.
+  - `--no-observe` (flag). Manually validated to be incompatible with `--service` (only valid alongside `--port REMOTE_PORT`); using both together raises a `ForwardManualConfigError` before the FastAPI app starts.
+  - `--agent-include` / `--agent-exclude` (multiple, CEL strings) filter which agents the plugin tracks/forwards. Default: empty — no filtering, every discovered agent is included.
+  - `--event-include` / `--event-exclude` (multiple, CEL strings) filter which `mngr event` source streams are followed per-agent (e.g. `services`, `requests`, `refresh`). Default: empty — every source the plugin currently uses (`services requests refresh`) is followed.
   - `--preauth-cookie <value>` with env var `MNGR_FORWARD_PREAUTH_COOKIE`.
   - `--open-browser/--no-open-browser` (default no).
   - `add_common_options` decorator + `setup_command_context(...)` to inherit common mngr CLI options.
@@ -141,9 +144,12 @@ Tests under `libs/mngr_forward/imbue/mngr_forward/`:
 **Phase 1**: none. Minds keeps its existing in-process implementation untouched. The plugin and minds coexist with duplicated functionality during this phase.
 
 **Phase 2 — files deleted**:
-- `apps/minds/imbue/minds/desktop_client/ssh_tunnel.py`, `ssh_tunnel_test.py`.
 - `apps/minds/imbue/minds/desktop_client/auth.py`, `auth_test.py`.
 - `apps/minds/imbue/minds/desktop_client/runner.py`, `runner_test.py` (replaced by the new `cli/run.py`).
+
+**Phase 2 — files explicitly NOT deleted (despite the in-process forwarder going away)**:
+- `apps/minds/imbue/minds/desktop_client/ssh_tunnel.py` and `ssh_tunnel_test.py` survive. The surviving `LatchkeyDiscoveryHandler` still uses `SSHTunnelManager.setup_reverse_tunnel(local_port=info.port, remote_port=AGENT_SIDE_LATCHKEY_PORT)` for the per-agent dynamic-port latchkey gateway. Deleting `ssh_tunnel.py` is gated on a follow-up "Latchkey fixed-per-host gateway" spec.
+- The `_OnCreatedCallbackFactory` / `_run_tunnel_setup` Cloudflare-tunnel injection path in `app.py` (and the `tunnel_token_store.py` it depends on) survive — they handle initial token issue + injection at agent-create time. Re-injection on subsequent discoveries moves into the new `LocalAgentDiscoveryHandler` (see "files added" below).
 
 **Phase 2 — files reworked**:
 - `apps/minds/imbue/minds/desktop_client/cookie_manager.py` — keep `SESSION_COOKIE_NAME = "minds_session"`, `create_session_cookie`, `verify_session_cookie` for the bare-origin minds session cookie. Delete `create_subdomain_auth_token`, `verify_subdomain_auth_token` (moved to plugin's `cookie.py`). Update `cookie_manager_test.py`.
@@ -154,14 +160,18 @@ Tests under `libs/mngr_forward/imbue/mngr_forward/`:
 **Phase 2 — files added**:
 - `apps/minds/imbue/minds/desktop_client/forward_cli.py` — minds-side wrapper around the `mngr forward` subprocess (named for symmetry with `imbue_cloud_cli.py`). Contains:
   - `EnvelopeStreamConsumer(MutableModel)` — owns the `RunningProcess` for `mngr forward`. Reads stdout line-by-line on a thread, parses each line into a `ForwardEnvelope` using the plugin's data types (re-imported from `imbue.mngr_forward.data_types`). Dispatches:
-    - `stream == "observe"` → existing `parse_discovery_event_line(...)` flow → `MngrCliBackendResolver.update_agents(...)`.
+    - `stream == "observe"` → existing `parse_discovery_event_line(...)` flow → `MngrCliBackendResolver.update_agents(...)`, **and** fans the resulting per-agent discovery / destruction events to any `add_on_agent_discovered_callback` / `add_on_agent_destroyed_callback` consumers (signature `(agent_id, ssh_info, provider_name)` for discovery and `(agent_id,)` for destruction — same as today's `MngrStreamManager`). The plugin re-emits a `FullDiscoverySnapshotEvent` after `bounce_observe()`, which translates to a fresh round of discovery callbacks.
     - `stream == "event"` → existing `parse_service_log_record(...)` flow → `MngrCliBackendResolver.update_services(...)`, plus the request/refresh callback routing already in place.
     - `stream == "forward"` and `payload.type == "reverse_tunnel_established"` → calls a registered `MindsApiUrlWriter` callback.
     - `stream == "forward"` and `payload.type` in `{"login_url","listening"}` → logged at debug level.
   - Exposes `bounce_observe()` — sends `SIGHUP` to the plugin's PID (looked up via `RunningProcess.pid`). This is the replacement for today's `MngrStreamManager.restart_observe()` and is what `apps/minds/imbue/minds/desktop_client/supertokens_routes.py` calls after writing a new `[providers.imbue_cloud_<slug>]` block on sign-in. Logs and no-ops if the plugin is no longer running.
+  - Exposes `add_on_agent_discovered_callback(callback)` / `add_on_agent_destroyed_callback(callback)` — public API mirroring today's `MngrStreamManager`. Used by minds startup to wire in the light `LocalAgentDiscoveryHandler` below, plus the surviving `LatchkeyDiscoveryHandler` and `LatchkeyDestructionHandler`.
   - `ForwardSubprocessConfig(FrozenModel)` — args passed to `mngr forward`: `port`, `preauth_cookie`, `service`, `agent_include`, `reverse_specs`.
   - `start_mngr_forward(concurrency_group, config) -> tuple[EnvelopeStreamConsumer, str]` — generates a 64-byte `secrets.token_urlsafe` preauth token, spawns `mngr forward` with the assembled args via `concurrency_group.run_process_in_background`, attaches the `EnvelopeStreamConsumer`, returns the consumer plus the preauth cookie value (so callers can hand it to Electron).
-  - `MindsApiUrlWriter` — the callback that handles `reverse_tunnel_established`. Given `(agent_id, remote_port, local_port, ssh_host, ssh_port)`, it opens a paramiko SSH connection to the agent's host (using SSH info already cached in the surviving resolver) and writes `http://127.0.0.1:<remote_port>` to the agent's `<state_dir>/minds_api_url`. Same logic as today's `AgentDiscoveryHandler.write_api_url_to_remote`, just driven by the envelope payload instead of in-process discovery.
+  - `MindsApiUrlWriter` — the callback that handles `reverse_tunnel_established` for **remote** agents. Given `(agent_id, remote_port, local_port, ssh_host, ssh_port)`, it opens a paramiko SSH connection to the agent's host (using SSH info already cached in the surviving resolver) and writes `http://127.0.0.1:<remote_port>` to the agent's `<state_dir>/minds_api_url`. The write is **unconditional** — the writer overwrites the file on every event with no diff check, so a tunnel-repair that drew a new sshd-assigned remote port is reflected immediately without bookkeeping. Same logic as today's `AgentDiscoveryHandler.write_api_url_to_remote`, just driven by the envelope payload instead of in-process discovery.
+  - `LocalAgentDiscoveryHandler(MutableModel)` — registered via `EnvelopeStreamConsumer.add_on_agent_discovered_callback`. Replaces the parts of the deleted `AgentDiscoveryHandler` that didn't depend on the plugin's reverse-tunnel events:
+    - For agents with `ssh_info is None` (local agents, which never get a `reverse_tunnel_established` event because there's no SSH transport to tunnel through), writes `http://127.0.0.1:<minds-api-port>` to `<MNGR_HOST_DIR>/agents/<agent-id>/minds_api_url` directly on the local filesystem.
+    - For every newly-discovered agent (local or remote), looks up any persisted Cloudflare tunnel token via `load_tunnel_token(...)` and re-injects it via `inject_tunnel_token_into_agent(...)`. This restores today's behavior where a `minds run` restart picks the token back up so cloudflared inside the agent can reconnect.
   - `_ForwardSubprocessLifecycleWatcher` — a thread that calls `RunningProcess.wait()` and, on plugin exit, captures stderr + exit code, dispatches a `NotificationDispatcher` notification + a logged error line, and signals minds to exit non-zero via the surrounding `ConcurrencyGroup`.
 - `apps/minds/imbue/minds/desktop_client/forward_cli_test.py`.
 - `apps/minds/imbue/minds/cli/run.py` — the renamed entry point (full rewrite of the deleted `runner.py`). The new `run` command:
@@ -170,6 +180,8 @@ Tests under `libs/mngr_forward/imbue/mngr_forward/`:
   - Calls `start_mngr_forward(...)` to spawn the plugin and obtain `(EnvelopeStreamConsumer, preauth_cookie)`.
   - Builds `MngrCliBackendResolver` and registers it on the consumer so the resolver gets fed from the plugin's stream.
   - Registers `MindsApiUrlWriter` as the consumer's reverse-tunnel callback.
+  - Registers `LocalAgentDiscoveryHandler` via `consumer.add_on_agent_discovered_callback` for local-agent `minds_api_url` writes and Cloudflare tunnel-token re-injection.
+  - Re-registers the surviving `LatchkeyDiscoveryHandler` / `LatchkeyDestructionHandler` against the consumer's discovery callbacks (these still use the in-process `SSHTunnelManager` for now; their migration to the plugin's `--reverse` is a follow-up spec).
   - Builds the minds-side bare-origin FastAPI app via the slimmed `create_desktop_client(...)` and runs `uvicorn` on `--port` (default 8420).
   - Emits a `mngr_forward_started` JSONL event on its own stdout (carrying the preauth cookie value) so the Electron shell can pre-set the cookie on `localhost:<mngr-forward-port>` before opening any agent subdomain.
   - On shutdown / parent death / plugin death, terminates the plugin subprocess and exits non-zero with the captured stderr + exit code.
@@ -192,6 +204,8 @@ Tests under `libs/mngr_forward/imbue/mngr_forward/`:
 - Minds keeps its own `MngrCliBackendResolver` (the rich service-aware resolver minds uses for its UI). The plugin uses the slimmer `ForwardResolver` for its own resolution. The two are not unified.
 - Multiple `mngr forward` processes on the same machine pick different ports; cookies are origin-scoped so they don't interfere.
 - Plugin lifecycle: `mngr forward` exits when its parent (the `minds run` process, in the Electron flow) dies, via `start_parent_death_watcher(...)`. On exit it terminates its own observe/event children, cleans up tunnels, and stops listening.
+- **Phase 1 coexistence**: while the plugin is enabled and minds is also running its in-process forwarder, both bind ports must differ (plugin defaults to `8421`, minds to `8420`) and signing-key files live in different directories (plugin: `$MNGR_HOST_DIR/plugin/forward/signing_key`; minds: minds' own data dir), so cookies don't collide. This is documented as user-facing guidance ("don't enable the `forward` plugin while minds is running, or change the plugin's `--port`") rather than enforced in code.
+- **Latchkey is intentionally out of scope.** The plugin doesn't know about Latchkey, doesn't bundle the `LatchkeyDiscoveryHandler`, and doesn't attempt to set up its per-agent reverse tunnel. After Phase 2, minds keeps `desktop_client/ssh_tunnel.py` and `latchkey/core.py` exactly as-is, registering the surviving `LatchkeyDiscoveryHandler` / `LatchkeyDestructionHandler` against `EnvelopeStreamConsumer`'s discovery callbacks. The end-state where the plugin's static `--reverse 1989:<fixed>` covers latchkey requires a follow-up spec to first migrate the latchkey gateway from one-process-per-agent to one-process-per-host with in-band per-agent routing (likely an agent API key the latchkey client passes in a request header). Only then can `ssh_tunnel.py` be deleted.
 
 ## Implementation Phases
 
@@ -210,7 +224,7 @@ End state: plugin tested end-to-end (in-process acceptance + Modal release), CI 
 
 - Add `apps/minds/imbue/minds/desktop_client/forward_cli.py` (`EnvelopeStreamConsumer`, `MindsApiUrlWriter`, `start_mngr_forward`, `_ForwardSubprocessLifecycleWatcher`).
 - Rename `apps/minds/imbue/minds/cli/forward.py` → `cli/run.py` and rewrite it as the subprocess-orchestrating entry point (no `runner.py` left behind).
-- Delete `desktop_client/ssh_tunnel.py`, `auth.py`, `runner.py`, the subdomain-forwarding portions of `app.py`, `MngrStreamManager` from `backend_resolver.py`, the subdomain-auth helpers in `cookie_manager.py`, and all of their tests.
+- Delete `desktop_client/auth.py`, `runner.py`, the subdomain-forwarding portions of `app.py`, `MngrStreamManager` from `backend_resolver.py`, the subdomain-auth helpers in `cookie_manager.py`, and all of their tests. Do **not** delete `desktop_client/ssh_tunnel.py` / `ssh_tunnel_test.py` — Latchkey still uses `SSHTunnelManager` for its per-agent dynamic-port reverse tunnel.
 - Slim `create_desktop_client(...)` to just the minds-specific routes and parameters.
 - Update `apps/minds/imbue/minds/cli_entry.py` to register `run` instead of `forward`.
 - Rewire Electron: `apps/minds/electron/main.js` / `backend.js` spawn args change to `minds run`; cookie pre-setting logic added.
@@ -233,7 +247,7 @@ End state: minds is smaller (no SSH-tunnel / auth / subdomain-forwarding code in
 - `reverse_handler_test.py` — per-agent setup-on-discovery; multi-pair `--reverse` invocation; `reverse_tunnel_established` event payloads with full SSH info; re-emission on health-check repair (with new remote port if reassigned).
 - `server_test.py` — auth + forwarding routes (unauthenticated → login form; valid OTP → cookie set; bare origin `/` → debug index for authenticated, OTP form for not; `<agent>.localhost` catch-all routes correctly; `/_subdomain_auth` token validation; 503 retry HTML when the URL isn't ready); strict `agent-<hex>.localhost` pattern enforcement.
 - `config_test.py` — `ForwardPluginConfig` defaults, `merge_with`, parsing from TOML.
-- `cli_test.py` — flag mutual exclusion (`--service` and `--port`), required-flag enforcement, `--reverse` repeatability, `--no-observe` empty-snapshot exit, `--preauth-cookie` env var fallback, `SIGHUP` handler dispatch (registers, sets the watcher event, dispatches to `bounce_observe()` in observe mode and `_resnapshot_now()` in `--no-observe` mode, no-ops on early/late signals).
+- `cli_test.py` — flag mutual exclusion (`--service` and `--port`), `--no-observe + --service` rejected as a usage error, required-flag enforcement, `--reverse` repeatability, `--reverse 0:<local>` accepted (dynamic remote port), `--no-observe` empty-snapshot exit, `--preauth-cookie` env var fallback, `--event-include` / `--event-exclude` plumbed into the events filter, `SIGHUP` handler dispatch (registers, sets the watcher event, dispatches to `bounce_observe()` in observe mode and `_resnapshot_now()` in `--no-observe` mode, no-ops on early/late signals).
 
 ### Acceptance test (in plugin, `@pytest.mark.acceptance`)
 
@@ -260,7 +274,7 @@ End state: minds is smaller (no SSH-tunnel / auth / subdomain-forwarding code in
 ### Cross-cutting tests in `apps/minds/`
 
 - `apps/minds/imbue/minds/desktop_client/test_desktop_client.py` keeps tests of bare-origin minds-side behavior: login flow for the `minds_session` cookie, create page, accounts, sharing, requests, telegram. Tests of subdomain forwarding are deleted (those paths are tested in the plugin).
-- New `apps/minds/imbue/minds/desktop_client/forward_cli_test.py` exercises the `EnvelopeStreamConsumer` + `MindsApiUrlWriter` integration against a stubbed subprocess emitting hand-crafted envelope lines. Asserts envelope dispatching feeds the resolver correctly, that `reverse_tunnel_established` triggers the SSH write, that `bounce_observe()` sends `SIGHUP` to the right PID and is a no-op when the plugin is already gone, and that subprocess death raises a notification + exits non-zero.
+- New `apps/minds/imbue/minds/desktop_client/forward_cli_test.py` exercises the `EnvelopeStreamConsumer` + `MindsApiUrlWriter` + `LocalAgentDiscoveryHandler` integration against a stubbed subprocess emitting hand-crafted envelope lines. Asserts envelope dispatching feeds the resolver correctly, that `reverse_tunnel_established` triggers the SSH write **unconditionally on every event** (including a re-emit with a different remote port), that `add_on_agent_discovered_callback` registered handlers fire on observe-stream agent-discovered events with `(agent_id, ssh_info, provider_name)`, that `LocalAgentDiscoveryHandler` writes `minds_api_url` for `ssh_info is None` agents and re-injects stored Cloudflare tunnel tokens, that `bounce_observe()` sends `SIGHUP` to the right PID and is a no-op when the plugin is already gone, and that subprocess death raises a notification + exits non-zero.
 - `apps/minds/imbue/minds/desktop_client/supertokens_routes_test.py` is updated so the post-sign-in path asserts a `bounce_observe()` call on a stubbed `EnvelopeStreamConsumer` instead of the old `MngrStreamManager.restart_observe()` call.
 
 ### Manual verification
@@ -284,4 +298,4 @@ End state: minds is smaller (no SSH-tunnel / auth / subdomain-forwarding code in
 
 ## Open Questions
 
-(none — every decision was resolved during architect Q&A.)
+- **Latchkey gateway routing scheme** (deferred to a separate spec): once the latchkey gateway moves to a single fixed-per-host process on a single fixed local port, how does that gateway identify which agent each inbound request belongs to? The likely answer is an agent API key the latchkey client passes in a request header, but the exact mechanism — header name, key issuance, rotation, key->agent lookup — is left to a follow-up spec. Resolving this is what unblocks deleting minds' `desktop_client/ssh_tunnel.py` and folding latchkey reverse tunnels into the plugin's `--reverse 1989:<fixed>`.
