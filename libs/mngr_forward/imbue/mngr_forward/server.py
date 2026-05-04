@@ -357,15 +357,29 @@ def _service_unavailable_response(request: Request) -> Response:
 # -- Subdomain handlers ---------------------------------------------------
 
 
+def _sanitize_next_url(value: str) -> str:
+    """Return ``value`` if it is a same-origin path; otherwise ``"/"``.
+
+    A same-origin redirect target must start with a single ``/`` and must
+    not start with ``//`` or ``/\\`` -- those forms are protocol-relative
+    URLs that browsers interpret as cross-origin, which would let an
+    attacker craft ``?next=//evil.com`` to bounce an authenticated user
+    off-origin.
+    """
+    if not value.startswith("/"):
+        return "/"
+    if value.startswith("//") or value.startswith("/\\"):
+        return "/"
+    return value
+
+
 def _handle_subdomain_auth_bridge(
     request: Request,
     agent_id: AgentId,
     auth_store: AuthStoreInterface,
 ) -> Response:
     token = request.query_params.get("token", "")
-    next_url = request.query_params.get("next", "/")
-    if not next_url.startswith("/"):
-        next_url = "/"
+    next_url = _sanitize_next_url(request.query_params.get("next", "/"))
     signing_key = auth_store.get_signing_key()
     if not verify_subdomain_auth_token(token=token, signing_key=signing_key, agent_id=str(agent_id)):
         return Response(status_code=403, content="Invalid or expired subdomain auth token")
@@ -611,9 +625,7 @@ def _handle_goto_workspace(
         return Response(status_code=404)
     signing_key = auth_store.get_signing_key()
     token = create_subdomain_auth_token(signing_key=signing_key, agent_id=str(parsed_id))
-    next_url = request.query_params.get("next", "/")
-    if not next_url.startswith("/"):
-        next_url = "/"
+    next_url = _sanitize_next_url(request.query_params.get("next", "/"))
     encoded_next = quote(next_url, safe="")
     location = f"http://{parsed_id}.localhost:{listen_port}{_SUBDOMAIN_AUTH_PATH}?token={token}&next={encoded_next}"
     return Response(status_code=302, headers={"Location": location})

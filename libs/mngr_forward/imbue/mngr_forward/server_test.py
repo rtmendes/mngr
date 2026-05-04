@@ -14,11 +14,13 @@ from starlette.testclient import TestClient
 
 from imbue.mngr_forward.auth import FileAuthStore
 from imbue.mngr_forward.cookie import create_session_cookie
+from imbue.mngr_forward.cookie import create_subdomain_auth_token
 from imbue.mngr_forward.data_types import ForwardServiceStrategy
 from imbue.mngr_forward.envelope import EnvelopeWriter
 from imbue.mngr_forward.primitives import MNGR_FORWARD_SESSION_COOKIE_NAME
 from imbue.mngr_forward.primitives import OneTimeCode
 from imbue.mngr_forward.resolver import ForwardResolver
+from imbue.mngr_forward.server import _sanitize_next_url
 from imbue.mngr_forward.server import create_forward_app
 from imbue.mngr_forward.ssh_tunnel import SSHTunnelManager
 
@@ -146,6 +148,66 @@ def test_goto_authenticated_redirects_to_subdomain_with_token(
     location = response.headers["location"]
     assert location.startswith(f"http://{valid_agent_id}.localhost:18421/_subdomain_auth?token=")
     assert "next=%2F" in location
+
+
+def test_goto_rejects_protocol_relative_next(
+    app_setup: tuple[TestClient, FileAuthStore, ForwardResolver],
+) -> None:
+    """`/goto/<agent>/?next=//evil.com` must be sanitized to `/`, not propagated as-is."""
+    client, store, _resolver = app_setup
+    cookie = create_session_cookie(store.get_signing_key())
+    valid_agent_id = "agent-" + "0" * 31 + "a"
+    response = client.get(
+        f"/goto/{valid_agent_id}/?next=//evil.com/path",
+        cookies={MNGR_FORWARD_SESSION_COOKIE_NAME: cookie},
+    )
+    assert response.status_code == 302
+    location = response.headers["location"]
+    # The `next` query param must be the encoded form of "/" -- never a
+    # protocol-relative URL the browser would interpret as cross-origin.
+    assert "next=%2F&" in location or location.endswith("next=%2F")
+    assert "evil.com" not in location
+
+
+def test_subdomain_auth_bridge_rejects_protocol_relative_next(tmp_path: Path) -> None:
+    """`/_subdomain_auth?next=//evil.com&token=<valid>` must Location: / not //evil.com.
+
+    Uses ``TestClient`` as a context manager so the FastAPI lifespan runs and the
+    subdomain-routing middleware can read ``app.state.http_client``.
+    """
+    auth_store = FileAuthStore(data_directory=tmp_path)
+    resolver = ForwardResolver(strategy=ForwardServiceStrategy(service_name="system_interface"))
+    tunnel_manager = SSHTunnelManager()
+    envelope_writer = EnvelopeWriter(output=io.StringIO())
+    app = create_forward_app(
+        auth_store=auth_store,
+        resolver=resolver,
+        tunnel_manager=tunnel_manager,
+        envelope_writer=envelope_writer,
+        listen_host="127.0.0.1",
+        listen_port=18421,
+    )
+    valid_agent_id = "agent-" + "0" * 31 + "a"
+    token = create_subdomain_auth_token(signing_key=auth_store.get_signing_key(), agent_id=valid_agent_id)
+    with TestClient(app, follow_redirects=False) as client:
+        response = client.get(
+            f"/_subdomain_auth?token={token}&next=//evil.com/path",
+            headers={"host": f"{valid_agent_id}.localhost:18421"},
+        )
+    assert response.status_code == 302
+    assert response.headers["location"] == "/"
+
+
+def test_sanitize_next_url() -> None:
+    """Direct unit coverage of the helper used by both bridge call sites."""
+    assert _sanitize_next_url("/") == "/"
+    assert _sanitize_next_url("/foo/bar") == "/foo/bar"
+    assert _sanitize_next_url("//evil.com") == "/"
+    assert _sanitize_next_url("//evil.com/path") == "/"
+    assert _sanitize_next_url("/\\evil.com") == "/"
+    assert _sanitize_next_url("http://evil.com") == "/"
+    assert _sanitize_next_url("evil.com") == "/"
+    assert _sanitize_next_url("") == "/"
 
 
 def test_preauth_cookie_short_circuit(tmp_path: Path) -> None:
