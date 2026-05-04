@@ -69,14 +69,35 @@ def test_apply_bootstrap_sets_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     assert os.environ["MNGR_PREFIX"] == "testname-"
 
 
-def test_apply_bootstrap_respects_existing_mngr_vars(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If MNGR_HOST_DIR/MNGR_PREFIX already set, bootstrap does not overwrite them.
+def test_apply_bootstrap_overrides_existing_mngr_vars_when_root_name_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit MINDS_ROOT_NAME wins over an inherited MNGR_HOST_DIR/MNGR_PREFIX.
 
-    This lets advanced users and test fixtures pin the mngr-layer vars independently
-    of MINDS_ROOT_NAME.
+    Without this, a minds process spawned from a parent that already set
+    MNGR_HOST_DIR (e.g. a Claude Code agent's tmux) would silently keep the
+    parent's host_dir and read a different mngr settings.toml than the one
+    minds bootstrap writes to.
     """
     _clear_env(monkeypatch)
-    monkeypatch.setenv(MINDS_ROOT_NAME_ENV_VAR, "minds")
+    monkeypatch.setenv(MINDS_ROOT_NAME_ENV_VAR, "devminds")
+    monkeypatch.setenv("MNGR_HOST_DIR", "/custom/host/dir")
+    monkeypatch.setenv("MNGR_PREFIX", "custom-")
+    apply_bootstrap()
+
+    assert os.environ["MNGR_HOST_DIR"] == str(Path.home() / ".devminds" / "mngr")
+    assert os.environ["MNGR_PREFIX"] == "devminds-"
+
+
+def test_apply_bootstrap_respects_existing_mngr_vars_when_root_name_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When MINDS_ROOT_NAME is not explicitly set, existing MNGR vars are preserved.
+
+    Lets test fixtures and advanced users who pin MNGR_HOST_DIR directly
+    keep doing so without having to also unset MINDS_ROOT_NAME.
+    """
+    _clear_env(monkeypatch)
     monkeypatch.setenv("MNGR_HOST_DIR", "/custom/host/dir")
     monkeypatch.setenv("MNGR_PREFIX", "custom-")
     apply_bootstrap()

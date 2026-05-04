@@ -131,14 +131,24 @@ def _ensure_mngr_settings(root_name: str) -> None:
 def apply_bootstrap() -> None:
     """Set MNGR_HOST_DIR and MNGR_PREFIX in os.environ from MINDS_ROOT_NAME.
 
-    Must be called before any ``imbue.mngr.*`` module is imported. Explicit
-    ``MNGR_HOST_DIR``/``MNGR_PREFIX`` values already in the environment take
-    precedence -- they are not overwritten, so tests and advanced users can
-    still pin them independently.
+    Must be called before any ``imbue.mngr.*`` module is imported. When
+    ``MINDS_ROOT_NAME`` is explicitly set in the environment, the derived
+    ``MNGR_HOST_DIR`` / ``MNGR_PREFIX`` values unconditionally override
+    any pre-existing values -- otherwise an inherited ``MNGR_HOST_DIR``
+    from a parent process (e.g. a Claude Code agent's tmux env) would
+    silently win and minds would read a different mngr settings.toml
+    than the bootstrap wrote to. When ``MINDS_ROOT_NAME`` is not set,
+    the defaults are written via ``setdefault`` so test fixtures and
+    advanced users who pin ``MNGR_HOST_DIR`` directly can still do so.
     """
+    is_root_name_explicit = MINDS_ROOT_NAME_ENV_VAR in os.environ
     root_name = resolve_minds_root_name()
-    os.environ.setdefault("MNGR_HOST_DIR", str(mngr_host_dir_for(root_name)))
-    os.environ.setdefault("MNGR_PREFIX", mngr_prefix_for(root_name))
+    if is_root_name_explicit:
+        os.environ["MNGR_HOST_DIR"] = str(mngr_host_dir_for(root_name))
+        os.environ["MNGR_PREFIX"] = mngr_prefix_for(root_name)
+    else:
+        os.environ.setdefault("MNGR_HOST_DIR", str(mngr_host_dir_for(root_name)))
+        os.environ.setdefault("MNGR_PREFIX", mngr_prefix_for(root_name))
     _ensure_mngr_settings(root_name)
 
 
