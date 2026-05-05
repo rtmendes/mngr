@@ -9,6 +9,7 @@ that we moved from inline strings to file-based templates.
 
 import hashlib
 import os
+from collections.abc import Mapping
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
@@ -301,9 +302,18 @@ def render_workspace_settings(
 def render_accounts_page(
     accounts: Sequence[object],
     default_account_id: str | None = None,
+    enabled_by_user_id: Mapping[str, bool] | None = None,
 ) -> str:
-    """Render the manage accounts page."""
+    """Render the manage accounts page.
+
+    ``enabled_by_user_id`` maps each account's user_id to whether its
+    ``[providers.imbue_cloud_<slug>]`` block is enabled in settings.toml.
+    The template renders a "Signed out" indicator when an account is
+    present (still in sessions.json) but the block has been
+    auto-disabled by an observed auth error.
+    """
     return JINJA_ENV.get_template("accounts.html").render(
         accounts=accounts,
         default_account_id=default_account_id or "",
+        enabled_by_user_id=dict(enabled_by_user_id or {}),
     )

@@ -501,6 +501,7 @@ class MngrStreamManager(MutableModel):
         default_factory=list
     )
     _on_agent_destroyed_callbacks: list[Callable[[AgentId], None]] = PrivateAttr(default_factory=list)
+    _on_provider_error_callbacks: list[Callable[[str, str, str], None]] = PrivateAttr(default_factory=list)
 
     def add_on_agent_discovered_callback(
         self,
@@ -516,6 +517,17 @@ class MngrStreamManager(MutableModel):
     def add_on_agent_destroyed_callback(self, callback: Callable[[AgentId], None]) -> None:
         """Register a callback invoked when an agent is destroyed (directly or with its host)."""
         self._on_agent_destroyed_callbacks.append(callback)
+
+    def add_on_provider_error_callback(self, callback: Callable[[str, str, str], None]) -> None:
+        """Register a callback invoked when a discovery error is attributable to a single provider.
+
+        The callback receives ``(provider_name, error_type, error_message)``.
+        Used by minds to auto-disable an imbue_cloud account whose session
+        has been revoked server-side ("token theft detected") so subsequent
+        ``mngr observe`` cycles skip it. Callbacks should be fast and
+        non-blocking; they run on the discovery-stream reader thread.
+        """
+        self._on_provider_error_callbacks.append(callback)
 
     def start(self) -> None:
         """Start the streaming subprocess for continuous agent discovery."""
@@ -750,6 +762,12 @@ class MngrStreamManager(MutableModel):
             event.error_message,
             event.error_type,
         )
+        if event.provider_name is not None:
+            for callback in self._on_provider_error_callbacks:
+                try:
+                    callback(event.provider_name, event.error_type, event.error_message)
+                except Exception as exc:
+                    logger.opt(exception=exc).error("on_provider_error callback raised for {}", event.provider_name)
         self._on_subprocess_error(event.source_name, event.error_message)
 
     def _on_subprocess_error(self, name: str, message: str) -> None:

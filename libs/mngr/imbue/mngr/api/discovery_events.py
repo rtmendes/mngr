@@ -37,6 +37,7 @@ from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import BaseMngrError
 from imbue.mngr.errors import DiscoverySchemaChangedError
+from imbue.mngr.errors import ProviderDiscoveryError
 from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.primitives import AgentId
@@ -122,6 +123,14 @@ class DiscoveryErrorEvent(EventEnvelope):
     error_type: str = Field(description="The type name of the exception (e.g. 'RuntimeError')")
     error_message: str = Field(description="The error message")
     source_name: str = Field(description="Provider, host, or agent that caused the error")
+    provider_name: str | None = Field(
+        default=None,
+        description=(
+            "Provider instance whose discovery raised, when the error is attributable "
+            "to a single provider. Lets consumers (e.g. minds) act per-provider without "
+            "parsing source_name."
+        ),
+    )
 
 
 DiscoveryEvent = Annotated[
@@ -372,7 +381,13 @@ def emit_host_ssh_info(config: MngrConfig, host_id: HostId, ssh: SSHInfo) -> Non
     logger.trace("Emitted host_ssh_info event for {}", host_id)
 
 
-def emit_discovery_error_event(config: MngrConfig, error_type: str, error_message: str, source_name: str) -> None:
+def emit_discovery_error_event(
+    config: MngrConfig,
+    error_type: str,
+    error_message: str,
+    source_name: str,
+    provider_name: str | None = None,
+) -> None:
     """Build and append a discovery error event."""
     timestamp, event_id = _make_envelope_fields()
     event = DiscoveryErrorEvent(
@@ -382,12 +397,18 @@ def emit_discovery_error_event(config: MngrConfig, error_type: str, error_messag
         error_type=error_type,
         error_message=error_message,
         source_name=source_name,
+        provider_name=provider_name,
     )
     append_discovery_event(config, event)
     logger.trace("Emitted discovery_error event: {} from {}", error_type, source_name)
 
 
-def emit_discovery_error_to_stdout(error_type: str, error_message: str, source_name: str) -> None:
+def emit_discovery_error_to_stdout(
+    error_type: str,
+    error_message: str,
+    source_name: str,
+    provider_name: str | None = None,
+) -> None:
     """Write a discovery error event as a JSONL line to stdout.
 
     Used in contexts where the events_base_dir is not available (e.g. list.py).
@@ -401,6 +422,7 @@ def emit_discovery_error_to_stdout(error_type: str, error_message: str, source_n
         error_type=error_type,
         error_message=error_message,
         source_name=source_name,
+        provider_name=provider_name,
     )
     line = json.dumps(event.model_dump(mode="json"), separators=(",", ":"))
     sys.stdout.write(line + "\n")
@@ -830,12 +852,15 @@ def _write_unfiltered_full_snapshot_logged(mngr_ctx: MngrContext) -> None:
         _write_unfiltered_full_snapshot(mngr_ctx)
     except Exception as e:
         logger.opt(exception=e).error("Failed to write discovery snapshot")
+        cause = e.cause if isinstance(e, ProviderDiscoveryError) else e
+        provider_name = str(e.provider_name) if isinstance(e, ProviderDiscoveryError) else None
         try:
             emit_discovery_error_event(
                 mngr_ctx.config,
-                error_type=type(e).__name__,
-                error_message=str(e),
+                error_type=type(cause).__name__,
+                error_message=str(cause),
                 source_name="discovery_snapshot",
+                provider_name=provider_name,
             )
         except (OSError, ValueError):
             pass
@@ -921,12 +946,15 @@ def run_discovery_stream(
                 # The tail thread will pick up the new snapshot and emit it
             except Exception as e:
                 logger.opt(exception=e).error("Discovery stream poll failed (continuing)")
+                cause = e.cause if isinstance(e, ProviderDiscoveryError) else e
+                provider_name = str(e.provider_name) if isinstance(e, ProviderDiscoveryError) else None
                 try:
                     emit_discovery_error_event(
                         mngr_ctx.config,
-                        error_type=type(e).__name__,
-                        error_message=str(e),
+                        error_type=type(cause).__name__,
+                        error_message=str(cause),
                         source_name="discovery_poll",
+                        provider_name=provider_name,
                     )
                 except (OSError, ValueError):
                     pass

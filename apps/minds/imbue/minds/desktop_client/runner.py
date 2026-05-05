@@ -1,5 +1,6 @@
 import os
 import secrets
+import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -13,6 +14,8 @@ from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.minds.bootstrap import disable_imbue_cloud_provider_for_account
+from imbue.minds.bootstrap import imbue_cloud_provider_name_for_account
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.api_v1 import inject_tunnel_token_into_agent
@@ -46,6 +49,7 @@ from imbue.minds.primitives import OutputFormat
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
 from imbue.minds.utils.output import emit_event
 from imbue.mngr.primitives import AgentId
+from imbue.mngr.utils.parent_process import start_grandparent_death_watcher
 
 _ONE_TIME_CODE_LENGTH: Final[int] = 32
 
@@ -195,6 +199,16 @@ def start_desktop_client(
     root_concurrency_group = ConcurrencyGroup(name="desktop-client")
     root_concurrency_group.__enter__()
 
+    # Watch our *grandparent* (typically Electron) rather than our immediate
+    # parent (the ``uv run`` wrapper, which doesn't propagate Electron's
+    # death). When Electron crashes or is killed without running its
+    # ``child.on('exit')`` cleanup, this watcher SIGTERMs us so the
+    # ``mngr observe`` / ``mngr events`` children we spawned -- which only
+    # watch their own parent (us) -- can in turn exit cleanly. Without it,
+    # a crashed Electron leaves an entire orphan tree running across
+    # restarts of the desktop client.
+    start_grandparent_death_watcher(root_concurrency_group)
+
     minds_config = MindsConfig(data_dir=data_directory)
     latchkey_permission_handler = LatchkeyPermissionGrantHandler(
         data_dir=data_directory,
@@ -219,6 +233,14 @@ def start_desktop_client(
     # which account each workspace is associated with.
     session_store = MultiAccountSessionStore(data_dir=data_directory)
     sharing_request_handler = SharingRequestHandler(session_store=session_store)
+
+    # When mngr observe surfaces an unrecoverable auth error against a
+    # specific imbue_cloud provider (the SuperTokens session was revoked
+    # server-side -- e.g. "token theft detected"), flip its ``is_enabled``
+    # to False in settings.toml and bounce ``mngr observe`` so subsequent
+    # discovery cycles skip the dead account instead of crashing the
+    # whole stream.
+    _wire_imbue_cloud_auth_error_disable(stream_manager=stream_manager, session_store=session_store)
 
     # Initialize request inbox from stored response events
     response_events = load_response_events(data_directory)
@@ -319,6 +341,75 @@ def start_desktop_client(
     # quickly, giving the lifespan shutdown hook time to run within
     # electron's 5-second SIGKILL window.
     uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=1)
+
+
+_AUTH_ERROR_TYPE: Final[str] = "ImbueCloudAuthError"
+
+
+class _ImbueCloudAuthErrorDisabler(FrozenModel):
+    """Auto-disables an ``imbue_cloud_<slug>`` provider on session-revoke errors.
+
+    Discovery surfaces ``ImbueCloudAuthError`` whenever the connector
+    rejects a refresh (token theft detected, refresh token expired past
+    the family lifetime, etc.). Without intervention every subsequent
+    ``mngr observe`` poll re-tries the same dead session and the whole
+    discovery stream errors out, blocking the rest of the user's
+    accounts. ``__call__`` walks ``session_store`` to map the offending
+    provider name back to an email, flips ``is_enabled = false`` on the
+    block in settings.toml, and bounces ``mngr observe`` so the change
+    takes effect within the same minds session. Re-enabling happens only
+    on an explicit signin (``set_imbue_cloud_provider_for_account(...,
+    force_enable=True)``).
+
+    The bounce is dispatched onto a daemon thread because ``__call__``
+    runs on ``MngrStreamManager``'s discovery-stream reader thread --
+    the same thread that ``restart_observe`` would try to join when it
+    terminates the running ``mngr observe`` subprocess. Calling it
+    inline raises ``RuntimeError: cannot join current thread``.
+    """
+
+    stream_manager: MngrStreamManager = Field(frozen=True, description="Stream manager to bounce after disable")
+    session_store: MultiAccountSessionStore = Field(
+        frozen=True, description="Session mirror used to map provider name to account email"
+    )
+
+    def __call__(self, provider_name: str, error_type: str, error_message: str) -> None:
+        if error_type != _AUTH_ERROR_TYPE:
+            return
+        offending_email: str | None = None
+        for account in self.session_store.list_accounts():
+            try:
+                if imbue_cloud_provider_name_for_account(str(account.email)) == provider_name:
+                    offending_email = str(account.email)
+                    break
+            except ValueError:
+                continue
+        if offending_email is None:
+            logger.warning(
+                "Auth error from provider {} but no matching minds session found; skipping auto-disable",
+                provider_name,
+            )
+            return
+        if disable_imbue_cloud_provider_for_account(offending_email):
+            logger.warning(
+                "Auto-disabled imbue_cloud provider for {} after auth error: {}",
+                offending_email,
+                error_message,
+            )
+            threading.Thread(
+                target=self.stream_manager.restart_observe,
+                name=f"restart-observe-after-disable-{provider_name}",
+                daemon=True,
+            ).start()
+
+
+def _wire_imbue_cloud_auth_error_disable(
+    stream_manager: MngrStreamManager,
+    session_store: MultiAccountSessionStore,
+) -> None:
+    """Register an ``_ImbueCloudAuthErrorDisabler`` on the stream manager."""
+    handler = _ImbueCloudAuthErrorDisabler(stream_manager=stream_manager, session_store=session_store)
+    stream_manager.add_on_provider_error_callback(handler)
 
 
 def _try_load_latchkey_services_catalog() -> dict[str, ServicePermissionInfo]:

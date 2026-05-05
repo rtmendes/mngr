@@ -107,20 +107,39 @@ def _ensure_mngr_settings(root_name: str) -> None:
         providers = existing.get("providers", {})
         plugins = existing.get("plugins", {})
         recursive_plugin = plugins.get("recursive", {})
-        if recursive_plugin.get("enabled") is False and "ssh" not in providers:
+        default_imbue_cloud = providers.get(_IMBUE_CLOUD_BACKEND_NAME, {})
+        if (
+            recursive_plugin.get("enabled") is False
+            and "ssh" not in providers
+            and default_imbue_cloud.get("backend") == _IMBUE_CLOUD_BACKEND_NAME
+            and default_imbue_cloud.get("is_enabled") is False
+        ):
             # Already in the desired shape -- recursive disabled, no stale
-            # ssh provider section, no need to rewrite + fsync.
+            # ssh provider section, default imbue_cloud instance suppressed --
+            # no need to rewrite + fsync.
             _cleanup_legacy_dynamic_hosts(root_name)
             return
         doc = tomlkit.loads(settings_path.read_text())
     else:
         doc = tomlkit.document()
 
+    providers_section = doc.setdefault("providers", tomlkit.table())
+
     # Remove the legacy ``[providers.ssh]`` block, if present, so ``mngr list``
     # discovery doesn't fan out to that provider's stale dynamic_hosts entries.
-    providers_section = doc.get("providers")
-    if isinstance(providers_section, dict) and "ssh" in providers_section:
+    if "ssh" in providers_section:
         del providers_section["ssh"]
+
+    # Suppress the default ``[providers.imbue_cloud]`` instance that
+    # ``get_all_provider_instances`` would otherwise auto-create from the
+    # registered backend name. Per-account ``[providers.imbue_cloud_<slug>]``
+    # entries (written on signin) carry the actual session keypairs and
+    # known_hosts; the un-suffixed default would race them and emit
+    # spurious "No host key in known_hosts" warnings on the same lease.
+    default_block = tomlkit.table()
+    default_block["backend"] = _IMBUE_CLOUD_BACKEND_NAME
+    default_block["is_enabled"] = False
+    providers_section[_IMBUE_CLOUD_BACKEND_NAME] = default_block
 
     plugins_section = doc.setdefault("plugins", tomlkit.table())
     recursive_block = tomlkit.table()
@@ -243,7 +262,11 @@ def _reconcile_imbue_cloud_providers_from_sessions(root_name: str) -> None:
         if not isinstance(email, str) or not email:
             continue
         try:
-            set_imbue_cloud_provider_for_account(email, root_name=root_name)
+            # Reconcile only fills in missing blocks; it must not re-enable a
+            # provider that was previously auto-disabled by an auth-error
+            # observation. Re-enable happens only on an explicit signin
+            # event.
+            set_imbue_cloud_provider_for_account(email, root_name=root_name, force_enable=False)
         except BootstrapError as e:
             # Bad email format (e.g. ``""``) -- log and keep going so a
             # single corrupt session entry doesn't block reconciliation
@@ -314,14 +337,27 @@ def _atomic_write_settings(settings_path: Path, doc: tomlkit.TOMLDocument) -> No
     tmp_path.rename(settings_path)
 
 
-def set_imbue_cloud_provider_for_account(email: str, *, root_name: str | None = None) -> bool:
+def set_imbue_cloud_provider_for_account(
+    email: str,
+    *,
+    root_name: str | None = None,
+    force_enable: bool = True,
+) -> bool:
     """Register ``[providers.imbue_cloud_<slug>]`` in mngr's settings.toml.
 
     Called by minds when a SuperTokens session for ``email`` is created
-    (signin/signup/oauth-success). Idempotent: a no-op if an equivalent
-    entry already exists. Returns ``True`` when the file was modified, so
-    callers know whether to bounce ``mngr observe`` (the running process
-    needs a restart to see the new provider instance).
+    (signin/signup/oauth-success) and from the bootstrap reconcile. Idempotent:
+    a no-op if an equivalent entry already exists.
+
+    When ``force_enable`` is True (signin events), ``is_enabled`` is set to
+    True even if the block was previously disabled by an auth-error
+    auto-disable. When False (bootstrap reconcile on a returning user),
+    any pre-existing ``is_enabled`` value is preserved so a previously
+    auto-disabled account stays disabled until the user signs in again.
+
+    Returns ``True`` when the file was modified, so callers know whether
+    to bounce ``mngr observe`` (the running process needs a restart to
+    see the new provider instance).
     """
     if root_name is None:
         root_name = resolve_minds_root_name()
@@ -335,18 +371,86 @@ def set_imbue_cloud_provider_for_account(email: str, *, root_name: str | None = 
         doc = tomlkit.document()
     providers = doc.setdefault("providers", tomlkit.table())
     existing = providers.get(provider_name)
+    existing_is_enabled = existing.get("is_enabled") if isinstance(existing, dict) else None
+    desired_is_enabled = True if force_enable else existing_is_enabled
     if (
         isinstance(existing, dict)
         and existing.get("backend") == _IMBUE_CLOUD_BACKEND_NAME
         and existing.get("account") == email
+        and existing_is_enabled == desired_is_enabled
     ):
         return False
     new_block = tomlkit.table()
     new_block["backend"] = _IMBUE_CLOUD_BACKEND_NAME
     new_block["account"] = email
+    if desired_is_enabled is not None:
+        new_block["is_enabled"] = desired_is_enabled
     providers[provider_name] = new_block
     _atomic_write_settings(settings_path, doc)
     logger.info("imbue_cloud provider {} registered in {}", provider_name, settings_path)
+    return True
+
+
+def is_imbue_cloud_provider_enabled_for_account(email: str, *, root_name: str | None = None) -> bool:
+    """Return whether ``[providers.imbue_cloud_<slug>]`` is currently enabled.
+
+    Reads the ``is_enabled`` field from the active mngr settings.toml so
+    the desktop UI can render "Signed out" on a chip whose provider was
+    auto-disabled by an observed auth error. Treats a missing entry or
+    a missing ``is_enabled`` field as enabled (per mngr's default), and
+    returns True when the settings file can't be located so the UI never
+    erroneously claims an account is signed out before the bootstrap
+    has finished writing the block.
+    """
+    if root_name is None:
+        root_name = resolve_minds_root_name()
+    settings_path = _resolve_active_settings_path(root_name)
+    if settings_path is None or not settings_path.exists():
+        return True
+    try:
+        provider_name = imbue_cloud_provider_name_for_account(email)
+    except BootstrapError:
+        return True
+    parsed = tomllib.loads(settings_path.read_text())
+    providers = parsed.get("providers")
+    if not isinstance(providers, dict):
+        return True
+    block = providers.get(provider_name)
+    if not isinstance(block, dict):
+        return True
+    is_enabled = block.get("is_enabled", True)
+    return bool(is_enabled)
+
+
+def disable_imbue_cloud_provider_for_account(email: str, *, root_name: str | None = None) -> bool:
+    """Mark ``[providers.imbue_cloud_<slug>]`` as ``is_enabled = false``.
+
+    Called by minds when discovery surfaces an unrecoverable auth error
+    for ``email`` (e.g. SuperTokens "token theft detected", or the refresh
+    token expiring past the family lifetime). Disabling the entry makes
+    subsequent ``mngr observe`` cycles skip this provider so the rest of
+    the discovery pipeline keeps working until the user signs in again.
+    Idempotent: a no-op if the block doesn't exist or is already
+    disabled. Returns ``True`` when the file was modified.
+    """
+    if root_name is None:
+        root_name = resolve_minds_root_name()
+    settings_path = _resolve_active_settings_path(root_name)
+    if settings_path is None or not settings_path.exists():
+        return False
+    provider_name = imbue_cloud_provider_name_for_account(email)
+    doc = tomlkit.loads(settings_path.read_text())
+    providers = doc.get("providers")
+    if not isinstance(providers, dict):
+        return False
+    existing = providers.get(provider_name)
+    if not isinstance(existing, dict):
+        return False
+    if existing.get("is_enabled") is False:
+        return False
+    existing["is_enabled"] = False
+    _atomic_write_settings(settings_path, doc)
+    logger.info("imbue_cloud provider {} disabled in {}", provider_name, settings_path)
     return True
 
 

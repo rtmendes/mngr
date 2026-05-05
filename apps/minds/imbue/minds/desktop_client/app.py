@@ -35,6 +35,7 @@ from websockets import ClientConnection
 from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.mutable_model import MutableModel
+from imbue.minds.bootstrap import is_imbue_cloud_provider_enabled_for_account
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.agent_creator import AgentCreationStatus
 from imbue.minds.desktop_client.agent_creator import AgentCreator
@@ -1560,7 +1561,14 @@ def _handle_accounts_page(
     minds_config: MindsConfig | None = request.app.state.minds_config
     accounts = session_store.list_accounts() if session_store else []
     default_account_id = minds_config.get_default_account_id() if minds_config else None
-    html = render_accounts_page(accounts=accounts, default_account_id=default_account_id)
+    enabled_by_user_id = {
+        str(account.user_id): is_imbue_cloud_provider_enabled_for_account(str(account.email)) for account in accounts
+    }
+    html = render_accounts_page(
+        accounts=accounts,
+        default_account_id=default_account_id,
+        enabled_by_user_id=enabled_by_user_id,
+    )
     return HTMLResponse(content=html)
 
 

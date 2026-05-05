@@ -530,6 +530,61 @@ def test_stream_manager_on_discovery_stream_output_raises_on_unrecognized_event(
     assert manager.resolver.list_known_agent_ids() == ()
 
 
+def test_stream_manager_handle_discovery_error_invokes_provider_callback() -> None:
+    """Discovery errors carrying ``provider_name`` fire the provider-error callback.
+
+    Used by minds to auto-disable a stale ``imbue_cloud_<slug>`` provider
+    after the connector reports the session is revoked server-side.
+    """
+    manager = _make_stream_manager()
+    received: list[tuple[str, str, str]] = []
+    manager.add_on_provider_error_callback(
+        lambda provider_name, error_type, error_message: received.append((provider_name, error_type, error_message))
+    )
+    line = json.dumps(
+        {
+            "type": "DISCOVERY_ERROR",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "event_id": "evt-test-002",
+            "source": "mngr/discovery",
+            "error_type": "ImbueCloudAuthError",
+            "error_message": "Refresh rejected: token theft detected",
+            "source_name": "discovery_poll",
+            "provider_name": "imbue_cloud_alice-example-com",
+        }
+    )
+    manager._on_discovery_stream_output(line, is_stdout=True)
+    assert received == [
+        (
+            "imbue_cloud_alice-example-com",
+            "ImbueCloudAuthError",
+            "Refresh rejected: token theft detected",
+        )
+    ]
+
+
+def test_stream_manager_handle_discovery_error_skips_callback_without_provider_name() -> None:
+    """Errors not attributable to a single provider must not fire the per-provider callback."""
+    manager = _make_stream_manager()
+    received: list[tuple[str, str, str]] = []
+    manager.add_on_provider_error_callback(
+        lambda provider_name, error_type, error_message: received.append((provider_name, error_type, error_message))
+    )
+    line = json.dumps(
+        {
+            "type": "DISCOVERY_ERROR",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "event_id": "evt-test-003",
+            "source": "mngr/discovery",
+            "error_type": "RuntimeError",
+            "error_message": "snapshot failed for some other reason",
+            "source_name": "discovery_snapshot",
+        }
+    )
+    manager._on_discovery_stream_output(line, is_stdout=True)
+    assert received == []
+
+
 def test_stream_manager_handle_discovery_line_raises_on_invalid_json() -> None:
     """Invalid JSON on the discovery stream surfaces as a JSONDecodeError; stdout should never carry non-JSON."""
     manager = _make_stream_manager()

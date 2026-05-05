@@ -216,7 +216,9 @@ def _store_session_from_auth_result(
     if minds_config is not None and minds_config.get_default_account_id() is None:
         minds_config.set_default_account_id(result.user.user_id)
 
-    if set_imbue_cloud_provider_for_account(result.user.email):
+    # Explicit signin -- always re-enable the provider entry, even if a
+    # previous run auto-disabled it after an auth error.
+    if set_imbue_cloud_provider_for_account(result.user.email, force_enable=True):
         _bounce_mngr_observe(request)
 
 
