@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -440,7 +440,7 @@ wheels = [
 
 [[package]]
 name = "concurrency-group"
-version = "0.1.15"
+version = "0.1.11"
 source = { editable = "../../../../libs/concurrency_group" }
 dependencies = [
     { name = "imbue-common" },
@@ -877,7 +877,7 @@ wheels = [
 
 [[package]]
 name = "imbue-common"
-version = "0.1.15"
+version = "0.1.11"
 source = { editable = "../../../../libs/imbue_common" }
 dependencies = [
     { name = "click" },
@@ -902,7 +902,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "imbue-mngr"
-version = "0.2.6"
+version = "0.2.2"
 source = { editable = "../../../../libs/mngr" }
 dependencies = [
     { name = "cel-python" },
@@ -957,7 +957,7 @@ requires-dist = [
 
 [[package]]
 name = "imbue-mngr-claude"
-version = "0.2.6"
+version = "0.2.2"
 source = { editable = "../../../../libs/mngr_claude" }
 dependencies = [
     { name = "imbue-mngr" },
@@ -971,7 +971,7 @@ dev = [{ name = "imbue-mngr-modal", editable = "../../../../libs/mngr_modal" }]
 
 [[package]]
 name = "imbue-mngr-modal"
-version = "0.2.6"
+version = "0.2.2"
 source = { editable = "../../../../libs/mngr_modal" }
 dependencies = [
     { name = "dockerfile-parse" },
@@ -1226,7 +1226,7 @@ wheels = [
 
 [[package]]
 name = "modal-proxy"
-version = "0.1.7"
+version = "0.1.3"
 source = { editable = "../../../../libs/modal_proxy" }
 dependencies = [
     { name = "concurrency-group" },
@@ -1885,17 +1885,15 @@ wheels = [
 
 [[package]]
 name = "resource-guards"
-version = "0.1.5"
+version = "0.1.2"
 source = { editable = "../../../../libs/resource_guards" }
 dependencies = [
-    { name = "pluggy" },
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "inline-snapshot", marker = "extra == 'dev'", specifier = ">=0.13" },
-    { name = "pluggy", specifier = ">=1.5" },
     { name = "pytest", specifier = ">=9.0" },
 ]
 provides-extras = ["dev"]

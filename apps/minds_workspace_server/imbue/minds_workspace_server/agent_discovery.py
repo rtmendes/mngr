@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from loguru import logger as _loguru_logger
@@ -19,16 +18,6 @@ from imbue.mngr.main import get_or_create_plugin_manager
 from imbue.mngr.utils.env_utils import parse_env_file
 
 logger = _loguru_logger
-
-
-def get_host_dir() -> Path:
-    """Return the mngr host directory from the environment.
-
-    Falls back to ``~/.mngr`` when ``MNGR_HOST_DIR`` is unset. This is the
-    canonical resolver shared by both the API layer (``server._find_agent``)
-    and the activity-state tracker (``AgentManager``).
-    """
-    return Path(os.environ.get("MNGR_HOST_DIR", str(Path.home() / ".mngr")))
 
 
 class AgentInfo(FrozenModel):
@@ -128,13 +117,7 @@ def discover_agents(
 
 def send_message(agent_name: str, message: str) -> bool:
     """Send a message to an agent. Returns True on success."""
-    import time as _time
-
-    _t0 = _time.perf_counter()
-    logger.info("[SEND_MSG_TIMING] inner.entry agent_name={}", agent_name)
     mngr_ctx, cg = _get_mngr_context()
-    _t1 = _time.perf_counter()
-    logger.info("[SEND_MSG_TIMING] inner.after_get_mngr_context dt={:.3f}s", _t1 - _t0)
     try:
         result = send_message_to_agents(
             mngr_ctx=mngr_ctx,
@@ -142,11 +125,6 @@ def send_message(agent_name: str, message: str) -> bool:
             include_filters=(f'(name == "{agent_name}" || id == "{agent_name}")',),
             error_behavior=ErrorBehavior.CONTINUE,
         )
-        _t2 = _time.perf_counter()
-        logger.info("[SEND_MSG_TIMING] inner.after_send_to_agents dt={:.3f}s", _t2 - _t1)
     finally:
-        _tx = _time.perf_counter()
         cg.__exit__(None, None, None)
-        _ty = _time.perf_counter()
-        logger.info("[SEND_MSG_TIMING] inner.cg_exit dt={:.3f}s", _ty - _tx)
     return len(result.successful_agents) > 0
