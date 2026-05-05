@@ -354,7 +354,7 @@ class ImbueCloudConnectorClient(MutableModel):
     ) -> TunnelInfo:
         body: dict[str, Any] = {"agent_id": agent_id}
         if default_auth_policy is not None:
-            body["default_auth_policy"] = default_auth_policy.model_dump()
+            body["default_auth_policy"] = _auth_policy_to_connector_body(default_auth_policy)
         response = httpx.post(
             self._url("/tunnels"),
             headers=self._bearer(access_token),
@@ -431,7 +431,7 @@ class ImbueCloudConnectorClient(MutableModel):
         response = httpx.put(
             self._url(f"/tunnels/{tunnel_name}/auth"),
             headers=self._bearer(access_token),
-            json=policy.model_dump(),
+            json=_auth_policy_to_connector_body(policy),
             timeout=self.timeout_seconds,
         )
         self._check(response, ImbueCloudTunnelError)
@@ -460,7 +460,7 @@ class ImbueCloudConnectorClient(MutableModel):
         response = httpx.put(
             self._url(f"/tunnels/{tunnel_name}/services/{service_name}/auth"),
             headers=self._bearer(access_token),
-            json=policy.model_dump(),
+            json=_auth_policy_to_connector_body(policy),
             timeout=self.timeout_seconds,
         )
         self._check(response, ImbueCloudTunnelError)
@@ -497,9 +497,70 @@ def _parse_service_info(raw: dict[str, Any]) -> ServiceInfo:
     )
 
 
+def _auth_policy_to_connector_body(policy: AuthPolicy) -> dict[str, Any]:
+    """Translate the plugin's high-level ``AuthPolicy`` into the body shape
+    the connector accepts (Cloudflare-native ``{"rules": [...]}``).
+
+    The connector's ``AuthPolicy`` model wraps a list of Cloudflare Access
+    rule dicts (``{action, include}``) and is consumed both directly
+    (per-service Access policies) and via KV (default-tunnel policy). Our
+    high-level model carries flat allow-lists (emails, email domains,
+    required IDPs); this helper bundles everything into a single
+    ``allow`` rule whose ``include`` is the union of the three.
+
+    A policy with no allow-list members serializes to ``{"rules": []}``,
+    which the connector interprets as "no policy" without rejecting the
+    request body.
+    """
+    include: list[dict[str, Any]] = []
+    for email in policy.emails:
+        include.append({"email": {"email": email}})
+    for domain in policy.email_domains:
+        include.append({"email_domain": {"domain": domain}})
+    for idp_id in policy.require_idp:
+        include.append({"login_method": {"id": idp_id}})
+    if not include:
+        return {"rules": []}
+    return {"rules": [{"action": "allow", "include": include}]}
+
+
 def _parse_auth_policy(raw: dict[str, Any]) -> AuthPolicy:
+    """Translate the connector's ``{"rules": [...]}`` response back into
+    the plugin's high-level ``AuthPolicy``.
+
+    Walks every rule's ``include`` list and bins entries by Cloudflare
+    Access rule type (``email`` / ``email_domain`` / ``login_method``).
+    Unknown shapes are ignored rather than raising so a connector that
+    later adds a new include type doesn't break older plugin clients.
+    """
+    emails: list[str] = []
+    email_domains: list[str] = []
+    require_idp: list[str] = []
+    rules = raw.get("rules") or []
+    if not isinstance(rules, list):
+        return AuthPolicy()
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        include = rule.get("include") or []
+        if not isinstance(include, list):
+            continue
+        for entry in include:
+            if not isinstance(entry, dict):
+                continue
+            email_obj = entry.get("email")
+            if isinstance(email_obj, dict) and isinstance(email_obj.get("email"), str):
+                emails.append(email_obj["email"])
+                continue
+            domain_obj = entry.get("email_domain")
+            if isinstance(domain_obj, dict) and isinstance(domain_obj.get("domain"), str):
+                email_domains.append(domain_obj["domain"])
+                continue
+            login_obj = entry.get("login_method")
+            if isinstance(login_obj, dict) and isinstance(login_obj.get("id"), str):
+                require_idp.append(login_obj["id"])
     return AuthPolicy(
-        emails=tuple(str(e) for e in raw.get("emails", []) or []),
-        email_domains=tuple(str(e) for e in raw.get("email_domains", []) or []),
-        require_idp=tuple(str(e) for e in raw.get("require_idp", []) or []),
+        emails=tuple(emails),
+        email_domains=tuple(email_domains),
+        require_idp=tuple(require_idp),
     )

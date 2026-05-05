@@ -13,6 +13,9 @@ from pydantic import AnyUrl
 from pydantic import SecretStr
 
 from imbue.mngr_imbue_cloud.client import ImbueCloudConnectorClient
+from imbue.mngr_imbue_cloud.client import _auth_policy_to_connector_body
+from imbue.mngr_imbue_cloud.client import _parse_auth_policy
+from imbue.mngr_imbue_cloud.data_types import AuthPolicy
 from imbue.mngr_imbue_cloud.data_types import LeaseAttributes
 from imbue.mngr_imbue_cloud.errors import ImbueCloudAuthError
 from imbue.mngr_imbue_cloud.errors import ImbueCloudConnectorError
@@ -106,3 +109,73 @@ def test_500_lease_raises_connector_error(monkeypatch: pytest.MonkeyPatch) -> No
     client = ImbueCloudConnectorClient(base_url=AnyUrl("https://example.com"))
     with pytest.raises(ImbueCloudConnectorError):
         client.lease_host(SecretStr("tok"), LeaseAttributes(cpus=1), "ssh-ed25519 X")
+
+
+# -- AuthPolicy translation --
+#
+# The connector's API takes/returns the Cloudflare-native ``{"rules": [...]}``
+# shape; the plugin's ``AuthPolicy`` is the high-level ``emails / email_domains
+# / require_idp`` shape. The client translates at every wire boundary so the
+# plugin CLI's user-facing surface stays high-level. These tests pin the
+# translation -- before they existed, the bug went unnoticed and ``set
+# service auth`` failed at runtime with a 422 from the connector.
+
+
+def test_auth_policy_to_connector_body_translates_emails_domains_idps() -> None:
+    body = _auth_policy_to_connector_body(
+        AuthPolicy(
+            emails=("a@b.com", "c@d.com"),
+            email_domains=("e.com",),
+            require_idp=("idp1",),
+        )
+    )
+    assert body == {
+        "rules": [
+            {
+                "action": "allow",
+                "include": [
+                    {"email": {"email": "a@b.com"}},
+                    {"email": {"email": "c@d.com"}},
+                    {"email_domain": {"domain": "e.com"}},
+                    {"login_method": {"id": "idp1"}},
+                ],
+            }
+        ]
+    }
+
+
+def test_auth_policy_to_connector_body_emits_empty_rules_for_empty_policy() -> None:
+    """An empty policy must serialize to ``{"rules": []}`` rather than a rule with an empty include."""
+    assert _auth_policy_to_connector_body(AuthPolicy()) == {"rules": []}
+
+
+def test_parse_auth_policy_round_trips_emails_domains_idps() -> None:
+    original = AuthPolicy(
+        emails=("a@b.com", "c@d.com"),
+        email_domains=("e.com",),
+        require_idp=("idp1",),
+    )
+    assert _parse_auth_policy(_auth_policy_to_connector_body(original)) == original
+
+
+def test_parse_auth_policy_handles_empty_response() -> None:
+    """``GET ... /auth`` returns ``{"rules": []}`` when no policy is configured."""
+    assert _parse_auth_policy({"rules": []}) == AuthPolicy()
+
+
+def test_parse_auth_policy_ignores_unknown_include_types() -> None:
+    """A future Cloudflare include shape (e.g. ``{"github": ...}``) must not break older clients."""
+    parsed = _parse_auth_policy(
+        {
+            "rules": [
+                {
+                    "action": "allow",
+                    "include": [
+                        {"email": {"email": "a@b.com"}},
+                        {"github": {"team": "secret"}},
+                    ],
+                }
+            ]
+        }
+    )
+    assert parsed == AuthPolicy(emails=("a@b.com",))
