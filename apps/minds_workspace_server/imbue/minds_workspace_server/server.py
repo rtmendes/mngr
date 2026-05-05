@@ -28,11 +28,13 @@ from starlette.websockets import WebSocketDisconnect
 from imbue.concurrency_group.subprocess_utils import run_local_command_modern_version
 from imbue.minds_workspace_server.agent_discovery import AgentInfo
 from imbue.minds_workspace_server.agent_discovery import discover_agents
+from imbue.minds_workspace_server.agent_discovery import get_host_dir
 from imbue.minds_workspace_server.agent_discovery import read_claude_config_dir_from_env_file
 from imbue.minds_workspace_server.agent_discovery import send_message
 from imbue.minds_workspace_server.agent_manager import AgentManager
 from imbue.minds_workspace_server.config import Config
 from imbue.minds_workspace_server.event_queues import AgentEventQueues
+from imbue.minds_workspace_server.events import BufferBehavior
 from imbue.minds_workspace_server.models import AgentCreationError
 from imbue.minds_workspace_server.models import AgentListItem
 from imbue.minds_workspace_server.models import AgentListResponse
@@ -147,13 +149,31 @@ def _get_or_create_watcher(request: Request, agent_info: AgentInfo) -> AgentSess
     """Get an existing watcher for an agent, or create one."""
     watchers: dict[str, AgentSessionWatcher] = request.app.state.watchers
     event_queues: AgentEventQueues = request.app.state.event_queues
+    agent_manager: AgentManager = request.app.state.agent_manager
 
     if agent_info.id in watchers:
         return watchers[agent_info.id]
 
+    # Single-element holder so the ``on_events`` closure can reach the watcher
+    # we are about to construct. Capturing the watcher directly (rather than
+    # looking it up in ``watchers`` by id on every event) keeps the callback
+    # self-contained: it cannot KeyError if the dict entry has since been
+    # removed, and it does not depend on the implicit invariant that the
+    # entry was already inserted before the first event fires.
+    watcher_holder: list[AgentSessionWatcher] = []
+
     def on_events(agent_id: str, events: list[dict[str, Any]]) -> None:
+        # IGNORE: session events are persisted in JSONL and recoverable via
+        # the REST /events endpoint; storing them in the in-memory replay
+        # buffer would grow unboundedly for the agent's lifetime.
         for event in events:
-            event_queues.broadcast(agent_id, event)
+            event_queues.broadcast(agent_id, {**event, "buffer_behavior": BufferBehavior.IGNORE})
+        # Recompute the per-agent activity state from the full transcript.
+        # The session watcher's incremental ``events`` argument only contains
+        # the newest lines, but the activity tracker needs the full transcript
+        # to detect unmatched tool_uses across turns and to read the last
+        # event's type.
+        agent_manager.update_session_events(agent_id, watcher_holder[0].get_all_events())
 
     watcher = AgentSessionWatcher(
         agent_id=agent_info.id,
@@ -161,8 +181,12 @@ def _get_or_create_watcher(request: Request, agent_info: AgentInfo) -> AgentSess
         claude_config_dir=agent_info.claude_config_dir,
         on_events=on_events,
     )
+    watcher_holder.append(watcher)
     watchers[agent_info.id] = watcher
     watcher.start()
+    # Seed transcript-derived activity signals once at watcher creation so the
+    # indicator does not lag a turn behind on first connect.
+    agent_manager.update_session_events(agent_info.id, watcher.get_all_events())
     return watcher
 
 
@@ -236,11 +260,6 @@ def _list_agents_endpoint(request: Request) -> JSONResponse:
     return JSONResponse(content=AgentListResponse(agents=items).model_dump())
 
 
-def _get_host_dir() -> Path:
-    """Get the mngr host directory from the environment."""
-    return Path(os.environ.get("MNGR_HOST_DIR", str(Path.home() / ".mngr")))
-
-
 def _find_agent(agent_id: str, request: Request) -> AgentInfo | None:
     """Find a specific agent by ID.
 
@@ -253,7 +272,7 @@ def _find_agent(agent_id: str, request: Request) -> AgentInfo | None:
     if agent_state is None:
         return None
 
-    host_dir = _get_host_dir()
+    host_dir = get_host_dir()
     agent_state_dir = host_dir / "agents" / agent_id
     claude_config_dir = read_claude_config_dir_from_env_file(agent_state_dir)
 
@@ -341,16 +360,27 @@ def _stream_events(agent_id: str, request: Request) -> Response:
 
 def _send_message_endpoint(agent_id: str, send_message_request: SendMessageRequest, request: Request) -> JSONResponse:
     """Send a message to an agent."""
+    import time as _time
+
+    _t0 = _time.perf_counter()
+    _loguru_logger.info("[SEND_MSG_TIMING] entry agent_id={}", agent_id)
     agent_info = _find_agent(agent_id, request)
+    _t1 = _time.perf_counter()
+    _loguru_logger.info("[SEND_MSG_TIMING] after_find_agent dt={:.3f}s", _t1 - _t0)
     if agent_info is None:
         return _agent_not_found_response(agent_id)
 
     success = send_message(agent_info.name, send_message_request.message)
+    _t2 = _time.perf_counter()
+    _loguru_logger.info("[SEND_MSG_TIMING] after_send_message dt={:.3f}s success={}", _t2 - _t1, success)
     if not success:
         error = ErrorResponse(detail=f"Failed to send message to agent '{agent_info.name}' (0 successful agents)")
         return JSONResponse(content=error.model_dump(), status_code=500)
 
-    return JSONResponse(content=SendMessageResponse(status="ok").model_dump())
+    response = JSONResponse(content=SendMessageResponse(status="ok").model_dump())
+    _t3 = _time.perf_counter()
+    _loguru_logger.info("[SEND_MSG_TIMING] total dt={:.3f}s", _t3 - _t0)
+    return response
 
 
 def _get_subagent_events(agent_id: str, subagent_session_id: str, request: Request) -> Response:
@@ -425,7 +455,7 @@ def _primary_agent_layout_dir() -> Path | None:
     agent_id = os.environ.get("MNGR_AGENT_ID", "")
     if not agent_id:
         return None
-    return _get_host_dir() / "agents" / agent_id / "workspace_layout"
+    return get_host_dir() / "agents" / agent_id / "workspace_layout"
 
 
 def _get_layout() -> Response:
