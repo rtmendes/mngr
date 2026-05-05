@@ -53,6 +53,7 @@ from imbue.minds.desktop_client.cookie_manager import create_subdomain_auth_toke
 from imbue.minds.desktop_client.cookie_manager import verify_session_cookie
 from imbue.minds.desktop_client.cookie_manager import verify_subdomain_auth_token
 from imbue.minds.desktop_client.deps import BackendResolverDep
+from imbue.minds.desktop_client.forward_cli import EnvelopeStreamConsumer
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
 from imbue.minds.desktop_client.latchkey.core import Latchkey
@@ -244,6 +245,15 @@ async def _managed_lifespan(
             logger.info("Stopping stream manager subprocesses...")
             stream_manager.stop()
             logger.info("Stream manager stopped.")
+        # Stop the new envelope-stream path's spawned ``mngr forward``
+        # subprocess. Same reasoning as ``stream_manager``: uvicorn re-raises
+        # SIGTERM after lifespan shutdown, so a ``try/finally`` around
+        # ``uvicorn.run`` never runs on the normal shutdown path.
+        envelope_stream_consumer: EnvelopeStreamConsumer | None = inner_app.state.envelope_stream_consumer
+        if envelope_stream_consumer is not None:
+            logger.info("Terminating mngr forward subprocess...")
+            envelope_stream_consumer.terminate()
+            logger.info("mngr forward subprocess terminated.")
         # Latchkey has no shutdown step: spawned ``latchkey gateway``
         # subprocesses are detached and intentionally outlive the desktop
         # client so in-flight container/VM agents keep working.
@@ -2269,6 +2279,7 @@ def create_desktop_client(
     paths: WorkspacePaths | None = None,
     minds_config: MindsConfig | None = None,
     stream_manager: MngrStreamManager | None = None,
+    envelope_stream_consumer: EnvelopeStreamConsumer | None = None,
     session_store: MultiAccountSessionStore | None = None,
     request_inbox: RequestInbox | None = None,
     request_event_handlers: tuple[RequestEventHandler, ...] = (),
@@ -2327,6 +2338,7 @@ def create_desktop_client(
     app.state.tunnel_manager = tunnel_manager
     app.state.latchkey = latchkey
     app.state.stream_manager = stream_manager
+    app.state.envelope_stream_consumer = envelope_stream_consumer
     app.state.agent_creator = agent_creator
     app.state.imbue_cloud_cli = imbue_cloud_cli
     app.state.telegram_orchestrator = telegram_orchestrator

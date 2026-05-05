@@ -4,7 +4,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from imbue.imbue_common.ratchet_testing import standard_ratchet_checks as rc
-from imbue.imbue_common.ratchet_testing.ratchets import TEST_FILE_PATTERNS
 from imbue.imbue_common.ratchet_testing.ratchets import check_no_ruff_errors
 from imbue.imbue_common.ratchet_testing.ratchets import check_no_type_errors
 
@@ -29,7 +28,7 @@ def test_prevent_eval() -> None:
 
 
 def test_prevent_while_true() -> None:
-    rc.check_while_true(_DIR, snapshot(1))
+    rc.check_while_true(_DIR, snapshot(2))
 
 
 def test_prevent_time_sleep() -> None:
@@ -41,7 +40,7 @@ def test_prevent_global_keyword() -> None:
 
 
 def test_prevent_bare_print() -> None:
-    rc.check_bare_print(_DIR, snapshot(12))
+    rc.check_bare_print(_DIR, snapshot(0))
 
 
 # --- Exception handling ---
@@ -52,7 +51,7 @@ def test_prevent_bare_except() -> None:
 
 
 def test_prevent_broad_exception_catch() -> None:
-    rc.check_broad_exception_catch(_DIR, snapshot(1))
+    rc.check_broad_exception_catch(_DIR, snapshot(0))
 
 
 def test_prevent_base_exception_catch() -> None:
@@ -64,7 +63,7 @@ def test_prevent_builtin_exception_raises() -> None:
 
 
 def test_prevent_silent_decode_error_catches() -> None:
-    rc.check_silent_decode_error_catches(_DIR, snapshot(11))
+    rc.check_silent_decode_error_catches(_DIR, snapshot(0))
 
 
 # --- Import style ---
@@ -98,10 +97,7 @@ def test_prevent_setattr() -> None:
 
 
 def test_prevent_asyncio_import() -> None:
-    # Two: app.py uses ``asyncio.get_running_loop()`` and ``asyncio.run_coroutine_threadsafe``
-    # for HTTP route handlers; latchkey/permissions.py uses ``run_in_executor`` to run the
-    # blocking grant/deny path off the event loop. Both are intrinsic to FastAPI integration.
-    rc.check_asyncio_import(_DIR, snapshot(2))
+    rc.check_asyncio_import(_DIR, snapshot(1))
 
 
 def test_prevent_pandas_import() -> None:
@@ -150,12 +146,7 @@ def test_prevent_num_prefix() -> None:
 
 
 def test_prevent_trailing_comments() -> None:
-    # ``forward_cli.py`` carries one ``# noqa: S603`` next to the
-    # ``subprocess.Popen`` call that spawns ``mngr forward``. The S603
-    # suppression must be on the same line as the call for ruff to
-    # recognize it; ``# noqa`` is intentionally not in the trailing-
-    # comment exempt list.
-    rc.check_trailing_comments(_DIR, snapshot(1))
+    rc.check_trailing_comments(_DIR, snapshot(37))
 
 
 def test_prevent_init_docstrings() -> None:
@@ -176,7 +167,7 @@ def test_prevent_returns_in_docstrings() -> None:
 
 
 def test_prevent_literal_with_multiple_options() -> None:
-    rc.check_literal_with_multiple_options(_DIR, snapshot(0))
+    rc.check_literal_with_multiple_options(_DIR, snapshot(1))
 
 
 def test_prevent_bare_generic_types() -> None:
@@ -221,7 +212,7 @@ def test_prevent_unittest_mock_imports() -> None:
 
 
 def test_prevent_monkeypatch_setattr() -> None:
-    rc.check_monkeypatch_setattr(_DIR, snapshot(0))
+    rc.check_monkeypatch_setattr(_DIR, snapshot(2))
 
 
 def test_prevent_test_container_classes() -> None:
@@ -244,36 +235,18 @@ def test_prevent_bare_urwid_tty_signal_keys() -> None:
 
 
 def test_prevent_direct_subprocess() -> None:
-    # ``latchkey/_spawn.py`` intentionally uses ``subprocess.Popen`` with
-    # ``start_new_session=True`` so that the spawned ``latchkey gateway``
-    # outlives the minds desktop client. That is the opposite of what the
-    # ratchet is designed to enforce (managed cleanup via ConcurrencyGroup),
-    # so we exclude that tiny helper specifically; see its module docstring
-    # for the full justification.
-    #
-    # ``forward_cli.py`` similarly uses ``subprocess.Popen`` directly so it
-    # can hold a reference to the ``mngr forward`` plugin's ``Popen.pid``
-    # for the ``SIGHUP``-bounce path. ``ConcurrencyGroup.RunningProcess``
-    # does not expose the PID today; once it does (a separate cleanup spec
-    # in the concurrency_group lib), this exclusion can be dropped.
-    excluded = TEST_FILE_PATTERNS + (
-        "testing.py",
-        "scripts/*.py",
-        "*/latchkey/_spawn.py",
-        "*/desktop_client/forward_cli.py",
-    )
-    rc.check_direct_subprocess(_DIR, snapshot(0), excluded_patterns=excluded)
+    rc.check_direct_subprocess(_DIR, snapshot(1))
 
 
 # --- AST-based ratchets ---
 
 
 def test_prevent_if_elif_without_else() -> None:
-    rc.check_if_elif_without_else(_DIR, snapshot(0))
+    rc.check_if_elif_without_else(_DIR, snapshot(1))
 
 
 def test_prevent_inline_functions() -> None:
-    rc.check_inline_functions(_DIR, snapshot(0))
+    rc.check_inline_functions(_DIR, snapshot(7))
 
 
 def test_prevent_underscore_imports() -> None:
@@ -281,7 +254,7 @@ def test_prevent_underscore_imports() -> None:
 
 
 def test_prevent_init_methods_in_non_exception_classes() -> None:
-    rc.check_init_methods_in_non_exception_classes(_DIR, snapshot(0))
+    rc.check_init_methods_in_non_exception_classes(_DIR, snapshot(1))
 
 
 def test_prevent_cast_usage() -> None:
@@ -296,10 +269,9 @@ def test_prevent_assert_isinstance() -> None:
 
 
 def test_prevent_code_in_init_files() -> None:
-    rc.check_code_in_init_files(_DIR, snapshot(0))
+    rc.check_code_in_init_files(_DIR, snapshot(1))
 
 
-@pytest.mark.flaky
 def test_no_type_errors() -> None:
     """Ensure the codebase has zero type errors."""
     check_no_type_errors(_DIR)

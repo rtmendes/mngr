@@ -1,11 +1,11 @@
 import hashlib
 import os
 import select
-import shlex
 import socket
 import sys
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 from urllib.parse import urlparse
@@ -117,6 +117,7 @@ class SSHTunnelManager(MutableModel):
     _reverse_tunnels: dict[tuple[str, int], ReverseTunnelInfo] = PrivateAttr(default_factory=dict)
     _reverse_tunnel_setup_locks: dict[str, threading.Lock] = PrivateAttr(default_factory=dict)
     _health_check_thread: threading.Thread | None = PrivateAttr(default=None)
+    _on_tunnel_repaired_callbacks: list[Callable[["ReverseTunnelInfo"], None]] = PrivateAttr(default_factory=list)
 
     def _get_tmpdir(self) -> Path:
         """Get or create the secure temporary directory for Unix sockets.
@@ -129,7 +130,7 @@ class SSHTunnelManager(MutableModel):
         """
         if self._tmpdir is None:
             base_dir = "/tmp" if sys.platform == "darwin" else None
-            self._tmpdir = tempfile.TemporaryDirectory(prefix="minds-ssh-", dir=base_dir)
+            self._tmpdir = tempfile.TemporaryDirectory(prefix="mngr-forward-ssh-", dir=base_dir)
             os.chmod(self._tmpdir.name, 0o700)
         return Path(self._tmpdir.name)
 
@@ -290,49 +291,6 @@ class SSHTunnelManager(MutableModel):
 
             return assigned_remote_port
 
-    def write_api_url_to_remote(
-        self,
-        ssh_info: RemoteSSHInfo,
-        agent_state_dir: str,
-        url: str,
-    ) -> None:
-        """Write the minds API URL to a file on the remote host via SSH."""
-        with self._lock:
-            client = self._get_or_create_connection(ssh_info)
-
-        shell_dir = _shell_quote_remote_path(agent_state_dir)
-        quoted_url = shlex.quote(url)
-        command = f"mkdir -p {shell_dir} && printf '%s' {quoted_url} > {shell_dir}/minds_api_url"
-        try:
-            _stdin, stdout, stderr = client.exec_command(command, timeout=10.0)
-            _stdin.close()
-            try:
-                exit_status = stdout.channel.recv_exit_status()
-                if exit_status != 0:
-                    error_output = stderr.read().decode().strip()
-                    logger.warning(
-                        "Failed to write API URL to remote {}: exit={}, stderr={}",
-                        ssh_info.host,
-                        exit_status,
-                        error_output,
-                    )
-            finally:
-                stdout.channel.close()
-                stdout.close()
-                stderr.close()
-        except (paramiko.SSHException, OSError) as e:
-            logger.warning("Failed to write API URL to remote {}: {}", ssh_info.host, e)
-
-    @staticmethod
-    def write_api_url_to_local(
-        agent_state_dir: Path,
-        url: str,
-    ) -> None:
-        """Write the minds API URL to a file on the local filesystem."""
-        agent_state_dir.mkdir(parents=True, exist_ok=True)
-        url_file = agent_state_dir / "minds_api_url"
-        url_file.write_text(url)
-
     def start_reverse_tunnel_health_check(self) -> None:
         """Start a background thread that checks reverse tunnels every 30 seconds."""
         if self._health_check_thread is not None:
@@ -348,12 +306,14 @@ class SSHTunnelManager(MutableModel):
         """Check all reverse tunnels and re-establish any that are broken.
 
         Called once per health-check iteration. Broken tunnels are re-established
-        with the same originally-requested remote port, and URL files on the
-        remote hosts are updated with the new remote port for tunnels that
-        track agent state dirs.
+        with the same originally-requested remote port. After a successful repair
+        each registered ``on_tunnel_repaired`` callback is fired with the new
+        ``ReverseTunnelInfo`` so consumers (e.g. the plugin's
+        ``ReverseTunnelHandler``) can emit a fresh envelope event.
         """
         with self._lock:
             tunnels = dict(self._reverse_tunnels)
+            callbacks = list(self._on_tunnel_repaired_callbacks)
 
         for tunnel_key, tunnel_info in tunnels.items():
             conn_key, _local_port = tunnel_key
@@ -387,21 +347,20 @@ class SSHTunnelManager(MutableModel):
                         agent_state_dir=extra_dir,
                         remote_port=tunnel_info.requested_remote_port,
                     )
-                # Update the URL file for all agents sharing this tunnel (no-op
-                # for tunnels with no tracked dirs, e.g. the Latchkey gateway).
-                new_url = f"http://127.0.0.1:{new_remote_port}"
-                for agent_state_dir in tunnel_info.agent_state_dirs:
-                    self.write_api_url_to_remote(
-                        ssh_info=tunnel_info.ssh_info,
-                        agent_state_dir=agent_state_dir,
-                        url=new_url,
-                    )
                 logger.info(
                     "Reverse tunnel re-established to {} (local {}) on remote port {}",
                     conn_key,
                     tunnel_info.local_port,
                     new_remote_port,
                 )
+                with self._lock:
+                    repaired_info = self._reverse_tunnels.get(tunnel_key)
+                if repaired_info is not None:
+                    for callback in callbacks:
+                        try:
+                            callback(repaired_info)
+                        except (OSError, RuntimeError) as e:
+                            logger.warning("Tunnel-repaired callback failed: {}", e)
             except (paramiko.SSHException, OSError, SSHTunnelError) as e:
                 logger.warning(
                     "Failed to re-establish reverse tunnel to {} (local {}): {}",
@@ -409,6 +368,16 @@ class SSHTunnelManager(MutableModel):
                     tunnel_info.local_port,
                     e,
                 )
+
+    def add_on_tunnel_repaired_callback(self, callback: "Callable[[ReverseTunnelInfo], None]") -> None:
+        """Register a callback fired once per successful repair of a broken tunnel.
+
+        Used by the plugin's ``ReverseTunnelHandler`` to re-emit a
+        ``reverse_tunnel_established`` envelope (with a possibly-new remote
+        port) so consumers can rewire any URL files they own.
+        """
+        with self._lock:
+            self._on_tunnel_repaired_callbacks.append(callback)
 
     def _reverse_tunnel_health_check_loop(self) -> None:
         """Periodically check reverse tunnels and re-establish broken ones."""
@@ -456,16 +425,6 @@ class SSHTunnelManager(MutableModel):
             except OSError as e:
                 logger.trace("Error cleaning up tunnel tmpdir: {}", e)
             self._tmpdir = None
-
-
-def open_ssh_client(ssh_info: RemoteSSHInfo) -> paramiko.SSHClient:
-    """Open a paramiko SSH client to the given host using the cached known_hosts.
-
-    Public wrapper around the internal ``_create_ssh_client`` helper. Used
-    by ``forward_cli.MindsApiUrlWriter`` to write ``minds_api_url`` on
-    remote agent hosts without depending on a private symbol.
-    """
-    return _create_ssh_client(ssh_info)
 
 
 def _create_ssh_client(ssh_info: RemoteSSHInfo) -> paramiko.SSHClient:
@@ -675,21 +634,6 @@ class _ForwardedTunnelHandler(FrozenModel):
             daemon=True,
             name=f"reverse-relay-127.0.0.1:{self.local_port}",
         ).start()
-
-
-def _shell_quote_remote_path(path: str) -> str:
-    """Produce a shell-safe argument for a remote path, preserving tilde expansion.
-
-    shlex.quote wraps strings in single quotes, which prevents tilde expansion on
-    the remote shell. Paths starting with '~/' are rewritten to use '$HOME/'
-    in a double-quoted string so the remote shell expands the variable correctly.
-    The remainder of the path after '~/' is the agent ID (UUID format: alphanumeric
-    and hyphens), which is safe to embed in a double-quoted shell string.
-    """
-    if path == "~" or path.startswith("~/"):
-        rest = path[1:]
-        return f'"$HOME{rest}"'
-    return shlex.quote(path)
 
 
 def parse_url_host_port(url: str) -> tuple[str, int]:
