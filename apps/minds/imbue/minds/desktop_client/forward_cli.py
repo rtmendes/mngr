@@ -70,6 +70,7 @@ _PREAUTH_TOKEN_LENGTH: Final[int] = 64
 OnAgentDiscoveredCallback = Callable[[AgentId, RemoteSSHInfo | None, str], None]
 OnAgentDestroyedCallback = Callable[[AgentId], None]
 OnReverseTunnelEstablishedCallback = Callable[["ReverseTunnelEstablishedInfo"], None]
+OnProviderErrorCallback = Callable[[str, str, str], None]
 
 
 class ReverseTunnelEstablishedInfo(FrozenModel):
@@ -129,6 +130,7 @@ class EnvelopeStreamConsumer(MutableModel):
     _on_reverse_tunnel_established_callbacks: list[OnReverseTunnelEstablishedCallback] = PrivateAttr(
         default_factory=list
     )
+    _on_provider_error_callbacks: list[OnProviderErrorCallback] = PrivateAttr(default_factory=list)
     _process: subprocess.Popen[bytes] | None = PrivateAttr(default=None)
     _has_notified_exit: bool = PrivateAttr(default=False)
     _intentional_shutdown: bool = PrivateAttr(default=False)
@@ -149,6 +151,19 @@ class EnvelopeStreamConsumer(MutableModel):
         """Register a callback fired for each ``reverse_tunnel_established`` envelope."""
         with self._lock:
             self._on_reverse_tunnel_established_callbacks.append(callback)
+
+    def add_on_provider_error_callback(self, callback: OnProviderErrorCallback) -> None:
+        """Register a callback fired for each ``DiscoveryErrorEvent`` attributable to a provider.
+
+        The callback receives ``(provider_name, error_type, error_message)``.
+        Used by minds to auto-disable an imbue_cloud account whose session has
+        been revoked server-side. Callbacks should be fast and non-blocking;
+        they run on the envelope-stream reader thread, so any work that needs
+        to terminate other subprocesses (e.g. bouncing observe) must dispatch
+        onto a worker thread itself.
+        """
+        with self._lock:
+            self._on_provider_error_callbacks.append(callback)
 
     # -- Subprocess lifecycle ---------------------------------------------
 
@@ -336,6 +351,8 @@ class EnvelopeStreamConsumer(MutableModel):
             logger.warning(
                 "Discovery error from {}: {} ({})", event.source_name, event.error_message, event.error_type
             )
+            if event.provider_name is not None:
+                self._fire_provider_error(event.provider_name, event.error_type, event.error_message)
         else:
             # parse_discovery_event_line returns the union we already
             # exhaustively enumerated above; an unknown event type means
@@ -467,6 +484,15 @@ class EnvelopeStreamConsumer(MutableModel):
                 callback(agent_id)
             except (OSError, RuntimeError, ValueError) as e:
                 logger.warning("on_agent_destroyed callback failed for {}: {}", agent_id, e)
+
+    def _fire_provider_error(self, provider_name: str, error_type: str, error_message: str) -> None:
+        with self._lock:
+            callbacks = list(self._on_provider_error_callbacks)
+        for callback in callbacks:
+            try:
+                callback(provider_name, error_type, error_message)
+            except (OSError, RuntimeError, ValueError) as e:
+                logger.warning("on_provider_error callback failed for {}: {}", provider_name, e)
 
     # -- Per-agent event lines (services / requests / refresh) ------------
 

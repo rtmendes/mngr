@@ -30,8 +30,12 @@ from typing import Final
 import click
 import uvicorn
 from loguru import logger
+from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.minds.bootstrap import disable_imbue_cloud_provider_for_account
+from imbue.minds.bootstrap import imbue_cloud_provider_name_for_account
 from imbue.minds.bootstrap import minds_data_dir_for
 from imbue.minds.bootstrap import resolve_minds_root_name
 from imbue.minds.config.data_types import DEFAULT_DESKTOP_CLIENT_HOST
@@ -41,6 +45,7 @@ from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.app import create_desktop_client
 from imbue.minds.desktop_client.auth import FileAuthStore
 from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
+from imbue.minds.desktop_client.forward_cli import EnvelopeStreamConsumer
 from imbue.minds.desktop_client.forward_cli import ForwardSubprocessConfig
 from imbue.minds.desktop_client.forward_cli import LocalAgentDiscoveryHandler
 from imbue.minds.desktop_client.forward_cli import MindsApiUrlWriter
@@ -67,8 +72,10 @@ from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import OutputFormat
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
 from imbue.minds.utils.output import emit_event
+from imbue.mngr.utils.parent_process import start_grandparent_death_watcher
 
 _DEFAULT_MNGR_FORWARD_PORT: Final[int] = 8421
+_AUTH_ERROR_TYPE: Final[str] = "ImbueCloudAuthError"
 
 
 @click.command()
@@ -129,6 +136,15 @@ def run(
 
     root_concurrency_group = ConcurrencyGroup(name="minds-run")
     root_concurrency_group.__enter__()
+
+    # Watch our *grandparent* (typically Electron) rather than our immediate
+    # parent (the ``uv run`` wrapper, which doesn't propagate Electron's
+    # death). When Electron crashes or is killed without running its
+    # ``child.on('exit')`` cleanup, this watcher SIGTERMs us so the
+    # ``mngr forward`` plugin and its observe / event grandchildren can in
+    # turn exit cleanly. Without it, a crashed Electron leaves the entire
+    # orphan tree running across restarts.
+    start_grandparent_death_watcher(root_concurrency_group)
 
     latchkey_permission_handler = LatchkeyPermissionGrantHandler(
         data_dir=data_directory,
@@ -191,6 +207,13 @@ def run(
     reconcile_callback = LatchkeyReconcileCallback(latchkey=latchkey, resolver=backend_resolver)
     backend_resolver.add_on_change_callback(reconcile_callback)
     tunnel_manager.start_reverse_tunnel_health_check()
+
+    # Auto-disable an ``imbue_cloud_<slug>`` provider if its session is
+    # revoked server-side, so the rest of the user's accounts keep working
+    # instead of every observe poll re-trying the dead session.
+    consumer.add_on_provider_error_callback(
+        _ImbueCloudAuthErrorDisabler(consumer=consumer, session_store=session_store)
+    )
 
     # All callbacks registered -- now safe to start the envelope reader
     # threads. Doing this earlier (e.g. inside ``start_mngr_forward``)
@@ -279,3 +302,63 @@ def _sleep_then_open(url: str, delay: float = 1.0) -> None:
     """
     threading.Event().wait(timeout=delay)
     webbrowser.open(url)
+
+
+class _ImbueCloudAuthErrorDisabler(FrozenModel):
+    """Auto-disables an ``imbue_cloud_<slug>`` provider on session-revoke errors.
+
+    Discovery surfaces ``ImbueCloudAuthError`` whenever the connector
+    rejects a refresh (token theft detected, refresh token expired past
+    the family lifetime, etc.). Without intervention every subsequent
+    ``mngr observe`` poll re-tries the same dead session and the whole
+    discovery stream errors out, blocking the rest of the user's
+    accounts. ``__call__`` walks ``session_store`` to map the offending
+    provider name back to an email, flips ``is_enabled = false`` on the
+    block in settings.toml, and bounces the plugin's observe child so the
+    change takes effect within the same minds session. Re-enabling
+    happens only on an explicit signin
+    (``set_imbue_cloud_provider_for_account(..., force_enable=True)``).
+
+    The bounce is dispatched onto a daemon thread because ``__call__``
+    runs on ``EnvelopeStreamConsumer``'s envelope-stream reader thread --
+    sending ``SIGHUP`` is itself non-blocking, but keeping the off-thread
+    dispatch matches the prior ``MngrStreamManager.restart_observe()``
+    behaviour and isolates any future expansion of the bounce path from
+    the reader thread.
+    """
+
+    consumer: EnvelopeStreamConsumer = Field(
+        frozen=True, description="Envelope consumer to bounce observe on after disable"
+    )
+    session_store: MultiAccountSessionStore = Field(
+        frozen=True, description="Session mirror used to map provider name to account email"
+    )
+
+    def __call__(self, provider_name: str, error_type: str, error_message: str) -> None:
+        if error_type != _AUTH_ERROR_TYPE:
+            return
+        offending_email: str | None = None
+        for account in self.session_store.list_accounts():
+            try:
+                if imbue_cloud_provider_name_for_account(str(account.email)) == provider_name:
+                    offending_email = str(account.email)
+                    break
+            except ValueError:
+                continue
+        if offending_email is None:
+            logger.warning(
+                "Auth error from provider {} but no matching minds session found; skipping auto-disable",
+                provider_name,
+            )
+            return
+        if disable_imbue_cloud_provider_for_account(offending_email):
+            logger.warning(
+                "Auto-disabled imbue_cloud provider for {} after auth error: {}",
+                offending_email,
+                error_message,
+            )
+            threading.Thread(
+                target=self.consumer.bounce_observe,
+                name=f"bounce-observe-after-disable-{provider_name}",
+                daemon=True,
+            ).start()
