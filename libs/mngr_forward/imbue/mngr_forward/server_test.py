@@ -22,6 +22,7 @@ from imbue.mngr_forward.envelope import EnvelopeWriter
 from imbue.mngr_forward.primitives import MNGR_FORWARD_SESSION_COOKIE_NAME
 from imbue.mngr_forward.primitives import OneTimeCode
 from imbue.mngr_forward.resolver import ForwardResolver
+from imbue.mngr_forward.server import _is_loopback_url
 from imbue.mngr_forward.server import _sanitize_next_url
 from imbue.mngr_forward.server import create_forward_app
 from imbue.mngr_forward.ssh_tunnel import SSHTunnelManager
@@ -340,3 +341,163 @@ def test_subdomain_forward_strips_session_cookie_when_only_session_cookie_presen
         f"Cookie header should be absent when only the session cookie was present, "
         f"got: {captured[0].headers.get('cookie')!r}"
     )
+
+
+def test_is_loopback_url() -> None:
+    """Direct unit coverage of the helper used by both forward handlers."""
+    assert _is_loopback_url("http://localhost:8000")
+    assert _is_loopback_url("http://localhost")
+    assert _is_loopback_url("http://LOCALHOST:8000")
+    assert _is_loopback_url("http://127.0.0.1:8000")
+    assert _is_loopback_url("http://127.7.7.7:1234")
+    assert _is_loopback_url("http://[::1]:8000")
+    assert _is_loopback_url("http://0.0.0.0:8000")
+    assert not _is_loopback_url("http://stub-backend:8000")
+    assert not _is_loopback_url("http://10.0.0.5:8000")
+    assert not _is_loopback_url("http://example.com")
+
+
+@pytest.mark.parametrize(
+    "loopback_url",
+    [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://[::1]:8000",
+    ],
+)
+def test_subdomain_forward_refuses_loopback_fallback_without_tunnel(
+    tmp_path: Path,
+    loopback_url: str,
+) -> None:
+    """Without an SSH tunnel, a loopback registered URL must 502 -- not silently dial host loopback."""
+    auth_store = FileAuthStore(data_directory=tmp_path)
+    resolver = ForwardResolver(strategy=ForwardServiceStrategy(service_name="system_interface"))
+    agent_id = AgentId()
+    resolver.add_known_agent(agent_id)
+    resolver.update_services(agent_id, {"system_interface": loopback_url})
+    tunnel_manager = SSHTunnelManager()
+    envelope_writer = EnvelopeWriter(output=io.StringIO())
+    preauth = "opaque-preauth-cookie-value"
+    app = create_forward_app(
+        auth_store=auth_store,
+        resolver=resolver,
+        tunnel_manager=tunnel_manager,
+        envelope_writer=envelope_writer,
+        listen_host="127.0.0.1",
+        listen_port=18421,
+        preauth_cookie_value=preauth,
+    )
+
+    captured: list[httpx.Request] = []
+
+    async def _capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(_capture), follow_redirects=False)
+
+    with TestClient(app, base_url=f"http://{agent_id}.localhost:18421", follow_redirects=False) as client:
+        app.state.http_client = mock_client
+        response = client.get(
+            "/api/whatever",
+            headers={"cookie": f"{MNGR_FORWARD_SESSION_COOKIE_NAME}={preauth}"},
+        )
+
+    assert response.status_code == 502
+    assert "refusing to dial host loopback" in response.text
+    assert captured == [], "request must NOT be forwarded to anything when loopback fallback is refused"
+
+
+def test_subdomain_forward_allows_loopback_fallback_when_opted_in(tmp_path: Path) -> None:
+    """``allow_host_loopback=True`` (the legacy DEV-mode escape hatch) restores the old fallback path."""
+    auth_store = FileAuthStore(data_directory=tmp_path)
+    resolver = ForwardResolver(strategy=ForwardServiceStrategy(service_name="system_interface"))
+    agent_id = AgentId()
+    resolver.add_known_agent(agent_id)
+    resolver.update_services(agent_id, {"system_interface": "http://127.0.0.1:8000"})
+    tunnel_manager = SSHTunnelManager()
+    envelope_writer = EnvelopeWriter(output=io.StringIO())
+    preauth = "opaque-preauth-cookie-value"
+    app = create_forward_app(
+        auth_store=auth_store,
+        resolver=resolver,
+        tunnel_manager=tunnel_manager,
+        envelope_writer=envelope_writer,
+        listen_host="127.0.0.1",
+        listen_port=18421,
+        preauth_cookie_value=preauth,
+        allow_host_loopback=True,
+    )
+
+    captured: list[httpx.Request] = []
+
+    async def _capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(_capture), follow_redirects=False)
+
+    with TestClient(app, base_url=f"http://{agent_id}.localhost:18421", follow_redirects=False) as client:
+        app.state.http_client = mock_client
+        response = client.get(
+            "/api/whatever",
+            headers={"cookie": f"{MNGR_FORWARD_SESSION_COOKIE_NAME}={preauth}"},
+        )
+
+    assert response.status_code == 200
+    assert len(captured) == 1
+
+
+def test_subdomain_forward_returns_retry_page_on_backend_connect_error(tmp_path: Path) -> None:
+    """When the backend refuses the connection (workspace_server still booting), HTML callers
+    must get the auto-refresh retry page rather than a hard 502."""
+    auth_store = FileAuthStore(data_directory=tmp_path)
+    resolver = ForwardResolver(strategy=ForwardServiceStrategy(service_name="system_interface"))
+    agent_id = AgentId()
+    resolver.add_known_agent(agent_id)
+    # Non-loopback URL so we don't trip the loopback-refusal path; the
+    # retry-page behaviour is independent of that check.
+    resolver.update_services(agent_id, {"system_interface": "http://stub-backend"})
+    tunnel_manager = SSHTunnelManager()
+    envelope_writer = EnvelopeWriter(output=io.StringIO())
+    preauth = "opaque-preauth-cookie-value"
+    app = create_forward_app(
+        auth_store=auth_store,
+        resolver=resolver,
+        tunnel_manager=tunnel_manager,
+        envelope_writer=envelope_writer,
+        listen_host="127.0.0.1",
+        listen_port=18421,
+        preauth_cookie_value=preauth,
+    )
+
+    async def _refuse(request: httpx.Request) -> httpx.Response:
+        del request
+        raise httpx.ConnectError("backend not yet listening")
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(_refuse), follow_redirects=False)
+
+    with TestClient(app, base_url=f"http://{agent_id}.localhost:18421", follow_redirects=False) as client:
+        app.state.http_client = mock_client
+        html_response = client.get(
+            "/",
+            headers={
+                "cookie": f"{MNGR_FORWARD_SESSION_COOKIE_NAME}={preauth}",
+                "accept": "text/html,application/xhtml+xml",
+            },
+        )
+        json_response = client.get(
+            "/api/something",
+            headers={
+                "cookie": f"{MNGR_FORWARD_SESSION_COOKIE_NAME}={preauth}",
+                "accept": "application/json",
+            },
+        )
+
+    # HTML navigations get the auto-refresh retry page so the user lands on
+    # something useful instead of a hard 502.
+    assert html_response.status_code == 503
+    assert "Retrying" in html_response.text
+    assert 'http-equiv="refresh"' in html_response.text
+    # Non-HTML callers get a plain 503 they can interpret programmatically.
+    assert json_response.status_code == 503

@@ -63,6 +63,7 @@ class ForwardCliOptions(CommonCliOptions):
     event_exclude: tuple[str, ...] = ()
     preauth_cookie: str | None = None
     open_browser: bool = False
+    allow_host_loopback: bool = False
 
 
 def _parse_reverse_specs(raw: tuple[str, ...]) -> tuple[ReverseTunnelSpec, ...]:
@@ -146,6 +147,17 @@ def _resolve_plugin_state_dir(mngr_host_dir: Path) -> Path:
     default=False,
     show_default=True,
     help="Open the printed login URL in the system browser.",
+)
+@click.option(
+    "--allow-host-loopback",
+    is_flag=True,
+    default=False,
+    help=(
+        "Permit dialing host loopback (localhost / 127.0.0.0/8 / ::1) when an agent's registered URL "
+        "is loopback and no SSH tunnel exists. Off by default: any agent whose SSH info hasn't been "
+        "published returns a 502 instead of silently serving whatever else is bound to that port on "
+        "the host. Pass this flag only for setups that intentionally run agents directly on the host."
+    ),
 )
 @add_common_options
 @click.pass_context
@@ -235,6 +247,7 @@ def forward(ctx: click.Context, **kwargs: Any) -> None:
         listen_port=listen_port,
         preauth_cookie_value=opts.preauth_cookie,
         on_listening=_on_listening,
+        allow_host_loopback=opts.allow_host_loopback,
     )
 
     try:

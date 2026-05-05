@@ -153,14 +153,6 @@ def run(
         mngr_message_sender=MngrMessageSender(),
     )
     imbue_cloud_cli = ImbueCloudCli(parent_concurrency_group=root_concurrency_group)
-    agent_creator = AgentCreator(
-        paths=paths,
-        server_port=port,
-        latchkey=latchkey,
-        imbue_cloud_cli=imbue_cloud_cli,
-        root_concurrency_group=root_concurrency_group,
-        notification_dispatcher=notification_dispatcher,
-    )
     telegram_orchestrator = TelegramSetupOrchestrator(paths=paths)
     session_store = MultiAccountSessionStore(data_dir=data_directory)
     sharing_request_handler = SharingRequestHandler(session_store=session_store)
@@ -173,15 +165,37 @@ def run(
     # surviving resolver from the plugin's stdout stream.
     mngr_host_dir_str = os.environ.get("MNGR_HOST_DIR")
     mngr_host_dir = Path(mngr_host_dir_str).expanduser() if mngr_host_dir_str else (Path.home() / ".mngr")
+    # ``MINDS_ALLOW_HOST_LOOPBACK=1`` opts into the plugin dialing host loopback
+    # without an SSH tunnel — needed for ``LaunchMode.DEV`` agents which run on
+    # the bare host. Off by default so the safer "refuse loopback fallback"
+    # path applies for everyone else (PR 1482).
+    allow_host_loopback = os.getenv("MINDS_ALLOW_HOST_LOOPBACK") == "1"
     forward_config = ForwardSubprocessConfig(
         port=mngr_forward_port,
         reverse_specs=(f"0:{port}",),
         mngr_host_dir=mngr_host_dir,
+        allow_host_loopback=allow_host_loopback,
     )
     consumer, preauth_cookie = start_mngr_forward(
         config=forward_config,
         resolver=backend_resolver,
         notification_dispatcher=notification_dispatcher,
+    )
+
+    # AgentCreator is constructed *after* ``start_mngr_forward`` so the
+    # readiness probe can use the same preauth cookie the plugin accepts and
+    # Electron pre-sets. Building it earlier would force us to either pre-mint
+    # the cookie out of band or expose a setter on AgentCreator, both of which
+    # are worse than just keeping the construction order linear.
+    agent_creator = AgentCreator(
+        paths=paths,
+        server_port=port,
+        latchkey=latchkey,
+        imbue_cloud_cli=imbue_cloud_cli,
+        root_concurrency_group=root_concurrency_group,
+        notification_dispatcher=notification_dispatcher,
+        mngr_forward_port=mngr_forward_port,
+        mngr_forward_preauth_cookie=preauth_cookie,
     )
 
     # Local-agent ``minds_api_url`` writes (Cloudflare-token re-injection

@@ -14,6 +14,7 @@ stay in minds; the plugin only handles:
 """
 
 import asyncio
+import ipaddress
 import socket as socket_module
 import threading
 from collections.abc import AsyncGenerator
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import Any
 from typing import Final
 from urllib.parse import quote
+from urllib.parse import urlsplit
 
 import httpx
 import paramiko
@@ -65,6 +67,36 @@ _SUBDOMAIN_AUTH_PATH: Final[str] = "/_subdomain_auth"
 _EXCLUDED_RESPONSE_HEADERS: Final[frozenset[str]] = frozenset(
     {"transfer-encoding", "content-encoding", "content-length"}
 )
+
+# WebSocket close-reasons are capped at 123 bytes by RFC 6455. Keep messages
+# short; full diagnostic detail goes to ``logger.warning`` instead.
+_WS_CLOSE_REASON_LOOPBACK_REFUSED: Final[str] = "Loopback fallback refused"
+
+
+def _is_loopback_url(url: str) -> bool:
+    """Return True if the URL's host is the local loopback (`localhost`, `127.0.0.0/8`, `::1`, `0.0.0.0`).
+
+    Used by ``_handle_workspace_forward_*`` to decide whether the proxy is
+    safe to dial without an SSH tunnel: a registered URL pointing at host
+    loopback when no tunnel exists for the agent means the desktop client
+    would silently serve whatever happens to be bound on the host's
+    loopback at that port (a security issue, see PR 1482).
+    """
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    raw_host = parsed.hostname
+    if raw_host is None:
+        return False
+    host = raw_host.lower()
+    if host == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return addr.is_loopback or addr.is_unspecified
 
 
 def _build_jinja_env() -> Environment:
@@ -295,7 +327,7 @@ async def _forward_workspace_http(
         try:
             backend_response = await http_client.send(backend_request, stream=True)
         except httpx.ConnectError:
-            return Response(status_code=502, content="Backend connection refused")
+            return _service_unavailable_response(request)
         except httpx.TimeoutException:
             return Response(status_code=504, content="Backend stream timed out")
 
@@ -322,12 +354,15 @@ async def _forward_workspace_http(
 
     try:
         backend_response = await http_client.request(method=request.method, url=url, headers=headers, content=body)
-    except httpx.ConnectError:
-        return Response(status_code=502, content="Backend connection refused")
+    except (httpx.ConnectError, httpx.RemoteProtocolError):
+        # Workspace-server may not yet be listening, or it may have closed the
+        # connection before sending headers (typical during startup). HTML
+        # navigations get the auto-refreshing retry page so the user lands on
+        # something useful instead of a hard 502; non-HTML callers get a plain
+        # 503 they can interpret programmatically.
+        return _service_unavailable_response(request)
     except httpx.ReadError:
         return Response(status_code=502, content="Backend connection lost")
-    except httpx.RemoteProtocolError:
-        return Response(status_code=502, content="Backend disconnected without response")
     except httpx.TimeoutException:
         return Response(status_code=504, content="Backend timed out")
 
@@ -406,6 +441,7 @@ async def _handle_workspace_forward_http(
     ssh_http_clients_lock: threading.Lock,
     preauth_cookie_value: str | None,
     listen_port: int,
+    allow_host_loopback: bool,
 ) -> Response:
     host_header = request.headers.get("host", "")
     agent_id = _parse_workspace_subdomain(host_header)
@@ -441,6 +477,21 @@ async def _handle_workspace_forward_http(
         logger.warning("SSH tunnel setup failed for {}: {}", agent_id, e)
         return Response(status_code=502, content=f"SSH tunnel failed: {e}")
 
+    if tunnel_client is None and _is_loopback_url(backend_url) and not allow_host_loopback:
+        logger.warning(
+            "Refusing to dial host loopback for agent {}: registered URL {} has no SSH tunnel "
+            "(pass --allow-host-loopback if the agent really runs on the host).",
+            agent_id,
+            backend_url,
+        )
+        return Response(
+            status_code=502,
+            content=(
+                f"workspace server unreachable: no SSH tunnel available for agent {agent_id}; "
+                f"refusing to dial host loopback at {backend_url}"
+            ),
+        )
+
     active_client = tunnel_client or http_client
     return await _forward_workspace_http(request=request, backend_url=backend_url, http_client=active_client)
 
@@ -451,6 +502,7 @@ async def _handle_workspace_forward_websocket(
     resolver: ForwardResolver,
     tunnel_manager: SSHTunnelManager,
     preauth_cookie_value: str | None,
+    allow_host_loopback: bool,
 ) -> None:
     host_header = websocket.headers.get("host", "")
     agent_id = _parse_workspace_subdomain(host_header)
@@ -484,6 +536,19 @@ async def _handle_workspace_forward_websocket(
         logger.debug("SSH tunnel setup failed for WS {}: {}", agent_id, e)
         try:
             await websocket.close(code=1011, reason="SSH tunnel failed")
+        except RuntimeError:
+            pass
+        return
+
+    if tunnel_socket_path is None and _is_loopback_url(backend_url) and not allow_host_loopback:
+        logger.warning(
+            "Refusing WS to host loopback for agent {}: registered URL {} has no SSH tunnel "
+            "(pass --allow-host-loopback if the agent really runs on the host).",
+            agent_id,
+            backend_url,
+        )
+        try:
+            await websocket.close(code=1013, reason=_WS_CLOSE_REASON_LOOPBACK_REFUSED)
         except RuntimeError:
             pass
         return
@@ -675,8 +740,18 @@ def create_forward_app(
     listen_port: int,
     preauth_cookie_value: str | None = None,
     on_listening: Callable[[], None] | None = None,
+    allow_host_loopback: bool = False,
 ) -> FastAPI:
-    """Create the FastAPI app for ``mngr forward``."""
+    """Create the FastAPI app for ``mngr forward``.
+
+    ``allow_host_loopback`` opts the proxy in to dialing host loopback when an
+    agent's registered URL is loopback and no SSH tunnel exists. The default
+    of ``False`` is the safe one: any non-DEV agent whose SSH info hasn't
+    been published gets a 502 instead of silently serving whatever else is
+    bound on the host's loopback at the registered port. Pass ``True`` only
+    for setups that intentionally run agents directly on the host (the
+    legacy ``LaunchMode.DEV`` flow).
+    """
     env = _build_jinja_env()
 
     app = FastAPI(
@@ -690,6 +765,7 @@ def create_forward_app(
     app.state.listen_host = listen_host
     app.state.listen_port = listen_port
     app.state.preauth_cookie_value = preauth_cookie_value
+    app.state.allow_host_loopback = allow_host_loopback
 
     @app.middleware("http")
     async def _subdomain_routing_middleware(request: Request, call_next: Any) -> Response:
@@ -707,6 +783,7 @@ def create_forward_app(
             ssh_http_clients_lock=app.state.ssh_http_clients_lock,
             preauth_cookie_value=preauth_cookie_value,
             listen_port=listen_port,
+            allow_host_loopback=allow_host_loopback,
         )
 
     @app.get("/login")
@@ -762,6 +839,7 @@ def create_forward_app(
             resolver=resolver,
             tunnel_manager=tunnel_manager,
             preauth_cookie_value=preauth_cookie_value,
+            allow_host_loopback=allow_host_loopback,
         )
 
     return app

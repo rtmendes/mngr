@@ -16,6 +16,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from enum import auto
 from pathlib import Path
@@ -24,6 +25,7 @@ from typing import assert_never
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
 
+import httpx
 from loguru import logger
 from pydantic import Field
 from pydantic import PrivateAttr
@@ -56,6 +58,13 @@ from imbue.minds.primitives import GitBranch
 from imbue.minds.primitives import GitUrl
 from imbue.minds.primitives import LaunchMode
 from imbue.mngr.primitives import AgentId
+
+# Inlined to avoid pulling the ``imbue-mngr-forward`` package into minds'
+# import graph -- minds spawns the plugin as a subprocess and otherwise has
+# no Python-level dependency on it. The constant is a stable wire-format
+# contract; if the plugin ever renames its session cookie, both sides update
+# together.
+_MNGR_FORWARD_SESSION_COOKIE_NAME: Final[str] = "mngr_forward_session"
 
 
 def _make_child_cg(name: str, parent: ConcurrencyGroup | None) -> ConcurrencyGroup:
@@ -794,6 +803,40 @@ class AgentCreator(MutableModel):
             "Cloudflare tunnel setup task) to the user as OS notifications."
         ),
     )
+    mngr_forward_port: int = Field(
+        default=0,
+        frozen=True,
+        description=(
+            "Port the ``mngr forward`` plugin is bound to. Used by ``_wait_for_workspace_ready`` to "
+            "probe the freshly-created agent's workspace_server through the plugin's per-subdomain "
+            "endpoint before publishing the redirect URL. The default of 0 disables readiness "
+            "probing -- only appropriate for tests that never exercise the happy-path redirect."
+        ),
+    )
+    mngr_forward_preauth_cookie: str = Field(
+        default="",
+        frozen=True,
+        description=(
+            "Pre-shared ``mngr_forward_session`` cookie value. Sent on readiness probes so the plugin "
+            "treats them as authenticated without requiring the OTP-issued cookie. Empty disables "
+            "readiness probing alongside ``mngr_forward_port=0``."
+        ),
+    )
+    workspace_ready_timeout_seconds: float = Field(
+        default=60.0,
+        frozen=True,
+        description="Maximum time to wait for the new agent's workspace_server to return HTTP 200.",
+    )
+    workspace_ready_poll_interval_seconds: float = Field(
+        default=0.5,
+        frozen=True,
+        description="Sleep between probe attempts when the workspace_server is not yet ready.",
+    )
+    workspace_ready_probe_timeout_seconds: float = Field(
+        default=2.0,
+        frozen=True,
+        description="Per-request timeout for the readiness probe HTTP GET.",
+    )
 
     # In-flight creation state is keyed by ``str(CreationId)`` because the
     # canonical ``AgentId`` doesn't exist until ``mngr create`` returns.
@@ -1281,7 +1324,25 @@ class AgentCreator(MutableModel):
 
                 log_queue.put("[minds] Agent created successfully.")
 
-                redirect_url = "/goto/{}/".format(canonical_id)
+                # Wait for the agent's workspace_server to actually answer 200
+                # through the plugin before publishing the redirect. Without
+                # this poll, the user gets dropped on a hard error page (404
+                # /503) for the few seconds between ``mngr create`` returning
+                # and the workspace_server inside the agent finishing
+                # startup. The probe is best-effort: if it times out, we
+                # publish anyway so the user at least lands on the retry
+                # page rather than spinning forever (PR 1471 part 1).
+                self._wait_for_workspace_ready(canonical_id, log_queue)
+
+                # The redirect URL is *absolute* and points at the plugin's
+                # bare origin. ``creating.js`` does
+                # ``window.location.href = data.redirect_url`` directly; a
+                # relative ``/goto/...`` would navigate to the minds origin
+                # (port :8420) where ``/goto/`` is unrouted -- the user
+                # would land on FastAPI's default ``{"detail":"Not Found"}``
+                # response instead of being bridged into the agent
+                # subdomain. The plugin owns ``/goto/<agent>/``.
+                redirect_url = self._build_redirect_url(canonical_id)
 
                 # Publish the canonical id + DONE atomically so the UI sees
                 # both at once. ``on_created`` runs after publication so any
@@ -1309,6 +1370,78 @@ class AgentCreator(MutableModel):
                 self.latchkey.discard_unbound_gateway(creation_id)
         finally:
             log_queue.put(LOG_SENTINEL)
+
+    def _build_redirect_url(self, agent_id: AgentId) -> str:
+        """Build the absolute URL the UI should navigate to after creation.
+
+        Always points at the plugin's ``/goto/<agent>/`` route, never minds'
+        bare origin -- minds doesn't serve ``/goto/`` and would 404. When
+        ``mngr_forward_port`` isn't configured (test fixtures, etc.), falls
+        back to the relative form so legacy callers that don't set the field
+        keep working.
+        """
+        if self.mngr_forward_port == 0:
+            return f"/goto/{agent_id}/"
+        return f"http://localhost:{self.mngr_forward_port}/goto/{agent_id}/"
+
+    def _wait_for_workspace_ready(self, agent_id: AgentId, log_queue: queue.Queue[str]) -> None:
+        """Poll the agent's workspace_server through the plugin until it responds 200.
+
+        Probes ``http://<agent_id>.localhost:<plugin_port>/`` with the preauth
+        cookie set, treating any 200 as ready. Other status codes (typically
+        503 from the plugin's auto-refresh page when the workspace_server
+        isn't yet listening, or 502 when SSH info hasn't propagated) are
+        treated as not-yet-ready and re-polled until the timeout elapses.
+
+        Best-effort: if probing is unconfigured (``mngr_forward_port=0`` or
+        empty preauth, e.g. tests that bypass the plugin) we return immediately.
+        On timeout we log + emit to the log queue and let the caller publish
+        the redirect anyway -- the user lands on the plugin's auto-refresh
+        retry page, which is better than spinning forever in the creation UI.
+        """
+        if self.mngr_forward_port == 0 or not self.mngr_forward_preauth_cookie:
+            logger.debug("Workspace readiness probe disabled (port=0 or empty preauth); skipping")
+            return
+
+        probe_url = f"http://{agent_id}.localhost:{self.mngr_forward_port}/"
+        deadline = time.monotonic() + self.workspace_ready_timeout_seconds
+        log_queue.put("[minds] Waiting for workspace server to be ready...")
+        last_status: int | None = None
+        last_error: str | None = None
+        attempt = 0
+        with httpx.Client(
+            timeout=self.workspace_ready_probe_timeout_seconds,
+            follow_redirects=False,
+            cookies={_MNGR_FORWARD_SESSION_COOKIE_NAME: self.mngr_forward_preauth_cookie},
+        ) as client:
+            while time.monotonic() < deadline:
+                attempt += 1
+                try:
+                    response = client.get(probe_url)
+                    last_status = response.status_code
+                    if response.status_code == 200:
+                        logger.debug(
+                            "Workspace ready for {} after {} probe(s)",
+                            agent_id,
+                            attempt,
+                        )
+                        log_queue.put("[minds] Workspace server is ready.")
+                        return
+                except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError, httpx.TimeoutException) as e:
+                    last_error = f"{type(e).__name__}: {e}"
+                threading.Event().wait(timeout=self.workspace_ready_poll_interval_seconds)
+        logger.warning(
+            "Workspace readiness probe for {} timed out after {:.0f}s "
+            "(last status={}, last error={}); publishing redirect anyway",
+            agent_id,
+            self.workspace_ready_timeout_seconds,
+            last_status,
+            last_error,
+        )
+        log_queue.put(
+            "[minds] Warning: workspace did not become ready within "
+            f"{self.workspace_ready_timeout_seconds:.0f}s; you may see a retry page on first load."
+        )
 
     def _allocate_latchkey_gateway(
         self,
