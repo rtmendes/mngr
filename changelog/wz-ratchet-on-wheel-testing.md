@@ -1,3 +1,10 @@
-Add the `exclude = ["*_test.py", "test_*.py", "**/conftest.py"]` line under `[tool.hatch.build.targets.wheel]` to all remaining workspace packages that were missing it (18 packages across `apps/` and `libs/`). Also exclude `**/testing.py` from packages that ship a `testing.py` helper (12 packages, including 3 leaking files in `libs/mngr` that the existing `**/utils/testing.py` pattern did not cover). Without these, hatchling includes test code in published wheels.
+Every workspace package's wheel build now excludes test files uniformly via:
 
-Add a meta ratchet (`test_every_project_excludes_tests_from_wheel` in `test_meta_ratchets.py`) that requires both the baseline patterns and a glob-matching exclude for every `testing.py` file in a package's tree.
+```
+[tool.hatch.build.targets.wheel]
+exclude = ["*_test.py", "test_*.py", "**/conftest.py", "**/testing.py"]
+```
+
+Previously, several packages were missing some or all of these patterns, so hatchling shipped `_test.py`, `conftest.py`, and `testing.py` files into the published wheels (e.g. `libs/mngr` was leaking `cli/testing.py`, `api/testing.py`, and `providers/docker/testing.py` because its existing pattern only covered `**/utils/testing.py`).
+
+A new meta ratchet (`test_every_project_excludes_tests_from_wheel`) enforces the four-pattern rule on every project so this cannot regress.

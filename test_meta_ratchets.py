@@ -264,59 +264,45 @@ def test_every_project_has_pypi_readme() -> None:
     assert len(errors) == 0, "Projects with PyPI readme issues:\n" + "\n".join(f"  - {e}" for e in errors)
 
 
-_REQUIRED_WHEEL_EXCLUDE_PATTERNS: tuple[str, ...] = ("*_test.py", "test_*.py", "**/conftest.py")
+_REQUIRED_WHEEL_EXCLUDE_PATTERNS: tuple[str, ...] = (
+    "*_test.py",
+    "test_*.py",
+    "**/conftest.py",
+    "**/testing.py",
+)
 
 
 def test_every_project_excludes_tests_from_wheel() -> None:
-    """Ensure each project's wheel build excludes test files from the published artifact.
+    """Ensure each project's wheel build excludes test code from the published artifact.
 
-    Without this, hatchling bundles every `_test.py`, `conftest.py`, and `testing.py`
-    helper into the wheel, so any consumer that pip-installs the package ships our
+    Without this, hatchling bundles `_test.py`, `conftest.py`, and `testing.py`
+    helpers into the wheel, so any consumer that pip-installs the package ships our
     test code in their `site-packages/`.
 
-    Each project's `[tool.hatch.build.targets.wheel]` must:
-    1. Set `exclude` to literally include `*_test.py`, `test_*.py`, and `**/conftest.py`.
-    2. Cover every `testing.py` file in the package tree with at least one exclude
-       pattern (the canonical form is `**/testing.py`).
+    Each project's `[tool.hatch.build.targets.wheel].exclude` must literally contain all
+    of `*_test.py`, `test_*.py`, `**/conftest.py`, and `**/testing.py`. The patterns are
+    required uniformly even for projects that do not currently have a matching file --
+    that way, adding a new `testing.py` (or similar) tomorrow needs no second PR.
 
     Projects with `only-include` (an explicit whitelist) are exempt.
     """
-    missing_baseline: list[str] = []
-    leaking_testing_helpers: list[str] = []
+    missing: list[str] = []
     for project_dir in _get_all_project_dirs():
         pyproject = tomlkit.parse((project_dir / "pyproject.toml").read_text())
         wheel = pyproject.get("tool", {}).get("hatch", {}).get("build", {}).get("targets", {}).get("wheel", {})
         if "only-include" in wheel:
             continue
         exclude_patterns = [str(x) for x in wheel.get("exclude", [])]
-
         absent = [pat for pat in _REQUIRED_WHEEL_EXCLUDE_PATTERNS if pat not in exclude_patterns]
         if absent:
-            missing_baseline.append(f"{project_dir.name} (missing: {absent})")
+            missing.append(f"{project_dir.name} (missing: {absent})")
 
-        package_root = project_dir / "imbue" / project_dir.name
-        if not package_root.exists():
-            continue
-        for testing_file in package_root.rglob("testing.py"):
-            rel = str(testing_file.relative_to(project_dir))
-            if not any(fnmatch.fnmatch(rel, pat) for pat in exclude_patterns):
-                leaking_testing_helpers.append(f"{project_dir.name}: {rel}")
-
-    errors: list[str] = []
-    if missing_baseline:
-        errors.append(
-            "Missing baseline test exclusions. Add to [tool.hatch.build.targets.wheel]:\n"
-            '    exclude = ["*_test.py", "test_*.py", "**/conftest.py"]\n\n'
-            "Offending projects:\n" + "\n".join(f"  - {m}" for m in missing_baseline)
-        )
-    if leaking_testing_helpers:
-        errors.append(
-            "`testing.py` helper files would ship in the wheel. Add `**/testing.py` to "
-            "[tool.hatch.build.targets.wheel].exclude (or a more specific pattern that "
-            "matches the file).\n\nOffending files:\n" + "\n".join(f"  - {m}" for m in leaking_testing_helpers)
-        )
-
-    assert len(errors) == 0, "Wheel test-exclusion check failed:\n\n" + "\n\n".join(errors)
+    assert len(missing) == 0, (
+        "Projects must exclude test files from their wheel build. Add to "
+        "[tool.hatch.build.targets.wheel]:\n"
+        '    exclude = ["*_test.py", "test_*.py", "**/conftest.py", "**/testing.py"]\n\n'
+        "Offending projects:\n" + "\n".join(f"  - {m}" for m in missing)
+    )
 
 
 def _has_test_files(project_dir: Path) -> bool:
