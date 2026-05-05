@@ -263,6 +263,56 @@ def test_set_service_auth_passes_allowed_idps() -> None:
     assert ctx.fake.access_apps[app_id]["allowed_idps"] == ["google-idp-uuid-123", "otp-idp-uuid-456"]
 
 
+def test_add_service_is_idempotent() -> None:
+    """Calling ``add_service`` twice for the same hostname should succeed without
+    creating a duplicate CNAME or duplicate ingress rule.
+
+    Real Cloudflare returns error 81053 ("DNS record already exists") on the
+    second ``create_cname`` call -- ``FakeCloudflareOps`` mirrors that. Before
+    this fix, the minds "Update sharing" flow re-ran ``add_service`` on every
+    submit and surfaced the connector's 400/81053 error to the user.
+    """
+    ctx = make_fake_forwarding_ctx(allowed_idps=["google-idp"])
+    ctx.create_tunnel("alice", "agent1")
+    ctx.add_service("alice--agent1", "alice", "web", "http://localhost:8080")
+    ctx.add_service("alice--agent1", "alice", "web", "http://localhost:9090")
+    assert len(ctx.fake.dns_records) == 1
+    services = ctx.list_services("alice--agent1", "alice")
+    assert len(services) == 1
+    assert services[0].service_url == "http://localhost:9090"
+
+
+def test_add_service_preserves_customized_service_auth_on_re_add() -> None:
+    """A second ``add_service`` after the user has set a custom service-level
+    auth policy must not reset that policy back to the tunnel default."""
+    ctx = make_fake_forwarding_ctx()
+    ctx.create_tunnel("alice", "agent1")
+    default_policy = AuthPolicy(rules=[{"action": "allow", "include": [{"email": {"email": "owner@x.com"}}]}])
+    ctx.set_tunnel_auth("alice--agent1", default_policy)
+    ctx.add_service("alice--agent1", "alice", "web", "http://localhost:8080")
+
+    custom_policy = AuthPolicy(rules=[{"action": "allow", "include": [{"email": {"email": "guest@y.com"}}]}])
+    ctx.set_service_auth("alice--agent1", "alice", "web", custom_policy)
+
+    ctx.add_service("alice--agent1", "alice", "web", "http://localhost:8080")
+    result = ctx.get_service_auth("alice--agent1", "alice", "web")
+    assert result is not None
+    assert result.rules == custom_policy.rules
+
+
+def test_add_service_rejects_cname_pointing_elsewhere() -> None:
+    """If a CNAME for the hostname exists but points at a different tunnel,
+    ``add_service`` must refuse rather than silently leak traffic."""
+    ctx = make_fake_forwarding_ctx()
+    ctx.create_tunnel("alice", "agent1")
+    hostname = make_hostname("web", "agent1", "alice", "example.com")
+    ctx.fake.dns_records.append(
+        {"id": "stray", "name": hostname, "content": "different-tunnel.cfargotunnel.com", "type": "CNAME"}
+    )
+    with pytest.raises(CloudflareApiError):
+        ctx.add_service("alice--agent1", "alice", "web", "http://localhost:8080")
+
+
 def test_remove_service_deletes_access_app() -> None:
     ctx = make_fake_forwarding_ctx()
     ctx.create_tunnel("alice", "agent1")

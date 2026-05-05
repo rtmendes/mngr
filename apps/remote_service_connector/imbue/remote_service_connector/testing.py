@@ -28,6 +28,7 @@ from supertokens_python.types import RecipeUserId
 from supertokens_python.types import User
 from supertokens_python.types.base import AccountInfoInput
 
+from imbue.remote_service_connector.app import CloudflareApiError
 from imbue.remote_service_connector.app import ForwardingCtx
 
 
@@ -82,6 +83,12 @@ class FakeCloudflareOps:
         self.tunnel_configs[tunnel_id] = config
 
     def create_cname(self, name: str, target: str) -> dict[str, Any]:
+        for existing in self.dns_records:
+            if existing["name"] == name:
+                raise CloudflareApiError(
+                    status_code=400,
+                    errors=[{"code": 81053, "message": "An A, AAAA, or CNAME record with that host already exists."}],
+                )
         record_id = f"record-{self._next_record_id}"
         self._next_record_id += 1
         record = {"id": record_id, "name": name, "content": target, "type": "CNAME"}

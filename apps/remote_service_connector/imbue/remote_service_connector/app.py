@@ -918,9 +918,29 @@ class ForwardingCtx:
         tid = tunnel["id"]
         agent_id = extract_agent_id_prefix(tunnel_name, username)
         hostname = make_hostname(service_name, agent_id, username, self.domain)
-        self.ops.create_cname(hostname, f"{tid}.cfargotunnel.com")
+        cname_target = f"{tid}.cfargotunnel.com"
+        existing_dns = self.ops.list_dns_records(name=hostname)
+        if not existing_dns:
+            self.ops.create_cname(hostname, cname_target)
+        elif existing_dns[0].get("content") != cname_target:
+            raise CloudflareApiError(
+                status_code=409,
+                errors=[
+                    {
+                        "message": (
+                            f"DNS record for {hostname} already exists pointing to "
+                            f"{existing_dns[0].get('content')!r}, not {cname_target!r}"
+                        )
+                    }
+                ],
+            )
+        else:
+            # CNAME already points at this tunnel; idempotent re-add.
+            pass
         config = self.ops.get_tunnel_config(tid)
-        rules = non_catchall_rules(config.get("config", {}).get("ingress", []))
+        rules = [
+            r for r in non_catchall_rules(config.get("config", {}).get("ingress", [])) if r.get("hostname") != hostname
+        ]
         rules.append(
             {
                 "hostname": hostname,
@@ -1018,10 +1038,18 @@ class ForwardingCtx:
             logger.warning("Failed to delete Access Application for %s: %s", hostname, exc)
 
     def _apply_default_access_policy(self, tunnel_name: str, hostname: str) -> None:
-        """Apply the tunnel's default auth policy to a new service, if one is set."""
+        """Apply the tunnel's default auth policy to a new service, if one is set.
+
+        Skipped when an Access Application already exists for the hostname:
+        on a re-add the service may have a customized per-service policy from
+        a prior :meth:`set_service_auth` call, and re-applying the tunnel
+        default would clobber it.
+        """
         try:
             raw = self.ops.kv_get(tunnel_name)
             if raw is None:
+                return
+            if self.ops.get_access_app_by_domain(hostname) is not None:
                 return
             policy = AuthPolicy.model_validate_json(raw)
             access_app = self.ops.create_access_app(hostname, f"cf-fwd-{hostname}", allowed_idps=self.allowed_idps)
