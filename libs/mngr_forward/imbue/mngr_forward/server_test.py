@@ -9,9 +9,11 @@ surfaces using ``starlette.testclient.TestClient``.
 import io
 from pathlib import Path
 
+import httpx
 import pytest
 from starlette.testclient import TestClient
 
+from imbue.mngr.primitives import AgentId
 from imbue.mngr_forward.auth import FileAuthStore
 from imbue.mngr_forward.cookie import create_session_cookie
 from imbue.mngr_forward.cookie import create_subdomain_auth_token
@@ -229,3 +231,112 @@ def test_preauth_cookie_short_circuit(tmp_path: Path) -> None:
     response = client.get("/", cookies={MNGR_FORWARD_SESSION_COOKIE_NAME: "opaque-pre-shared-token"})
     assert response.status_code == 200
     assert "Discovered agents" in response.text
+
+
+def test_subdomain_forward_strips_session_cookie_before_proxying_to_backend(tmp_path: Path) -> None:
+    """The plugin must NEVER forward its own session cookie to the agent's
+    workspace_server.
+
+    The cookie value is the plugin's auth credential -- a backend that sees
+    it could replay it against ``localhost:<plugin_port>`` and reach every
+    other agent's subdomain (cookie auth is not bound per-agent). The
+    forwarder explicitly strips ``mngr_forward_session=...`` from the
+    outbound ``Cookie`` header; this regression test locks that in.
+    """
+    auth_store = FileAuthStore(data_directory=tmp_path)
+    resolver = ForwardResolver(strategy=ForwardServiceStrategy(service_name="system_interface"))
+    agent_id = AgentId()
+    resolver.add_known_agent(agent_id)
+    resolver.update_services(agent_id, {"system_interface": "http://stub-backend"})
+    tunnel_manager = SSHTunnelManager()
+    envelope_writer = EnvelopeWriter(output=io.StringIO())
+    preauth = "opaque-preauth-cookie-value"
+    app = create_forward_app(
+        auth_store=auth_store,
+        resolver=resolver,
+        tunnel_manager=tunnel_manager,
+        envelope_writer=envelope_writer,
+        listen_host="127.0.0.1",
+        listen_port=18421,
+        preauth_cookie_value=preauth,
+    )
+
+    captured: list[httpx.Request] = []
+
+    async def _capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(_capture), follow_redirects=False)
+
+    with TestClient(app, base_url=f"http://{agent_id}.localhost:18421", follow_redirects=False) as client:
+        # Replace the lifespan-created http_client with one whose transport we
+        # control. Local agents (``ssh_info is None``) use ``app.state.http_client``
+        # directly -- no SSH tunnel client to override.
+        app.state.http_client = mock_client
+        response = client.get(
+            "/api/whatever",
+            headers={
+                # Two cookies on the same Cookie header: the plugin session
+                # (must be stripped) and an unrelated one (must pass through).
+                "cookie": f"{MNGR_FORWARD_SESSION_COOKIE_NAME}={preauth}; downstream_pref=keep-me",
+            },
+        )
+
+    assert response.status_code == 200
+    assert len(captured) == 1, f"expected exactly one forwarded request, got {len(captured)}"
+    forwarded_cookie = captured[0].headers.get("cookie", "")
+    assert MNGR_FORWARD_SESSION_COOKIE_NAME not in forwarded_cookie, (
+        f"plugin session cookie leaked to backend in Cookie header: {forwarded_cookie!r}"
+    )
+    assert "downstream_pref=keep-me" in forwarded_cookie, (
+        f"unrelated cookie was unexpectedly stripped: {forwarded_cookie!r}"
+    )
+
+
+def test_subdomain_forward_strips_session_cookie_when_only_session_cookie_present(
+    tmp_path: Path,
+) -> None:
+    """When the plugin's session cookie is the *only* cookie on the request,
+    the outbound request must end up with no Cookie header at all (not an
+    empty-string Cookie that some backends might still parse).
+    """
+    auth_store = FileAuthStore(data_directory=tmp_path)
+    resolver = ForwardResolver(strategy=ForwardServiceStrategy(service_name="system_interface"))
+    agent_id = AgentId()
+    resolver.add_known_agent(agent_id)
+    resolver.update_services(agent_id, {"system_interface": "http://stub-backend"})
+    tunnel_manager = SSHTunnelManager()
+    envelope_writer = EnvelopeWriter(output=io.StringIO())
+    preauth = "opaque-preauth-cookie-value"
+    app = create_forward_app(
+        auth_store=auth_store,
+        resolver=resolver,
+        tunnel_manager=tunnel_manager,
+        envelope_writer=envelope_writer,
+        listen_host="127.0.0.1",
+        listen_port=18421,
+        preauth_cookie_value=preauth,
+    )
+
+    captured: list[httpx.Request] = []
+
+    async def _capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(_capture), follow_redirects=False)
+
+    with TestClient(app, base_url=f"http://{agent_id}.localhost:18421", follow_redirects=False) as client:
+        app.state.http_client = mock_client
+        response = client.get(
+            "/api/whatever",
+            headers={"cookie": f"{MNGR_FORWARD_SESSION_COOKIE_NAME}={preauth}"},
+        )
+
+    assert response.status_code == 200
+    assert len(captured) == 1
+    assert "cookie" not in captured[0].headers, (
+        f"Cookie header should be absent when only the session cookie was present, "
+        f"got: {captured[0].headers.get('cookie')!r}"
+    )
