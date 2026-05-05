@@ -42,7 +42,6 @@ from imbue.minds.desktop_client.agent_creator import AgentCreator
 from imbue.minds.desktop_client.agent_creator import LOG_SENTINEL
 from imbue.minds.desktop_client.agent_creator import resolve_template_version
 from imbue.minds.desktop_client.api_v1 import create_api_v1_router
-from imbue.minds.desktop_client.api_v1 import get_cf_client_with_auth
 from imbue.minds.desktop_client.api_v1 import inject_tunnel_token_into_agent
 from imbue.minds.desktop_client.auth import AuthStoreInterface
 from imbue.minds.desktop_client.backend_resolver import BackendResolverInterface
@@ -66,8 +65,10 @@ from imbue.minds.desktop_client.request_events import parse_request_event
 from imbue.minds.desktop_client.request_handler import RequestEventHandler
 from imbue.minds.desktop_client.request_handler import find_handler_for_event
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
+from imbue.minds.desktop_client.sharing_handler import SharingError
 from imbue.minds.desktop_client.sharing_handler import enable_sharing_via_cloudflare
 from imbue.minds.desktop_client.sharing_handler import parse_emails_form_value
+from imbue.minds.desktop_client.sharing_handler import resolve_account_email_for_workspace
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
 from imbue.minds.desktop_client.ssh_tunnel import parse_url_host_port
@@ -85,7 +86,6 @@ from imbue.minds.desktop_client.templates import render_sidebar_page
 from imbue.minds.desktop_client.templates import render_welcome_page
 from imbue.minds.desktop_client.templates import render_workspace_settings
 from imbue.minds.desktop_client.templates import workspace_accent
-from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token as _save_tunnel_token
 from imbue.minds.primitives import CreationId
 from imbue.minds.primitives import LaunchMode
 from imbue.minds.primitives import OneTimeCode
@@ -795,7 +795,6 @@ def _run_tunnel_setup(
     agent_id: AgentId,
     imbue_cloud_cli: ImbueCloudCli,
     account_email: str,
-    paths: WorkspacePaths,
     notification_dispatcher: NotificationDispatcher,
     agent_display_name: str,
 ) -> None:
@@ -804,6 +803,11 @@ def _run_tunnel_setup(
     Runs on a detached thread scheduled by ``_OnCreatedCallbackFactory`` on
     the desktop client's root ``ConcurrencyGroup``. Failures are logged via
     loguru and surfaced to the user via ``notification_dispatcher``.
+
+    The plugin owns all tunnel state (token, services, auth policy);
+    minds keeps no local cache. ``create_tunnel`` is idempotent on the
+    connector side, so re-injecting on every agent (re)creation just
+    delivers the existing token rather than rotating.
     """
     try:
         info = imbue_cloud_cli.create_tunnel(account=account_email, agent_id=str(agent_id))
@@ -818,9 +822,7 @@ def _run_tunnel_setup(
     if info.token is None:
         logger.warning("Tunnel created for {} but no token returned", agent_id)
         return
-    tunnel_token = info.token.get_secret_value()
-    _save_tunnel_token(paths.data_dir, agent_id, tunnel_token)
-    inject_tunnel_token_into_agent(agent_id, tunnel_token)
+    inject_tunnel_token_into_agent(agent_id, info.token.get_secret_value())
     logger.debug("Injected tunnel token into agent {}", agent_id)
 
 
@@ -870,7 +872,6 @@ class _OnCreatedCallbackFactory(MutableModel):
         frozen=True,
         description="CLI wrapper for `mngr imbue_cloud tunnels create`.",
     )
-    paths: WorkspacePaths = Field(frozen=True, description="Workspace paths for tunnel token storage")
     root_concurrency_group: ConcurrencyGroup = Field(
         frozen=True,
         description="Root group on which the detached tunnel task is scheduled.",
@@ -910,7 +911,6 @@ class _OnCreatedCallbackFactory(MutableModel):
                 "agent_id": agent_id,
                 "imbue_cloud_cli": self.imbue_cloud_cli,
                 "account_email": str(account.email),
-                "paths": self.paths,
                 "notification_dispatcher": self.notification_dispatcher,
                 "agent_display_name": agent_display_name,
             },
@@ -935,18 +935,12 @@ def _build_on_created_callback(
 
     session_store: MultiAccountSessionStore | None = request.app.state.session_store
     imbue_cloud_cli: ImbueCloudCli | None = request.app.state.imbue_cloud_cli
-    try:
-        paths: WorkspacePaths | None = request.app.state.api_v1_paths
-    except AttributeError:
-        paths = None
-
     root_concurrency_group: ConcurrencyGroup | None = request.app.state.root_concurrency_group
     notification_dispatcher: NotificationDispatcher | None = request.app.state.notification_dispatcher
 
     if (
         session_store is None
         or imbue_cloud_cli is None
-        or paths is None
         or root_concurrency_group is None
         or notification_dispatcher is None
     ):
@@ -955,7 +949,6 @@ def _build_on_created_callback(
     return _OnCreatedCallbackFactory(
         session_store=session_store,
         imbue_cloud_cli=imbue_cloud_cli,
-        paths=paths,
         root_concurrency_group=root_concurrency_group,
         notification_dispatcher=notification_dispatcher,
         account_id=account_id,
@@ -1663,19 +1656,22 @@ async def _handle_workspace_disassociate(
     request: Request,
     auth_store: AuthStoreDep,
 ) -> Response:
-    """Disassociate a workspace from its account and tear down tunnels."""
+    """Disassociate a workspace from its account and tear down its tunnel."""
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content="Not authenticated")
     session_store: MultiAccountSessionStore | None = request.app.state.session_store
+    cli: ImbueCloudCli | None = request.app.state.imbue_cloud_cli
     if session_store:
         account = session_store.get_account_for_workspace(agent_id)
         if account:
-            # Tear down Cloudflare tunnel
-            cf_client, _ = get_cf_client_with_auth(request, agent_id=AgentId(agent_id))
-            if cf_client is not None:
+            # Tear down the Cloudflare tunnel for this agent (if any). The
+            # plugin owns tunnel state -- minds keeps no local cache.
+            if cli is not None:
                 try:
-                    cf_client.delete_tunnel(AgentId(agent_id))
-                except (httpx.HTTPError, ValueError, OSError) as e:
+                    tunnel = cli.find_tunnel_for_agent(account=str(account.email), agent_id=agent_id)
+                    if tunnel is not None:
+                        cli.delete_tunnel(account=str(account.email), tunnel_name=tunnel.tunnel_name)
+                except ImbueCloudCliError as e:
                     logger.warning("Failed to delete tunnel during disassociation: {}", e)
             session_store.disassociate_workspace(str(account.user_id), agent_id)
     return Response(status_code=303, headers={"Location": f"/workspace/{agent_id}/settings"})
@@ -1879,19 +1875,31 @@ async def _handle_sharing_enable(
     :class:`SharingRequestHandler`); this route only services the
     workspace-settings sharing editor. Both paths funnel through
     :func:`enable_sharing_via_cloudflare` so they cannot drift.
+
+    On a soft failure (no signed-in account, plugin error, etc.) the
+    handler returns 502 with a JSON ``{"error": "..."}`` body. The
+    sharing editor JS surfaces that inline instead of silently
+    redirecting to a now-empty status page.
     """
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content="Not authenticated")
 
     form = await request.form()
     emails = parse_emails_form_value(str(form.get("emails", "[]")))
-    enable_sharing_via_cloudflare(
-        request=request,
-        agent_id=AgentId(agent_id),
-        service_name=ServiceName(service_name),
-        emails=emails,
-        backend_resolver=backend_resolver,
-    )
+    try:
+        enable_sharing_via_cloudflare(
+            request=request,
+            agent_id=AgentId(agent_id),
+            service_name=ServiceName(service_name),
+            emails=emails,
+            backend_resolver=backend_resolver,
+        )
+    except SharingError as exc:
+        return Response(
+            status_code=502,
+            content=json.dumps({"error": str(exc)}),
+            media_type="application/json",
+        )
     return Response(status_code=303, headers={"Location": f"/sharing/{agent_id}/{service_name}"})
 
 
@@ -1901,14 +1909,54 @@ async def _handle_sharing_disable(
     request: Request,
     auth_store: AuthStoreDep,
 ) -> Response:
-    """Disable sharing for a server."""
+    """Disable sharing for a service via the imbue_cloud plugin.
+
+    Removes the service from its tunnel (DNS + Access app teardown
+    happen connector-side). The tunnel itself stays around so re-
+    enabling later doesn't re-issue a fresh token.
+    """
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content="Not authenticated")
 
-    cf_client, _ = get_cf_client_with_auth(request, agent_id=AgentId(agent_id))
-    if cf_client is not None:
-        cf_client.remove_service(AgentId(agent_id), service_name)
+    cli: ImbueCloudCli | None = request.app.state.imbue_cloud_cli
+    session_store: MultiAccountSessionStore | None = request.app.state.session_store
+    if cli is None:
+        return Response(
+            status_code=502,
+            content=json.dumps({"error": "imbue_cloud CLI is not configured."}),
+            media_type="application/json",
+        )
+    parsed_id = AgentId(agent_id)
+    try:
+        account_email = resolve_account_email_for_workspace(session_store, parsed_id)
+    except SharingError as exc:
+        return Response(
+            status_code=502,
+            content=json.dumps({"error": str(exc)}),
+            media_type="application/json",
+        )
 
+    try:
+        tunnel = cli.find_tunnel_for_agent(account=account_email, agent_id=str(parsed_id))
+    except ImbueCloudCliError as exc:
+        return Response(
+            status_code=502,
+            content=json.dumps({"error": f"Failed to look up the tunnel: {exc}"}),
+            media_type="application/json",
+        )
+    if tunnel is None:
+        # No tunnel = nothing to disable. Treat as success so the JS
+        # redirect lands on the (already-disabled) status page.
+        return Response(status_code=303, headers={"Location": f"/sharing/{agent_id}/{service_name}"})
+
+    try:
+        cli.remove_service(account=account_email, tunnel_name=tunnel.tunnel_name, service_name=service_name)
+    except ImbueCloudCliError as exc:
+        return Response(
+            status_code=502,
+            content=json.dumps({"error": f"Failed to disable sharing: {exc}"}),
+            media_type="application/json",
+        )
     return Response(status_code=303, headers={"Location": f"/sharing/{agent_id}/{service_name}"})
 
 
@@ -1918,44 +1966,89 @@ def _handle_sharing_status_api(
     request: Request,
     auth_store: AuthStoreDep,
 ) -> Response:
-    """JSON API to get current sharing status for the editor JS."""
+    """JSON API to get current sharing status for the editor JS.
+
+    Reads tunnel + service + per-service auth from the imbue_cloud
+    plugin (the connector is the source of truth -- minds keeps no
+    local copy). The JS contract is::
+
+        {"enabled": bool, "url": str | null, "policy": {"emails": [str, ...], ...}}
+
+    ``policy`` is the AuthPolicy shape the plugin emits (not the
+    Cloudflare-native nested ``auth_rules`` shape the deleted
+    ``CloudflareClient`` returned). Default policy when sharing isn't
+    yet enabled is the workspace's associated account email.
+    """
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content='{"error":"Not authenticated"}', media_type="application/json")
 
-    cf_client, error_response = get_cf_client_with_auth(request, agent_id=AgentId(agent_id))
-    if error_response is not None:
+    cli: ImbueCloudCli | None = request.app.state.imbue_cloud_cli
+    session_store: MultiAccountSessionStore | None = request.app.state.session_store
+    if cli is None:
         return Response(
-            content=json.dumps({"enabled": False, "url": None, "auth_rules": []}),
-            media_type="application/json",
-        )
-    if cf_client is None:
-        return Response(
-            content=json.dumps({"enabled": False, "url": None, "auth_rules": []}),
+            content=json.dumps({"enabled": False, "url": None, "policy": {"emails": []}}),
             media_type="application/json",
         )
 
     parsed_id = AgentId(agent_id)
-    services = cf_client.list_services(parsed_id)
-    if services is None:
-        default_rules = cf_client.get_tunnel_auth(parsed_id) or []
+    try:
+        account_email = resolve_account_email_for_workspace(session_store, parsed_id)
+    except SharingError as exc:
+        # No associated account = no plugin call available; surface
+        # an empty default rather than 502 since the page itself
+        # already shows the "associate an account" affordance for
+        # this state.
+        logger.debug("Sharing status: {}", exc)
         return Response(
-            content=json.dumps({"enabled": False, "url": None, "auth_rules": default_rules}),
+            content=json.dumps({"enabled": False, "url": None, "policy": {"emails": []}}),
             media_type="application/json",
         )
 
-    hostname = services.get(service_name)
-    if hostname:
-        auth_rules = cf_client.get_service_auth(parsed_id, service_name)
-        if auth_rules is None:
-            auth_rules = cf_client.get_tunnel_auth(parsed_id) or []
+    default_policy = {"emails": [account_email]}
+    try:
+        tunnel = cli.find_tunnel_for_agent(account=account_email, agent_id=str(parsed_id))
+    except ImbueCloudCliError as exc:
+        logger.warning("Failed to list tunnels for {}: {}", parsed_id, exc)
         return Response(
-            content=json.dumps({"enabled": True, "url": f"https://{hostname}", "auth_rules": auth_rules}),
+            content=json.dumps({"enabled": False, "url": None, "policy": default_policy}),
+            media_type="application/json",
+        )
+    if tunnel is None or service_name not in tunnel.services:
+        return Response(
+            content=json.dumps({"enabled": False, "url": None, "policy": default_policy}),
             media_type="application/json",
         )
 
-    default_rules = cf_client.get_tunnel_auth(parsed_id) or []
+    try:
+        service_entries = cli.list_services(account_email, tunnel.tunnel_name)
+    except ImbueCloudCliError as exc:
+        logger.warning("Failed to list services for tunnel {}: {}", tunnel.tunnel_name, exc)
+        service_entries = []
+    hostname = next(
+        (entry.get("hostname") for entry in service_entries if entry.get("service_name") == service_name),
+        None,
+    )
+
+    try:
+        policy = cli.get_service_auth(account_email, tunnel.tunnel_name, service_name)
+    except ImbueCloudCliError:
+        try:
+            policy = cli.get_tunnel_auth(account_email, tunnel.tunnel_name)
+        except ImbueCloudCliError:
+            policy = default_policy
+    if not policy.get("emails") and not policy.get("email_domains"):
+        # Empty policy means "use tunnel default"; surface the owner's
+        # email so the editor doesn't render an empty ACL.
+        policy = default_policy
+
     return Response(
-        content=json.dumps({"enabled": False, "url": None, "auth_rules": default_rules}),
+        content=json.dumps(
+            {
+                "enabled": True,
+                "url": f"https://{hostname}" if hostname else None,
+                "policy": policy,
+            }
+        ),
         media_type="application/json",
     )
 

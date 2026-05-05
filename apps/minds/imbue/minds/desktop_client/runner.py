@@ -22,7 +22,6 @@ from imbue.minds.bootstrap import disable_imbue_cloud_provider_for_account
 from imbue.minds.bootstrap import imbue_cloud_provider_name_for_account
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.agent_creator import AgentCreator
-from imbue.minds.desktop_client.api_v1 import inject_tunnel_token_into_agent
 from imbue.minds.desktop_client.app import create_desktop_client
 from imbue.minds.desktop_client.auth import FileAuthStore
 from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
@@ -47,7 +46,6 @@ from imbue.minds.desktop_client.sharing_handler import SharingRequestHandler
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
-from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import OutputFormat
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
@@ -203,16 +201,6 @@ class AgentDiscoveryHandler(MutableModel):
             logger.debug("Wrote API URL {} for remote agent {}", api_url, agent_id)
         except (SSHTunnelError, OSError, paramiko.SSHException) as e:
             logger.warning("Failed to set up reverse tunnel for agent {}: {}", agent_id, e)
-
-        # Inject stored tunnel token if one exists for this agent
-        self._inject_stored_tunnel_token(agent_id)
-
-    def _inject_stored_tunnel_token(self, agent_id: AgentId) -> None:
-        """If a tunnel token is stored for this agent, inject it via mngr exec."""
-        token = load_tunnel_token(self.data_dir, agent_id)
-        if token is None:
-            return
-        inject_tunnel_token_into_agent(agent_id, token)
 
     def _handle_local_agent(self, agent_id: AgentId) -> None:
         local_state_dir = self.mngr_host_dir / "agents" / str(agent_id)

@@ -26,8 +26,6 @@ from imbue.minds.desktop_client.deps import BackendResolverDep
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
-from imbue.minds.desktop_client.tunnel_token_store import load_tunnel_token
-from imbue.minds.desktop_client.tunnel_token_store import save_tunnel_token
 from imbue.minds.primitives import ServiceName
 from imbue.minds.telegram.credential_store import load_agent_bot_credentials
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
@@ -247,14 +245,10 @@ def _handle_cloudflare_enable(
     # Ensure the tunnel exists and we have a token for it.
     # create_tunnel is idempotent -- if the tunnel already exists, it returns
     # the existing token. We always need the token to inject into the agent.
-    paths: WorkspacePaths = request.app.state.api_v1_paths
-    stored_token = load_tunnel_token(paths.data_dir, parsed_id)
-    if stored_token is None:
-        token, message = cf_client.create_tunnel(parsed_id)
-        if token is None:
-            return _json_error(f"Failed to create Cloudflare tunnel: {message}", 502)
-        save_tunnel_token(paths.data_dir, parsed_id, token)
-        inject_tunnel_token_into_agent(parsed_id, token)
+    token, message = cf_client.create_tunnel(parsed_id)
+    if token is None:
+        return _json_error(f"Failed to create Cloudflare tunnel: {message}", 502)
+    inject_tunnel_token_into_agent(parsed_id, token)
 
     is_success = cf_client.add_service(parsed_id, parsed_service, service_url)
     if not is_success:

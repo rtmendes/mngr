@@ -33,6 +33,13 @@ _DEFAULT_TIMEOUT_SECONDS = 60.0
 _LEASE_TIMEOUT_SECONDS = 300.0
 _KEY_OP_TIMEOUT_SECONDS = 90.0
 
+# Mirrors ``apps/remote_service_connector/.../app.py`` -- the connector uses
+# the first 16 hex chars of the agent UUID (after stripping ``"agent-"``) as
+# the trailing slug of every tunnel name. Used by ``find_tunnel_for_agent``
+# to filter ``list_tunnels`` output without having to know the per-account
+# username prefix.
+_AGENT_ID_PREFIX_LENGTH = 16
+
 
 class ImbueCloudCliError(MindError):
     """Raised when a `mngr imbue_cloud ...` invocation returns a non-zero exit code.
@@ -394,6 +401,68 @@ class ImbueCloudCli(MutableModel):
             cg_name="imbue-cloud-tunnel-auth-get",
         )
         return self._expect_success(result, "tunnels auth get")
+
+    def set_service_auth(
+        self,
+        account: str,
+        tunnel_name: str,
+        service_name: str,
+        policy: Mapping[str, Any],
+    ) -> None:
+        """Set the per-service auth policy on a tunnel.
+
+        Wraps ``mngr imbue_cloud tunnels auth set <tunnel_name> <policy_json> --service <name>``.
+        Pass ``policy`` as ``{"emails": [...], "email_domains": [...], "require_idp": ...}``;
+        empty fields are accepted as defaults by the plugin.
+        """
+        result = self._run(
+            [
+                "tunnels",
+                "auth",
+                "set",
+                tunnel_name,
+                _json.dumps(dict(policy)),
+                "--service",
+                service_name,
+                "--account",
+                account,
+            ],
+            cg_name="imbue-cloud-service-auth-set",
+        )
+        self._expect_success(result, "tunnels auth set --service")
+
+    def get_service_auth(self, account: str, tunnel_name: str, service_name: str) -> dict[str, Any]:
+        """Read the per-service auth policy from a tunnel.
+
+        Wraps ``mngr imbue_cloud tunnels auth get <tunnel_name> --service <name>``.
+        Returns the same ``AuthPolicy`` JSON shape as :meth:`get_tunnel_auth`.
+        """
+        result = self._run(
+            ["tunnels", "auth", "get", tunnel_name, "--service", service_name, "--account", account],
+            cg_name="imbue-cloud-service-auth-get",
+        )
+        return self._expect_success(result, "tunnels auth get --service")
+
+    def find_tunnel_for_agent(self, account: str, agent_id: str) -> TunnelInfo | None:
+        """Return the tunnel registered for ``agent_id`` under ``account``, or None.
+
+        Uses ``list_tunnels`` and matches on the trailing-slug convention the
+        connector uses for tunnel names: ``<short_user>--<short_agent>``,
+        where ``short_agent`` is the first 16 hex chars of the agent UUID
+        (``"agent-"`` prefix stripped). Stable contract -- changing the
+        truncation length on the connector side requires updating
+        ``_AGENT_ID_PREFIX_LENGTH`` here in lockstep.
+
+        Returning ``None`` lets the sharing-status route distinguish
+        "tunnel doesn't exist yet" (the user hasn't enabled sharing) from
+        "tunnel exists but no service is registered for this name".
+        """
+        short_agent = agent_id.removeprefix("agent-")[:_AGENT_ID_PREFIX_LENGTH]
+        suffix = f"--{short_agent}"
+        for tunnel in self.list_tunnels(account):
+            if tunnel.tunnel_name.endswith(suffix):
+                return tunnel
+        return None
 
 
 def _parse_stdout_json(stdout: str, command_repr: str) -> Any:
