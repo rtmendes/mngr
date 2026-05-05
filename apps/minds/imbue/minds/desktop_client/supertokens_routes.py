@@ -22,6 +22,7 @@ from loguru import logger
 from pydantic import ConfigDict
 from pydantic import Field
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.minds.bootstrap import set_imbue_cloud_provider_for_account
@@ -527,14 +528,24 @@ def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
     subprocess opens the system browser, captures the callback, and writes
     the session itself; this route then mirrors the account identity into
     ``MultiAccountSessionStore`` once the subprocess finishes.
+
+    The thread is started via ``root_concurrency_group.start_new_thread``
+    rather than a bare ``threading.Thread`` so that any unhandled
+    exception inside ``_run_oauth_subprocess`` (e.g. a slow
+    ``restart_observe`` raising ``TimeoutExpired``) is logged via the CG's
+    ``ObservableThread`` instead of disappearing silently and stalling
+    the user on a "Waiting..." page.
     """
     imbue_cloud_cli: ImbueCloudCli | None = request.app.state.imbue_cloud_cli
     session_store = _get_session_store(request)
     output_format = _get_output_format(request)
     minds_config: MindsConfig | None = request.app.state.minds_config
     stream_manager: MngrStreamManager | None = request.app.state.stream_manager
+    root_cg: ConcurrencyGroup | None = request.app.state.root_concurrency_group
     if imbue_cloud_cli is None:
         return _json_response({"status": "ERROR", "error": "imbue_cloud_cli is not configured"}, 503)
+    if root_cg is None:
+        return _json_response({"status": "ERROR", "error": "root_concurrency_group is not configured"}, 503)
     if provider_id.lower() not in ("google", "github"):
         return _json_response({"status": "ERROR", "error": f"Unknown provider: {provider_id}"}, 404)
 
@@ -543,7 +554,7 @@ def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
         flow_id,
         _OAuthFlowStatus(state="running", deadline=time.monotonic() + _OAUTH_FLOW_TTL_SECONDS),
     )
-    thread = threading.Thread(
+    root_cg.start_new_thread(
         target=_run_oauth_subprocess,
         kwargs={
             "provider_id": provider_id.lower(),
@@ -554,10 +565,9 @@ def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
             "output_format": output_format,
             "stream_manager": stream_manager,
         },
-        daemon=True,
         name=f"imbue-cloud-oauth-{provider_id}",
+        is_checked=False,
     )
-    thread.start()
     return _json_response(
         {
             "status": "OK",

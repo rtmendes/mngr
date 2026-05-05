@@ -11,9 +11,13 @@ import paramiko
 import uvicorn
 from loguru import logger
 from pydantic import Field
+from pydantic import PrivateAttr
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyExceptionGroup
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
+from imbue.concurrency_group.concurrency_group import InvalidConcurrencyGroupStateError
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.imbue_common.mutable_model import MutableModel
 from imbue.minds.bootstrap import disable_imbue_cloud_provider_for_account
 from imbue.minds.bootstrap import imbue_cloud_provider_name_for_account
 from imbue.minds.config.data_types import WorkspacePaths
@@ -82,11 +86,31 @@ _LOCAL_PROVIDER_NAME: Final[str] = "local"
 _REMOTE_HOST_DIR: Final[str] = "/mngr"
 
 
-class AgentDiscoveryHandler(FrozenModel):
-    """Handles agent discovery events by setting up reverse tunnels and writing URL files."""
+class AgentDiscoveryHandler(MutableModel):
+    """Handles agent discovery events by setting up reverse tunnels and writing URL files.
+
+    Tunnel setup is dispatched onto worker threads via ``concurrency_group``
+    so the ``MngrStreamManager`` discovery-stream reader thread is never
+    blocked on slow SSH I/O. A blocked reader thread can't observe
+    ``shutdown_event``, which delays subsequent ``restart_observe`` /
+    ``stop`` cycles by however long the in-flight tunnel setup takes
+    (multi-second SSH connects in practice).
+
+    Concurrent fires for the same agent are coalesced: while a setup is
+    in flight, additional ``__call__`` invocations for that agent_id are
+    dropped. The underlying ``SSHTunnelManager.setup_reverse_tunnel`` is
+    already idempotent on ``(host:port, local_port)`` -- this in-handler
+    coalescing just avoids spinning up a redundant worker thread that
+    would race the lock and immediately find the existing tunnel.
+
+    Local-agent handling stays synchronous on the discovery thread: it's
+    a single file write with no network I/O, so off-thread dispatch
+    would only add latency.
+    """
 
     tunnel_manager: SSHTunnelManager = Field(description="SSH tunnel manager for reverse tunnels")
     server_port: int = Field(description="Local server port to forward")
+    concurrency_group: ConcurrencyGroup = Field(description="CG used to dispatch off-thread tunnel setups")
     mngr_host_dir: Path = Field(
         default_factory=_resolve_default_mngr_host_dir,
         description=(
@@ -99,6 +123,9 @@ class AgentDiscoveryHandler(FrozenModel):
         default_factory=lambda: _resolve_default_mngr_host_dir().parent / ".minds",
         description="Minds data directory for looking up stored tunnel tokens",
     )
+
+    _pending_remote_agents: set[str] = PrivateAttr(default_factory=set)
+    _pending_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     def __call__(self, agent_id: AgentId, ssh_info: RemoteSSHInfo | None, provider_name: str) -> None:
         # Dispatch on provider name, not on whether ssh_info has arrived yet.
@@ -122,12 +149,41 @@ class AgentDiscoveryHandler(FrozenModel):
                 provider_name,
             )
             return
-        self._handle_remote_agent(agent_id, ssh_info)
+        agent_id_str = str(agent_id)
+        with self._pending_lock:
+            if agent_id_str in self._pending_remote_agents:
+                logger.debug("Tunnel setup already in flight for agent {}; skipping duplicate fire", agent_id)
+                return
+            self._pending_remote_agents.add(agent_id_str)
+        try:
+            self.concurrency_group.start_new_thread(
+                target=self._run_remote_setup,
+                args=(agent_id, ssh_info),
+                name=f"agent-discovery-setup-{agent_id_str}",
+                is_checked=False,
+            )
+        except (ConcurrencyExceptionGroup, InvalidConcurrencyGroupStateError, RuntimeError):
+            # Roll back the pending flag so a later fire (after the CG
+            # is healthy again) isn't permanently coalesced away.
+            with self._pending_lock:
+                self._pending_remote_agents.discard(agent_id_str)
+            raise
 
     @staticmethod
     def _remote_host_dir() -> str:
         """Return the mngr host directory for a remote provider."""
         return _REMOTE_HOST_DIR
+
+    def _run_remote_setup(self, agent_id: AgentId, ssh_info: RemoteSSHInfo) -> None:
+        """Worker-thread entry point. Always clears the pending flag so a
+        crash inside ``_handle_remote_agent`` doesn't permanently block
+        subsequent fires for this agent.
+        """
+        try:
+            self._handle_remote_agent(agent_id, ssh_info)
+        finally:
+            with self._pending_lock:
+                self._pending_remote_agents.discard(str(agent_id))
 
     def _handle_remote_agent(self, agent_id: AgentId, ssh_info: RemoteSSHInfo) -> None:
         host_dir = self._remote_host_dir()
@@ -271,10 +327,16 @@ def start_desktop_client(
     )
 
     # Register callback to set up reverse tunnels and write API URL files
-    # when agents are discovered
+    # when agents are discovered. Both AgentDiscoveryHandler and
+    # LatchkeyDiscoveryHandler take ``root_concurrency_group`` so they
+    # can dispatch their multi-second SSH tunnel setup onto worker
+    # threads instead of blocking the discovery-stream reader thread
+    # (which would also delay shutdown_event observation by however
+    # long the in-flight setup takes).
     discovery_handler = AgentDiscoveryHandler(
         tunnel_manager=tunnel_manager,
         server_port=port,
+        concurrency_group=root_concurrency_group,
         data_dir=data_directory,
     )
     stream_manager.add_on_agent_discovered_callback(discovery_handler)
@@ -286,6 +348,7 @@ def start_desktop_client(
     latchkey_discovery_handler = LatchkeyDiscoveryHandler(
         latchkey=latchkey,
         tunnel_manager=tunnel_manager,
+        concurrency_group=root_concurrency_group,
     )
     latchkey_destruction_handler = LatchkeyDestructionHandler(latchkey=latchkey)
     stream_manager.add_on_agent_discovered_callback(latchkey_discovery_handler)
