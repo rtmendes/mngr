@@ -460,13 +460,19 @@ def _run_oauth_subprocess(
     session_store: MultiAccountSessionStore,
     minds_config: MindsConfig | None,
     output_format: OutputFormat,
+    stream_manager: MngrStreamManager | None,
 ) -> None:
     """Run ``mngr imbue_cloud auth oauth <provider>`` in a background thread.
 
     The plugin opens the system browser, listens on its own localhost port for
     the OAuth callback, exchanges the code, and writes the session to its own
     state directory. We then mirror the resulting account identity into
-    ``MultiAccountSessionStore`` so the desktop UI can render it.
+    ``MultiAccountSessionStore`` so the desktop UI can render it, register
+    a ``[providers.imbue_cloud_<slug>]`` entry (force-enabled, even if a
+    previous run auto-disabled it after an auth error), and bounce
+    ``mngr observe`` so the new provider config is picked up immediately --
+    mirroring what the email/password ``_store_session_from_auth_result``
+    path does for non-OAuth signins.
     """
     try:
         result = imbue_cloud_cli.auth_oauth(account="", provider_id=provider_id)
@@ -489,6 +495,9 @@ def _run_oauth_subprocess(
     )
     if minds_config is not None and minds_config.get_default_account_id() is None:
         minds_config.set_default_account_id(str(result.user_id))
+
+    if set_imbue_cloud_provider_for_account(str(result.email), force_enable=True) and stream_manager is not None:
+        stream_manager.restart_observe()
 
     emit_event(
         "auth_success",
@@ -523,6 +532,7 @@ def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
     session_store = _get_session_store(request)
     output_format = _get_output_format(request)
     minds_config: MindsConfig | None = request.app.state.minds_config
+    stream_manager: MngrStreamManager | None = request.app.state.stream_manager
     if imbue_cloud_cli is None:
         return _json_response({"status": "ERROR", "error": "imbue_cloud_cli is not configured"}, 503)
     if provider_id.lower() not in ("google", "github"):
@@ -542,6 +552,7 @@ def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
             "session_store": session_store,
             "minds_config": minds_config,
             "output_format": output_format,
+            "stream_manager": stream_manager,
         },
         daemon=True,
         name=f"imbue-cloud-oauth-{provider_id}",

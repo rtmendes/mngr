@@ -507,6 +507,57 @@ def test_stream_manager_on_discovery_stream_output_ignores_stderr() -> None:
     assert manager.resolver.list_known_agent_ids() == ()
 
 
+class _FakeRunningProcess:
+    """Minimal stand-in for RunningProcess that records terminate/wait calls.
+
+    Used to drive ``_wait_for_process_and_notify`` directly so we can assert
+    on the notification side-effect without spawning real subprocesses.
+    """
+
+    def __init__(self, exit_code: int) -> None:
+        self._exit_code = exit_code
+        self.terminate_calls = 0
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self._exit_code
+
+
+def test_wait_for_process_and_notify_skips_notification_on_intentional_terminate() -> None:
+    """A SIGTERM we sent ourselves must not surface as a 'subprocess failed' notification.
+
+    Without this, the per-agent ``mngr events`` subprocess that we terminate
+    every time an agent disappears from the discovery snapshot would spam
+    the user with a false-positive error each cycle.
+    """
+    manager = _make_stream_manager()
+    process = _FakeRunningProcess(exit_code=-15)
+    manager._terminate_managed_process(process)  # type: ignore[arg-type]
+    assert process.terminate_calls == 1
+
+    notified: list[tuple[str, str]] = []
+    manager._on_subprocess_error = lambda name, message: notified.append((name, message))  # type: ignore[method-assign]
+    manager._wait_for_process_and_notify(process, "mngr events test")  # type: ignore[arg-type]
+    assert notified == []
+    # The id is removed from the set after consumption so a later unrelated process
+    # with the same id() can't be falsely classified as intentional.
+    assert id(process) not in manager._intentionally_terminated_ids
+
+
+def test_wait_for_process_and_notify_fires_notification_on_unintentional_exit() -> None:
+    """A non-zero exit we did NOT initiate still surfaces as a notification."""
+    manager = _make_stream_manager()
+    process = _FakeRunningProcess(exit_code=1)
+    notified: list[tuple[str, str]] = []
+    manager._on_subprocess_error = lambda name, message: notified.append((name, message))  # type: ignore[method-assign]
+    manager._wait_for_process_and_notify(process, "mngr observe")  # type: ignore[arg-type]
+    assert len(notified) == 1
+    assert notified[0][0] == "mngr observe"
+    assert "code 1" in notified[0][1]
+
+
 def test_stream_manager_on_discovery_stream_output_ignores_empty_lines() -> None:
     manager = _make_stream_manager()
     manager._on_discovery_stream_output("", is_stdout=True)

@@ -496,6 +496,12 @@ class MngrStreamManager(MutableModel):
     _events_services: dict[str, dict[str, str]] = PrivateAttr(default_factory=dict)
     _observe_process: RunningProcess | None = PrivateAttr(default=None)
     _events_processes: dict[str, RunningProcess] = PrivateAttr(default_factory=dict)
+    # ``id(process)`` of subprocesses we ourselves SIGTERMed. The watcher
+    # started by ``_watch_process_exit`` consults this set before firing the
+    # user-facing "subprocess failed" notification so a SIGTERM we sent
+    # (shutdown, observe restart, events-stream sync after the agent was
+    # removed from discovery) never bubbles up as a fake error.
+    _intentionally_terminated_ids: set[int] = PrivateAttr(default_factory=set)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _on_agent_discovered_callbacks: list[Callable[[AgentId, RemoteSSHInfo | None, str], None]] = PrivateAttr(
         default_factory=list
@@ -549,8 +555,20 @@ class MngrStreamManager(MutableModel):
         exits the ConcurrencyGroup (which joins the threads).
         """
         for process in self._all_managed_processes():
-            process.terminate()
+            self._terminate_managed_process(process)
         self._cg.__exit__(None, None, None)
+
+    def _terminate_managed_process(self, process: RunningProcess) -> None:
+        """SIGTERM a managed subprocess and mark the termination as intentional.
+
+        ``_wait_for_process_and_notify`` consults ``_intentionally_terminated_ids``
+        before firing the user-visible 'subprocess failed' notification, so
+        terminations we initiate ourselves (shutdown, observe restart,
+        per-agent events-stream sync) don't surface as errors.
+        """
+        with self._lock:
+            self._intentionally_terminated_ids.add(id(process))
+        process.terminate()
 
     def restart_observe(self) -> None:
         """Bounce the ``mngr observe`` subprocess so config changes take effect.
@@ -568,7 +586,7 @@ class MngrStreamManager(MutableModel):
             logger.debug("restart_observe: no running observe process; skipping")
             return
         logger.info("Restarting mngr observe to pick up updated provider config")
-        self._observe_process.terminate()
+        self._terminate_managed_process(self._observe_process)
         self._observe_process = self._cg.run_process_in_background(
             command=[self.mngr_binary, "observe", "--discovery-only", "--quiet"],
             on_output=self._on_discovery_stream_output,
@@ -722,11 +740,11 @@ class MngrStreamManager(MutableModel):
             self._discovered_agents = tuple(a for a in self._discovered_agents if str(a.agent_id) != aid_str)
             self._known_agent_ids.discard(aid_str)
             process = self._events_processes.pop(aid_str, None)
-            if process is not None:
-                process.terminate()
             self._events_services.pop(aid_str, None)
             agent_ids = tuple(AgentId(aid) for aid in self._agent_host_map)
             discovered_agents = self._discovered_agents
+        if process is not None:
+            self._terminate_managed_process(process)
 
         self._update_resolver(agent_ids, discovered_agents)
         self.resolver.update_services(event.agent_id, {})
@@ -736,18 +754,21 @@ class MngrStreamManager(MutableModel):
         """Remove all agents on a destroyed host from the resolver."""
         destroyed_ids = {str(agent_id) for agent_id in event.agent_ids}
 
+        terminating: list[RunningProcess] = []
         with self._lock:
             for aid_str in destroyed_ids:
                 self._agent_host_map.pop(aid_str, None)
                 self._known_agent_ids.discard(aid_str)
                 process = self._events_processes.pop(aid_str, None)
                 if process is not None:
-                    process.terminate()
+                    terminating.append(process)
                 self._events_services.pop(aid_str, None)
             self._discovered_agents = tuple(a for a in self._discovered_agents if str(a.agent_id) not in destroyed_ids)
             self._ssh_by_host_id.pop(str(event.host_id), None)
             agent_ids = tuple(AgentId(aid) for aid in self._agent_host_map)
             discovered_agents = self._discovered_agents
+        for process in terminating:
+            self._terminate_managed_process(process)
 
         self._update_resolver(agent_ids, discovered_agents)
         for agent_id in event.agent_ids:
@@ -796,8 +817,20 @@ class MngrStreamManager(MutableModel):
         thread.start()
 
     def _wait_for_process_and_notify(self, process: RunningProcess, name: str) -> None:
-        """Wait for a process to exit and fire an error callback if it exits with non-zero code."""
+        """Wait for a process to exit and fire an error callback if it exits with non-zero code.
+
+        Skips the error path when the termination was initiated by us (via
+        ``_terminate_managed_process``); a SIGTERM we sent is part of normal
+        lifecycle (shutdown, observe restart, agent removed from discovery)
+        and surfacing it as 'subprocess failed' would be a false alarm.
+        """
         exit_code = process.wait()
+        with self._lock:
+            was_intentional = id(process) in self._intentionally_terminated_ids
+            self._intentionally_terminated_ids.discard(id(process))
+        if was_intentional:
+            logger.debug("Subprocess {} exited (code={}) after intentional terminate; not notifying", name, exit_code)
+            return
         if exit_code != 0:
             self._on_subprocess_error(name, f"process exited with code {exit_code}")
 
@@ -864,6 +897,7 @@ class MngrStreamManager(MutableModel):
 
     def _sync_events_streams(self, new_agent_ids: set[str]) -> None:
         """Start events streams for new agents and stop streams for removed agents."""
+        terminating: list[tuple[str, RunningProcess]] = []
         with self._lock:
             previously_known = set(self._known_agent_ids)
             self._known_agent_ids = new_agent_ids
@@ -877,13 +911,16 @@ class MngrStreamManager(MutableModel):
             for aid_str in removed:
                 process = self._events_processes.pop(aid_str, None)
                 if process is not None:
-                    logger.info("Stopping events stream for removed agent {}", aid_str)
-                    process.terminate()
+                    terminating.append((aid_str, process))
                 self._events_services.pop(aid_str, None)
 
             # Start streams for newly discovered agents
             for aid_str in added:
                 self._start_events_stream(AgentId(aid_str))
+
+        for aid_str, process in terminating:
+            logger.info("Stopping events stream for removed agent {}", aid_str)
+            self._terminate_managed_process(process)
 
     def _on_events_stream_output(self, line: str, is_stdout: bool, agent_id: AgentId) -> None:
         """Handle a line of output from mngr event --follow for a specific agent.
