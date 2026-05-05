@@ -2,6 +2,8 @@ import os
 import threading
 from uuid import uuid4
 
+import pytest
+
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.utils.parent_process import _PARENT_POLL_INTERVAL_SECONDS
 from imbue.mngr.utils.parent_process import _read_grandparent_pid
@@ -35,16 +37,17 @@ def test_parent_death_watcher_does_not_fire_when_parent_alive() -> None:
 
 
 def test_read_grandparent_pid_returns_alive_grandparent() -> None:
-    """The helper should return a positive PID when run under a normal process tree.
+    """The helper should return a positive, signalable PID when a grandparent exists.
 
-    Pytest under xdist runs each test inside a worker that itself has a real
-    parent and grandparent, so this should always resolve to something
-    signalable.
+    Pytest under xdist runs each test inside a worker that has a real parent
+    and grandparent, so locally this always resolves. Some offload sandboxes
+    run pytest directly under PID 1, leaving no grandparent; in that case the
+    helper correctly returns ``None`` and the test skips.
     """
     grandparent_pid = _read_grandparent_pid()
-    assert grandparent_pid is not None
+    if grandparent_pid is None:
+        pytest.skip("No resolvable grandparent in this process tree (e.g. offload sandbox)")
     assert grandparent_pid > 1
-    # Verify the PID exists right now (no signal sent).
     os.kill(grandparent_pid, 0)
 
 
