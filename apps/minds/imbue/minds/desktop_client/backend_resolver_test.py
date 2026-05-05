@@ -1,9 +1,12 @@
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
+from typing import cast
 
 import pytest
 
+from imbue.concurrency_group.local_process import RunningProcess
 from imbue.minds.desktop_client.backend_resolver import AgentDisplayInfo
 from imbue.minds.desktop_client.backend_resolver import BackendResolverInterface
 from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
@@ -525,6 +528,21 @@ class _FakeRunningProcess:
         return self._exit_code
 
 
+class _RecordingNotifier:
+    """Captures (name, message) pairs from MngrStreamManager._on_subprocess_error.
+
+    Used by tests as a drop-in replacement for the bound method so we can
+    assert on whether a subprocess-failure notification fired without
+    standing up a real NotificationDispatcher.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, name: str, message: str) -> None:
+        self.calls.append((name, message))
+
+
 def test_wait_for_process_and_notify_skips_notification_on_intentional_terminate() -> None:
     """A SIGTERM we sent ourselves must not surface as a 'subprocess failed' notification.
 
@@ -533,29 +551,29 @@ def test_wait_for_process_and_notify_skips_notification_on_intentional_terminate
     the user with a false-positive error each cycle.
     """
     manager = _make_stream_manager()
-    process = _FakeRunningProcess(exit_code=-15)
-    manager._terminate_managed_process(process)  # type: ignore[arg-type]
-    assert process.terminate_calls == 1
+    fake = _FakeRunningProcess(exit_code=-15)
+    process = cast(RunningProcess, fake)
+    manager._terminate_managed_process(process)
+    assert fake.terminate_calls == 1
 
-    notified: list[tuple[str, str]] = []
-    manager._on_subprocess_error = lambda name, message: notified.append((name, message))  # type: ignore[method-assign]
-    manager._wait_for_process_and_notify(process, "mngr events test")  # type: ignore[arg-type]
-    assert notified == []
-    # The id is removed from the set after consumption so a later unrelated process
-    # with the same id() can't be falsely classified as intentional.
+    recorder = _RecordingNotifier()
+    manager._on_subprocess_error = cast(Any, recorder)
+    manager._wait_for_process_and_notify(process, "mngr events test")
+    assert recorder.calls == []
     assert id(process) not in manager._intentionally_terminated_ids
 
 
 def test_wait_for_process_and_notify_fires_notification_on_unintentional_exit() -> None:
     """A non-zero exit we did NOT initiate still surfaces as a notification."""
     manager = _make_stream_manager()
-    process = _FakeRunningProcess(exit_code=1)
-    notified: list[tuple[str, str]] = []
-    manager._on_subprocess_error = lambda name, message: notified.append((name, message))  # type: ignore[method-assign]
-    manager._wait_for_process_and_notify(process, "mngr observe")  # type: ignore[arg-type]
-    assert len(notified) == 1
-    assert notified[0][0] == "mngr observe"
-    assert "code 1" in notified[0][1]
+    fake = _FakeRunningProcess(exit_code=1)
+    process = cast(RunningProcess, fake)
+    recorder = _RecordingNotifier()
+    manager._on_subprocess_error = cast(Any, recorder)
+    manager._wait_for_process_and_notify(process, "mngr observe")
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0][0] == "mngr observe"
+    assert "code 1" in recorder.calls[0][1]
 
 
 def test_stream_manager_on_discovery_stream_output_ignores_empty_lines() -> None:
