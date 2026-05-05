@@ -64,11 +64,17 @@ def workspace_accent(agent_id: str) -> str:
 @pure
 def render_landing_page(
     accessible_agent_ids: Sequence[AgentId],
+    mngr_forward_origin: str = "",
     telegram_status_by_agent_id: dict[str, bool] | None = None,
     is_discovering: bool = False,
     agent_names: dict[str, str] | None = None,
 ) -> str:
     """Render the landing page listing accessible workspaces.
+
+    ``mngr_forward_origin`` is the bare origin of the ``mngr forward`` plugin
+    (e.g. ``"http://localhost:8421"``). Workspace links target
+    ``{mngr_forward_origin}/goto/<agent>/`` because Phase 2 deletes minds'
+    in-process subdomain forwarder; the plugin owns ``/goto/`` now.
 
     telegram_status_by_agent_id maps agent ID strings to whether they have
     active Telegram bot credentials. When None, no telegram buttons are shown.
@@ -76,14 +82,15 @@ def render_landing_page(
     agent_names maps agent ID strings to human-readable workspace names.
 
     When is_discovering is True, the page shows a "Discovering agents..." message
-    with auto-refresh instead of the empty state. This is used when the stream
-    manager hasn't completed initial agent discovery yet.
+    with auto-refresh instead of the empty state. This is used when the
+    envelope-stream consumer hasn't completed initial agent discovery yet.
     """
     agent_accents = {str(aid): workspace_accent(str(aid)) for aid in accessible_agent_ids}
     template = JINJA_ENV.get_template("landing.html")
     return template.render(
         agent_ids=accessible_agent_ids,
         agent_accents=agent_accents,
+        mngr_forward_origin=mngr_forward_origin,
         telegram_enabled=telegram_status_by_agent_id is not None,
         telegram_status_by_agent_id=telegram_status_by_agent_id or {},
         is_discovering=is_discovering,
@@ -205,6 +212,7 @@ def render_auth_error_page(message: str) -> str:
 def render_chrome_page(
     is_mac: bool = False,
     is_authenticated: bool = False,
+    mngr_forward_origin: str = "",
     initial_workspaces: Sequence[dict[str, str]] | None = None,
 ) -> str:
     """Render the persistent chrome page (title bar + sidebar + content iframe).
@@ -212,25 +220,34 @@ def render_chrome_page(
     is_mac controls whether macOS-specific styling is applied (traffic light padding,
     hidden window controls).
 
+    ``mngr_forward_origin`` is exposed to the page-level JS via a
+    ``data-mngr-forward-origin`` attribute on the body so chrome.js can build
+    workspace links that target the plugin's port directly.
+
     In Electron mode, the iframe and browser sidebar are hidden via JS; the content
     and sidebar are handled by separate WebContentsViews.
     """
     return JINJA_ENV.get_template("chrome.html").render(
         is_mac=is_mac,
         is_authenticated=is_authenticated,
+        mngr_forward_origin=mngr_forward_origin,
         initial_workspaces=initial_workspaces or [],
     )
 
 
 @pure
-def render_sidebar_page() -> str:
+def render_sidebar_page(mngr_forward_origin: str = "") -> str:
     """Render the standalone sidebar page for the Electron sidebar WebContentsView.
 
     This page shows the workspace list and subscribes to SSE updates. In Electron,
     clicking a workspace sends an IPC message via the preload bridge to navigate
-    the content WebContentsView.
+    the content WebContentsView. ``mngr_forward_origin`` is exposed via
+    ``data-mngr-forward-origin`` so sidebar.js can build the cross-origin
+    ``/goto/<agent>/`` URL the plugin serves.
     """
-    return JINJA_ENV.get_template("sidebar.html").render()
+    return JINJA_ENV.get_template("sidebar.html").render(
+        mngr_forward_origin=mngr_forward_origin,
+    )
 
 
 # -- Workspace/settings/sharing/accounts --
@@ -241,6 +258,7 @@ def render_sharing_editor(
     agent_id: str,
     service_name: str,
     title: str,
+    mngr_forward_origin: str = "",
     initial_emails: list[str] | None = None,
     is_request: bool = False,
     request_id: str = "",
@@ -250,11 +268,16 @@ def render_sharing_editor(
     ws_name: str = "",
     account_email: str = "",
 ) -> str:
-    """Render the sharing editor page used for both request approval and direct editing."""
+    """Render the sharing editor page used for both request approval and direct editing.
+
+    ``mngr_forward_origin`` is the bare origin of the ``mngr forward`` plugin;
+    the workspace link in the page title points at ``{mngr_forward_origin}/goto/<agent>/``.
+    """
     return JINJA_ENV.get_template("sharing.html").render(
         title=title,
         agent_id=agent_id,
         service_name=service_name,
+        mngr_forward_origin=mngr_forward_origin,
         initial_emails=initial_emails or [],
         is_request=is_request,
         request_id=request_id,

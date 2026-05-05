@@ -246,8 +246,6 @@ def run(
         auth_store=auth_store,
         backend_resolver=backend_resolver,
         http_client=None,
-        tunnel_manager=tunnel_manager,
-        latchkey=latchkey,
         agent_creator=agent_creator,
         imbue_cloud_cli=imbue_cloud_cli,
         telegram_orchestrator=telegram_orchestrator,
@@ -259,6 +257,8 @@ def run(
         request_inbox=request_inbox,
         request_event_handlers=(latchkey_permission_handler, sharing_request_handler),
         server_port=port,
+        mngr_forward_port=mngr_forward_port,
+        mngr_forward_preauth_cookie=preauth_cookie,
         output_format=output_format,
         root_concurrency_group=root_concurrency_group,
     )

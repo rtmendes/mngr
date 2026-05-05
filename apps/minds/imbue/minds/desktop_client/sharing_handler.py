@@ -189,6 +189,7 @@ class SharingRequestHandler(RequestEventHandler):
         self,
         req_event: RequestEvent,
         backend_resolver: BackendResolverInterface,
+        mngr_forward_origin: str,
     ) -> Response:
         if not isinstance(req_event, SharingRequestEvent):
             return HTMLResponse(content="<p>Unsupported request type</p>", status_code=500)
@@ -202,6 +203,7 @@ class SharingRequestHandler(RequestEventHandler):
             agent_id=req_event.agent_id,
             service_name=req_event.service_name,
             title=f"Sharing Request: {req_event.service_name}",
+            mngr_forward_origin=mngr_forward_origin,
             initial_emails=suggested,
             is_request=True,
             request_id=request_id,

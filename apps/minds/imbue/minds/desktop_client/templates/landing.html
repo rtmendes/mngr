@@ -14,7 +14,7 @@
           <div class="accent-spine relative flex items-center gap-3 bg-white border border-zinc-200 rounded-xl px-4 py-3.5 cursor-pointer overflow-hidden transition hover:border-zinc-300 hover:shadow-sm"
                style="--workspace-accent: {{ agent_accents.get(agent_id | string, 'oklch(65% 0.15 230)') }};"
                data-agent-id="{{ agent_id }}"
-               onclick="window.location='/goto/{{ agent_id }}/'">
+               onclick="window.location='{{ mngr_forward_origin }}/goto/{{ agent_id }}/'">
             <span class="flex-1 font-medium text-zinc-900 pl-1">{{ agent_names.get(agent_id | string, agent_id) }}</span>
             <button class="bg-transparent border border-transparent rounded-md cursor-pointer p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 flex items-center justify-center"
                     onclick="event.stopPropagation(); window.location='/workspace/{{ agent_id }}/settings'"

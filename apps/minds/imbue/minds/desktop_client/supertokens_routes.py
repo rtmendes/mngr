@@ -27,7 +27,7 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.minds.bootstrap import set_imbue_cloud_provider_for_account
 from imbue.minds.bootstrap import unset_imbue_cloud_provider_for_account
-from imbue.minds.desktop_client.backend_resolver import MngrStreamManager
+from imbue.minds.desktop_client.forward_cli import EnvelopeStreamConsumer
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
 from imbue.minds.desktop_client.minds_config import MindsConfig
@@ -220,30 +220,26 @@ def _store_session_from_auth_result(
     # Explicit signin -- always re-enable the provider entry, even if a
     # previous run auto-disabled it after an auth error.
     if set_imbue_cloud_provider_for_account(result.user.email, force_enable=True):
-        _bounce_mngr_observe(request)
+        _bounce_forward_observe(request)
 
 
-def _bounce_mngr_observe(request: Request) -> None:
-    """Restart ``mngr observe`` so a freshly-written provider entry is visible.
+def _bounce_forward_observe(request: Request) -> None:
+    """Bounce the ``mngr forward`` plugin's observe child so a freshly-written
+    provider entry takes effect within the same minds session.
 
-    Prefers the new ``EnvelopeStreamConsumer`` (Phase 2 path: ``minds run``
-    spawns ``mngr forward`` and we send ``SIGHUP`` to its PID). Falls back
-    to the legacy in-process ``MngrStreamManager.restart_observe()`` for
-    tests / older entry points that haven't migrated yet. No-op when
-    neither is registered.
+    Sends ``SIGHUP`` to the plugin via ``EnvelopeStreamConsumer.bounce_observe()``;
+    per-agent event subprocesses, SSH tunnels, and the FastAPI app on the
+    plugin side stay alive (the plugin's SIGHUP handler only restarts
+    ``mngr observe``). No-op if the consumer hasn't been attached yet.
 
     ``app.state.envelope_stream_consumer`` is always set (to either the
     consumer or ``None``) by ``create_desktop_client``, so direct attribute
     access is safe — no defensive ``getattr`` required.
     """
     envelope_stream_consumer = request.app.state.envelope_stream_consumer
-    if envelope_stream_consumer is not None:
-        envelope_stream_consumer.bounce_observe()
+    if envelope_stream_consumer is None:
         return
-    stream_manager: MngrStreamManager | None = request.app.state.stream_manager
-    if stream_manager is None:
-        return
-    stream_manager.restart_observe()
+    envelope_stream_consumer.bounce_observe()
 
 
 def _auth_error_response(exc: AuthBackendError | ImbueCloudCliError) -> Response:
@@ -358,7 +354,7 @@ async def _handle_signout_api(request: Request) -> Response:
         logger.warning("No mirrored account for user {}; skipping plugin signout", str(user_id)[:8])
     session_store.remove_session(str(user_id))
     if signed_out_email and unset_imbue_cloud_provider_for_account(signed_out_email):
-        _bounce_mngr_observe(request)
+        _bounce_forward_observe(request)
     return _json_response({"status": "OK"})
 
 
@@ -472,7 +468,7 @@ def _run_oauth_subprocess(
     session_store: MultiAccountSessionStore,
     minds_config: MindsConfig | None,
     output_format: OutputFormat,
-    stream_manager: MngrStreamManager | None,
+    envelope_stream_consumer: EnvelopeStreamConsumer | None,
 ) -> None:
     """Run ``mngr imbue_cloud auth oauth <provider>`` in a background thread.
 
@@ -481,10 +477,10 @@ def _run_oauth_subprocess(
     state directory. We then mirror the resulting account identity into
     ``MultiAccountSessionStore`` so the desktop UI can render it, register
     a ``[providers.imbue_cloud_<slug>]`` entry (force-enabled, even if a
-    previous run auto-disabled it after an auth error), and bounce
-    ``mngr observe`` so the new provider config is picked up immediately --
-    mirroring what the email/password ``_store_session_from_auth_result``
-    path does for non-OAuth signins.
+    previous run auto-disabled it after an auth error), and bounce the
+    ``mngr forward`` plugin's observe child so the new provider config is
+    picked up immediately -- mirroring what the email/password
+    ``_store_session_from_auth_result`` path does for non-OAuth signins.
     """
     try:
         result = imbue_cloud_cli.auth_oauth(account="", provider_id=provider_id)
@@ -508,8 +504,9 @@ def _run_oauth_subprocess(
     if minds_config is not None and minds_config.get_default_account_id() is None:
         minds_config.set_default_account_id(str(result.user_id))
 
-    if set_imbue_cloud_provider_for_account(str(result.email), force_enable=True) and stream_manager is not None:
-        stream_manager.restart_observe()
+    if set_imbue_cloud_provider_for_account(str(result.email), force_enable=True):
+        if envelope_stream_consumer is not None:
+            envelope_stream_consumer.bounce_observe()
 
     emit_event(
         "auth_success",
@@ -551,7 +548,7 @@ def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
     session_store = _get_session_store(request)
     output_format = _get_output_format(request)
     minds_config: MindsConfig | None = request.app.state.minds_config
-    stream_manager: MngrStreamManager | None = request.app.state.stream_manager
+    envelope_stream_consumer: EnvelopeStreamConsumer | None = request.app.state.envelope_stream_consumer
     root_cg: ConcurrencyGroup | None = request.app.state.root_concurrency_group
     if imbue_cloud_cli is None:
         return _json_response({"status": "ERROR", "error": "imbue_cloud_cli is not configured"}, 503)
@@ -574,7 +571,7 @@ def _handle_oauth_redirect(provider_id: str, request: Request) -> Response:
             "session_store": session_store,
             "minds_config": minds_config,
             "output_format": output_format,
-            "stream_manager": stream_manager,
+            "envelope_stream_consumer": envelope_stream_consumer,
         },
         name=f"imbue-cloud-oauth-{provider_id}",
         is_checked=False,

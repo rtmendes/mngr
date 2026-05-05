@@ -12,6 +12,9 @@
   var isRequest = config.isRequest;
   var requestId = config.requestId;
   var proposedEmails = config.initialEmails || [];
+  // ``mngr forward`` plugin's bare origin (e.g. ``http://localhost:8421``);
+  // the workspace link below targets the plugin's ``/goto/<agent>/`` route.
+  var mngrForwardOrigin = (document.body && document.body.dataset.mngrForwardOrigin) || '';
 
   function setHeading(isEnabled) {
     var h = document.getElementById('page-heading');
@@ -27,7 +30,7 @@
     h.appendChild(document.createTextNode(isEnabled ? ' shared in ' : ' in '));
 
     var link = document.createElement('a');
-    link.href = '/goto/' + agentId + '/';
+    link.href = mngrForwardOrigin + '/goto/' + agentId + '/';
     link.className = 'text-blue-600 hover:underline';
     link.textContent = wsName;
     h.appendChild(link);
