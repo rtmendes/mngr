@@ -40,10 +40,8 @@ class _StubSSHTunnelManager(SSHTunnelManager):
         self,
         ssh_info: RemoteSSHInfo,
         local_port: int,
-        agent_state_dir: str | None = None,
         remote_port: int = 0,
     ) -> int:
-        del agent_state_dir
         self._setup_calls.append((ssh_info, local_port, remote_port))
         if remote_port != 0:
             return remote_port
@@ -138,7 +136,6 @@ def test_repair_re_emits_for_every_tracked_agent(writer_buf: tuple[EnvelopeWrite
         local_port=8420,
         remote_port=44444,
         requested_remote_port=0,
-        agent_state_dirs=[],
     )
     manager.fire_repair(repaired_info)
 
@@ -170,7 +167,6 @@ def test_repair_with_no_tracked_agents_emits_nothing(
         local_port=8420,
         remote_port=12345,
         requested_remote_port=0,
-        agent_state_dirs=[],
     )
     manager.fire_repair(repaired_info)
     assert _read_envelopes(buf) == []
@@ -194,7 +190,6 @@ def test_setup_for_snapshot_tracks_agents(writer_buf: tuple[EnvelopeWriter, io.S
         local_port=8420,
         remote_port=99999,
         requested_remote_port=0,
-        agent_state_dirs=[],
     )
     manager.fire_repair(repaired_info)
     repair_envelopes = _read_envelopes(buf)[2:]
@@ -238,7 +233,6 @@ def test_concurrent_setup_does_not_interleave(writer_buf: tuple[EnvelopeWriter, 
         local_port=8420,
         remote_port=55555,
         requested_remote_port=0,
-        agent_state_dirs=[],
     )
     manager.fire_repair(repaired_info)
     # Every agent should be re-emitted exactly once.

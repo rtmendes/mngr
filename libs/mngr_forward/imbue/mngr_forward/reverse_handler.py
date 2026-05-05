@@ -111,21 +111,10 @@ class ReverseTunnelHandler(MutableModel):
 
     def _on_tunnel_repaired(self, info: ReverseTunnelInfo) -> None:
         # Fan out one envelope per agent that requested this tunnel via
-        # ``__call__`` / ``setup_for_snapshot``. The tracking map is the
-        # plugin's normal path (no agent_state_dirs are passed when the
-        # plugin opens a reverse tunnel). The agent_state_dirs branch is
-        # retained as a fallback for future minds-side integration where
-        # SSHTunnelManager is shared with the latchkey path.
+        # ``__call__`` / ``setup_for_snapshot``.
         agents = self._lookup_agents_for_tunnel(info)
         if agents:
             for agent_id in agents:
-                self._emit_repaired(agent_id, info)
-            return
-        if info.agent_state_dirs:
-            for state_dir in info.agent_state_dirs:
-                agent_id = self._agent_id_from_state_dir(state_dir)
-                if agent_id is None:
-                    continue
                 self._emit_repaired(agent_id, info)
             return
         logger.debug(
@@ -153,15 +142,3 @@ class ReverseTunnelHandler(MutableModel):
                 ssh_port=PositiveInt(info.ssh_info.port),
             )
         )
-
-    @staticmethod
-    def _agent_id_from_state_dir(state_dir: str) -> AgentId | None:
-        # State dirs follow ``<host_dir>/agents/<agent-id>``; strip the
-        # trailing directory component if present.
-        if "/" not in state_dir:
-            return None
-        last = state_dir.rstrip("/").rsplit("/", maxsplit=1)[-1]
-        try:
-            return AgentId(last)
-        except ValueError:
-            return None

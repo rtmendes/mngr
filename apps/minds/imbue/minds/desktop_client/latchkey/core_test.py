@@ -360,10 +360,8 @@ class _RecordingTunnelManager(SSHTunnelManager):
         self,
         ssh_info: RemoteSSHInfo,
         local_port: int,
-        agent_state_dir: str | None = None,
         remote_port: int = 0,
     ) -> int:
-        del agent_state_dir
         self._calls.append((ssh_info, local_port, remote_port))
         return remote_port
 

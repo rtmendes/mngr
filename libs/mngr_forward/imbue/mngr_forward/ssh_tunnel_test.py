@@ -69,10 +69,8 @@ def test_reverse_tunnel_info_defaults() -> None:
         ssh_info=ssh_info,
         local_port=8420,
         remote_port=12345,
-        agent_state_dirs=[],
     )
     assert info.requested_remote_port == 0  # default: dynamic-assign sentinel
-    assert info.agent_state_dirs == []
 
 
 def test_reverse_tunnel_spec_remote_zero_means_dynamic() -> None:

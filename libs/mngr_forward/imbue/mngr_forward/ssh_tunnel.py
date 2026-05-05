@@ -17,7 +17,6 @@ from pydantic import Field
 from pydantic import PrivateAttr
 
 from imbue.imbue_common.frozen_model import FrozenModel
-from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.mutable_model import MutableModel
 
 _BUFFER_SIZE: Final[int] = 65536
@@ -76,14 +75,10 @@ class ReverseTunnelInfo(FrozenModel):
         default=0,
         description=(
             "Remote port originally requested from the remote sshd. ``0`` means a dynamically "
-            "assigned port (the default, used by the minds API tunnel); a fixed value is used "
-            "by per-agent tunnels that need a well-known port inside the container (e.g. the "
-            "Latchkey gateway on ``AGENT_SIDE_LATCHKEY_PORT``). The health check re-requests "
-            "this same value when re-establishing a broken tunnel."
+            "assigned port (the default for the plugin's ``--reverse 0:<local>`` flag); a fixed "
+            "value is used when the caller wants a well-known port inside the container. The "
+            "health check re-requests this same value when re-establishing a broken tunnel."
         ),
-    )
-    agent_state_dirs: list[str] = Field(
-        description="$MNGR_AGENT_STATE_DIR paths on the remote host for all agents sharing this tunnel"
     )
 
 
@@ -214,7 +209,6 @@ class SSHTunnelManager(MutableModel):
         self,
         ssh_info: RemoteSSHInfo,
         local_port: int,
-        agent_state_dir: str | None = None,
         remote_port: int = 0,
     ) -> int:
         """Set up a reverse port forward so the remote host can reach the local server.
@@ -224,11 +218,6 @@ class SSHTunnelManager(MutableModel):
         ``127.0.0.1:local_port`` on the local machine. Returns the port the
         remote sshd actually bound (equal to ``remote_port`` when it is
         non-zero, or the dynamically assigned port when it is 0).
-
-        Pass ``agent_state_dir`` for tunnels whose remote URL should be written
-        into a per-agent state directory (minds API); leave it as ``None`` for
-        tunnels that deliver their endpoint via a constant URL injected at
-        ``mngr create`` time (Latchkey gateway).
 
         Reuses an existing tunnel identified by the ``(conn_key, local_port)``
         key so that multiple callers targeting the same local service share a
@@ -250,14 +239,6 @@ class SSHTunnelManager(MutableModel):
                     # Verify the transport is still alive
                     client = self._connections.get(conn_key)
                     if client is not None and _ssh_connection_is_active(client):
-                        # Register this agent's state dir if not already tracked
-                        if agent_state_dir is not None and agent_state_dir not in existing.agent_state_dirs:
-                            self._reverse_tunnels[tunnel_key] = existing.model_copy_update(
-                                to_update(
-                                    existing.field_ref().agent_state_dirs,
-                                    existing.agent_state_dirs + [agent_state_dir],
-                                )
-                            )
                         return existing.remote_port
 
                 client = self._get_or_create_connection(ssh_info)
@@ -269,8 +250,7 @@ class SSHTunnelManager(MutableModel):
             # ``handler=None`` path puts every channel on a single transport-
             # wide queue keyed only by arrival order, which silently cross-
             # routes connections when multiple reverse tunnels share one
-            # transport (e.g. the minds API tunnel and a Latchkey gateway
-            # tunnel to the same agent host).
+            # transport.
             handler = _ForwardedTunnelHandler(local_port=local_port, shutdown_event=self._shutdown_event)
             assigned_remote_port = transport.request_port_forward("127.0.0.1", remote_port, handler=handler)
             logger.info(
@@ -284,7 +264,6 @@ class SSHTunnelManager(MutableModel):
                 local_port=local_port,
                 remote_port=assigned_remote_port,
                 requested_remote_port=remote_port,
-                agent_state_dirs=[agent_state_dir] if agent_state_dir is not None else [],
             )
             with self._lock:
                 self._reverse_tunnels[tunnel_key] = tunnel_info
@@ -330,23 +309,11 @@ class SSHTunnelManager(MutableModel):
                 tunnel_info.local_port,
             )
             try:
-                first_dir: str | None = tunnel_info.agent_state_dirs[0] if tunnel_info.agent_state_dirs else None
                 new_remote_port = self.setup_reverse_tunnel(
                     ssh_info=tunnel_info.ssh_info,
                     local_port=tunnel_info.local_port,
-                    agent_state_dir=first_dir,
                     remote_port=tunnel_info.requested_remote_port,
                 )
-                # Re-register remaining agent state dirs so they are tracked
-                # in the new tunnel's ReverseTunnelInfo (setup_reverse_tunnel
-                # appends dirs to an existing active tunnel without creating a new one).
-                for extra_dir in tunnel_info.agent_state_dirs[1:]:
-                    self.setup_reverse_tunnel(
-                        ssh_info=tunnel_info.ssh_info,
-                        local_port=tunnel_info.local_port,
-                        agent_state_dir=extra_dir,
-                        remote_port=tunnel_info.requested_remote_port,
-                    )
                 logger.info(
                     "Reverse tunnel re-established to {} (local {}) on remote port {}",
                     conn_key,
