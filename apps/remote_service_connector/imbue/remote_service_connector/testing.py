@@ -871,8 +871,11 @@ class FakeCursor:
             "from pool_hosts" in query_lower and "status = 'leased'" in query_lower and "leased_to_user" in query_lower
         ):
             if "select leased_to_user" in query_lower:
-                # Release endpoint: lookup by id
-                host_id = params[0]
+                # Release endpoint: lookup by id. The connector stringifies
+                # the UUID before passing it as a bind param (psycopg2 can't
+                # adapt Python ``UUID`` directly), so accept either form.
+                raw_host_id = params[0]
+                host_id = UUID(raw_host_id) if isinstance(raw_host_id, str) else raw_host_id
                 for row in self._backend.pool_rows:
                     if row.host_id == host_id and row.status == "leased":
                         self._results = [(row.leased_to_user,)]
@@ -897,7 +900,8 @@ class FakeCursor:
                         )
 
         elif "update pool_hosts set status = 'released'" in query_lower:
-            host_id = params[0]
+            raw_host_id = params[0]
+            host_id = UUID(raw_host_id) if isinstance(raw_host_id, str) else raw_host_id
             for row in self._backend.pool_rows:
                 if row.host_id == host_id:
                     row.status = "released"
