@@ -94,7 +94,8 @@ Add a `_init_runtime_worktree()` function called once from `main()` *before* the
 3. If `runtime/.git` already exists (worktree already set up from a prior bootstrap run on the same container), return early.
 4. Best-effort `git fetch origin {branch}` (silently ignore network errors).
 5. If the fetched ref exists locally:
-   - `git worktree add runtime/ origin/{branch}` and have the local branch track it.
+   - `git worktree add -b {branch} runtime/ origin/{branch}` so the worktree is on a local branch by that name (a bare `git worktree add runtime/ origin/{branch}` would leave the worktree in detached HEAD, which would later break `git push` from the runtime-backup service).
+   - Configure the local branch to track `origin/{branch}` (e.g. `git -C runtime/ branch --set-upstream-to=origin/{branch}`).
    - Restore complete; return.
 6. Else (fresh agent or branch doesn't exist on origin):
    - If `runtime/` exists with files (race avoidance): rename it to `runtime.preexisting/`, create the worktree at `runtime/`, then move files from `runtime.preexisting/` back into `runtime/` and `rmdir` the old name.
