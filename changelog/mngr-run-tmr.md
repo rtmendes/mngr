@@ -22,6 +22,16 @@
   debugging. The `mngr create -vv` log span around `_execute_agent_file_transfers`
   now wraps the early-return path too, so the span is emitted (with
   `count=0`) even when the agent declared no file transfers.
+- Stop the `claude plugin update` SessionStart hook from hanging Modal-launched
+  agents at an `ssh` first-contact (TOFU) prompt for github.com. The plugin
+  updater shells out to `git pull`, which uses `ssh` -- on a fresh sandbox
+  with no `~/.ssh/known_hosts` entry, ssh blocks on a "Are you sure you
+  want to continue connecting" prompt that Claude Code's bypass-permissions
+  setting does not cover. `scripts/claude_update_plugin.sh` now prefixes
+  the update with `GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=accept-new
+  -o BatchMode=yes'`, which writes the first-seen host key to known_hosts
+  and exits non-interactively if anything goes wrong (matching the
+  script's existing `2>/dev/null || true` failure tolerance).
 - `mngr tmr` HTML reports now have a dedicated "Failed" section,
   separate from "Blocked". The two represent different failure modes:
   Blocked means the coding agent reported every change as BLOCKED
