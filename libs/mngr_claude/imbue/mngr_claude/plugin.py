@@ -1830,7 +1830,12 @@ class ClaudeAgent(BaseAgent[ClaudeAgentConfig]):
             sync_local=config.sync_claude_json,
             version=config.version,
         )
-        approve_api_key_for_claude(claude_json_data)
+        # Pass host + options so approval finds keys arriving via --env, --pass-env,
+        # --pass-host-env, --host-env, and --host-env-file -- not just os.environ. The
+        # LOCAL/Docker minds path lands its ANTHROPIC_API_KEY only on the host's env
+        # file (via --host-env-file <repo>/.env), so without these arguments the
+        # approval missed the key and claude blocked on the custom-key TUI prompt.
+        approve_api_key_for_claude(claude_json_data, host=host, options=options)
 
         settings_json = _build_settings_json(source_claude_dir, config, ctx, sync_local=config.sync_home_settings)
 
@@ -2633,17 +2638,63 @@ def modify_env_vars_for_deploy(
     env_vars["IS_SANDBOX"] = "1"
 
 
-def approve_api_key_for_claude(data: dict[str, Any]):
-    """Approve the API key so that the agent doesn't get blocked by the custom API key dialog."""
+def approve_api_key_for_claude(
+    data: dict[str, Any],
+    host: OnlineHostInterface | None = None,
+    options: CreateAgentOptions | None = None,
+) -> None:
+    """Approve every reachable ANTHROPIC_API_KEY so claude doesn't block on the custom-key dialog.
+
+    Claude challenges any ``ANTHROPIC_API_KEY`` it sees in env that doesn't match either
+    ``primaryApiKey`` in its config or an entry in ``customApiKeyResponses.approved``. The
+    challenge is interactive (TUI prompt), which deadlocks ``mngr``'s ``wait_for_ready_signal``.
+
+    Sources we consult, in priority order, mirroring ``_has_api_credentials_available``:
+
+    - ``os.environ.get("ANTHROPIC_API_KEY")`` -- the running mngr process (e.g. ``mngr_imbue_cloud``
+      injects the LiteLLM key here via ``subprocess_env`` before calling ``mngr create``).
+    - ``options.environment.env_vars`` -- explicit ``--env`` / ``--pass-env`` from the CLI.
+    - ``host.get_env_var("ANTHROPIC_API_KEY")`` -- the *target host's* env file, populated by
+      ``_write_host_env_vars`` from ``--host-env``, ``--pass-host-env``, and ``--host-env-file``.
+      The last one is critical: minds passes the workspace ``.env`` via ``--host-env-file`` and
+      its ``ANTHROPIC_API_KEY`` only ever lives there, never in ``os.environ``. Without consulting
+      the host env, the approval was a no-op for the LOCAL/Docker path (see PR thread for
+      assistant2 reproduction).
+    - ``primaryApiKey`` in the user's ``~/.claude.json``.
+
+    ``host`` and ``options`` default to ``None`` because :func:`approve_api_key_for_claude` is
+    also called from the deploy-image path (``_collect_files_for_deploy``) where there is no
+    host yet and the only credential source is ``os.environ`` / the user's claude config.
+    """
+    keys_to_approve: list[str] = []
+
+    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if env_key:
+        keys_to_approve.append(env_key)
+
+    if options is not None:
+        for env_var in options.environment.env_vars:
+            if env_var.key == "ANTHROPIC_API_KEY" and env_var.value:
+                keys_to_approve.append(env_var.value)
+
+    if host is not None:
+        host_key = host.get_env_var("ANTHROPIC_API_KEY") or ""
+        if host_key:
+            keys_to_approve.append(host_key)
+
     user_config = read_claude_config(find_user_claude_config())
     conf_key = user_config.get("primaryApiKey", "")
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if api_key or conf_key:
-        approved_section = data.setdefault("customApiKeyResponses", {})
-        approved_list = approved_section.get("approved", [])
-        if api_key[-20:] not in approved_list:
-            approved_list.append(api_key[-20:])
-        if conf_key[-20:] not in approved_list:
-            approved_list.append(conf_key[-20:])
-        approved_section["approved"] = approved_list
-        approved_section["rejected"] = []
+    if conf_key:
+        keys_to_approve.append(conf_key)
+
+    if not keys_to_approve:
+        return
+
+    approved_section = data.setdefault("customApiKeyResponses", {})
+    approved_list = list(approved_section.get("approved", []))
+    for key in keys_to_approve:
+        suffix = key[-20:]
+        if suffix not in approved_list:
+            approved_list.append(suffix)
+    approved_section["approved"] = approved_list
+    approved_section["rejected"] = []
