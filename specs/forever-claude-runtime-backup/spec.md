@@ -105,8 +105,8 @@ Add a `_init_runtime_worktree()` function called once from `main()` *before* the
    - Configure the local branch to track `origin/{branch}` (e.g. `git -C runtime/ branch --set-upstream-to=origin/{branch}`).
    - Restore complete; return.
 6. Fresh-create path (origin confirmed not to have the branch, or offline-only mode):
-   - If `runtime/` exists with files (race avoidance): rename it to `runtime.preexisting/`, create the worktree at `runtime/`, then move files from `runtime.preexisting/` back into `runtime/` and `rmdir` the old name.
-   - `git worktree add --orphan -b {branch} runtime/`.
+   - Race-avoidance preamble: if `runtime/` already exists with files (e.g. cloudflared got there first), rename it to `runtime.preexisting/` so the next step has a clean target. After the worktree-add below succeeds, move the files from `runtime.preexisting/` back into `runtime/` and `rmdir runtime.preexisting/`. If `runtime/` does not pre-exist, skip this preamble entirely.
+   - `git worktree add --orphan -b {branch} runtime/` (the single worktree-creation command for this path; runs whether or not the preamble fired).
    - Inside `runtime/`: write `.gitignore` containing `secrets`, set bot identity (§2), `git -C runtime/ commit --allow-empty -m "runtime backup: <ISO 8601 UTC timestamp>"` (same format as every other commit per §2; the timestamp is the init time).
    - If `GH_TOKEN` is set: `git -C runtime/ push --set-upstream origin {branch}` (best-effort; failure is logged but non-fatal).
 7. All errors are logged to stderr; bootstrap proceeds to reconcile services either way.
