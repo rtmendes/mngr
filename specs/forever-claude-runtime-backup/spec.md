@@ -24,9 +24,10 @@
 - The post-commit hook is installed via `core.hooksPath = /code/scripts/git_hooks` so it applies to every checkout (main, worker sub-agents, runtime worktree). The hook self-skips when:
   - `GH_TOKEN` is unset, OR
   - the current branch starts with `mindsbackup/` (the polling service handles those pushes).
-- Worker sub-agents do *not* receive `GH_TOKEN`; the same hook installed in their checkouts no-ops cleanly.
+- Worker sub-agents *do* receive `GH_TOKEN` (it's in `[commands.create].pass_env` and worker templates do not override that), so their post-commit hook auto-pushes their working branch. Workers do not run the runtime-backup service; only the outer main agent does.
 - Bootstrap init failures (network blip, missing token) are logged loudly to stderr but do not block service startup. The runtime-backup service retries on its own tick.
 - `memory/` is moved to `runtime/memory/` by updating `.claude/settings.json` (`autoMemoryDirectory`), `.gitignore`, and `CLAUDE.md`. Existing populated `memory/` dirs at the repo root are NOT auto-migrated (fresh installs only).
+- `tk` ticket storage is moved from `.tickets/` to `runtime/tickets/` via `TICKETS_DIR=/code/runtime/tickets` in `host_env` so tickets are also covered by the backup branch. Existing `.tickets/` dirs are not auto-migrated.
 - Force-push is never used; per-agent branches mean exactly one writer.
 
 ### Interactions worth calling out
@@ -41,11 +42,13 @@
 
 All paths below are relative to the forever-claude-template repo root unless noted otherwise.
 
-### 1. Move `memory/` into `runtime/memory/`
+### 1. Move `memory/` and `tk` tickets into `runtime/`
 
 - `.claude/settings.json`: change `"autoMemoryDirectory": "memory"` → `"autoMemoryDirectory": "runtime/memory"`.
-- `.gitignore`: remove the standalone `memory/` line (the whole `runtime/` is already gitignored, so `runtime/memory/` is covered transitively).
+- `.gitignore`: remove the standalone `memory/` line (the whole `runtime/` is already gitignored, so `runtime/memory/` is covered transitively). `.tickets/` stays gitignored as a safety net for any code path that bypasses `TICKETS_DIR`.
 - `CLAUDE.md` Memory section: update the path and note that memory is now backed up via the `mindsbackup/$MNGR_AGENT_ID` branch.
+- `.mngr/settings.toml`'s `[commands.create].host_env`: add `TICKETS_DIR=/code/runtime/tickets` so tk stores tickets inside the backup worktree.
+- `CLAUDE.md` ticket-system bullet and `README.md`: update the documented path from `.tickets/` to `runtime/tickets/`.
 
 ### 2. Runtime worktree + initial branch state
 
@@ -125,7 +128,7 @@ A bash script. Logical flow:
 - `.mngr/settings.toml`:
   - `[commands.create].pass_env`: append `"GH_TOKEN"` to the existing list.
   - `[create_templates.main].extra_window` `git_auth_setup` entry: append `&& git config --global core.hooksPath /code/scripts/git_hooks` to the existing chain (it already runs `git config --global url… && gh auth setup-git`).
-  - To keep workers from inheriting `GH_TOKEN`: in `[create_templates.worker]` and `[create_templates.crystallize-worker]`, explicitly set `pass_env = ["MINDS_WORKSPACE_NAME", "TELEGRAM_BOT_TOKEN", "TELEGRAM_USER_NAME", "REMOTE_SERVICE_CONNECTOR_URL", "LATCHKEY_GATEWAY"]` (the original list, *without* `GH_TOKEN`). See Open Questions §1 for the override-vs-append semantic that needs verification.
+  - Worker templates (`[create_templates.worker]` and `[create_templates.crystallize-worker]`) intentionally do NOT override `pass_env`, so they inherit `GH_TOKEN` from `[commands.create].pass_env` and their post-commit hook auto-pushes the worker's branch. (Workers still don't run the runtime-backup service because they don't include the `bootstrap` extra_window.)
 - `services.toml`: add `[services.runtime-backup]` with `command = "uv run runtime-backup"` and `restart = "on-failure"`.
 - Root `pyproject.toml`: add `libs/runtime_backup` to the workspace members so `uv sync --all-packages` picks it up.
 - `Dockerfile`: no change required — `uv sync --all-packages` already runs at image build and will install the new package.
@@ -204,7 +207,7 @@ Each phase ends with a working, observably better system.
 - Network down during init: bootstrap proceeds; service retries on next tick.
 - Two consecutive ticks where nothing changed: only one commit total.
 - A worktree that lost its ref (e.g. main checkout's `.git/worktrees/` got stale): runtime-backup logs and continues; not a blocker.
-- `MNGR_AGENT_ID` containing characters that aren't ref-safe (see Open Questions §2).
+- (`MNGR_AGENT_ID` is generated from a ref-safe alphabet by mngr, so no sanitization is needed.)
 
 ### Manual verification before declaring done
 
@@ -213,11 +216,10 @@ Each phase ends with a working, observably better system.
 
 ## Open Questions
 
-1. **Worker `pass_env` override mechanics.** mngr's template-merge semantics need verifying: does `pass_env` in `[create_templates.worker]` *replace* the list inherited from `[commands.create]`, or *append*? If it appends, we need a different mechanism to keep `GH_TOKEN` out of workers (e.g. unsetting it explicitly in the worker's `extra_window`, or moving `GH_TOKEN` out of `[commands.create].pass_env` and into a `main`-only template's `pass_env`).
-2. **`MNGR_AGENT_ID` ref-safety.** Confirm that `MNGR_AGENT_ID` as currently generated by mngr is always a valid git ref-name component (no `..`, `~`, `^`, `:`, `?`, `*`, `[`, control chars). If not, sanitize at branch-name computation time (e.g. replace invalid chars with `-`).
-3. **Bootstrap behavior when init fails *and* `GH_TOKEN` is unset.** Decision per Q&A: still start the runtime-backup service (it no-ops cleanly without push). Spec assumes this; flagging in case the implementer wants to revisit.
-4. **`/tmp/` log persistence.** `/tmp/` is wiped on container restart. If you want the log to survive restarts, the spec would need to point logs into `runtime/` (and gitignore them). Current decision per Q&A is `/tmp/`.
-5. **`.tickets/` and other gitignored dirs.** Out of scope for this spec — only `runtime/` and (relocated) `memory/` are backed up. If ticket state matters for disaster recovery, follow up.
-6. **Push backoff.** Current design retries every tick (60s) on push failure with no backoff. If origin is hard-down for hours, that's ~60 retries an hour. Probably fine for "stupid and simple"; flagging in case.
-7. **Multi-agent isolation in a shared private fork.** If a user reuses one fork for several agents, branches accumulate (`mindsbackup/agent-A`, `mindsbackup/agent-B`, …). No automatic cleanup; user prunes manually.
-8. **Pre-existing memory migration.** §1 deliberately doesn't migrate existing populated `memory/` dirs at the repo root — fresh installs only per the Q&A. If you change your mind, add a one-shot move in bootstrap that runs before the new `autoMemoryDirectory` setting takes effect.
+1. **Bootstrap behavior when init fails *and* `GH_TOKEN` is unset.** Decision per Q&A: still start the runtime-backup service (it no-ops cleanly without push). Spec assumes this; flagging in case the implementer wants to revisit.
+2. **`/tmp/` log persistence.** `/tmp/` is wiped on container restart. If you want the log to survive restarts, the spec would need to point logs into `runtime/` (and gitignore them). Current decision per Q&A is `/tmp/`.
+3. **Push backoff.** Current design retries every tick (60s) on push failure with no backoff. If origin is hard-down for hours, that's ~60 retries an hour. Probably fine for "stupid and simple"; flagging in case.
+4. **Multi-agent isolation in a shared private fork.** If a user reuses one fork for several agents, branches accumulate (`mindsbackup/agent-A`, `mindsbackup/agent-B`, …). No automatic cleanup; user prunes manually.
+5. **Pre-existing memory / tickets migration.** §1 deliberately doesn't migrate existing populated `memory/` or `.tickets/` dirs at the repo root — fresh installs only per the Q&A. If you change your mind, add a one-shot move in bootstrap that runs before the new `autoMemoryDirectory` / `TICKETS_DIR` settings take effect.
+
+Resolved during Q&A and removed: worker `pass_env` semantics (workers do receive `GH_TOKEN` and auto-push their branches; that's intentional), and `MNGR_AGENT_ID` ref-safety (the id is always ref-safe by construction).
