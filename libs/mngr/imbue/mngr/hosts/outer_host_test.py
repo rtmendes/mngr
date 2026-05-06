@@ -89,3 +89,60 @@ def test_create_ssh_pyinfra_host_no_key_set() -> None:
     """The SSH-pyinfra-host helper does NOT set ssh_key (deferred to user's ~/.ssh)."""
     pyinfra_host = create_ssh_pyinfra_host_using_user_config(hostname="example.com")
     assert pyinfra_host.data.get("ssh_key") is None
+
+
+def test_outer_host_streaming_local_calls_on_line_per_line(temp_mngr_ctx: MngrContext) -> None:
+    """execute_streaming_command on a local OuterHost calls on_line for each output line."""
+    pyinfra_host = create_local_pyinfra_host()
+    outer = OuterHost(
+        id=HostId.generate(),
+        connector=PyinfraConnector(pyinfra_host),
+        mngr_ctx=temp_mngr_ctx,
+    )
+    received: list[str] = []
+    result = outer.execute_streaming_command(
+        "printf 'one\\ntwo\\nthree\\n'",
+        received.append,
+    )
+    assert result.success
+    assert received == ["one", "two", "three"]
+    # The full stdout should also be captured in the result.
+    assert "one" in result.stdout
+    assert "three" in result.stdout
+
+
+def test_outer_host_streaming_local_captures_failure(temp_mngr_ctx: MngrContext) -> None:
+    """execute_streaming_command surfaces non-zero exit codes via CommandResult.success."""
+    pyinfra_host = create_local_pyinfra_host()
+    outer = OuterHost(
+        id=HostId.generate(),
+        connector=PyinfraConnector(pyinfra_host),
+        mngr_ctx=temp_mngr_ctx,
+    )
+    received: list[str] = []
+    result = outer.execute_streaming_command(
+        "echo before-fail; exit 7",
+        received.append,
+    )
+    assert not result.success
+    assert "before-fail" in received
+
+
+def test_outer_host_streaming_local_streams_stderr(temp_mngr_ctx: MngrContext) -> None:
+    """stderr lines also reach on_line and end up on the result.stderr field."""
+    pyinfra_host = create_local_pyinfra_host()
+    outer = OuterHost(
+        id=HostId.generate(),
+        connector=PyinfraConnector(pyinfra_host),
+        mngr_ctx=temp_mngr_ctx,
+    )
+    received: list[str] = []
+    result = outer.execute_streaming_command(
+        "echo to-stdout; echo to-stderr 1>&2",
+        received.append,
+    )
+    assert result.success
+    assert "to-stdout" in received
+    assert "to-stderr" in received
+    assert "to-stdout" in result.stdout
+    assert "to-stderr" in result.stderr

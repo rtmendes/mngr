@@ -474,6 +474,10 @@ def _upload_directory_to_outer(
     raise MngrError(f"Upload failed: {last_stderr}")
 
 
+def _noop_line_sink(_line: str) -> None:
+    """No-op line sink for ``execute_streaming_command`` callers that don't care about output."""
+
+
 def _build_image_on_outer(
     outer: OuterHostInterface,
     *,
@@ -514,12 +518,18 @@ def _build_image_on_outer(
     safe_remote_cmd = _redact_secret_env(remote_cmd)
     logger.trace("docker build remote command: {}", safe_remote_cmd)
 
-    result = outer.execute_idempotent_command(remote_cmd, env=run_env, timeout_seconds=timeout_seconds)
-    if on_output is not None:
-        for line in result.stdout.splitlines():
-            on_output(line)
-        for line in result.stderr.splitlines():
-            on_output(line)
+    # Stream build output line-by-line so the user sees progress during long
+    # docker builds. execute_streaming_command treats the command as
+    # idempotent and retries transient SSH errors with backoff -- on retry
+    # on_output will be re-invoked with the new attempt's output (duplicates
+    # are expected and acceptable for docker build).
+    line_callback: Callable[[str], None] = on_output if on_output is not None else _noop_line_sink
+    result = outer.execute_streaming_command(
+        remote_cmd,
+        line_callback,
+        env=run_env,
+        timeout_seconds=timeout_seconds,
+    )
     if not result.success:
         tail = "\n".join((result.stdout + "\n" + result.stderr).splitlines()[-50:])
         raise MngrError(f"Remote docker build failed: {tail}")

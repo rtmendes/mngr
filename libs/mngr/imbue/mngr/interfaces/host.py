@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from typing import Callable
 from typing import Final
 from typing import Iterator
 from typing import Mapping
@@ -240,6 +241,33 @@ class OuterHostInterface(MutableModel, ABC):
         Prefer to use execute_idempotent_command whenever possible, as it is a much simpler abstraction and more robust.
         This is really here if you *must* do something which cannot be made idempotent.
         It automatically handles making the command idempotent, but it's much slower and more complex.
+        """
+        ...
+
+    @abstractmethod
+    def execute_streaming_command(
+        self,
+        command: str,
+        on_line: Callable[[str], None],
+        *,
+        env: Mapping[str, str] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> CommandResult:
+        """Execute a command, calling ``on_line`` for each output line as it arrives.
+
+        Useful for long-running commands where progress visibility matters
+        (e.g. ``docker build``). The callback is invoked once per line of
+        stdout or stderr in the order the bytes arrive on each stream. The
+        trailing newline is stripped before calling ``on_line``.
+
+        Returns a ``CommandResult`` with the merged stdout / stderr / exit
+        code once the command finishes.
+
+        The command is treated as **idempotent**: implementations may retry
+        it on transient SSH errors. When a retry happens, ``on_line`` will
+        be re-called with the new attempt's output -- callers should expect
+        and tolerate duplicate lines on retry. Use this for commands like
+        ``docker build`` where re-running is safe.
         """
         ...
 
