@@ -105,7 +105,7 @@ Add a `_init_runtime_worktree()` function called once from `main()` *before* the
 6. Fresh-create path (origin confirmed not to have the branch, or offline-only mode):
    - If `runtime/` exists with files (race avoidance): rename it to `runtime.preexisting/`, create the worktree at `runtime/`, then move files from `runtime.preexisting/` back into `runtime/` and `rmdir` the old name.
    - `git worktree add --orphan -b {branch} runtime/`.
-   - Inside `runtime/`: write `.gitignore` containing `secrets`, set bot identity (§2), `git -C runtime/ commit --allow-empty -m "runtime backup: init"`.
+   - Inside `runtime/`: write `.gitignore` containing `secrets`, set bot identity (§2), `git -C runtime/ commit --allow-empty -m "runtime backup: <ISO 8601 UTC timestamp>"` (same format as every other commit per §2; the timestamp is the init time).
    - If `GH_TOKEN` is set: `git -C runtime/ push --set-upstream origin {branch}` (best-effort; failure is logged but non-fatal).
 7. All errors are logged to stderr; bootstrap proceeds to reconcile services either way.
 
