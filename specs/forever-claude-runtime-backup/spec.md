@@ -75,13 +75,15 @@ libs/runtime_backup/
 ```
 
 - `pyproject.toml`: declares one console script `runtime-backup = "runtime_backup.runner:main"` and one runtime dep on `loguru` (matching the other service packages).
-- `runner.py:main()`: infinite loop, sleep 60s, then run one tick. Tick logic:
-  1. `git -C runtime/ add -A`.
-  2. If `git -C runtime/ status --porcelain` is empty, skip commit + push (nothing changed).
-  3. Else `git -C runtime/ commit -m "runtime backup: <ISO timestamp>"`.
-  4. Always attempt `git -C runtime/ push` (covers cases where a prior tick committed but failed to push). No `--force`, no `--set-upstream` — bootstrap init already set upstream.
-  5. If `GH_TOKEN` is unset: skip step 4 and log `[runtime-backup] no GH_TOKEN, skipping push` once at startup (not every tick).
-  6. On any subprocess error other than "nothing to commit": log to stderr and append to `/tmp/runtime-backup.log`, continue to next tick. Never exit.
+- `runner.py:main()`: structured as a one-time startup phase followed by an infinite tick loop.
+  - Startup (runs exactly once before entering the loop):
+    - If `GH_TOKEN` is unset, log `[runtime-backup] no GH_TOKEN, skipping push` once. (Per-tick logging is intentionally avoided to prevent log spam.)
+  - Tick loop: sleep 60s, then run one tick. Tick logic:
+    1. `git -C runtime/ add -A`.
+    2. If `git -C runtime/ status --porcelain` is empty, skip commit + push (nothing changed) and continue to the next tick.
+    3. Else `git -C runtime/ commit -m "runtime backup: <ISO timestamp>"`.
+    4. If `GH_TOKEN` is set, attempt `git -C runtime/ push` (this also covers cases where a prior tick committed but failed to push). No `--force`, no `--set-upstream` — bootstrap init already set upstream. If `GH_TOKEN` is unset, skip the push entirely.
+    5. On any subprocess error other than "nothing to commit": log to stderr and append to `/tmp/runtime-backup.log`, continue to next tick. Never exit.
 - `README.md`: describes the service contract, log path, branch naming convention.
 - `test_runtime_backup_ratchets.py`: import-only ratchets matching the other services.
 
