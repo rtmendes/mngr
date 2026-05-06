@@ -82,7 +82,7 @@ libs/runtime_backup/
     1. `git -C runtime/ add -A`.
     2. If `git -C runtime/ status --porcelain` is empty, skip commit + push (nothing changed) and continue to the next tick.
     3. Else `git -C runtime/ commit -m "runtime backup: <ISO timestamp>"`.
-    4. If `GH_TOKEN` is set, attempt `git -C runtime/ push` (this also covers cases where a prior tick committed but failed to push). No `--force`, no `--set-upstream` — bootstrap init already set upstream. If `GH_TOKEN` is unset, skip the push entirely.
+    4. If `GH_TOKEN` is set, attempt `git -C runtime/ push` (this also covers cases where a prior tick committed but failed to push). On failure, fall back to `git -C runtime/ push --set-upstream origin {branch}` so the service self-heals when bootstrap's initial `--set-upstream` push didn't succeed (bootstrap's push is best-effort per §4 step 6, so upstream may not yet be configured). No `--force`. If `GH_TOKEN` is unset, skip the push entirely.
     5. On any subprocess error other than "nothing to commit": log to stderr and append to `/tmp/runtime-backup.log`, continue to next tick. Never exit.
 - `README.md`: describes the service contract, log path, branch naming convention.
 - `test_runtime_backup_ratchets.py`: import-only ratchets matching the other services.
