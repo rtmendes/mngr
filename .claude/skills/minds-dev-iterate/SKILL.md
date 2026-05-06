@@ -141,7 +141,7 @@ If this chain breaks (orphaned `mngr observe`/`mngr event` processes appear), so
 Both `create-pool-hosts-dev` (mngr-working-tree -> vendor/mngr) and `propagate_changes` exclude:
 `.git`, `__pycache__`, `.venv`, `node_modules`, `.test_output`, `.mypy_cache`, `.ruff_cache`, `.pytest_cache`, `uv.lock`, `.external_worktrees`
 
-`propagate_changes` additionally protects `runtime/` and `.mngr/` from deletion in the container sync.
+`propagate_changes` additionally protects `runtime/`, `.mngr/`, and `.claude/settings.local.json` from deletion.
 
 ### Editable installs
 
