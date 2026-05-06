@@ -1,0 +1,1 @@
+Cleanup pass after splitting functionality out of minds into the `mngr_imbue_cloud` and `mngr_forward` plugins. No user-visible changes yet; this PR currently only seeds the branch for follow-up commits.
