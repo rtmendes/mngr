@@ -621,6 +621,8 @@ def _run_tmr_pipeline(
     # Otherwise, all agents are launched up front and then polled via the same function.
     use_batched = opts.max_agents > 0 and opts.max_agents < len(test_node_ids)
 
+    launch_failures: list[TestMapReduceResult] = []
+
     if use_batched:
         if opts.use_snapshot:
             write_human_line("WARNING: --use-snapshot is not supported with --max-agents and will be ignored")
@@ -634,6 +636,7 @@ def _run_tmr_pipeline(
             config=config,
             mngr_ctx=mngr_ctx,
             pytest_flags=testing_flags,
+            launch_failures=launch_failures,
             prompt_suffix=opts.prompt_suffix or "",
             use_snapshot=opts.use_snapshot and provided_snapshot is None,
             max_parallel=opts.max_parallel,
@@ -658,6 +661,7 @@ def _run_tmr_pipeline(
         report_path=html_path,
         all_agents=agent_infos,
         all_hosts=agent_hosts,
+        launch_failures=launch_failures,
         artifact_output_dir=output_dir,
         source_dir=source_dir,
         base_commit=base_commit if is_remote_provider else None,
@@ -677,6 +681,7 @@ def _run_tmr_pipeline(
         cg=mngr_ctx.concurrency_group,
         base_commit=base_commit if is_remote_provider else None,
         cached_results=cached_results,
+        launch_failures=launch_failures,
     )
 
     # Step 9: Write report with final results (artifacts already pulled during polling)

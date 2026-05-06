@@ -14,3 +14,6 @@
   ("localhost"), so the new-host path can never find a free name; TMR now
   reuses the existing local host when the target provider is `local`,
   matching what `mngr create` already does.
+- `mngr tmr` HTML reports now include rows for tests whose agent failed to
+  launch (e.g. `SendMessageError` from a paste-detection timeout). They are
+  rendered as errored entries instead of being silently dropped.
