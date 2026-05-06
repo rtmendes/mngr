@@ -96,14 +96,6 @@ class AgentCreationStatus(UpperCaseStrEnum):
     FAILED = auto()
 
 
-class AgentDestructionStatus(UpperCaseStrEnum):
-    """Status of a background agent destruction."""
-
-    DESTROYING = auto()
-    DONE = auto()
-    FAILED = auto()
-
-
 class AgentCreationInfo(FrozenModel):
     """Snapshot of agent creation state, returned to callers for status polling.
 
@@ -125,14 +117,6 @@ class AgentCreationInfo(FrozenModel):
     )
     status: AgentCreationStatus = Field(description="Current creation status")
     redirect_url: str | None = Field(default=None, description="URL to redirect to when creation is done")
-    error: str | None = Field(default=None, description="Error message, set when status is FAILED")
-
-
-class AgentDestructionInfo(FrozenModel):
-    """Snapshot of agent destruction state."""
-
-    agent_id: AgentId = Field(description="ID of the agent being destroyed")
-    status: AgentDestructionStatus = Field(description="Current destruction status")
     error: str | None = Field(default=None, description="Error message, set when status is FAILED")
 
 
@@ -817,8 +801,6 @@ class AgentCreator(MutableModel):
     _log_queues: dict[str, queue.Queue[str]] = PrivateAttr(default_factory=dict)
     _threads: list[threading.Thread] = PrivateAttr(default_factory=list)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
-    _destroy_statuses: dict[str, AgentDestructionStatus] = PrivateAttr(default_factory=dict)
-    _destroy_errors: dict[str, str] = PrivateAttr(default_factory=dict)
 
     def start_creation(
         self,
@@ -925,168 +907,6 @@ class AgentCreator(MutableModel):
         """Get the log queue for an in-flight creation, or None if not tracked."""
         with self._lock:
             return self._log_queues.get(str(creation_id))
-
-    def release_imbue_cloud_host(self, agent_id: AgentId, account_email: str) -> None:
-        """Release the imbue_cloud lease backing an agent, if any.
-
-        Looks up the lease via ``mngr imbue_cloud hosts list --account <email>``
-        and releases the matching entry. No-op when the agent isn't backed by
-        an imbue_cloud lease (returns silently).
-        """
-        if self.imbue_cloud_cli is None or not account_email:
-            return
-        try:
-            leased = self.imbue_cloud_cli.list_hosts(account_email)
-        except ImbueCloudCliError as exc:
-            logger.warning("Could not list imbue_cloud hosts for {}: {}", account_email, exc)
-            return
-        host_db_id: str | None = None
-        for entry in leased:
-            if entry.agent_id == str(agent_id):
-                host_db_id = entry.host_db_id
-                break
-        if host_db_id is None:
-            logger.debug("No imbue_cloud lease found for agent {}, skipping release", agent_id)
-            return
-        is_released = self.imbue_cloud_cli.release_host(account_email, host_db_id)
-        if is_released:
-            logger.debug("Released imbue_cloud lease {} for agent {}", host_db_id, agent_id)
-        else:
-            logger.warning("Failed to release imbue_cloud lease {} for agent {}", host_db_id, agent_id)
-
-    def start_destruction(
-        self,
-        agent_id: AgentId,
-        account_email: str = "",
-    ) -> None:
-        """Start destroying an agent in a background thread.
-
-        Runs ``mngr destroy``; if ``account_email`` is supplied, also releases
-        any matching imbue_cloud lease through ``mngr imbue_cloud hosts release``.
-        """
-        with self._lock:
-            self._destroy_statuses[str(agent_id)] = AgentDestructionStatus.DESTROYING
-
-        thread = threading.Thread(
-            target=self._destroy_agent_background,
-            args=(agent_id, account_email),
-            daemon=True,
-            name="agent-destroyer-{}".format(agent_id),
-        )
-        thread.start()
-        with self._lock:
-            self._threads.append(thread)
-
-    def get_destruction_info(self, agent_id: AgentId) -> AgentDestructionInfo | None:
-        """Get the current destruction status for an agent, or None if not tracked."""
-        with self._lock:
-            status = self._destroy_statuses.get(str(agent_id))
-            if status is None:
-                return None
-            return AgentDestructionInfo(
-                agent_id=agent_id,
-                status=status,
-                error=self._destroy_errors.get(str(agent_id)),
-            )
-
-    def _destroy_agent_background(
-        self,
-        agent_id: AgentId,
-        account_email: str,
-    ) -> None:
-        """Background thread that destroys all agents on the same host and releases imbue_cloud resources."""
-        aid = str(agent_id)
-        try:
-            with log_span("Destroying workspace {}", agent_id):
-                host_id = self._get_host_id_for_agent(agent_id)
-
-                if host_id is not None:
-                    self._destroy_all_agents_on_host(host_id)
-                else:
-                    logger.warning("Could not determine host for agent {}, destroying single agent", agent_id)
-                    self._destroy_single_agent(agent_id)
-
-                # Release the imbue_cloud lease (no-op when the agent isn't backed
-                # by one or no account is supplied).
-                if account_email:
-                    self.release_imbue_cloud_host(agent_id, account_email)
-
-                with self._lock:
-                    self._destroy_statuses[aid] = AgentDestructionStatus.DONE
-
-        except (MngrCommandError, ImbueCloudCliError, ValueError, OSError) as e:
-            logger.error("Failed to destroy agent {}: {}", agent_id, e)
-            with self._lock:
-                self._destroy_statuses[aid] = AgentDestructionStatus.FAILED
-                self._destroy_errors[aid] = str(e)
-
-    def _get_host_id_for_agent(self, agent_id: AgentId) -> str | None:
-        """Look up the host ID for an agent via ``mngr list``."""
-        cg = _make_child_cg("mngr-list-host", self.root_concurrency_group)
-        with cg:
-            result = cg.run_process_to_completion(
-                command=[
-                    MNGR_BINARY,
-                    "list",
-                    "--include",
-                    'id == "{}"'.format(agent_id),
-                    "--format",
-                    "json",
-                ],
-                is_checked_after=False,
-            )
-        if result.returncode != 0:
-            return None
-        try:
-            data = json.loads(result.stdout)
-            agents = data.get("agents", [])
-            if agents:
-                host = agents[0].get("host", {})
-                return host.get("id")
-        except (json.JSONDecodeError, KeyError, IndexError):
-            pass
-        return None
-
-    def _destroy_all_agents_on_host(self, host_id: str) -> None:
-        """Destroy all agents on the given host via ``mngr destroy -f``."""
-        cg = _make_child_cg("mngr-destroy-host", self.root_concurrency_group)
-        with cg:
-            result = cg.run_process_to_completion(
-                command=[
-                    "bash",
-                    "-c",
-                    "{mngr} list --include 'host.id == \"{host_id}\"' --ids | {mngr} destroy -f -".format(
-                        mngr=MNGR_BINARY,
-                        host_id=host_id,
-                    ),
-                ],
-                is_checked_after=False,
-            )
-        if result.returncode != 0:
-            raise MngrCommandError(
-                "mngr destroy for host {} failed (exit code {}):\n{}".format(
-                    host_id,
-                    result.returncode,
-                    result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
-                )
-            )
-
-    def _destroy_single_agent(self, agent_id: AgentId) -> None:
-        """Destroy a single agent via ``mngr destroy``."""
-        cg = _make_child_cg("mngr-destroy", self.root_concurrency_group)
-        with cg:
-            result = cg.run_process_to_completion(
-                command=[MNGR_BINARY, "destroy", str(agent_id), "-f"],
-                is_checked_after=False,
-            )
-        if result.returncode != 0:
-            raise MngrCommandError(
-                "mngr destroy failed for {} (exit code {}):\n{}".format(
-                    agent_id,
-                    result.returncode,
-                    result.stderr.strip() if result.stderr.strip() else result.stdout.strip(),
-                )
-            )
 
     def _create_agent_background(
         self,

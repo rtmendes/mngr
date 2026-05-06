@@ -261,6 +261,10 @@ def test_prevent_direct_subprocess() -> None:
         "scripts/*.py",
         "*/latchkey/_spawn.py",
         "*/desktop_client/forward_cli.py",
+        # ``destroying.py`` spawns a detached ``bash -c '<mngr destroy ...>'``
+        # so the destroy survives a minds-backend exit; same justification as
+        # ``latchkey/_spawn.py``. See specs/detached-destroy-flow/spec.md.
+        "*/desktop_client/destroying.py",
     )
     rc.check_direct_subprocess(_DIR, snapshot(0), excluded_patterns=excluded)
 

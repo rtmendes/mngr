@@ -40,6 +40,13 @@ from imbue.minds.desktop_client.cookie_manager import SESSION_COOKIE_NAME
 from imbue.minds.desktop_client.cookie_manager import create_session_cookie
 from imbue.minds.desktop_client.cookie_manager import verify_session_cookie
 from imbue.minds.desktop_client.deps import BackendResolverDep
+from imbue.minds.desktop_client.destroying import DestroyingStatus
+from imbue.minds.desktop_client.destroying import delete_destroying
+from imbue.minds.desktop_client.destroying import list_destroying
+from imbue.minds.desktop_client.destroying import lookup_host_id
+from imbue.minds.desktop_client.destroying import read_destroying
+from imbue.minds.desktop_client.destroying import read_log_chunk
+from imbue.minds.desktop_client.destroying import start_destroy
 from imbue.minds.desktop_client.forward_cli import EnvelopeStreamConsumer
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
@@ -62,6 +69,7 @@ from imbue.minds.desktop_client.templates import render_auth_error_page
 from imbue.minds.desktop_client.templates import render_chrome_page
 from imbue.minds.desktop_client.templates import render_create_form
 from imbue.minds.desktop_client.templates import render_creating_page
+from imbue.minds.desktop_client.templates import render_destroying_page
 from imbue.minds.desktop_client.templates import render_landing_page
 from imbue.minds.desktop_client.templates import render_login_page
 from imbue.minds.desktop_client.templates import render_login_redirect_page
@@ -251,6 +259,8 @@ def _handle_landing_page(
         return HTMLResponse(content=html)
 
     all_agent_ids = backend_resolver.list_known_workspace_ids()
+    paths: WorkspacePaths | None = request.app.state.api_v1_paths
+    destroying_status_by_agent_id = _resolve_destroying_for_landing(paths, all_agent_ids)
 
     if all_agent_ids:
         telegram_orchestrator: TelegramSetupOrchestrator | None = request.app.state.telegram_orchestrator
@@ -270,6 +280,7 @@ def _handle_landing_page(
             mngr_forward_origin=_get_mngr_forward_origin(request),
             telegram_status_by_agent_id=telegram_status,
             agent_names=agent_names,
+            destroying_status_by_agent_id=destroying_status_by_agent_id,
         )
         return HTMLResponse(content=html)
 
@@ -756,66 +767,198 @@ async def _handle_creation_logs_sse(
 # -- Agent destruction route handlers --
 
 
+def _resolve_destroying_for_landing(
+    paths: WorkspacePaths | None,
+    all_agent_ids: tuple[AgentId, ...],
+) -> dict[str, str]:
+    """Walk ``<paths.data_dir>/destroying/``, delete DONE records, return marker map.
+
+    Returns ``{agent_id_str: "running" | "failed"}`` for any in-flight or
+    failed destroy whose agent_id is currently known to the resolver. DONE
+    records (pid dead AND agent missing from the resolver) are deleted on
+    the spot so the row vanishes naturally on the next refresh.
+
+    Returns an empty dict (and does no work) when ``paths`` is None --
+    that path is exercised by tests that build a minimal app without
+    a real data dir.
+    """
+    if paths is None:
+        return {}
+    in_resolver = frozenset(all_agent_ids)
+    records = list_destroying(paths, in_resolver)
+    marker: dict[str, str] = {}
+    for agent_id, record in records.items():
+        if record.status == DestroyingStatus.DONE:
+            delete_destroying(agent_id, paths)
+            continue
+        marker[str(agent_id)] = "running" if record.status == DestroyingStatus.RUNNING else "failed"
+    return marker
+
+
+def _agent_in_resolver(request: Request, agent_id: AgentId) -> bool:
+    backend_resolver: BackendResolverInterface = request.app.state.backend_resolver
+    return agent_id in backend_resolver.list_known_workspace_ids()
+
+
 async def _handle_destroy_agent_api(
     agent_id: str,
     request: Request,
     auth_store: AuthStoreDep,
 ) -> Response:
-    """API endpoint for destroying an agent (POST /api/destroy-agent/{agent_id})."""
+    """POST /api/destroy-agent/<agent_id>: spawn a detached destroy.
+
+    Idempotent: if a destroy is already running for this agent, returns
+    200 with the existing record's status. Otherwise spawns the
+    detached subprocess and returns 202.
+
+    Always returns ``redirect_url: "/"`` so the settings-page JS can
+    immediately navigate to the landing page (where the destroying
+    marker is already visible).
+    """
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content='{"error": "Not authenticated"}', media_type="application/json")
 
-    agent_creator: AgentCreator | None = request.app.state.agent_creator
-    if agent_creator is None:
-        return Response(
-            status_code=501, content='{"error": "Agent management not configured"}', media_type="application/json"
-        )
+    paths: WorkspacePaths | None = request.app.state.api_v1_paths
+    if paths is None:
+        return Response(status_code=501, content='{"error": "Destroy not configured"}', media_type="application/json")
 
     parsed_id = AgentId(agent_id)
 
-    # Resolve the imbue_cloud account email so the agent_creator can call
-    # `mngr imbue_cloud hosts release` via the plugin. Tokens themselves
-    # live in the plugin's session store, not minds'.
-    account_email = ""
+    # Disassociate the workspace from the session store synchronously.
+    # Tokens live in the plugin's session store; minds only owns the
+    # workspace<->account mapping, which we want broken before mngr
+    # destroy returns regardless of whether the destroy succeeds.
     session_store: MultiAccountSessionStore | None = request.app.state.session_store
     if session_store:
         account = session_store.get_account_for_workspace(agent_id)
         if account:
-            account_email = str(account.email)
             session_store.disassociate_workspace(str(account.user_id), agent_id)
 
-    agent_creator.start_destruction(parsed_id, account_email=account_email)
+    # Idempotent: short-circuit if a destroy is already running.
+    existing = read_destroying(parsed_id, paths, agent_in_resolver=_agent_in_resolver(request, parsed_id))
+    if existing is not None and existing.status == DestroyingStatus.RUNNING:
+        return Response(
+            status_code=200,
+            content=json.dumps({"agent_id": agent_id, "status": "running", "redirect_url": "/"}),
+            media_type="application/json",
+        )
+
+    host_id = lookup_host_id(parsed_id)
+    start_destroy(parsed_id, paths, host_id)
 
     return Response(
-        content=json.dumps({"agent_id": agent_id, "status": "destroying"}),
+        status_code=202,
+        content=json.dumps({"agent_id": agent_id, "status": "running", "redirect_url": "/"}),
         media_type="application/json",
     )
 
 
-def _handle_destroy_agent_status_api(
+def _handle_destroying_status_api(
     agent_id: str,
     request: Request,
     auth_store: AuthStoreDep,
 ) -> Response:
-    """Check destruction status for an agent."""
+    """GET /api/destroying/<agent_id>/status: live status of a destroy."""
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content='{"error": "Not authenticated"}', media_type="application/json")
-
-    agent_creator: AgentCreator | None = request.app.state.agent_creator
-    if agent_creator is None:
-        return Response(
-            status_code=501, content='{"error": "Agent management not configured"}', media_type="application/json"
-        )
-
+    paths: WorkspacePaths | None = request.app.state.api_v1_paths
+    if paths is None:
+        return Response(status_code=404, content='{"error": "No record"}', media_type="application/json")
     parsed_id = AgentId(agent_id)
-    info = agent_creator.get_destruction_info(parsed_id)
-    if info is None:
-        return Response(status_code=404, content='{"error": "Unknown destruction"}', media_type="application/json")
+    record = read_destroying(parsed_id, paths, agent_in_resolver=_agent_in_resolver(request, parsed_id))
+    if record is None:
+        return Response(status_code=404, content='{"error": "No record"}', media_type="application/json")
+    return Response(
+        content=json.dumps(
+            {
+                "agent_id": agent_id,
+                "pid": record.pid,
+                "pid_alive": record.pid_alive,
+                "agent_in_resolver": record.agent_in_resolver,
+                "status": str(record.status).lower(),
+            }
+        ),
+        media_type="application/json",
+    )
 
-    result: dict[str, object] = {"agent_id": agent_id, "status": str(info.status).lower()}
-    if info.error:
-        result["error"] = info.error
-    return Response(content=json.dumps(result), media_type="application/json")
+
+def _handle_destroying_log_api(
+    agent_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """GET /api/destroying/<agent_id>/log?after=<bytes>: tail the destroy log."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content='{"error": "Not authenticated"}', media_type="application/json")
+    paths: WorkspacePaths | None = request.app.state.api_v1_paths
+    if paths is None:
+        return Response(status_code=404, content='{"error": "No record"}', media_type="application/json")
+    parsed_id = AgentId(agent_id)
+    after_str = request.query_params.get("after", "0")
+    try:
+        after = max(int(after_str), 0)
+    except ValueError:
+        after = 0
+    try:
+        content_bytes, next_offset = read_log_chunk(parsed_id, paths, after)
+    except FileNotFoundError:
+        return Response(status_code=404, content='{"error": "No record"}', media_type="application/json")
+    return Response(
+        content=json.dumps(
+            {
+                "bytes_read": len(content_bytes),
+                "next_offset": next_offset,
+                "content": content_bytes.decode("utf-8", errors="replace"),
+            }
+        ),
+        media_type="application/json",
+    )
+
+
+def _handle_destroying_dismiss_api(
+    agent_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+) -> Response:
+    """POST /api/destroying/<agent_id>/dismiss: remove the destroy record."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content='{"error": "Not authenticated"}', media_type="application/json")
+    paths: WorkspacePaths | None = request.app.state.api_v1_paths
+    if paths is None:
+        return Response(status_code=200, content="{}", media_type="application/json")
+    parsed_id = AgentId(agent_id)
+    delete_destroying(parsed_id, paths)
+    return Response(status_code=200, content="{}", media_type="application/json")
+
+
+def _handle_destroying_page(
+    agent_id: str,
+    request: Request,
+    auth_store: AuthStoreDep,
+    backend_resolver: BackendResolverDep,
+) -> Response:
+    """GET /destroying/<agent_id>: the destroy detail / log-tail page."""
+    if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
+        return Response(status_code=403, content="Not authenticated")
+    paths: WorkspacePaths | None = request.app.state.api_v1_paths
+    if paths is None:
+        return Response(status_code=404, content="No record")
+    parsed_id = AgentId(agent_id)
+    in_resolver = parsed_id in backend_resolver.list_known_workspace_ids()
+    record = read_destroying(parsed_id, paths, agent_in_resolver=in_resolver)
+    if record is None:
+        return Response(status_code=404, content="No record")
+    workspace_name = backend_resolver.get_workspace_name(parsed_id)
+    if not workspace_name:
+        info = backend_resolver.get_agent_display_info(parsed_id)
+        workspace_name = info.agent_name if info else agent_id
+    html = render_destroying_page(
+        agent_id=parsed_id,
+        agent_name=workspace_name or agent_id,
+        pid=record.pid,
+        status=str(record.status).lower(),
+    )
+    return HTMLResponse(content=html)
 
 
 # -- Telegram setup route handlers --
@@ -1842,8 +1985,10 @@ def create_desktop_client(
     # events produced between consumer.start() and uvicorn.run()) see a
     # valid attribute and can choose to drop the event instead of crashing.
     app.state.event_loop = None
-    if paths is not None:
-        app.state.api_v1_paths = paths
+    # Always-set (possibly None) so consumers can read directly via
+    # ``app.state.api_v1_paths`` instead of using a defaulting attribute
+    # lookup -- the latter is flagged by the project ratchet.
+    app.state.api_v1_paths = paths
     if http_client is not None:
         app.state.http_client = http_client
 
@@ -1922,7 +2067,10 @@ def create_desktop_client(
 
     # Agent destruction routes
     app.post("/api/destroy-agent/{agent_id}")(_handle_destroy_agent_api)
-    app.get("/api/destroy-agent/{agent_id}/status")(_handle_destroy_agent_status_api)
+    app.get("/api/destroying/{agent_id}/status")(_handle_destroying_status_api)
+    app.get("/api/destroying/{agent_id}/log")(_handle_destroying_log_api)
+    app.post("/api/destroying/{agent_id}/dismiss")(_handle_destroying_dismiss_api)
+    app.get("/destroying/{agent_id}")(_handle_destroying_page)
 
     # Telegram setup routes
     app.post("/api/agents/{agent_id}/telegram/setup")(_handle_telegram_setup)

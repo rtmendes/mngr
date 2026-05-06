@@ -68,6 +68,7 @@ def render_landing_page(
     telegram_status_by_agent_id: dict[str, bool] | None = None,
     is_discovering: bool = False,
     agent_names: dict[str, str] | None = None,
+    destroying_status_by_agent_id: dict[str, str] | None = None,
 ) -> str:
     """Render the landing page listing accessible workspaces.
 
@@ -80,6 +81,14 @@ def render_landing_page(
     active Telegram bot credentials. When None, no telegram buttons are shown.
 
     agent_names maps agent ID strings to human-readable workspace names.
+
+    destroying_status_by_agent_id maps agent ID strings to one of
+    ``"running"``/``"failed"`` for agents whose detached destroy subprocess
+    is currently in flight (running) or exited without removing the agent
+    (failed). Agents whose destroy is ``done`` are not included -- the
+    landing handler deletes those records so the row vanishes naturally
+    once discovery propagates ``AgentDestroyed``. When None, no marker is
+    shown.
 
     When is_discovering is True, the page shows a "Discovering agents..." message
     with auto-refresh instead of the empty state. This is used when the
@@ -95,6 +104,7 @@ def render_landing_page(
         telegram_status_by_agent_id=telegram_status_by_agent_id or {},
         is_discovering=is_discovering,
         agent_names=agent_names or {},
+        destroying_status_by_agent_id=destroying_status_by_agent_id or {},
     )
 
 
@@ -203,6 +213,30 @@ def render_login_redirect_page(one_time_code: OneTimeCode) -> str:
 def render_auth_error_page(message: str) -> str:
     """Render an error page for failed authentication."""
     return JINJA_ENV.get_template("auth_error.html").render(message=message)
+
+
+@pure
+def render_destroying_page(
+    agent_id: AgentId,
+    agent_name: str,
+    pid: int,
+    status: str,
+) -> str:
+    """Render the detail page for an in-flight or recently-completed destroy.
+
+    The page polls ``/api/destroying/<agent_id>/{status,log}`` to keep its
+    log tail and status badge up to date; once status flips to ``done`` it
+    redirects to ``/``. ``status`` is the initial server-side computed
+    value (``running``/``failed``/``done``) so the page renders correctly
+    even before the first poll completes.
+    """
+    return JINJA_ENV.get_template("destroying.html").render(
+        agent_id=str(agent_id),
+        agent_name=agent_name,
+        pid=pid,
+        status=status,
+        accent=workspace_accent(str(agent_id)),
+    )
 
 
 # -- Chrome (persistent shell) templates --
