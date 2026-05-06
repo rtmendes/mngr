@@ -27,7 +27,6 @@ from paramiko import SFTPClient
 from paramiko import SSHException
 from paramiko import Transport
 from pydantic import Field
-from pydantic import PrivateAttr
 from pydantic import ValidationError
 from pyinfra.api.command import StringCommand
 from pyinfra.api.exceptions import ConnectError
@@ -68,17 +67,18 @@ from imbue.mngr.hosts.common import LOCAL_CONNECTOR_NAME
 from imbue.mngr.hosts.common import build_ssh_transport_command
 from imbue.mngr.hosts.common import get_ssh_known_hosts_file
 from imbue.mngr.hosts.offline_host import BaseHost
+from imbue.mngr.hosts.outer_host import OuterHost
 from imbue.mngr.interfaces.agent import AgentInterface
 from imbue.mngr.interfaces.data_types import CertifiedHostData
 from imbue.mngr.interfaces.data_types import CommandResult
 from imbue.mngr.interfaces.data_types import FileTransferSpec
 from imbue.mngr.interfaces.data_types import HostResources
-from imbue.mngr.interfaces.data_types import PyinfraConnector
 from imbue.mngr.interfaces.host import CreateAgentOptions
 from imbue.mngr.interfaces.host import CreateWorkDirResult
 from imbue.mngr.interfaces.host import HostInterface
 from imbue.mngr.interfaces.host import NamedCommand
 from imbue.mngr.interfaces.host import OnlineHostInterface
+from imbue.mngr.interfaces.host import OuterHostInterface
 from imbue.mngr.interfaces.host import PROVISIONING_FIELD_MAP
 from imbue.mngr.interfaces.provider_instance import ProviderInstanceInterface
 from imbue.mngr.primitives import ActivitySource
@@ -216,22 +216,20 @@ class HostLocation(FrozenModel):
     )
 
 
-class Host(BaseHost, OnlineHostInterface):
+class Host(OuterHost, BaseHost, OnlineHostInterface):
     """Host implementation that proxies operations through a pyinfra connector.
 
     All operations (command execution, file read/write) are performed through
     the pyinfra connector, which handles both local and remote hosts transparently.
+
+    Inherits the safe-method primitives (file ops, command execution, SSH info)
+    from ``OuterHost``. Adds the agent / lifecycle / snapshot / tag machinery
+    that distinguishes a managed host from a raw outer host.
     """
 
-    connector: PyinfraConnector = Field(frozen=True, description="Pyinfra connector for host operations")
     provider_instance: ProviderInstanceInterface = Field(
         frozen=True, description="The provider instance managing this host"
     )
-    mngr_ctx: MngrContext = Field(frozen=True, repr=False, description="The mngr context")
-
-    # Set to True by disconnect() and model_copy_update() to prevent __del__
-    # from closing the paramiko client (which may be shared with a copy).
-    _explicitly_disconnected: bool = PrivateAttr(default=False)
 
     @property
     def is_local(self) -> bool:
@@ -954,6 +952,21 @@ class Host(BaseHost, OnlineHostInterface):
         assert key_path_str, "SSH key path must be set for remote hosts"
 
         return (user, hostname, port, Path(key_path_str))
+
+    # =========================================================================
+    # Outer Host Access
+    # =========================================================================
+
+    @contextmanager
+    def outer_host(self) -> Iterator["OuterHostInterface | None"]:
+        """Open the outer host (the underlying machine that hosts this container/sandbox).
+
+        Delegates to ``self.provider_instance.outer_host_for(self.id)``. The
+        SSH connection (when applicable) is opened on ``__enter__`` and closed
+        on ``__exit__``.
+        """
+        with self.provider_instance.outer_host_for(self.id) as outer:
+            yield outer
 
     # =========================================================================
     # Activity Times

@@ -19,8 +19,10 @@ This provider's responsibilities are then:
 import json
 import time
 from collections.abc import Callable
+from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -46,6 +48,7 @@ from imbue.mngr.hosts.common import resolve_expected_process_name
 from imbue.mngr.hosts.common import timestamp_to_datetime
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.hosts.offline_host import OfflineHost
+from imbue.mngr.hosts.outer_host import OuterHost
 from imbue.mngr.interfaces.agent import AgentInterface
 from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.interfaces.data_types import CpuResources
@@ -57,6 +60,7 @@ from imbue.mngr.interfaces.data_types import SnapshotInfo
 from imbue.mngr.interfaces.data_types import VolumeInfo
 from imbue.mngr.interfaces.host import HostInterface
 from imbue.mngr.interfaces.host import OnlineHostInterface
+from imbue.mngr.interfaces.host import OuterHostInterface
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import CommandString
@@ -839,6 +843,42 @@ class ImbueCloudProvider(BaseProviderInstance):
     def on_connection_error(self, host_id: HostId) -> None:
         """A connection error doesn't change connector-side lease state; just clear our cache."""
         self.reset_caches()
+
+    @contextmanager
+    def outer_host_for(self, host_id: HostId) -> Iterator[OuterHostInterface | None]:
+        """Open the outer host (the leased VPS itself, root@vps_ip:22).
+
+        Uses the per-host SSH key already on disk (the lease step authorized
+        this key on both the container's sshd and the VPS root account).
+        """
+        leased = self._find_leased(host_id)
+        if leased is None:
+            raise HostNotFoundError(host_id)
+        private_key_path, _ = self._host_keypair_paths(host_id)
+        if not private_key_path.exists():
+            raise HostNotFoundError(host_id)
+
+        known_hosts_path = self._host_known_hosts_path(host_id)
+        known_hosts_path.parent.mkdir(parents=True, exist_ok=True)
+        if not known_hosts_path.exists():
+            known_hosts_path.touch()
+
+        pyinfra_host = create_pyinfra_host(
+            hostname=leased.vps_ip,
+            port=22,
+            private_key_path=private_key_path,
+            known_hosts_path=known_hosts_path,
+            ssh_user="root",
+        )
+        outer = OuterHost(
+            id=host_id,
+            connector=PyinfraConnector(pyinfra_host),
+            mngr_ctx=self.mngr_ctx,
+        )
+        try:
+            yield outer
+        finally:
+            outer.disconnect()
 
     # ------------------------------------------------------------------
     # Snapshots / volumes / tags / rename: not supported

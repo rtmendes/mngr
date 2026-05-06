@@ -31,6 +31,7 @@ from imbue.mngr.interfaces.data_types import SnapshotInfo
 from imbue.mngr.interfaces.data_types import VolumeInfo
 from imbue.mngr.interfaces.host import HostInterface
 from imbue.mngr.interfaces.host import OnlineHostInterface
+from imbue.mngr.interfaces.host import OuterHostInterface
 from imbue.mngr.interfaces.volume import HostVolume
 from imbue.mngr.primitives import ActivitySource
 from imbue.mngr.primitives import AgentId
@@ -711,3 +712,28 @@ class ProviderInstanceInterface(MutableModel, ABC):
 
         The default implementation is a no-op for providers that don't need this.
         """
+
+    # =========================================================================
+    # Outer Host Access
+    # =========================================================================
+
+    @contextmanager
+    def outer_host_for(self, host_id: HostId) -> Iterator[OuterHostInterface | None]:
+        """Open the outer host for the inner host with the given id.
+
+        Yields an ``OuterHostInterface`` for the underlying machine that hosts
+        the inner host (container/sandbox), or ``None`` when no outer host is
+        accessible (e.g. modal sandboxes, the local provider, the ssh provider,
+        or docker-over-tcp daemons).
+
+        Raises ``HostNotFoundError`` if the given ``host_id`` is unknown to this
+        provider. Outer-host construction is a pure function of (provider,
+        host_id) and does not depend on the inner host being reachable.
+
+        Each ``with`` entry produces a fresh outer-host instance and a fresh
+        SSH connection (when applicable); the connection is closed on exit.
+
+        The default implementation yields ``None``. Providers that have an
+        accessible outer host override this method.
+        """
+        yield None

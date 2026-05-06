@@ -4,8 +4,10 @@ import shutil
 import tempfile
 import time
 from collections.abc import Callable
+from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
+from contextlib import contextmanager
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -33,6 +35,7 @@ from imbue.mngr.hosts.host import Host
 from imbue.mngr.hosts.offline_host import OfflineHost
 from imbue.mngr.hosts.offline_host import derive_offline_host_state
 from imbue.mngr.hosts.offline_host import validate_and_create_discovered_agent
+from imbue.mngr.hosts.outer_host import OuterHost
 from imbue.mngr.interfaces.agent import AgentInterface
 from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.interfaces.data_types import CertifiedHostData
@@ -46,6 +49,7 @@ from imbue.mngr.interfaces.data_types import SnapshotRecord
 from imbue.mngr.interfaces.data_types import VolumeInfo
 from imbue.mngr.interfaces.host import HostInterface
 from imbue.mngr.interfaces.host import OnlineHostInterface
+from imbue.mngr.interfaces.host import OuterHostInterface
 from imbue.mngr.primitives import ActivitySource
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
@@ -1100,6 +1104,35 @@ class VpsDockerProvider(BaseProviderInstance):
 
     def on_connection_error(self, host_id: HostId) -> None:
         self._evict_cached_host(host_id)
+
+    @contextmanager
+    def outer_host_for(self, host_id: HostId) -> Iterator[OuterHostInterface | None]:
+        """Open the outer host (the VPS itself, root@vps_ip:22).
+
+        Uses this provider's per-instance VPS SSH key (the one cloud-init
+        injected on VPS provisioning).
+        """
+        host_record = self._find_host_record(host_id)
+        if host_record is None or host_record.vps_ip is None:
+            raise HostNotFoundError(host_id)
+
+        vps_key_path, _pub = self._get_vps_ssh_keypair()
+        pyinfra_host = create_pyinfra_host(
+            hostname=host_record.vps_ip,
+            port=22,
+            private_key_path=vps_key_path,
+            known_hosts_path=self._vps_known_hosts_path(),
+            ssh_user="root",
+        )
+        outer = OuterHost(
+            id=host_id,
+            connector=PyinfraConnector(pyinfra_host),
+            mngr_ctx=self.mngr_ctx,
+        )
+        try:
+            yield outer
+        finally:
+            outer.disconnect()
 
     # =========================================================================
     # Discovery
