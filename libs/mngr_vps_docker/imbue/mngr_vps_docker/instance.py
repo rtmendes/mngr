@@ -1105,6 +1105,15 @@ class VpsDockerProvider(BaseProviderInstance):
     def on_connection_error(self, host_id: HostId) -> None:
         self._evict_cached_host(host_id)
 
+    def outer_host_id_for(self, host_id: HostId) -> str | None:
+        """Stable id for the outer (the VPS) of host_id, keyed by VPS IP."""
+        host_record = self._find_host_record(host_id)
+        if host_record is None:
+            raise HostNotFoundError(host_id)
+        if host_record.vps_ip is None:
+            return None
+        return f"outer:{self.name}:{host_record.vps_ip}"
+
     @contextmanager
     def outer_host_for(self, host_id: HostId) -> Iterator[OuterHostInterface | None]:
         """Open the outer host (the VPS itself, root@vps_ip:22).

@@ -265,25 +265,43 @@ def _execute_on_single_agent(
         )
 
 
-def outer_host_canonical_id(provider_name: ProviderInstanceName, host_id: HostId) -> str:
-    """Compute the canonical outer-host id used for grouping in ``mngr exec --outer``."""
-    return f"outer:{provider_name}:{host_id}"
-
-
-def group_matches_by_candidate_outer(
+def group_matches_by_outer_host(
     matches: Sequence[AgentMatch],
-) -> dict[str, list[AgentMatch]]:
-    """Group agent matches by their candidate outer-host id.
+    mngr_ctx: MngrContext,
+) -> tuple[dict[str, list[AgentMatch]], list[AgentMatch], list[tuple[AgentMatch, str]]]:
+    """Group agent matches by the *real* outer-host id reported by their provider.
 
-    The candidate id is computed cheaply from (provider, inner_host_id) without
-    opening a connection. Whether the provider actually has an outer is
-    determined later by entering the outer-host context manager.
+    Returns a 3-tuple:
+
+    - ``by_outer``: ``{outer_host_id: [agent_matches...]}`` for agents whose
+      provider has an outer (the value the provider returns from
+      ``outer_host_id_for``). Two agents whose providers return the same id
+      share the same outer machine, so the command runs once for the group.
+    - ``no_outer``: agents whose provider returned ``None`` (no accessible
+      outer); the caller decides what to do via ``--missing-outer``.
+    - ``provider_errors``: ``(match, error_message)`` for agents whose provider
+      could not be loaded or raised ``HostNotFoundError`` while computing
+      the outer id.
     """
-    by_candidate: dict[str, list[AgentMatch]] = {}
+    by_outer: dict[str, list[AgentMatch]] = {}
+    no_outer: list[AgentMatch] = []
+    errors: list[tuple[AgentMatch, str]] = []
     for match in matches:
-        candidate = outer_host_canonical_id(match.provider_name, match.host_id)
-        by_candidate.setdefault(candidate, []).append(match)
-    return by_candidate
+        try:
+            provider = get_provider_instance(match.provider_name, mngr_ctx)
+        except MngrError as e:
+            errors.append((match, f"Failed to load provider for agent {match.agent_name}: {e}"))
+            continue
+        try:
+            outer_id = provider.outer_host_id_for(match.host_id)
+        except HostNotFoundError as e:
+            errors.append((match, str(e)))
+            continue
+        if outer_id is None:
+            no_outer.append(match)
+        else:
+            by_outer.setdefault(outer_id, []).append(match)
+    return by_outer, no_outer, errors
 
 
 @log_call
@@ -302,10 +320,11 @@ def exec_command_on_outer_hosts(
 ) -> MultiExecResult:
     """Execute a shell command on the *outer host* of the targeted agents.
 
-    Targeted agents are grouped by their outer host (canonical id
-    ``outer:<provider>:<inner_host_id>``) so the command runs **once per
-    unique outer host**. Each row in ``result.outer_results`` corresponds to
-    one outer host and lists the input agents whose outer that was.
+    Agents are grouped by their *real* outer-host id (returned by the
+    provider's ``outer_host_id_for``) so the command runs **once per unique
+    outer machine**. For example, three docker containers on the same daemon
+    map to one outer (the local box or the SSH daemon host) and produce a
+    single result row that lists all three input agents.
 
     When ``missing_outer`` is:
     - ``ABORT``: raise immediately if any targeted agent has no outer host.
@@ -327,65 +346,56 @@ def exec_command_on_outer_hosts(
     if not matches:
         return result
 
-    groups = group_matches_by_candidate_outer(matches)
+    by_outer, no_outer, errors = group_matches_by_outer_host(matches, mngr_ctx)
 
-    for candidate_id, group in groups.items():
+    for match, error_msg in errors:
+        is_should_abort = _record_failure(result, match.agent_name, error_msg, on_error, error_behavior)
+        if is_should_abort:
+            return result
+
+    if no_outer:
+        if missing_outer == MissingOuterBehavior.ABORT:
+            first = no_outer[0]
+            raise UserInputError(f"agent {first.agent_name} has no outer host (provider={first.provider_name})")
+        for match in no_outer:
+            skipped = SkippedAgent(
+                agent_id=match.agent_id,
+                agent_name=match.agent_name,
+                host_id=match.host_id,
+                provider_name=match.provider_name,
+                reason="no outer host",
+            )
+            result.skipped_agents.append(skipped)
+            if on_skip is not None and missing_outer == MissingOuterBehavior.WARN:
+                on_skip(skipped)
+
+    for outer_id, group in by_outer.items():
         first = group[0]
-        try:
-            provider = get_provider_instance(first.provider_name, mngr_ctx)
-        except MngrError as e:
-            for match in group:
-                is_should_abort = _record_failure(
-                    result,
-                    match.agent_name,
-                    f"Failed to load provider for agent {match.agent_name}: {e}",
-                    on_error,
-                    error_behavior,
-                )
-                if is_should_abort:
-                    return result
-            continue
+        # Provider already validated by the grouping pass.
+        provider = get_provider_instance(first.provider_name, mngr_ctx)
 
-        try:
-            outer_cm = provider.outer_host_for(first.host_id)
-        except HostNotFoundError as e:
-            for match in group:
-                is_should_abort = _record_failure(result, match.agent_name, str(e), on_error, error_behavior)
-                if is_should_abort:
-                    return result
-            continue
-
-        with outer_cm as outer:
+        with provider.outer_host_for(first.host_id) as outer:
             if outer is None:
-                # No outer host accessible for this provider; honor --missing-outer.
-                if missing_outer == MissingOuterBehavior.ABORT:
-                    raise UserInputError(
-                        f"agent {first.agent_name} has no outer host (provider={first.provider_name})"
-                    )
+                # outer_host_id_for said this provider has an outer but the
+                # actual open returned None -- treat as a runtime failure.
+                err_msg = f"provider returned an outer id but outer_host_for yielded None for outer {outer_id}"
                 for match in group:
-                    skipped = SkippedAgent(
-                        agent_id=match.agent_id,
-                        agent_name=match.agent_name,
-                        host_id=match.host_id,
-                        provider_name=match.provider_name,
-                        reason="no outer host",
-                    )
-                    result.skipped_agents.append(skipped)
-                    if on_skip is not None and missing_outer == MissingOuterBehavior.WARN:
-                        on_skip(skipped)
+                    is_should_abort = _record_failure(result, match.agent_name, err_msg, on_error, error_behavior)
+                    if is_should_abort:
+                        return result
                 continue
 
-            # Default cwd = SSH user's home (~) on the outer.
+            # Default cwd = SSH user's home on the outer (None means the connector's default).
             effective_cwd = Path(cwd) if cwd is not None else None
             try:
-                with log_span("Executing command on outer host {}", candidate_id):
+                with log_span("Executing command on outer host {}", outer_id):
                     cmd_result = outer.execute_stateful_command(
                         command,
                         cwd=effective_cwd,
                         timeout_seconds=timeout_seconds,
                     )
             except MngrError as e:
-                err_msg = f"Failed to execute on outer host {candidate_id}: {e}"
+                err_msg = f"Failed to execute on outer host {outer_id}: {e}"
                 for match in group:
                     is_should_abort = _record_failure(result, match.agent_name, err_msg, on_error, error_behavior)
                     if is_should_abort:
@@ -393,7 +403,7 @@ def exec_command_on_outer_hosts(
                 continue
 
             outer_result = OuterExecResult(
-                outer_host=candidate_id,
+                outer_host=outer_id,
                 agents=tuple(str(m.agent_name) for m in group),
                 stdout=cmd_result.stdout,
                 stderr=cmd_result.stderr,

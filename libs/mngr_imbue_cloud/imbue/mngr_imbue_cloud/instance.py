@@ -844,6 +844,13 @@ class ImbueCloudProvider(BaseProviderInstance):
         """A connection error doesn't change connector-side lease state; just clear our cache."""
         self.reset_caches()
 
+    def outer_host_id_for(self, host_id: HostId) -> str | None:
+        """Stable id for the outer (leased VPS) of host_id, keyed by VPS IP."""
+        leased = self._find_leased(host_id)
+        if leased is None:
+            raise HostNotFoundError(host_id)
+        return f"outer:{self.name}:{leased.vps_ip}"
+
     @contextmanager
     def outer_host_for(self, host_id: HostId) -> Iterator[OuterHostInterface | None]:
         """Open the outer host (the leased VPS itself, root@vps_ip:22).

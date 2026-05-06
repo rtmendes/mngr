@@ -368,23 +368,7 @@ class OuterHost(OuterHostInterface):
             filename_or_io.truncate(0)
         try:
             if not self.is_local:
-                transport = self._get_paramiko_transport()
-                sftp = self._create_sftp_client(transport)
-                if sftp is None:
-                    raise HostConnectionError("Failed to create SFTP channel from transport")
-                try:
-                    if isinstance(filename_or_io, str):
-                        sftp.get(remote_filename, filename_or_io)
-                    else:
-                        sftp.getfo(remote_filename, filename_or_io)
-                    return True
-                except IOError as e:
-                    error_msg = str(e)
-                    if "No such file" in error_msg or "not found" in error_msg.lower():
-                        raise FileNotFoundError(f"File not found: {remote_filename}") from e
-                    raise
-                finally:
-                    sftp.close()
+                return self._get_file_via_paramiko(remote_filename, filename_or_io)
             return self.connector.host.get_file(
                 remote_filename,
                 filename_or_io,
@@ -415,6 +399,34 @@ class OuterHost(OuterHostInterface):
             self.connector.host.disconnect()
             raise
 
+    def _get_file_via_paramiko(
+        self,
+        remote_filename: str,
+        filename_or_io: str | IO[bytes],
+    ) -> bool:
+        """Download a file using a dedicated paramiko SFTP channel.
+
+        Creates a fresh SFTPClient from the shared SSH transport for each call.
+        This is thread-safe because paramiko transports can multiplex channels.
+        """
+        transport = self._get_paramiko_transport()
+        sftp = self._create_sftp_client(transport)
+        if sftp is None:
+            raise HostConnectionError("Failed to create SFTP channel from transport")
+        try:
+            if isinstance(filename_or_io, str):
+                sftp.get(remote_filename, filename_or_io)
+            else:
+                sftp.getfo(remote_filename, filename_or_io)
+            return True
+        except IOError as e:
+            error_msg = str(e)
+            if "No such file" in error_msg or "not found" in error_msg.lower():
+                raise FileNotFoundError(f"File not found: {remote_filename}") from e
+            raise
+        finally:
+            sftp.close()
+
     def _put_file(
         self,
         filename_or_io: str | IO[str] | IO[bytes],
@@ -444,18 +456,7 @@ class OuterHost(OuterHostInterface):
             filename_or_io.seek(0)
         try:
             if not self.is_local:
-                transport = self._get_paramiko_transport()
-                sftp = self._create_sftp_client(transport)
-                if sftp is None:
-                    raise HostConnectionError("Failed to create SFTP channel from transport")
-                try:
-                    if isinstance(filename_or_io, str):
-                        sftp.put(filename_or_io, remote_filename)
-                    else:
-                        sftp.putfo(filename_or_io, remote_filename)
-                    return True
-                finally:
-                    sftp.close()
+                return self._put_file_via_paramiko(filename_or_io, remote_filename)
             return self.connector.host.put_file(
                 filename_or_io,
                 remote_filename,
@@ -482,6 +483,29 @@ class OuterHost(OuterHostInterface):
             logger.debug("SSH error while writing {}: {}, disconnecting for retry", remote_filename, e)
             self.connector.host.disconnect()
             raise
+
+    def _put_file_via_paramiko(
+        self,
+        filename_or_io: str | IO[str] | IO[bytes],
+        remote_filename: str,
+    ) -> bool:
+        """Upload a file using a dedicated paramiko SFTP channel.
+
+        Creates a fresh SFTPClient from the shared SSH transport for each call.
+        This is thread-safe because paramiko transports can multiplex channels.
+        """
+        transport = self._get_paramiko_transport()
+        sftp = self._create_sftp_client(transport)
+        if sftp is None:
+            raise HostConnectionError("Failed to create SFTP channel from transport")
+        try:
+            if isinstance(filename_or_io, str):
+                sftp.put(filename_or_io, remote_filename)
+            else:
+                sftp.putfo(filename_or_io, remote_filename)
+            return True
+        finally:
+            sftp.close()
 
     def execute_idempotent_command(
         self,
@@ -574,8 +598,8 @@ class OuterHost(OuterHostInterface):
         """Write string content to a file, creating parent directories as needed."""
         self.write_file(path, content.encode(encoding), mode=mode)
 
-    def get_file_mtime(self, path: Path) -> datetime | None:
-        """Return the modification time of a file, or None if the file doesn't exist."""
+    def _get_file_mtime(self, path: Path) -> datetime | None:
+        """Get the mtime of a file on the host."""
         if self.is_local:
             try:
                 mtime = path.stat().st_mtime
@@ -592,6 +616,10 @@ class OuterHost(OuterHostInterface):
             except ValueError:
                 pass
         return None
+
+    def get_file_mtime(self, path: Path) -> datetime | None:
+        """Return the modification time of a file, or None if the file doesn't exist."""
+        return self._get_file_mtime(path)
 
     def get_ssh_connection_info(self) -> tuple[str, str, int, Path] | None:
         """Get SSH connection info for this host if it's remote."""

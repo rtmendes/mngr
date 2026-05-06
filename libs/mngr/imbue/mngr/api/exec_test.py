@@ -18,8 +18,7 @@ from imbue.mngr.api.exec import SkippedAgent
 from imbue.mngr.api.exec import _record_failure
 from imbue.mngr.api.exec import exec_command_on_agent
 from imbue.mngr.api.exec import exec_command_on_agents
-from imbue.mngr.api.exec import group_matches_by_candidate_outer
-from imbue.mngr.api.exec import outer_host_canonical_id
+from imbue.mngr.api.exec import group_matches_by_outer_host
 from imbue.mngr.api.find import AgentMatch
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
@@ -371,15 +370,6 @@ def test_exec_command_on_agents_returns_empty_when_no_agents_match(
 # =========================================================================
 
 
-def test_outer_host_canonical_id_format() -> None:
-    """Canonical id is outer:<provider>:<inner_host_id>."""
-    canonical = outer_host_canonical_id(
-        ProviderInstanceName("docker"),
-        HostId("host-abc123def4567890abcd1234567890ef"),
-    )
-    assert canonical == "outer:docker:host-abc123def4567890abcd1234567890ef"
-
-
 def test_skipped_agent_carries_all_ids() -> None:
     """SkippedAgent has agent_id, agent_name, host_id, provider_name, reason."""
     skipped = SkippedAgent(
@@ -416,41 +406,30 @@ def test_outer_exec_result_carries_outer_host_and_agents() -> None:
     assert r.success is True
 
 
-def test_group_matches_by_candidate_outer_dedups_by_provider_and_host() -> None:
-    """group_matches_by_candidate_outer groups by (provider, inner_host_id)."""
-    host_id_a = HostId("host-abc123def4567890abcd1234567890ef")
-    host_id_b = HostId("host-fed987cba6543210dcba9876543210fe")
-    provider = ProviderInstanceName("docker")
+def test_group_matches_by_outer_host_buckets_no_outer_for_local(
+    temp_mngr_ctx: MngrContext,
+    local_provider: LocalProviderInstance,
+) -> None:
+    """group_matches_by_outer_host groups by the provider's outer_host_id_for.
+
+    Local provider returns None for outer_host_id_for, so all matches end up
+    in the no_outer bucket.
+    """
+    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
     matches = [
         AgentMatch(
             agent_id=AgentId.generate(),
-            agent_name=AgentName("a1"),
-            host_id=host_id_a,
+            agent_name=AgentName(f"a{i}"),
+            host_id=host.id,
             host_name=HostName("h"),
-            provider_name=provider,
-        ),
-        AgentMatch(
-            agent_id=AgentId.generate(),
-            agent_name=AgentName("a2"),
-            host_id=host_id_a,
-            host_name=HostName("h"),
-            provider_name=provider,
-        ),
-        AgentMatch(
-            agent_id=AgentId.generate(),
-            agent_name=AgentName("a3"),
-            host_id=host_id_b,
-            host_name=HostName("h"),
-            provider_name=provider,
-        ),
+            provider_name=local_provider.name,
+        )
+        for i in range(3)
     ]
-    grouped = group_matches_by_candidate_outer(matches)
-    assert len(grouped) == 2
-    # Two agents on host_a should map to the same group
-    key_a = f"outer:{provider}:{host_id_a}"
-    key_b = f"outer:{provider}:{host_id_b}"
-    assert {m.agent_name for m in grouped[key_a]} == {AgentName("a1"), AgentName("a2")}
-    assert [m.agent_name for m in grouped[key_b]] == [AgentName("a3")]
+    by_outer, no_outer, errors = group_matches_by_outer_host(matches, temp_mngr_ctx)
+    assert by_outer == {}
+    assert {m.agent_name for m in no_outer} == {AgentName("a0"), AgentName("a1"), AgentName("a2")}
+    assert errors == []
 
 
 def test_provider_outer_host_for_default_yields_none(

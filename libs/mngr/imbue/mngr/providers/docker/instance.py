@@ -1739,6 +1739,34 @@ kill -TERM 1
     # Outer Host Access
     # =========================================================================
 
+    def _outer_machine_id(self) -> str | None:
+        """Stable id for the actual outer machine (the docker daemon's host).
+
+        All containers managed by this provider share the same daemon and so
+        share the same outer. Returns None when the outer is not accessible
+        (e.g. tcp:// daemon).
+        """
+        url = self.config.host
+        if not url or url.startswith("unix://"):
+            return "local"
+        parsed = urlparse(url)
+        if parsed.scheme == "ssh":
+            if not parsed.hostname:
+                return None
+            user = parsed.username or "default"
+            port = parsed.port or 22
+            return f"ssh:{user}@{parsed.hostname}:{port}"
+        return None
+
+    def outer_host_id_for(self, host_id: HostId) -> str | None:
+        """Stable id for the outer of `host_id` -- shared across all containers on this daemon."""
+        if self._host_store.read_host_record(host_id, use_cache=False) is None:
+            raise HostNotFoundError(host_id)
+        machine = self._outer_machine_id()
+        if machine is None:
+            return None
+        return f"outer:{self.name}:{machine}"
+
     @contextmanager
     def outer_host_for(self, host_id: HostId) -> Iterator[OuterHostInterface | None]:
         """Open the outer host (the docker daemon's host machine).
