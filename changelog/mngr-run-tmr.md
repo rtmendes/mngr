@@ -8,3 +8,9 @@
   alongside `MngrError` / `HostError`, log a warning, and continue with the
   remaining agents. This applies to test-agent launching (both batched and
   pre-launched modes) and to the integrator launch.
+- Fix `mngr tmr` integrator launch (and any local-provider test-agent
+  launch), which always failed with `Failed to generate a unique host name
+  after 100 attempts`. The local provider has a single fixed host
+  ("localhost"), so the new-host path can never find a free name; TMR now
+  reuses the existing local host when the target provider is `local`,
+  matching what `mngr create` already does.

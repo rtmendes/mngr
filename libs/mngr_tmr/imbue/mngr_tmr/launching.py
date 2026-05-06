@@ -92,11 +92,16 @@ def _create_tmr_agent(
 
     if existing_host is not None:
         target_host: OnlineHostInterface | NewHostOptions = existing_host
+    elif config.provider_name.lower() == LOCAL_PROVIDER_NAME:
+        # The local provider has a single fixed host ("localhost"); reuse the
+        # source_host (already the local host) instead of the new-host path.
+        # That path would call _generate_unique_host_name, which never finds
+        # a free name because the local provider's get_host_name always
+        # returns "localhost" and discover_hosts always reports it as taken.
+        target_host = config.source_host
     else:
         build = _resolve_build_options(config, mngr_ctx)
-        is_local = config.provider_name.lower() == LOCAL_PROVIDER_NAME
-        resolved_host_name = None if is_local else host_name
-        target_host = NewHostOptions(provider=config.provider_name, name=resolved_host_name, build=build)
+        target_host = NewHostOptions(provider=config.provider_name, name=host_name, build=build)
 
     return api_create(
         source_location=source_location,
