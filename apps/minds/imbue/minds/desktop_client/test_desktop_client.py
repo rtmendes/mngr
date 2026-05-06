@@ -26,7 +26,7 @@ from imbue.minds.desktop_client.cookie_manager import create_session_cookie
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.request_events import RequestInbox
-from imbue.minds.desktop_client.request_events import create_sharing_request_event
+from imbue.minds.desktop_client.request_events import create_latchkey_permission_request_event
 from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
 from imbue.minds.primitives import CreationId
 from imbue.minds.primitives import OneTimeCode
@@ -992,7 +992,9 @@ def test_requests_panel_card_routes_via_minds_bridge(tmp_path: Path) -> None:
     # Build the app inline so we can seed the inbox before creating the
     # TestClient and still have a concretely-typed handle to app.state.
     agent_id = str(AgentId())
-    event = create_sharing_request_event(agent_id=agent_id, service_name="web")
+    event = create_latchkey_permission_request_event(
+        agent_id=agent_id, service_name="slack", rationale="Need to post status updates"
+    )
     auth_store = FileAuthStore(data_directory=tmp_path / "auth")
     session_store = MultiAccountSessionStore(data_dir=tmp_path)
     minds_config = MindsConfig(data_dir=tmp_path)

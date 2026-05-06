@@ -1529,13 +1529,10 @@ async def _handle_sharing_enable(
     auth_store: AuthStoreDep,
     backend_resolver: BackendResolverDep,
 ) -> Response:
-    """Enable or update sharing for a service via direct editing.
+    """Enable or update sharing for a service via the workspace-settings editor.
 
-    Approving a *pending* sharing request goes through the unified
-    ``POST /requests/{id}/grant`` dispatcher (which calls into
-    :class:`SharingRequestHandler`); this route only services the
-    workspace-settings sharing editor. Both paths funnel through
-    :func:`enable_sharing_via_cloudflare` so they cannot drift.
+    Sharing is configured exclusively from this editor; agents no longer
+    write sharing-request events back into the inbox.
 
     On a soft failure (no signed-in account, plugin error, etc.) the
     handler returns 502 with a JSON ``{"error": "..."}`` body. The

@@ -215,11 +215,10 @@
     setSubmitting(true);
     var form = new FormData();
     form.append('emails', JSON.stringify(getFinalEmails()));
-    // Request-approval and direct-edit submissions go to different
-    // endpoints: the request flow needs a GRANTED response event
-    // appended (handled by /requests/{id}/grant -> SharingRequestHandler),
-    // while direct edits just change the connector config. Both end up
-    // calling the same enable_sharing_via_cloudflare helper server-side.
+    // Direct edits go to /sharing/<agent>/<service>/enable, which calls
+    // enable_sharing_via_cloudflare server-side. The legacy request-approval
+    // branch is retained for backward compatibility with any in-flight
+    // requests written before the sharing-request flow was removed.
     var url = isRequest
       ? '/requests/' + requestId + '/grant'
       : '/sharing/' + agentId + '/' + serviceName + '/enable';
