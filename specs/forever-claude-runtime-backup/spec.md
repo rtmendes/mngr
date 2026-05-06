@@ -14,7 +14,7 @@
 - User generates a `GH_TOKEN` scoped to one private fork of forever-claude-template, then sets it in the env that runs `mngr create`.
 - Every ~60s after the workspace is up, the contents of `runtime/` (including `runtime/memory/` for Claude's auto-memory and any task / transcript artifacts under `runtime/<skill>/<slug>/`) are visible on the `mindsbackup/$MNGR_AGENT_ID` branch of their private repo.
 - Whenever the agent commits to the main repo, the post-commit hook also pushes the active branch to origin in the background.
-- If the user runs `mngr create` *without* `GH_TOKEN`, the workspace runs normally, `runtime/` is still committed locally to the orphan branch, but nothing is pushed. As soon as a token is supplied (e.g. on container restart), the next backup tick pushes everything that accumulated.
+- If the user runs `mngr create` *without* `GH_TOKEN`, the workspace runs normally and `runtime/` is still committed locally to the orphan branch, but nothing is pushed. To start pushing later the user must supply `GH_TOKEN` and recreate the container: bootstrap's fresh-create path then re-runs and pushes with `--set-upstream`, after which subsequent backup ticks keep the branch up to date. Local-only commits made in the previous (offline) container are lost when that container is destroyed -- offline-only mode does not preserve history across container loss.
 - If the same `MNGR_AGENT_ID` is recreated on a fresh container, the existing `mindsbackup/$MNGR_AGENT_ID` branch is fetched and materialized into `runtime/` on first boot (restore). Cross-agent migration is intentionally manual; no tooling.
 
 ### From the system's perspective
