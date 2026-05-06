@@ -153,7 +153,7 @@ def run(
     )
     imbue_cloud_cli = ImbueCloudCli(parent_concurrency_group=root_concurrency_group)
     telegram_orchestrator = TelegramSetupOrchestrator(paths=paths)
-    session_store = MultiAccountSessionStore(data_dir=data_directory)
+    session_store = MultiAccountSessionStore(data_dir=data_directory, cli=imbue_cloud_cli)
     response_events = load_response_events(data_directory)
     request_inbox = RequestInbox()
     for resp in response_events:

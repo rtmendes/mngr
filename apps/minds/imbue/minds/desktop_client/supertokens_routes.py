@@ -194,12 +194,12 @@ def _store_session_from_auth_result(
     result: AuthResult,
     request: Request,
 ) -> None:
-    """Mirror the account identity from a successful auth result.
+    """Drop cached identity so the new account shows up, and configure defaults.
 
-    Tokens are NOT mirrored -- the mngr_imbue_cloud plugin owns SuperTokens
-    state on disk. Minds only records ``user_id``/``email``/``display_name``
-    so the desktop UI can render the signed-in account, and so workspace<->
-    account associations survive a restart.
+    Tokens and identity (email, display_name) are persisted by the
+    mngr_imbue_cloud plugin -- minds doesn't mirror them. We only
+    invalidate our identity cache so the next ``auth list`` reflects the
+    just-signed-in account.
 
     On first login (no default account set), this account becomes the default.
 
@@ -208,11 +208,7 @@ def _store_session_from_auth_result(
     becomes immediately usable by ``mngr create``/``list``/etc.
     """
     assert result.user is not None, "AuthResult missing user"
-    session_store.add_or_update_session(
-        user_id=result.user.user_id,
-        email=result.user.email,
-        display_name=result.user.display_name,
-    )
+    session_store.invalidate_identity_cache()
     minds_config: MindsConfig | None = request.app.state.minds_config
     if minds_config is not None and minds_config.get_default_account_id() is None:
         minds_config.set_default_account_id(result.user.user_id)
@@ -352,7 +348,7 @@ async def _handle_signout_api(request: Request) -> Response:
         backend.signout_account(signed_out_email)
     else:
         logger.warning("No mirrored account for user {}; skipping plugin signout", str(user_id)[:8])
-    session_store.remove_session(str(user_id))
+    session_store.invalidate_identity_cache()
     if signed_out_email and unset_imbue_cloud_provider_for_account(signed_out_email):
         _bounce_forward_observe(request)
     return _json_response({"status": "OK"})
@@ -496,11 +492,7 @@ def _run_oauth_subprocess(
         )
         return
 
-    session_store.add_or_update_session(
-        user_id=str(result.user_id),
-        email=str(result.email),
-        display_name=result.display_name,
-    )
+    session_store.invalidate_identity_cache()
     if minds_config is not None and minds_config.get_default_account_id() is None:
         minds_config.set_default_account_id(str(result.user_id))
 

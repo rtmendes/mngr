@@ -1246,7 +1246,7 @@ async def _handle_account_logout(
         return Response(status_code=403, content="Not authenticated")
     session_store: MultiAccountSessionStore | None = request.app.state.session_store
     if session_store:
-        session_store.remove_session(user_id)
+        session_store.invalidate_identity_cache()
     return Response(status_code=303, headers={"Location": "/accounts"})
 
 
