@@ -164,9 +164,9 @@ Each phase ends with a working, observably better system.
 - Add the post-commit hook script at `scripts/git_hooks/post-commit`.
 - Verify: with `GH_TOKEN` set, `mindsbackup/$MNGR_AGENT_ID` appears on origin and grows over time; without `GH_TOKEN`, container behaves as Phase 2.
 
-### Phase 4 — Worker isolation + restore-on-restart
+### Phase 4 — Worker behavior + restore-on-restart
 
-- Override `pass_env` in worker templates to exclude `GH_TOKEN`. Verify that a worker container's `GH_TOKEN` is empty and its post-commit hook no-ops.
+- Verify the resolved worker semantics (§6): worker containers inherit `GH_TOKEN` from `[commands.create].pass_env`, so their `post-commit` hook auto-pushes their working branch; they do NOT run the runtime-backup service because their template does not include the `bootstrap` extra_window.
 - Recreate the same `MNGR_AGENT_ID` after destroying the container; verify bootstrap restores `runtime/` from the existing remote branch and that `runtime/memory/` content reappears.
 
 ### Phase 5 — Docs + polish
