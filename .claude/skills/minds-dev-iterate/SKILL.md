@@ -171,7 +171,7 @@ If this chain breaks (orphaned `mngr observe`/`mngr event` processes appear), so
 Both syncs (mngr->vendor/mngr and template->container) exclude:
 `.git`, `__pycache__`, `.venv`, `node_modules`, `.test_output`, `.mypy_cache`, `.ruff_cache`, `.pytest_cache`, `uv.lock`, `.external_worktrees`
 
-The template->container sync also protects `runtime/`, `.mngr/`, and `.claude/settings.local.json` from deletion. The latter holds the per-agent `UserPromptSubmit` hook (`tmux wait-for -S "mngr-submit-..."`) that mngr writes during agent creation; without it, every `send_message` hangs the 90s submission-signal timeout while Claude responds normally in the UI.
+The template->container sync also protects `runtime/`, `.mngr/`, and `.claude/settings.local.json` from deletion.
 
 ### Editable installs
 
