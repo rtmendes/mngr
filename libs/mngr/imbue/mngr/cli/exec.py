@@ -1,4 +1,3 @@
-import sys
 from typing import Any
 from typing import assert_never
 
@@ -21,6 +20,7 @@ from imbue.mngr.cli.output_helpers import AbortError
 from imbue.mngr.cli.output_helpers import emit_event
 from imbue.mngr.cli.output_helpers import emit_final_json
 from imbue.mngr.cli.output_helpers import emit_format_template_lines
+from imbue.mngr.cli.output_helpers import write_command_stdout_and_stderr
 from imbue.mngr.cli.output_helpers import write_human_line
 from imbue.mngr.cli.stdin_utils import STDIN_PLACEHOLDER
 from imbue.mngr.cli.stdin_utils import expand_stdin_placeholder
@@ -189,9 +189,12 @@ def _exec_impl(ctx: click.Context, **kwargs: Any) -> None:
 
 
 def _emit_skipped_warning(skipped: SkippedAgent) -> None:
-    """Print a stderr warning for an agent skipped because it has no outer host."""
-    sys.stderr.write(f"WARNING: agent {skipped.agent_name} has no outer host (provider={skipped.provider_name})\n")
-    sys.stderr.flush()
+    """Log a warning for an agent skipped because it has no outer host."""
+    logger.warning(
+        "agent {} has no outer host (provider={})",
+        skipped.agent_name,
+        skipped.provider_name,
+    )
 
 
 def _run_outer_exec(
@@ -299,17 +302,7 @@ def _emit_human_outer_output(result: MultiExecResult) -> None:
             agents_str = ", ".join(outer_result.agents)
             write_human_line("--- {} (agents: {}) ---", outer_result.outer_host, agents_str)
 
-        if outer_result.stdout:
-            sys.stdout.write(outer_result.stdout)
-            if not outer_result.stdout.endswith("\n"):
-                sys.stdout.write("\n")
-            sys.stdout.flush()
-
-        if outer_result.stderr:
-            sys.stderr.write(outer_result.stderr)
-            if not outer_result.stderr.endswith("\n"):
-                sys.stderr.write("\n")
-            sys.stderr.flush()
+        write_command_stdout_and_stderr(outer_result.stdout, outer_result.stderr)
 
         if outer_result.success:
             write_human_line("Command succeeded on outer host {}", outer_result.outer_host)
@@ -418,17 +411,7 @@ def _emit_human_output(result: MultiExecResult) -> None:
         if is_multi:
             write_human_line("--- {} ---", exec_result.agent_name)
 
-        if exec_result.stdout:
-            sys.stdout.write(exec_result.stdout)
-            if not exec_result.stdout.endswith("\n"):
-                sys.stdout.write("\n")
-            sys.stdout.flush()
-
-        if exec_result.stderr:
-            sys.stderr.write(exec_result.stderr)
-            if not exec_result.stderr.endswith("\n"):
-                sys.stderr.write("\n")
-            sys.stderr.flush()
+        write_command_stdout_and_stderr(exec_result.stdout, exec_result.stderr)
 
         if exec_result.success:
             write_human_line("Command succeeded on agent {}", exec_result.agent_name)
@@ -462,7 +445,7 @@ def _emit_json_output(result: MultiExecResult) -> None:
 CommandHelpMetadata(
     key="exec",
     one_line_description="Execute a shell command on one or more agents' hosts",
-    synopsis="mngr [exec|x] [AGENTS...|-] COMMAND [--agent <AGENT>] [--cwd <DIR>] [--timeout <SECONDS>] [--on-error <MODE>] [--[no-]start]",
+    synopsis="mngr [exec|x] [AGENTS...|-] COMMAND [--agent <AGENT>] [--cwd <DIR>] [--timeout <SECONDS>] [--on-error <MODE>] [--[no-]start] [--[no-]outer] [--missing-outer <MODE>]",
     arguments_description=(
         "- `AGENTS`: Name(s) or ID(s) of the agent(s) whose host will run the command\n"
         "- `COMMAND`: Shell command to execute on the agent's host"

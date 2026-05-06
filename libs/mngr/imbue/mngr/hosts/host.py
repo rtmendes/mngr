@@ -545,7 +545,7 @@ class Host(OuterHost, BaseHost, OnlineHostInterface):
         self,
         remote_filename: str,
         filename_or_io: str | IO[bytes],
-        remote_temp_filename: str | None,
+        remote_temp_filename: str | None = None,
     ) -> bool:
         self._ensure_connected()
         # Reset output IO for retry attempts (clear any partial data from a failed attempt)
@@ -652,7 +652,7 @@ class Host(OuterHost, BaseHost, OnlineHostInterface):
         self,
         filename_or_io: str | IO[str] | IO[bytes],
         remote_filename: str,
-        remote_temp_filename: str | None,
+        remote_temp_filename: str | None = None,
     ) -> bool:
         self._ensure_connected()
         # Reset input IO position for retry attempts

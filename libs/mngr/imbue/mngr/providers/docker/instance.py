@@ -35,8 +35,8 @@ from imbue.mngr.errors import SnapshotNotFoundError
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.hosts.offline_host import OfflineHost
 from imbue.mngr.hosts.outer_host import OuterHost
-from imbue.mngr.hosts.outer_host import _create_local_pyinfra_host
-from imbue.mngr.hosts.outer_host import _create_ssh_pyinfra_host_using_user_config
+from imbue.mngr.hosts.outer_host import create_local_pyinfra_host
+from imbue.mngr.hosts.outer_host import create_ssh_pyinfra_host_using_user_config
 from imbue.mngr.interfaces.data_types import CertifiedHostData
 from imbue.mngr.interfaces.data_types import CpuResources
 from imbue.mngr.interfaces.data_types import HostLifecycleOptions
@@ -1764,7 +1764,7 @@ kill -TERM 1
         """Build an OuterHost (or None) for the docker daemon's host machine."""
         docker_host_url = self.config.host
         if not docker_host_url or docker_host_url.startswith("unix://"):
-            pyinfra_host = _create_local_pyinfra_host()
+            pyinfra_host = create_local_pyinfra_host()
             return OuterHost(
                 id=host_id,
                 connector=PyinfraConnector(pyinfra_host),
@@ -1775,7 +1775,7 @@ kill -TERM 1
             if not parsed.hostname:
                 logger.warning("Cannot parse hostname from DOCKER_HOST URL {}", docker_host_url)
                 return None
-            pyinfra_host = _create_ssh_pyinfra_host_using_user_config(
+            pyinfra_host = create_ssh_pyinfra_host_using_user_config(
                 hostname=parsed.hostname,
                 port=parsed.port,
                 user=parsed.username,

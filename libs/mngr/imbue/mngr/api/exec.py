@@ -265,12 +265,12 @@ def _execute_on_single_agent(
         )
 
 
-def _outer_host_canonical_id(provider_name: ProviderInstanceName, host_id: HostId) -> str:
+def outer_host_canonical_id(provider_name: ProviderInstanceName, host_id: HostId) -> str:
     """Compute the canonical outer-host id used for grouping in ``mngr exec --outer``."""
     return f"outer:{provider_name}:{host_id}"
 
 
-def _group_matches_by_candidate_outer(
+def group_matches_by_candidate_outer(
     matches: Sequence[AgentMatch],
 ) -> dict[str, list[AgentMatch]]:
     """Group agent matches by their candidate outer-host id.
@@ -281,7 +281,7 @@ def _group_matches_by_candidate_outer(
     """
     by_candidate: dict[str, list[AgentMatch]] = {}
     for match in matches:
-        candidate = _outer_host_canonical_id(match.provider_name, match.host_id)
+        candidate = outer_host_canonical_id(match.provider_name, match.host_id)
         by_candidate.setdefault(candidate, []).append(match)
     return by_candidate
 
@@ -327,7 +327,7 @@ def exec_command_on_outer_hosts(
     if not matches:
         return result
 
-    groups = _group_matches_by_candidate_outer(matches)
+    groups = group_matches_by_candidate_outer(matches)
 
     for candidate_id, group in groups.items():
         first = group[0]

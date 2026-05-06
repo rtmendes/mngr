@@ -13,9 +13,14 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.mngr.agents.base_agent import BaseAgent
 from imbue.mngr.api.exec import ExecResult
 from imbue.mngr.api.exec import MultiExecResult
+from imbue.mngr.api.exec import OuterExecResult
+from imbue.mngr.api.exec import SkippedAgent
 from imbue.mngr.api.exec import _record_failure
 from imbue.mngr.api.exec import exec_command_on_agent
 from imbue.mngr.api.exec import exec_command_on_agents
+from imbue.mngr.api.exec import group_matches_by_candidate_outer
+from imbue.mngr.api.exec import outer_host_canonical_id
+from imbue.mngr.api.find import AgentMatch
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import AgentNotFoundError
@@ -24,7 +29,9 @@ from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import AgentTypeName
 from imbue.mngr.primitives import CommandString
 from imbue.mngr.primitives import ErrorBehavior
+from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
+from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
 from imbue.mngr.utils.testing import cleanup_tmux_session
@@ -357,3 +364,102 @@ def test_exec_command_on_agents_returns_empty_when_no_agents_match(
     )
     assert result.successful_results == []
     assert result.failed_agents == []
+
+
+# =========================================================================
+# --outer mode tests
+# =========================================================================
+
+
+def test_outer_host_canonical_id_format() -> None:
+    """Canonical id is outer:<provider>:<inner_host_id>."""
+    canonical = outer_host_canonical_id(
+        ProviderInstanceName("docker"),
+        HostId("host-abc123def4567890abcd1234567890ef"),
+    )
+    assert canonical == "outer:docker:host-abc123def4567890abcd1234567890ef"
+
+
+def test_skipped_agent_carries_all_ids() -> None:
+    """SkippedAgent has agent_id, agent_name, host_id, provider_name, reason."""
+    skipped = SkippedAgent(
+        agent_id=AgentId("agent-abc123def4567890abcd1234567890ef"),
+        agent_name=AgentName("my-agent"),
+        host_id=HostId("host-abc123def4567890abcd1234567890ef"),
+        provider_name=ProviderInstanceName("modal"),
+        reason="no outer host",
+    )
+    assert skipped.agent_name == "my-agent"
+    assert skipped.provider_name == "modal"
+    assert skipped.reason == "no outer host"
+
+
+def test_multi_exec_result_has_skipped_and_outer_lists() -> None:
+    """MultiExecResult has skipped_agents and outer_results lists, both empty by default."""
+    result = MultiExecResult()
+    assert result.skipped_agents == []
+    assert result.outer_results == []
+    assert result.is_any_failure is False
+
+
+def test_outer_exec_result_carries_outer_host_and_agents() -> None:
+    """OuterExecResult holds the canonical outer-host id and the input-agent list."""
+    r = OuterExecResult(
+        outer_host="outer:docker:host-abc",
+        agents=("a", "b", "c"),
+        stdout="hello\n",
+        stderr="",
+        success=True,
+    )
+    assert r.outer_host == "outer:docker:host-abc"
+    assert r.agents == ("a", "b", "c")
+    assert r.success is True
+
+
+def test_group_matches_by_candidate_outer_dedups_by_provider_and_host() -> None:
+    """group_matches_by_candidate_outer groups by (provider, inner_host_id)."""
+    host_id_a = HostId("host-abc123def4567890abcd1234567890ef")
+    host_id_b = HostId("host-fed987cba6543210dcba9876543210fe")
+    provider = ProviderInstanceName("docker")
+    matches = [
+        AgentMatch(
+            agent_id=AgentId.generate(),
+            agent_name=AgentName("a1"),
+            host_id=host_id_a,
+            host_name=HostName("h"),
+            provider_name=provider,
+        ),
+        AgentMatch(
+            agent_id=AgentId.generate(),
+            agent_name=AgentName("a2"),
+            host_id=host_id_a,
+            host_name=HostName("h"),
+            provider_name=provider,
+        ),
+        AgentMatch(
+            agent_id=AgentId.generate(),
+            agent_name=AgentName("a3"),
+            host_id=host_id_b,
+            host_name=HostName("h"),
+            provider_name=provider,
+        ),
+    ]
+    grouped = group_matches_by_candidate_outer(matches)
+    assert len(grouped) == 2
+    # Two agents on host_a should map to the same group
+    key_a = f"outer:{provider}:{host_id_a}"
+    key_b = f"outer:{provider}:{host_id_b}"
+    assert {m.agent_name for m in grouped[key_a]} == {AgentName("a1"), AgentName("a2")}
+    assert [m.agent_name for m in grouped[key_b]] == [AgentName("a3")]
+
+
+def test_provider_outer_host_for_default_yields_none(
+    local_provider: LocalProviderInstance,
+) -> None:
+    """The base ProviderInstanceInterface.outer_host_for default yields None.
+
+    Local provider does not override outer_host_for, so it inherits the default.
+    """
+    host = local_provider.create_host(HostName(LOCAL_HOST_NAME))
+    with local_provider.outer_host_for(host.id) as outer:
+        assert outer is None

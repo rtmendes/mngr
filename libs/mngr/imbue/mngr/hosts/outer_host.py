@@ -25,7 +25,6 @@ from typing import Any
 from typing import IO
 from typing import Iterator
 from typing import Mapping
-from typing import cast
 from uuid import uuid4
 
 from loguru import logger
@@ -58,10 +57,10 @@ from imbue.mngr.interfaces.host import OuterHostInterface
 from imbue.mngr.primitives import HostName
 
 
-def _create_local_pyinfra_host() -> PyinfraHost:
+def create_local_pyinfra_host() -> PyinfraHost:
     """Create a pyinfra host that executes commands on the local machine.
 
-    Mirrors ``LocalProviderInstance._create_local_pyinfra_host``. Pyinfra's
+    Mirrors ``LocalProviderInstance.create_local_pyinfra_host``. Pyinfra's
     LocalConnector is selected automatically when the host name starts with
     ``@``.
     """
@@ -73,7 +72,7 @@ def _create_local_pyinfra_host() -> PyinfraHost:
     return pyinfra_host
 
 
-def _create_ssh_pyinfra_host_using_user_config(
+def create_ssh_pyinfra_host_using_user_config(
     hostname: str,
     port: int | None = None,
     user: str | None = None,
@@ -327,8 +326,8 @@ class OuterHost(OuterHostInterface):
     def _get_paramiko_transport(self) -> object:
         """Get the paramiko Transport from the SSH connector."""
         try:
-            connector = cast(Any, self.connector.host.connector)
-            transport = connector.client.get_transport()
+            client = self.connector.host.connector.client  # ty: ignore[unresolved-attribute]
+            transport = client.get_transport()
         except AttributeError as e:
             raise HostConnectionError(f"Host does not support SSH file transfer: {e}") from e
         if transport is None:
@@ -343,11 +342,12 @@ class OuterHost(OuterHostInterface):
         self,
         remote_filename: str,
         filename_or_io: str | IO[bytes],
+        remote_temp_filename: str | None = None,
     ) -> bool:
         """Read a file from the host. Raises FileNotFoundError if not found."""
         with self._notify_on_connection_error():
             try:
-                return self._get_file_with_transient_retry(remote_filename, filename_or_io)
+                return self._get_file_with_transient_retry(remote_filename, filename_or_io, remote_temp_filename)
             except OSError as e:
                 if "Socket is closed" in str(e):
                     raise HostConnectionError("Connection was closed while reading file") from e
@@ -360,6 +360,7 @@ class OuterHost(OuterHostInterface):
         self,
         remote_filename: str,
         filename_or_io: str | IO[bytes],
+        remote_temp_filename: str | None = None,
     ) -> bool:
         self._ensure_connected()
         if not isinstance(filename_or_io, str):
@@ -384,7 +385,11 @@ class OuterHost(OuterHostInterface):
                     raise
                 finally:
                     sftp.close()
-            return self.connector.host.get_file(remote_filename, filename_or_io)
+            return self.connector.host.get_file(
+                remote_filename,
+                filename_or_io,
+                remote_temp_filename=remote_temp_filename,
+            )
         except OSError as e:
             error_msg = str(e)
             if "No such file or directory" in error_msg or "cannot stat" in error_msg:
@@ -414,11 +419,12 @@ class OuterHost(OuterHostInterface):
         self,
         filename_or_io: str | IO[str] | IO[bytes],
         remote_filename: str,
+        remote_temp_filename: str | None = None,
     ) -> bool:
         """Write a file to the host."""
         with self._notify_on_connection_error():
             try:
-                return self._put_file_with_transient_retry(filename_or_io, remote_filename)
+                return self._put_file_with_transient_retry(filename_or_io, remote_filename, remote_temp_filename)
             except OSError as e:
                 if "Socket is closed" in str(e):
                     raise HostConnectionError("Connection was closed while writing file") from e
@@ -431,6 +437,7 @@ class OuterHost(OuterHostInterface):
         self,
         filename_or_io: str | IO[str] | IO[bytes],
         remote_filename: str,
+        remote_temp_filename: str | None = None,
     ) -> bool:
         self._ensure_connected()
         if not isinstance(filename_or_io, str):
@@ -449,7 +456,11 @@ class OuterHost(OuterHostInterface):
                     return True
                 finally:
                     sftp.close()
-            return self.connector.host.put_file(filename_or_io, remote_filename)
+            return self.connector.host.put_file(
+                filename_or_io,
+                remote_filename,
+                remote_temp_filename=remote_temp_filename,
+            )
         except OSError as e:
             if "Socket is closed" in str(e):
                 logger.debug("Socket closed while writing {}, disconnecting for retry", remote_filename)
