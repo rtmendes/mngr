@@ -5,7 +5,7 @@
 - **Goal:** Never lose important agent state from a minds workspace by continuously backing up the gitignored `runtime/` folder (which will now also contain `memory/`) to the same per-workspace private git repo on a separate orphan branch.
 - **Why:** Today, container loss wipes all transcripts, Claude memory, ticket state, telegram history, etc. With this change, "migrate to a totally new workspace" becomes "clone the private repo, set `GH_TOKEN`, start a fresh container."
 - **Approach:** Make `runtime/` a git worktree of an orphan branch (`mindsbackup/$MNGR_AGENT_ID`) on the same `origin` as the main checkout. A 60-second polling service commits + pushes any changes. A `post-commit` hook auto-pushes the *main* repo too, both gated on `GH_TOKEN` being set.
-- **Constraints:** Stupid and simple. One writer per backup branch (no force-push). `runtime/secrets` is gitignored inside the backup branch (the real Cloudflare token must never be pushed). Workers don't run the backup service and don't get `GH_TOKEN`.
+- **Constraints:** Stupid and simple. One writer per backup branch (no force-push). `runtime/secrets` is gitignored inside the backup branch (the real Cloudflare token must never be pushed). Workers don't run the backup service (only the outer main agent does), but they DO inherit `GH_TOKEN` so their own `post-commit` hook can auto-push their working branch.
 
 ## Expected Behavior
 
