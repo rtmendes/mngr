@@ -92,12 +92,17 @@ Add a `_init_runtime_worktree()` function called once from `main()` *before* the
 1. Read `MNGR_AGENT_ID` from env. If unset, log a warning and return (bootstrap continues; runtime-backup service will also no-op).
 2. Compute `branch = f"mindsbackup/{MNGR_AGENT_ID}"`.
 3. If `runtime/.git` already exists (worktree already set up from a prior bootstrap run on the same container), return early.
-4. Best-effort `git fetch origin {branch}` (silently ignore network errors).
-5. If the fetched ref exists locally:
+4. Probe origin to decide between restore and fresh-create. The decision must distinguish three cases — restore, fresh-create, and "can't tell yet" — because silently falling back to fresh-create when origin actually has the branch would create a divergent local orphan that can never push (force-push is forbidden) and would violate the one-writer-per-branch invariant.
+   - If `GH_TOKEN` is unset, treat as "fresh-create" (offline-only mode; nothing to fetch). Note: if `GH_TOKEN` is later supplied for the same `MNGR_AGENT_ID` and the remote branch already exists, the next push will fail; that is an explicit limitation of offline-only mode.
+   - Else run `git ls-remote --exit-code origin "refs/heads/{branch}"`:
+     - Exit 0 with output → branch exists on origin → fetch it (`git fetch origin {branch}`) and proceed to step 5 (restore).
+     - Exit 2 (no matching ref) → branch does not exist on origin → proceed to step 6 (fresh-create).
+     - Any other failure (network down, auth error, etc.) → log loudly to stderr and SKIP the rest of init. Do NOT create an orphan locally. The runtime-backup service and the next bootstrap restart will retry; this avoids producing a divergent local history for a branch that may already exist on origin.
+5. Restore path:
    - `git worktree add -b {branch} runtime/ origin/{branch}` so the worktree is on a local branch by that name (a bare `git worktree add runtime/ origin/{branch}` would leave the worktree in detached HEAD, which would later break `git push` from the runtime-backup service).
    - Configure the local branch to track `origin/{branch}` (e.g. `git -C runtime/ branch --set-upstream-to=origin/{branch}`).
    - Restore complete; return.
-6. Else (fresh agent or branch doesn't exist on origin):
+6. Fresh-create path (origin confirmed not to have the branch, or offline-only mode):
    - If `runtime/` exists with files (race avoidance): rename it to `runtime.preexisting/`, create the worktree at `runtime/`, then move files from `runtime.preexisting/` back into `runtime/` and `rmdir` the old name.
    - `git worktree add --orphan -b {branch} runtime/`.
    - Inside `runtime/`: write `.gitignore` containing `secrets`, set bot identity (§2), `git -C runtime/ commit --allow-empty -m "runtime backup: init"`.
