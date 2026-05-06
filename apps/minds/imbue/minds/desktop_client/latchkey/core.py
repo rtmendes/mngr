@@ -23,7 +23,6 @@ agent-lifecycle event flow.
 import json
 import os
 import shutil
-import signal
 import socket
 import threading
 from collections.abc import Mapping
@@ -62,14 +61,7 @@ from imbue.minds.desktop_client.latchkey.store import save_permissions
 from imbue.minds.desktop_client.ssh_tunnel import RemoteSSHInfo
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelError
 from imbue.minds.desktop_client.ssh_tunnel import SSHTunnelManager
-from imbue.minds.primitives import CreationId
 from imbue.mngr.primitives import AgentId
-
-# Subdirectory under ``data_dir`` where a gateway's spawn-time state lives
-# until ``bind_gateway_to_agent`` renames it into ``agents/<agent_id>/``.
-# Kept distinct from the agents/ tree so a stale or never-bound gateway
-# can be cleaned up without confusing the agents/ scan in ``initialize``.
-_PENDING_GATEWAYS_DIR_NAME: Final[str] = "pending-gateways"
 
 LATCHKEY_BINARY: Final[str] = "latchkey"
 
@@ -330,27 +322,6 @@ def _build_env_with_latchkey_directory(latchkey_directory: Path | None) -> dict[
     return env
 
 
-class PendingLatchkeyGateway(FrozenModel):
-    """A latchkey gateway subprocess that has been spawned but not yet bound to an ``AgentId``.
-
-    Returned from :py:meth:`Latchkey.allocate_gateway` so the caller can
-    inject the gateway URL into ``mngr create`` *before* the canonical
-    ``AgentId`` is known. Once ``mngr create`` returns the canonical id,
-    :py:meth:`Latchkey.bind_gateway_to_agent` migrates the spawn-time state
-    into the per-agent on-disk layout (``agents/<agent_id>/``) and registers
-    a regular :class:`LatchkeyGatewayInfo` for the rest of the system to
-    discover. If creation fails, :py:meth:`Latchkey.discard_unbound_gateway`
-    tears the gateway down without ever surfacing it through the bound API.
-    """
-
-    creation_id: CreationId = Field(description="Minds-internal creation handle this gateway is staged under")
-    host: str = Field(description="Host the gateway is listening on (typically 127.0.0.1)")
-    port: int = Field(description="Port the gateway is listening on")
-    pid: int = Field(description="PID of the spawned ``latchkey gateway`` process")
-    started_at: datetime = Field(description="UTC timestamp when the gateway was started")
-    pending_dir: Path = Field(description="Spawn-time directory holding the gateway's log + permissions config")
-
-
 class Latchkey(MutableModel):
     """Wraps every interaction with the upstream ``latchkey`` CLI.
 
@@ -382,10 +353,6 @@ class Latchkey(MutableModel):
 
     _data_dir: Path | None = PrivateAttr(default=None)
     _infos: dict[str, LatchkeyGatewayInfo] = PrivateAttr(default_factory=dict)
-    # In-flight (allocated-but-not-yet-bound) gateways keyed by their CreationId.
-    # Bind moves an entry from here into ``_infos`` keyed by canonical AgentId;
-    # discard tears one down without ever publishing it.
-    _pending: dict[str, PendingLatchkeyGateway] = PrivateAttr(default_factory=dict)
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _is_initialized: bool = PrivateAttr(default=False)
     _has_ensured_browser: bool = PrivateAttr(default=False)
@@ -458,146 +425,6 @@ class Latchkey(MutableModel):
             self._infos[aid_str] = info
             save_gateway_info(data_dir, info)
         return info
-
-    def allocate_gateway(self, creation_id: CreationId) -> PendingLatchkeyGateway:
-        """Spawn a gateway whose canonical ``AgentId`` is not yet known.
-
-        Used by the agent-creation flow to inject ``LATCHKEY_GATEWAY`` into
-        ``mngr create`` before the inner ``mngr create`` returns the
-        canonical ``AgentId`` (which for imbue_cloud agents comes from the
-        leased pool host's pre-baked id, not from minds). The spawn-time
-        log + permissions files live under
-        ``<data_dir>/pending-gateways/<creation_id>/`` so they don't
-        collide with a future agent-id-keyed dir; :py:meth:`bind_gateway_to_agent`
-        renames that directory into ``agents/<agent_id>/`` once the canonical
-        id is in hand.
-        """
-        with self._lock:
-            data_dir = self._require_initialized_locked()
-        pending_dir = data_dir / _PENDING_GATEWAYS_DIR_NAME / str(creation_id)
-        pending_dir.mkdir(parents=True, exist_ok=True)
-        log_path = pending_dir / "latchkey_gateway.log"
-        permissions_path = pending_dir / "latchkey_permissions.json"
-        # Latchkey treats a missing permissions file as "allow all"; materialize
-        # an empty-rules config so the gateway starts deny-all. See _spawn_gateway
-        # for the same invariant on the bound path.
-        if not permissions_path.is_file():
-            save_permissions(permissions_path, LatchkeyPermissionsConfig())
-
-        if shutil.which(self.latchkey_binary) is None and not Path(self.latchkey_binary).is_file():
-            raise LatchkeyBinaryNotFoundError(f"Latchkey binary not found: {self.latchkey_binary}")
-        self._ensure_browser_once(data_dir)
-
-        port = _allocate_free_port(self.listen_host)
-        with log_span(
-            "Allocating Latchkey gateway for creation {} on {}:{}",
-            creation_id,
-            self.listen_host,
-            port,
-        ):
-            try:
-                pid = spawn_detached_latchkey_gateway(
-                    latchkey_binary=self.latchkey_binary,
-                    listen_host=self.listen_host,
-                    listen_port=port,
-                    log_path=log_path,
-                    latchkey_directory=self.latchkey_directory,
-                    permissions_config_path=permissions_path,
-                )
-            except OSError as e:
-                raise LatchkeyError(f"Failed to spawn unbound Latchkey gateway: {e}") from e
-
-        pending = PendingLatchkeyGateway(
-            creation_id=creation_id,
-            host=self.listen_host,
-            port=port,
-            pid=pid,
-            started_at=datetime.now(timezone.utc),
-            pending_dir=pending_dir,
-        )
-        with self._lock:
-            self._pending[str(creation_id)] = pending
-        return pending
-
-    def bind_gateway_to_agent(self, creation_id: CreationId, agent_id: AgentId) -> LatchkeyGatewayInfo:
-        """Promote an allocated-but-unbound gateway to a regular per-agent gateway.
-
-        Renames ``pending-gateways/<creation_id>/`` to ``agents/<agent_id>/``
-        on the same filesystem so the gateway process's open log + permissions
-        FDs continue to point at the same inodes (Linux ``rename(2)``
-        preserves them). After this returns, the gateway shows up under the
-        normal ``LatchkeyGatewayInfo`` channels keyed by ``agent_id``.
-
-        Raises ``LatchkeyError`` if no pending gateway exists for ``creation_id``,
-        or if the target ``agents/<agent_id>/`` directory already exists.
-        """
-        cid_str = str(creation_id)
-        with self._lock:
-            data_dir = self._require_initialized_locked()
-            pending = self._pending.get(cid_str)
-            if pending is None:
-                raise LatchkeyError(f"No pending Latchkey gateway for creation_id {creation_id}")
-
-        target_dir = data_dir / "agents" / str(agent_id)
-        target_dir.parent.mkdir(parents=True, exist_ok=True)
-        if target_dir.exists():
-            raise LatchkeyError(
-                f"Cannot bind gateway: target {target_dir} already exists "
-                f"(agent_id collision -- pre-baked agent already has gateway state on disk?)"
-            )
-        # Same-filesystem rename: spawn-time inodes (log + permissions) survive,
-        # so the gateway process's open FDs keep working through the move.
-        pending.pending_dir.rename(target_dir)
-
-        info = LatchkeyGatewayInfo(
-            agent_id=agent_id,
-            host=pending.host,
-            port=pending.port,
-            pid=pending.pid,
-            started_at=pending.started_at,
-        )
-        with self._lock:
-            self._pending.pop(cid_str, None)
-            self._infos[str(agent_id)] = info
-            save_gateway_info(data_dir, info)
-        logger.info(
-            "Bound Latchkey gateway (creation {} -> agent {}, pid={}, {}:{})",
-            creation_id,
-            agent_id,
-            info.pid,
-            info.host,
-            info.port,
-        )
-        return info
-
-    def discard_unbound_gateway(self, creation_id: CreationId) -> None:
-        """Tear down a gateway that was allocated but never bound.
-
-        Used by the agent-creation flow's failure path so the spawn-time
-        gateway subprocess + its ``pending-gateways/<creation_id>/`` dir
-        don't leak when ``mngr create`` itself fails. No-op if no pending
-        gateway exists for ``creation_id`` (idempotent on re-raise paths).
-        """
-        cid_str = str(creation_id)
-        with self._lock:
-            pending = self._pending.pop(cid_str, None)
-        if pending is None:
-            return
-        try:
-            os.kill(pending.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except OSError as e:
-            logger.warning("Failed to SIGTERM unbound Latchkey gateway pid={}: {}", pending.pid, e)
-        # Best-effort dir cleanup -- if we can't, the next minds session's
-        # initialize() will see no record under agents/ and ignore the orphan.
-        if pending.pending_dir.exists():
-            shutil.rmtree(pending.pending_dir, ignore_errors=True)
-        logger.info(
-            "Discarded unbound Latchkey gateway for creation {} (pid={})",
-            creation_id,
-            pending.pid,
-        )
 
     def stop_gateway_for_agent(self, agent_id: AgentId) -> None:
         """Terminate the gateway for ``agent_id`` and delete its records.

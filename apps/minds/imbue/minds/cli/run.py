@@ -190,7 +190,6 @@ def run(
     agent_creator = AgentCreator(
         paths=paths,
         server_port=port,
-        latchkey=latchkey,
         imbue_cloud_cli=imbue_cloud_cli,
         root_concurrency_group=root_concurrency_group,
         notification_dispatcher=notification_dispatcher,

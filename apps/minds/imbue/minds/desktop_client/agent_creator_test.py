@@ -10,15 +10,12 @@ file covers minds' command-building and helpers.
 import queue
 import threading
 import time
-from datetime import datetime
-from datetime import timezone
 from http.server import BaseHTTPRequestHandler
 from http.server import HTTPServer
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.agent_creator import AgentCreator
-from imbue.minds.desktop_client.agent_creator import _build_latchkey_gateway_url
 from imbue.minds.desktop_client.agent_creator import _build_mngr_create_command
 from imbue.minds.desktop_client.agent_creator import _is_git_worktree
 from imbue.minds.desktop_client.agent_creator import _is_local_path
@@ -26,7 +23,7 @@ from imbue.minds.desktop_client.agent_creator import _make_host_name
 from imbue.minds.desktop_client.agent_creator import _redact_url_credentials
 from imbue.minds.desktop_client.agent_creator import _redact_url_credentials_in_text
 from imbue.minds.desktop_client.agent_creator import extract_repo_name
-from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
+from imbue.minds.desktop_client.latchkey.core import AGENT_SIDE_LATCHKEY_PORT
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.primitives import AgentName
 from imbue.minds.primitives import LaunchMode
@@ -67,27 +64,32 @@ def test_make_host_name_appends_host_suffix() -> None:
     assert _make_host_name(AgentName("alpha")) == "alpha-host"
 
 
-def _make_gateway_info(host: str = "127.0.0.1", port: int = 12345) -> LatchkeyGatewayInfo:
-    return LatchkeyGatewayInfo(
-        host=host,
-        port=port,
-        agent_id=AgentId.generate(),
-        pid=1234,
-        started_at=datetime.now(timezone.utc),
+def test_build_mngr_create_command_injects_latchkey_for_non_dev_modes() -> None:
+    """Container/VM/VPS/leased modes get the constant agent-side LATCHKEY_GATEWAY URL.
+
+    The reverse tunnel that ``LatchkeyDiscoveryHandler`` sets up post-discovery bridges
+    the agent's loopback at ``AGENT_SIDE_LATCHKEY_PORT`` to whichever host-side gateway
+    port the discovery handler picked, so the URL is the same constant every time.
+    """
+    expected = f"LATCHKEY_GATEWAY=http://127.0.0.1:{AGENT_SIDE_LATCHKEY_PORT}"
+    for mode in (LaunchMode.LOCAL, LaunchMode.LIMA, LaunchMode.CLOUD):
+        command, _ = _build_mngr_create_command(launch_mode=mode, agent_name=AgentName("hello"))
+        assert expected in command, f"{mode} command missing latchkey env: {command}"
+    # IMBUE_CLOUD requires an account to build the address; pass one and check the env var.
+    command, _ = _build_mngr_create_command(
+        launch_mode=LaunchMode.IMBUE_CLOUD,
+        agent_name=AgentName("hello"),
+        imbue_cloud_account="alice@imbue.com",
     )
+    assert expected in command
 
 
-def test_build_latchkey_gateway_url_uses_dynamic_host_for_dev() -> None:
-    info = _make_gateway_info(host="127.0.0.1", port=12345)
-    assert _build_latchkey_gateway_url(LaunchMode.DEV, info) == "http://127.0.0.1:12345"
-
-
-def test_build_latchkey_gateway_url_uses_constant_loopback_for_remote() -> None:
-    info = _make_gateway_info(host="ignored", port=99)
-    for mode in (LaunchMode.LOCAL, LaunchMode.LIMA, LaunchMode.CLOUD, LaunchMode.IMBUE_CLOUD):
-        url = _build_latchkey_gateway_url(mode, info)
-        assert url.startswith("http://127.0.0.1:")
-        assert url != "http://127.0.0.1:99"
+def test_build_mngr_create_command_omits_latchkey_for_dev_mode() -> None:
+    """DEV runs the agent on the bare host with no reverse tunnel, so no
+    ``LATCHKEY_GATEWAY`` is injected. Tests that need one set it themselves."""
+    command, _ = _build_mngr_create_command(launch_mode=LaunchMode.DEV, agent_name=AgentName("hello"))
+    joined = " ".join(command)
+    assert "LATCHKEY_GATEWAY" not in joined
 
 
 def test_build_mngr_create_command_uses_main_template_and_omits_message_arg() -> None:

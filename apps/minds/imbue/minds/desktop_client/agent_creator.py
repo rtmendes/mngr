@@ -44,10 +44,6 @@ from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
 from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCliError
 from imbue.minds.desktop_client.imbue_cloud_cli import LiteLLMKeyMaterial
 from imbue.minds.desktop_client.latchkey.core import AGENT_SIDE_LATCHKEY_PORT
-from imbue.minds.desktop_client.latchkey.core import Latchkey
-from imbue.minds.desktop_client.latchkey.core import LatchkeyError
-from imbue.minds.desktop_client.latchkey.core import PendingLatchkeyGateway
-from imbue.minds.desktop_client.latchkey.store import LatchkeyGatewayInfo
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.errors import GitCloneError
 from imbue.minds.errors import GitOperationError
@@ -357,37 +353,10 @@ def _make_host_name(agent_name: AgentName) -> str:
     return f"{agent_name}-host"
 
 
-def _build_latchkey_gateway_url(
-    launch_mode: LaunchMode,
-    gateway: PendingLatchkeyGateway | LatchkeyGatewayInfo,
-) -> str:
-    """Return the ``LATCHKEY_GATEWAY`` URL the agent should see in its environment.
-
-    DEV agents run on the bare host and reach the gateway on its dynamic host
-    port directly. Every other mode (container / VM / VPS / leased pool host)
-    runs inside an isolated runtime whose own loopback is bridged to the
-    host-side gateway via an SSH reverse tunnel bound to a fixed remote port,
-    so the URL is the same constant for every such agent.
-
-    Accepts either kind of gateway record: ``PendingLatchkeyGateway``
-    pre-bind (while we still don't know the canonical ``AgentId``) and
-    ``LatchkeyGatewayInfo`` post-bind. They share the ``host`` + ``port``
-    fields used here.
-    """
-    match launch_mode:
-        case LaunchMode.DEV:
-            return f"http://{gateway.host}:{gateway.port}"
-        case LaunchMode.LOCAL | LaunchMode.LIMA | LaunchMode.CLOUD | LaunchMode.IMBUE_CLOUD:
-            return f"http://127.0.0.1:{AGENT_SIDE_LATCHKEY_PORT}"
-        case _ as unreachable:
-            assert_never(unreachable)
-
-
 def _build_mngr_create_command(
     launch_mode: LaunchMode,
     agent_name: AgentName,
     host_env_file: Path | None = None,
-    latchkey_gateway_url: str | None = None,
     imbue_cloud_account: str | None = None,
     imbue_cloud_repo_url: str | None = None,
     imbue_cloud_branch_or_tag: str | None = None,
@@ -424,9 +393,12 @@ def _build_mngr_create_command(
     environment via ``--host-env-file`` so secrets from a local ``.env`` reach
     the agent without being baked into the template.
 
-    When ``latchkey_gateway_url`` is supplied, it is injected as
-    ``LATCHKEY_GATEWAY=<url>`` so the agent's ``latchkey`` CLI forwards
-    its calls to the gateway minds is running for this agent.
+    For container/VM/VPS/leased modes, ``LATCHKEY_GATEWAY=http://127.0.0.1:<port>``
+    is injected unconditionally; the agent reaches that loopback URL via the
+    reverse tunnel that ``LatchkeyDiscoveryHandler`` sets up post-discovery.
+    DEV mode gets no injected ``LATCHKEY_GATEWAY`` -- DEV runs on the bare
+    host without a reverse tunnel, so any test that wants latchkey there
+    should set the env var itself.
     """
     match launch_mode:
         case LaunchMode.DEV:
@@ -452,6 +424,15 @@ def _build_mngr_create_command(
     # ``--format jsonl`` makes mngr emit ``{"event": "created", "agent_id": ..., "host_id": ...}``
     # as the final stdout line; ``run_mngr_create`` parses that to recover
     # the canonical agent id.
+    # Non-DEV modes bridge the agent's loopback to a host-side latchkey
+    # gateway via the reverse tunnel ``LatchkeyDiscoveryHandler`` sets up
+    # post-discovery, so the URL is always the constant agent-side port.
+    # DEV mode runs the agent on the bare host with no tunnel; tests there
+    # set ``LATCHKEY_GATEWAY`` themselves if they want one.
+    latchkey_env_args: list[str] = []
+    if launch_mode is not LaunchMode.DEV:
+        latchkey_env_args = ["--env", f"LATCHKEY_GATEWAY=http://127.0.0.1:{AGENT_SIDE_LATCHKEY_PORT}"]
+
     mngr_command: list[str] = [
         MNGR_BINARY,
         "create",
@@ -465,7 +446,7 @@ def _build_mngr_create_command(
         f"MINDS_API_KEY={api_key}",
         "--label",
         "user_created=true",
-        *(["--env", f"LATCHKEY_GATEWAY={latchkey_gateway_url}"] if latchkey_gateway_url else []),
+        *latchkey_env_args,
         "--label",
         "is_primary=true",
     ]
@@ -659,7 +640,6 @@ def run_mngr_create(
     agent_name: AgentName,
     on_output: OutputCallback | None = None,
     host_env_file: Path | None = None,
-    latchkey_gateway_url: str | None = None,
     imbue_cloud_account: str | None = None,
     imbue_cloud_repo_url: str | None = None,
     imbue_cloud_branch_or_tag: str | None = None,
@@ -688,7 +668,6 @@ def run_mngr_create(
         launch_mode,
         agent_name,
         host_env_file=host_env_file,
-        latchkey_gateway_url=latchkey_gateway_url,
         imbue_cloud_account=imbue_cloud_account,
         imbue_cloud_repo_url=imbue_cloud_repo_url,
         imbue_cloud_branch_or_tag=imbue_cloud_branch_or_tag,
@@ -773,18 +752,6 @@ class AgentCreator(MutableModel):
             "themselves run inside the plugin's ``ImbueCloudProvider.create_host``, so minds "
             "no longer maintains its own SuperTokens session, host pool, or LiteLLM key code. "
             "Other launch modes do not consult this client."
-        ),
-    )
-    latchkey: Latchkey | None = Field(
-        default=None,
-        frozen=True,
-        description=(
-            "Optional gateway manager. When provided, creation pre-spawns a gateway for every "
-            "agent and passes the appropriate URL to ``mngr create`` as "
-            "``--env LATCHKEY_GATEWAY=...`` so the agent's ``latchkey`` CLI proxies through it. "
-            "For DEV agents the URL is the gateway's dynamic host port; for container/VM/VPS "
-            "agents it is a constant URL on the agent-side loopback that ``LatchkeyGatewayDiscoveryHandler`` "
-            "bridges back via an SSH reverse tunnel once the agent is discovered."
         ),
     )
     root_concurrency_group: ConcurrencyGroup = Field(
@@ -1259,17 +1226,6 @@ class AgentCreator(MutableModel):
                 with self._lock:
                     self._statuses[cid_str] = AgentCreationStatus.CREATING
 
-                # Allocate a Latchkey gateway under the creation_id (no
-                # canonical AgentId yet -- mngr create generates that and
-                # we read it out of its JSONL ``created`` event below). We
-                # need the URL *before* invoking ``mngr create`` so it can
-                # be injected via ``--env LATCHKEY_GATEWAY=...``; spawn
-                # state lives in ``pending-gateways/<creation_id>/`` and is
-                # renamed into ``agents/<agent_id>/`` after we bind.
-                pending_gateway, latchkey_gateway_url = self._allocate_latchkey_gateway(
-                    creation_id, launch_mode, log_queue
-                )
-
                 parsed_name = AgentName(agent_name)
                 log_queue.put("[minds] Creating agent '{}' (mode: {})...".format(agent_name, launch_mode.value))
                 api_key, canonical_id = run_mngr_create(
@@ -1278,7 +1234,6 @@ class AgentCreator(MutableModel):
                     agent_name=parsed_name,
                     on_output=emit_log,
                     host_env_file=host_env_file,
-                    latchkey_gateway_url=latchkey_gateway_url,
                     imbue_cloud_account=account_email if launch_mode is LaunchMode.IMBUE_CLOUD else None,
                     # Don't constrain the lease on ``repo_url`` here:
                     # ``repo_source`` is whatever the user picked in the UI
@@ -1299,22 +1254,6 @@ class AgentCreator(MutableModel):
                     imbue_cloud_anthropic_base_url=(str(key_material.base_url) if key_material is not None else None),
                     parent_cg=self.root_concurrency_group,
                 )
-
-                # Bind the previously-allocated gateway to the canonical id
-                # so it's discoverable through the regular per-agent paths
-                # (``agents/<agent_id>/...``). On bind failure we don't
-                # block the create flow -- the agent is up and the gateway
-                # process is fine, just not registered under the right key.
-                if pending_gateway is not None and self.latchkey is not None:
-                    try:
-                        self.latchkey.bind_gateway_to_agent(creation_id, canonical_id)
-                    except LatchkeyError as exc:
-                        logger.warning(
-                            "Failed to bind Latchkey gateway for creation {} -> agent {}: {}",
-                            creation_id,
-                            canonical_id,
-                            exc,
-                        )
 
                 # Persist the API key hash under the canonical id so future
                 # ``/api/<agent_id>`` requests authenticate against it.
@@ -1363,11 +1302,6 @@ class AgentCreator(MutableModel):
             with self._lock:
                 self._statuses[cid_str] = AgentCreationStatus.FAILED
                 self._errors[cid_str] = str(e)
-            # The pre-spawned gateway is orphaned now; tear it down so the
-            # subprocess + ``pending-gateways/<creation_id>/`` directory
-            # don't leak on retry.
-            if self.latchkey is not None:
-                self.latchkey.discard_unbound_gateway(creation_id)
         finally:
             log_queue.put(LOG_SENTINEL)
 
@@ -1442,34 +1376,3 @@ class AgentCreator(MutableModel):
             "[minds] Warning: workspace did not become ready within "
             f"{self.workspace_ready_timeout_seconds:.0f}s; you may see a retry page on first load."
         )
-
-    def _allocate_latchkey_gateway(
-        self,
-        creation_id: CreationId,
-        launch_mode: LaunchMode,
-        log_queue: queue.Queue[str],
-    ) -> tuple[PendingLatchkeyGateway | None, str | None]:
-        """Allocate a Latchkey gateway *before* the canonical AgentId is known.
-
-        The gateway URL is needed up front because it gets injected as
-        ``--env LATCHKEY_GATEWAY=<url>`` on ``mngr create``, but the
-        gateway can't yet be associated with an AgentId (mngr generates
-        that). Spawn state lives under ``pending-gateways/<creation_id>/``
-        until ``Latchkey.bind_gateway_to_agent`` migrates it after
-        ``mngr create`` returns the canonical id.
-
-        Returns ``(pending_gateway, url)``; both are ``None`` (and a
-        warning is logged) when latchkey is unconfigured or spawn fails,
-        so agent creation can proceed without a gateway URL.
-        """
-        if self.latchkey is None:
-            return None, None
-        try:
-            pending = self.latchkey.allocate_gateway(creation_id)
-        except LatchkeyError as e:
-            logger.warning("Pre-spawning Latchkey gateway for creation {} failed: {}", creation_id, e)
-            log_queue.put(f"[minds] Warning: Latchkey gateway could not be started for this agent: {e}")
-            return None, None
-        url = _build_latchkey_gateway_url(launch_mode, pending)
-        log_queue.put(f"[minds] Latchkey gateway for this agent: {url}")
-        return pending, url
