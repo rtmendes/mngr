@@ -152,11 +152,11 @@ A bash script. Logical flow:
 
 Each phase ends with a working, observably better system.
 
-### Phase 1 — Memory move
+### Phase 1 — Memory + tickets move
 
-- Update `.claude/settings.json`, `.gitignore`, `CLAUDE.md`.
-- Verify on a fresh container: `runtime/memory/` is created on first auto-memory write; nothing else changes.
-- Smallest possible change; isolates the directory move from anything git-related.
+- Update `.claude/settings.json`, `.gitignore`, `CLAUDE.md` (memory section and ticket-system bullet), `README.md` (ticket path), and `.mngr/settings.toml`'s `[commands.create].host_env` (add `TICKETS_DIR=/code/runtime/tickets`).
+- Verify on a fresh container: `runtime/memory/` is created on first auto-memory write, and `tk` writes new tickets under `runtime/tickets/`; nothing else changes.
+- Smallest possible change; isolates the directory moves from anything git-related.
 
 ### Phase 2 — Runtime worktree + backup service (local-only)
 
