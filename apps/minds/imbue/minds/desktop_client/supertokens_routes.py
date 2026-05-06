@@ -318,6 +318,34 @@ async def _handle_signin_api(request: Request) -> Response:
     )
 
 
+def signout_user_via_plugin(request: Request, user_id: str) -> None:
+    """Sign ``user_id`` out via the mngr_imbue_cloud plugin and clear local state.
+
+    Resolves the email for ``user_id`` against the cached ``auth list``,
+    runs ``mngr imbue_cloud auth signout --account <email>`` (plugin owns
+    the SuperTokens session), invalidates the local identity cache, and
+    tears down the matching ``[providers.imbue_cloud_<slug>]`` block /
+    bounces ``mngr observe`` so ``mngr create``/``list`` reflect the new
+    state immediately.
+
+    No-ops gracefully when the user isn't currently visible to the
+    plugin -- the cache is still invalidated so a stale entry can't
+    survive.
+    """
+    session_store = _get_session_store(request)
+    backend = _get_auth_backend(request)
+    session = session_store.get_session(user_id)
+    signed_out_email: str | None = None
+    if session is not None:
+        signed_out_email = str(session.email)
+        backend.signout_account(signed_out_email)
+    else:
+        logger.warning("No mirrored account for user {}; skipping plugin signout", user_id[:8])
+    session_store.invalidate_identity_cache()
+    if signed_out_email and unset_imbue_cloud_provider_for_account(signed_out_email):
+        _bounce_forward_observe(request)
+
+
 async def _handle_signout_api(request: Request) -> Response:
     """Handle sign-out for a specific account.
 
@@ -330,8 +358,6 @@ async def _handle_signout_api(request: Request) -> Response:
     logged; we still drop the local mirror so the user's intent is honored
     even when the connector is unreachable.
     """
-    session_store = _get_session_store(request)
-    backend = _get_auth_backend(request)
     try:
         body = await request.json()
         user_id = body.get("user_id")
@@ -341,16 +367,7 @@ async def _handle_signout_api(request: Request) -> Response:
     if not user_id:
         return _json_response({"status": "ERROR", "message": "user_id is required"}, 400)
 
-    session = session_store.get_session(str(user_id))
-    signed_out_email: str | None = None
-    if session is not None:
-        signed_out_email = str(session.email)
-        backend.signout_account(signed_out_email)
-    else:
-        logger.warning("No mirrored account for user {}; skipping plugin signout", str(user_id)[:8])
-    session_store.invalidate_identity_cache()
-    if signed_out_email and unset_imbue_cloud_provider_for_account(signed_out_email):
-        _bounce_forward_observe(request)
+    signout_user_via_plugin(request, str(user_id))
     return _json_response({"status": "OK"})
 
 
