@@ -1520,7 +1520,6 @@ def _handle_sharing_page(
         service_name=service_name,
         title=f"Sharing: {service_name}",
         mngr_forward_origin=_get_mngr_forward_origin(request),
-        is_request=False,
         has_account=has_account,
         accounts=accounts,
         redirect_url=f"/sharing/{agent_id}/{service_name}",

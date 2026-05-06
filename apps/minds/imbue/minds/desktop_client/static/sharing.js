@@ -1,6 +1,6 @@
 // Sharing editor: rebuilds the ACL + heading via DOM methods (NOT innerHTML)
-// so a crafted email from a sharing request cannot inject script. The page
-// config is passed from Jinja as a JSON data island, not as template-interpolated JS.
+// so a crafted email cannot inject script. The page config is passed from
+// Jinja as a JSON data island, not as template-interpolated JS.
 (function () {
   var configEl = document.getElementById('sharing-config');
   if (!configEl) return;
@@ -9,8 +9,6 @@
   var serviceName = config.serviceName;
   var wsName = config.wsName;
   var accountEmail = config.accountEmail;
-  var isRequest = config.isRequest;
-  var requestId = config.requestId;
   var proposedEmails = config.initialEmails || [];
   // ``mngr forward`` plugin's bare origin (e.g. ``http://localhost:8421``);
   // the workspace link below targets the plugin's ``/goto/<agent>/`` route.
@@ -215,13 +213,7 @@
     setSubmitting(true);
     var form = new FormData();
     form.append('emails', JSON.stringify(getFinalEmails()));
-    // Direct edits go to /sharing/<agent>/<service>/enable, which calls
-    // enable_sharing_via_cloudflare server-side. The legacy request-approval
-    // branch is retained for backward compatibility with any in-flight
-    // requests written before the sharing-request flow was removed.
-    var url = isRequest
-      ? '/requests/' + requestId + '/grant'
-      : '/sharing/' + agentId + '/' + serviceName + '/enable';
+    var url = '/sharing/' + agentId + '/' + serviceName + '/enable';
     postWithErrorCheck(url, form)
       .then(function () { window.location.href = '/sharing/' + agentId + '/' + serviceName; })
       .catch(function (err) { showError('Could not save sharing changes: ' + err.message); setSubmitting(false); });
@@ -233,14 +225,6 @@
     postWithErrorCheck('/sharing/' + agentId + '/' + serviceName + '/disable', null)
       .then(function () { window.location.href = '/sharing/' + agentId + '/' + serviceName; })
       .catch(function (err) { showError('Could not disable sharing: ' + err.message); setSubmitting(false); });
-  };
-
-  window.submitDeny = function () {
-    clearError();
-    setSubmitting(true);
-    postWithErrorCheck('/requests/' + requestId + '/deny', null)
-      .then(function () { window.location.href = '/'; })
-      .catch(function (err) { showError('Could not deny request: ' + err.message); setSubmitting(false); });
   };
 
   window.copyUrl = function () {
