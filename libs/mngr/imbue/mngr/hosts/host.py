@@ -2574,18 +2574,19 @@ class Host(BaseHost, OnlineHostInterface):
             raise MngrError(f"Required files for provisioning not found: {missing_str}")
 
         # Execute transfers
-        for transfer in transfers:
-            if not transfer.local_path.exists():
-                # Optional file doesn't exist, skip it
-                logger.trace("Skipped optional file transfer (file not found): {}", transfer.local_path)
-                continue
+        with log_span("Transferring agent files", count=len(transfers)):
+            for transfer in transfers:
+                if not transfer.local_path.exists():
+                    # Optional file doesn't exist, skip it
+                    logger.trace("Skipped optional file transfer (file not found): {}", transfer.local_path)
+                    continue
 
-            # Resolve relative remote paths to work_dir
-            remote_path = agent.work_dir / transfer.agent_path
+                # Resolve relative remote paths to work_dir
+                remote_path = agent.work_dir / transfer.agent_path
 
-            local_content = transfer.local_path.read_bytes()
-            self.write_file(remote_path, local_content)
-            logger.trace("Transferred agent file: {} -> {}", transfer.local_path, remote_path)
+                local_content = transfer.local_path.read_bytes()
+                self.write_file(remote_path, local_content)
+                logger.trace("Transferred agent file: {} -> {}", transfer.local_path, remote_path)
 
     def rename_agent(self, agent: AgentInterface, new_name: AgentName) -> AgentInterface:
         """Rename an agent and return the updated agent object.

@@ -12,6 +12,7 @@ from imbue.mngr.api.create import resolve_target_host
 from imbue.mngr.api.data_types import CreateAgentResult
 from imbue.mngr.api.providers import get_provider_instance
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.errors import AgentError
 from imbue.mngr.errors import HostError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.hosts.host import HostLocation
@@ -284,7 +285,7 @@ def launch_all_test_agents(
                 info, host = future.result()
                 agents.append(info)
                 agent_hosts[str(info.agent_id)] = host
-            except (MngrError, HostError, OSError, BaseExceptionGroup) as exc:
+            except (MngrError, HostError, AgentError, OSError, BaseExceptionGroup) as exc:
                 logger.warning("Failed to launch agent: {}", exc)
 
     logger.info("Launched {} agent(s)", len(agents))
@@ -328,7 +329,7 @@ def launch_agents_up_to_limit(
         except TimeoutError:
             logger.warning("Agent creation timed out after {}s for {}", _AGENT_CREATION_TIMEOUT_SECONDS, test_node_id)
             continue
-        except (MngrError, HostError, OSError, BaseExceptionGroup) as exc:
+        except (MngrError, HostError, AgentError, OSError, BaseExceptionGroup) as exc:
             logger.warning("Failed to launch agent for {}: {}", test_node_id, exc)
             continue
         all_agents.append(info)

@@ -24,6 +24,7 @@ from imbue.mngr.cli.output_helpers import emit_event
 from imbue.mngr.cli.output_helpers import write_human_line
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import OutputOptions
+from imbue.mngr.errors import AgentError
 from imbue.mngr.errors import HostError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.interfaces.data_types import AgentDetails
@@ -319,7 +320,7 @@ def _run_integrator_phase(
             config=config,
             mngr_ctx=mngr_ctx,
         )
-    except (MngrError, HostError, OSError, BaseExceptionGroup) as exc:
+    except (MngrError, HostError, AgentError, OSError, BaseExceptionGroup) as exc:
         logger.warning("Failed to launch integrator agent: {}", exc)
         return None
 
