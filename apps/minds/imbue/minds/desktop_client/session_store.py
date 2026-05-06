@@ -176,7 +176,10 @@ class MultiAccountSessionStore(MutableModel):
     def _identity_by_user_id(self, refresh: bool = False) -> dict[str, ImbueCloudAuthAccount]:
         with self._cache_lock:
             if not refresh and self._identity_cache is not None:
-                return self._identity_cache
+                # Return a shallow copy so that an ``invalidate_identity_cache``
+                # call from another thread can't swap the underlying dict
+                # while a caller iterates over it.
+                return dict(self._identity_cache)
             try:
                 accounts = self.cli.auth_list()
             except ImbueCloudCliError as exc:
@@ -188,7 +191,7 @@ class MultiAccountSessionStore(MutableModel):
                 # this call only and let the next read retry.
                 return {}
             self._identity_cache = {account.user_id: account for account in accounts}
-            return self._identity_cache
+            return dict(self._identity_cache)
 
     # -- Public read API ----------------------------------------------------
 

@@ -1,6 +1,6 @@
 """Request and response event types for the minds request inbox.
 
-Agents write request events (sharing, permissions) to
+Agents write request events (permissions, latchkey-permission) to
 ``$MNGR_AGENT_STATE_DIR/events/requests/events.jsonl``. The desktop
 client watches these and presents them in an inbox panel. Response
 events (grant/deny) are written by the desktop client to
@@ -95,7 +95,10 @@ class RequestResponseEvent(EventEnvelope):
     request_event_id: str = Field(description="event_id of the original request")
     status: str = Field(description="Resolution status: 'GRANTED' or 'DENIED'")
     agent_id: str = Field(description="Agent ID the request was for")
-    service_name: str | None = Field(default=None, description="Service name (for sharing requests)")
+    service_name: str | None = Field(
+        default=None,
+        description="Service name (for request types that scope to a service, e.g. latchkey-permission)",
+    )
     request_type: str = Field(description="Type of request that was responded to")
 
 
@@ -142,13 +145,10 @@ def create_request_response_event(
 
 def _dedup_key(event: RequestEvent | RequestResponseEvent) -> tuple[str, str | None, str]:
     """Compute the deduplication key for a request or response event."""
-    service_name: str | None = None
-    if isinstance(event, LatchkeyPermissionRequestEvent):
-        service_name = event.service_name
-    elif isinstance(event, RequestResponseEvent):
+    if isinstance(event, (LatchkeyPermissionRequestEvent, RequestResponseEvent)):
         service_name = event.service_name
     else:
-        pass
+        service_name = None
     return (event.agent_id, service_name, event.request_type)
 
 
