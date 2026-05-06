@@ -1,1 +1,1 @@
-Adds a spec for backing up the gitignored `runtime/` (and possibly `memory/`) folder of forever-claude-template into the same private repo on a separate orphan branch, plus a periodic backup service and `GH_TOKEN`-based auto-push setup.
+Adds a spec for backing up the gitignored `runtime/` folder of forever-claude-template (which now also contains `memory/` and `tickets/`) into the same private repo on a separate orphan branch, plus a periodic backup service and `GH_TOKEN`-based auto-push setup.
