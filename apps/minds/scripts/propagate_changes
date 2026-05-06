@@ -168,11 +168,9 @@ agent_update() {
         return 1
     fi
 
-    # Protect .claude/settings.local.json: it is generated per-agent at create
-    # time by mngr's _configure_agent_hooks (writes UserPromptSubmit hooks that
-    # signal `tmux wait-for -S "mngr-submit-..."`). Without it, every send_message
-    # hangs the 90s submission-signal timeout. The template doesn't ship this
-    # file, so without protection, --delete blows it away on every iteration.
+    # .claude/settings.local.json is generated per-agent at create time and
+    # holds mngr's UserPromptSubmit hook; without protection, --delete removes
+    # it and send_message then hangs the 90s submission-signal timeout.
     echo "[3/4] Syncing template into agent work_dir..."
     if [[ "${MODE}" == "remote" ]]; then
         rsync -avz --delete \
