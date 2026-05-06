@@ -253,8 +253,7 @@
   };
 
   // The status endpoint emits the AuthPolicy shape from the imbue_cloud
-  // plugin (``{"emails": [...], "email_domains": [...], "require_idp": ...}``)
-  // rather than the Cloudflare-native nested ``auth_rules`` shape.
+  // plugin: ``{"emails": [...], "email_domains": [...], "require_idp": ...}``.
   function emailsFromPolicy(policy) {
     if (!policy || !Array.isArray(policy.emails)) return [];
     return policy.emails.slice();

@@ -1635,10 +1635,9 @@ def _handle_sharing_status_api(
 
         {"enabled": bool, "url": str | null, "policy": {"emails": [str, ...], ...}}
 
-    ``policy`` is the AuthPolicy shape the plugin emits (not the
-    Cloudflare-native nested ``auth_rules`` shape the deleted
-    ``CloudflareClient`` returned). Default policy when sharing isn't
-    yet enabled is the workspace's associated account email.
+    ``policy`` is the AuthPolicy shape the plugin emits. Default policy
+    when sharing isn't yet enabled is the workspace's associated account
+    email.
     """
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content='{"error":"Not authenticated"}', media_type="application/json")

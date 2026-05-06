@@ -1,8 +1,8 @@
 """REST API v1 router for the minds desktop client.
 
-Provides authenticated JSON endpoints for Cloudflare forwarding,
-Telegram bot setup, and user notifications. Authentication uses
-per-agent API keys (Bearer tokens) with SHA-256 hash lookup.
+Provides authenticated JSON endpoints for Telegram bot setup and user
+notifications. Authentication uses per-agent API keys (Bearer tokens)
+with SHA-256 hash lookup.
 """
 
 import json
@@ -15,10 +15,8 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import Response
 from loguru import logger
-from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
-from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.minds.config.data_types import MNGR_BINARY
 from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.desktop_client.api_key_store import find_agent_by_api_key
@@ -26,62 +24,10 @@ from imbue.minds.desktop_client.deps import BackendResolverDep
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.notification import NotificationRequest
 from imbue.minds.desktop_client.notification import NotificationUrgency
-from imbue.minds.primitives import ServiceName
 from imbue.minds.telegram.credential_store import load_agent_bot_credentials
 from imbue.minds.telegram.setup import TelegramSetupOrchestrator
 from imbue.minds.telegram.setup import TelegramSetupStatus
 from imbue.mngr.primitives import AgentId
-
-
-class CloudflareClient:
-    """Placeholder for the now-deleted minds CloudflareClient.
-
-    The Cloudflare-related endpoints in this file were originally backed by
-    direct HTTP calls to ``remote_service_connector``; that wiring has been
-    removed in favour of the ``mngr_imbue_cloud`` plugin. Until each handler
-    is rewritten to call ``ImbueCloudCli.list_services`` / ``add_service`` /
-    etc., this stub keeps the file importable. ``app.state.cloudflare_client``
-    is permanently ``None``, so the route helper ``get_cf_client_with_auth``
-    always returns 501 and the cloudflare UI is disabled.
-
-    The methods below are stubs that raise NotImplementedError if a handler
-    somehow gets a real instance (which won't happen in production -- they
-    are only here to satisfy the type checker over the unmigrated handlers).
-    """
-
-    supertokens_email: str | None = None
-    connector_url: str | None = None
-
-    def list_services(self, *_a: object, **_k: object) -> dict[str, str] | None:
-        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels services list")
-
-    def add_service(self, *_a: object, **_k: object) -> object:
-        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels services add")
-
-    def remove_service(self, *_a: object, **_k: object) -> object:
-        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels services remove")
-
-    def create_tunnel(self, *_a: object, **_k: object) -> tuple[str | None, str]:
-        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels create")
-
-    def delete_tunnel(self, *_a: object, **_k: object) -> object:
-        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels delete")
-
-    def get_tunnel_auth(self, *_a: object, **_k: object) -> list[object]:
-        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth get")
-
-    def set_tunnel_auth(self, *_a: object, **_k: object) -> object:
-        raise NotImplementedError("CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth set")
-
-    def get_service_auth(self, *_a: object, **_k: object) -> list[object]:
-        raise NotImplementedError(
-            "CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth get --service ..."
-        )
-
-    def set_service_auth(self, *_a: object, **_k: object) -> object:
-        raise NotImplementedError(
-            "CloudflareClient is no longer wired; use mngr imbue_cloud tunnels auth set --service ..."
-        )
 
 
 def _authenticate_api_key(request: Request) -> AgentId:
@@ -141,147 +87,6 @@ def _json_response(data: dict[str, object], status_code: int = 200) -> Response:
 
 def _json_error(message: str, status_code: int) -> Response:
     return _json_response({"error": message}, status_code=status_code)
-
-
-def get_cf_client_with_auth(
-    request: Request, agent_id: AgentId | None = None
-) -> tuple[CloudflareClient | None, Response | None]:
-    """Cloudflare forwarding is not wired post-cutover; always returns 501.
-
-    The original signature returned an HTTP-client enriched with the
-    caller's SuperTokens token. After the mngr_imbue_cloud cutover, those
-    tokens live entirely inside the plugin and minds doesn't have a
-    Cloudflare client at all -- the route handlers below should be
-    rewritten to call ``mngr imbue_cloud tunnels …`` via ``ImbueCloudCli``
-    instead. Until that happens, every cloudflare endpoint short-circuits
-    here.
-    """
-    _ = request, agent_id
-    return None, _json_error("Cloudflare forwarding not configured", 501)
-
-
-# -- Request body models --
-
-
-class _CloudflareEnableBody(FrozenModel):
-    """Optional request body for the Cloudflare enable endpoint."""
-
-    service_url: str | None = Field(
-        default=None,
-        description="Service URL to register. If omitted, resolved from the backend resolver.",
-    )
-    auth_rules: list[dict[str, object]] | None = Field(
-        default=None,
-        description="Auth policy rules to apply. If omitted, uses tunnel default.",
-    )
-
-
-# -- Cloudflare forwarding routes --
-
-
-def _handle_cloudflare_status(
-    agent_id: str,
-    service_name: str,
-    request: Request,
-    _caller_agent_id: CallerAgentIdDep,
-) -> Response:
-    """Get Cloudflare forwarding status for a server."""
-    cf_client, error_response = get_cf_client_with_auth(request, agent_id=AgentId(agent_id))
-    if error_response is not None:
-        return error_response
-    assert cf_client is not None
-
-    parsed_id = AgentId(agent_id)
-
-    # Build the default auth rules from the session's email for when no policy is stored
-    session_email = cf_client.supertokens_email
-    owner_default_rules = (
-        [{"action": "allow", "include": [{"email": {"email": session_email}}]}] if session_email else []
-    )
-
-    services = cf_client.list_services(parsed_id)
-    if services is None:
-        # No tunnel exists yet -- return owner email as the default
-        default_rules = cf_client.get_tunnel_auth(parsed_id)
-        return _json_response({"enabled": False, "url": None, "auth_rules": default_rules or owner_default_rules})
-
-    hostname = services.get(service_name)
-    if hostname:
-        # Service is enabled -- get its specific auth policy
-        auth_rules = cf_client.get_service_auth(parsed_id, service_name)
-        if auth_rules is None:
-            auth_rules = cf_client.get_tunnel_auth(parsed_id) or owner_default_rules
-        return _json_response({"enabled": True, "url": f"https://{hostname}", "auth_rules": auth_rules})
-
-    # Tunnel exists but this service isn't enabled -- return tunnel default or owner email
-    default_rules = cf_client.get_tunnel_auth(parsed_id)
-    return _json_response({"enabled": False, "url": None, "auth_rules": default_rules or owner_default_rules})
-
-
-def _handle_cloudflare_enable(
-    agent_id: str,
-    service_name: str,
-    request: Request,
-    _caller_agent_id: CallerAgentIdDep,
-    backend_resolver: BackendResolverDep,
-    body: _CloudflareEnableBody | None = None,
-) -> Response:
-    """Enable Cloudflare forwarding for a server."""
-    cf_client, error_response = get_cf_client_with_auth(request, agent_id=AgentId(agent_id))
-    if error_response is not None:
-        return error_response
-    assert cf_client is not None
-
-    parsed_id = AgentId(agent_id)
-    parsed_service = ServiceName(service_name)
-
-    service_url = body.service_url if body is not None else None
-    if service_url is None:
-        backend_url = backend_resolver.get_backend_url(parsed_id, parsed_service)
-        if backend_url is None:
-            return _json_error("Server not found locally", 404)
-        service_url = backend_url
-
-    # Ensure the tunnel exists and we have a token for it.
-    # create_tunnel is idempotent -- if the tunnel already exists, it returns
-    # the existing token. We always need the token to inject into the agent.
-    token, message = cf_client.create_tunnel(parsed_id)
-    if token is None:
-        return _json_error(f"Failed to create Cloudflare tunnel: {message}", 502)
-    inject_tunnel_token_into_agent(parsed_id, token)
-
-    is_success = cf_client.add_service(parsed_id, parsed_service, service_url)
-    if not is_success:
-        return _json_error("Cloudflare API call failed", 502)
-
-    # Apply auth rules if provided
-    auth_rules = body.auth_rules if body is not None else None
-    if auth_rules is not None:
-        cf_client.set_service_auth(parsed_id, str(parsed_service), auth_rules)
-
-    return _json_response({"ok": True})
-
-
-def _handle_cloudflare_disable(
-    agent_id: str,
-    service_name: str,
-    request: Request,
-    _caller_agent_id: CallerAgentIdDep,
-) -> Response:
-    """Disable Cloudflare forwarding for a server."""
-    cf_client, error_response = get_cf_client_with_auth(request, agent_id=AgentId(agent_id))
-    if error_response is not None:
-        return error_response
-    assert cf_client is not None
-
-    parsed_id = AgentId(agent_id)
-    parsed_service = ServiceName(service_name)
-
-    is_success = cf_client.remove_service(parsed_id, parsed_service)
-
-    if is_success:
-        return _json_response({"ok": True})
-    return _json_error("Cloudflare API call failed", 502)
 
 
 # -- Telegram routes --
@@ -408,17 +213,6 @@ async def _handle_notification(
 def create_api_v1_router() -> APIRouter:
     """Create the /api/v1/ router with all REST API endpoints."""
     router = APIRouter()
-
-    # Cloudflare forwarding
-    router.get(
-        "/agents/{agent_id}/services/{service_name}/cloudflare",
-    )(_handle_cloudflare_status)
-    router.put(
-        "/agents/{agent_id}/services/{service_name}/cloudflare",
-    )(_handle_cloudflare_enable)
-    router.delete(
-        "/agents/{agent_id}/services/{service_name}/cloudflare",
-    )(_handle_cloudflare_disable)
 
     # Telegram
     router.post(
