@@ -308,7 +308,7 @@ def test_build_current_results_timed_out_agents() -> None:
     results = build_current_results(agents=agents, final_details={}, timed_out_ids={str(agent_id)}, hosts={})
     assert len(results) == 1
     assert results[0].errored is True
-    assert report_section_of(results[0]) == ReportSection.BLOCKED
+    assert report_section_of(results[0]) == ReportSection.FAILED
 
 
 def test_build_current_results_includes_launch_failures() -> None:
@@ -330,7 +330,7 @@ def test_build_current_results_includes_launch_failures() -> None:
     assert results[0].test_node_id == "tests/test_a.py::test_one"
     assert results[0].errored is True
     assert "Failed to launch agent: boom" in results[0].summary_markdown
-    assert report_section_of(results[0]) == ReportSection.BLOCKED
+    assert report_section_of(results[0]) == ReportSection.FAILED
 
 
 def test_build_current_results_launch_failures_come_before_running_agents() -> None:
