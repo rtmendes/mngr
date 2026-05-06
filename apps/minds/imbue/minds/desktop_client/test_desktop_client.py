@@ -25,6 +25,7 @@ from imbue.minds.desktop_client.conftest import make_service_log
 from imbue.minds.desktop_client.conftest import make_session_store_for_test
 from imbue.minds.desktop_client.cookie_manager import SESSION_COOKIE_NAME
 from imbue.minds.desktop_client.cookie_manager import create_session_cookie
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.request_events import RequestInbox
@@ -898,11 +899,17 @@ def test_chrome_events_sse_returns_workspaces_when_authenticated(tmp_path: Path)
 
 def _create_test_client_with_stores(
     tmp_path: Path,
+    cli: ImbueCloudCli | None = None,
 ) -> tuple[TestClient, FileAuthStore]:
-    """Create a desktop client with session store and config for testing new routes."""
+    """Create a desktop client with session store and config for testing new routes.
+
+    ``cli`` is forwarded to :func:`make_session_store_for_test` so callers
+    can seed the session store with specific accounts; defaults to a
+    fresh empty fake CLI.
+    """
     auth_dir = tmp_path / "auth"
     auth_store = FileAuthStore(data_directory=auth_dir)
-    session_store = make_session_store_for_test(tmp_path)
+    session_store = make_session_store_for_test(tmp_path, cli=cli)
     minds_config = MindsConfig(data_dir=tmp_path)
     request_inbox = RequestInbox()
 
@@ -940,22 +947,7 @@ def test_accounts_page_shows_logged_in_accounts(tmp_path: Path) -> None:
     """The /accounts page lists logged-in accounts."""
     cli = make_fake_imbue_cloud_cli()
     cli.add_account(user_id="user-test-123", email="test@example.com")
-    auth_dir = tmp_path / "auth"
-    auth_store = FileAuthStore(data_directory=auth_dir)
-    session_store = make_session_store_for_test(tmp_path, cli=cli)
-    minds_config = MindsConfig(data_dir=tmp_path)
-    request_inbox = RequestInbox()
-    backend_resolver = StaticBackendResolver(url_by_agent_and_service={})
-    app = create_desktop_client(
-        auth_store=auth_store,
-        backend_resolver=backend_resolver,
-        http_client=None,
-        session_store=session_store,
-        minds_config=minds_config,
-        request_inbox=request_inbox,
-        paths=WorkspacePaths(data_dir=tmp_path),
-    )
-    client = TestClient(app, base_url="http://localhost")
+    client, auth_store = _create_test_client_with_stores(tmp_path, cli=cli)
     _authenticate_client(client, auth_store)
 
     response = client.get("/accounts")
