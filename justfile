@@ -58,7 +58,9 @@ test-offload args="":
     : "${MODAL_TOKEN_SECRET:?must be set}"
     just _generate-dockerignore
     trap "rm -f .dockerignore" EXIT
-    offload -c offload-modal.toml run --trace {{args}} || [[ $? -eq 2 ]]
+    offload -c offload-modal.toml run --trace \
+        --env "GITHUB_HEAD_REF=${GITHUB_HEAD_REF:-}" \
+        --env "GITHUB_REF_NAME=${GITHUB_REF_NAME:-}" {{args}} || [[ $? -eq 2 ]]
 
     # Copy results to the main worktree so new worktrees inherit baselines via COPY mode.
     MAIN_WORKTREE=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
@@ -78,7 +80,9 @@ test-offload-acceptance args="":
     # MODAL_IMAGE_BUILDER_VERSION=2025.06 is required for enable_docker support (Docker-in-Docker alpha).
     MODAL_IMAGE_BUILDER_VERSION=2025.06 offload -c offload-modal-acceptance.toml run --trace \
         --env "MODAL_TOKEN_ID=$MODAL_TOKEN_ID" \
-        --env "MODAL_TOKEN_SECRET=$MODAL_TOKEN_SECRET" {{args}} || [[ $? -eq 2 ]]
+        --env "MODAL_TOKEN_SECRET=$MODAL_TOKEN_SECRET" \
+        --env "GITHUB_HEAD_REF=${GITHUB_HEAD_REF:-}" \
+        --env "GITHUB_REF_NAME=${GITHUB_REF_NAME:-}" {{args}} || [[ $? -eq 2 ]]
 
 # Run release tests on Modal via Offload (with Docker-in-Docker)
 test-offload-release args="":
@@ -99,7 +103,9 @@ test-offload-release args="":
         --env "MODAL_TOKEN_ID=$MODAL_TOKEN_ID" \
         --env "MODAL_TOKEN_SECRET=$MODAL_TOKEN_SECRET" \
         --env "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
-        --env "IS_RELEASE=1" {{args}} || [[ $? -eq 2 ]]
+        --env "IS_RELEASE=1" \
+        --env "GITHUB_HEAD_REF=${GITHUB_HEAD_REF:-}" \
+        --env "GITHUB_REF_NAME=${GITHUB_REF_NAME:-}" {{args}} || [[ $? -eq 2 ]]
 
     # Copy results to the main worktree so new worktrees inherit baselines via COPY mode.
     MAIN_WORKTREE=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
