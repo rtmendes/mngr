@@ -1,3 +1,5 @@
+import hashlib
+import json
 from collections.abc import Generator
 from pathlib import Path
 
@@ -6,14 +8,36 @@ import docker.errors
 import docker.models.containers
 
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.errors import HostNotFoundError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.providers.docker.config import DockerProviderConfig
 from imbue.mngr.providers.docker.instance import DockerProviderInstance
+from imbue.mngr.providers.docker.instance import create_docker_client
 from imbue.mngr.providers.docker.volume import LABEL_PROVIDER
 from imbue.mngr.providers.docker.volume import state_volume_name
 from imbue.mngr.providers.local.volume import LocalVolume
 from imbue.mngr.utils.testing import get_short_random_string
+
+
+def write_fake_docker_context(config_dir: Path, context_name: str, host_url: str) -> None:
+    """Write a fake Docker config and context metadata into *config_dir*.
+
+    Used by the ``fake_docker_config`` fixture to set up a deterministic
+    Docker context for tests that exercise ``_get_docker_context_host``.
+    """
+    (config_dir / "config.json").write_text(json.dumps({"currentContext": context_name}))
+    if context_name == "default":
+        return
+    ctx_id = hashlib.sha256(context_name.encode()).hexdigest()
+    meta_dir = config_dir / "contexts" / "meta" / ctx_id
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    meta = {
+        "Name": context_name,
+        "Metadata": {},
+        "Endpoints": {"docker": {"Host": host_url, "SkipTLSVerify": False}},
+    }
+    (meta_dir / "meta.json").write_text(json.dumps(meta))
 
 
 def remove_docker_container_and_volume(
@@ -55,7 +79,7 @@ def remove_all_containers_by_prefix(
     Creates and closes its own Docker client so callers don't need one.
     """
     try:
-        client = docker.from_env()
+        client = create_docker_client()
     except (docker.errors.DockerException, OSError):
         return
 
@@ -125,8 +149,12 @@ def make_docker_provider_with_cleanup(
         discovered = provider.discover_hosts(cg, include_destroyed=True)
         for host in discovered:
             try:
-                provider.destroy_host(host.host_id, delete_snapshots=True)
+                provider.destroy_host(host.host_id)
             except (MngrError, docker.errors.DockerException, OSError):
+                pass
+            try:
+                provider.delete_host(provider.get_host(host.host_id))
+            except (HostNotFoundError, MngrError, docker.errors.DockerException, OSError):
                 pass
     except (MngrError, docker.errors.DockerException, OSError):
         pass

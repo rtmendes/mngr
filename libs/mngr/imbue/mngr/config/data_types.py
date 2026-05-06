@@ -37,8 +37,15 @@ from imbue.mngr.utils.logging import LoggingConfig
 
 USER_ID_FILENAME: Final[str] = "user_id"
 
-# 7 days in seconds
+# 7 days in seconds -- controls how long destroyed host records (and their
+# snapshots) are kept before permanent deletion, giving users a recovery
+# window via `mngr create --snapshot`.
 _DEFAULT_DESTROYED_HOST_PERSISTED_SECONDS: Final[float] = 60.0 * 60.0 * 24.0 * 7.0
+
+# 10 minutes -- minimum age before GC will destroy an online host with no agents.
+# Short because we only need to protect against transient empty states (e.g. between
+# agent creation and discovery).
+_DEFAULT_MIN_ONLINE_HOST_AGE_SECONDS: Final[float] = 60.0 * 10.0
 
 # === Helper Functions ===
 
@@ -66,8 +73,8 @@ def split_cli_args_string(cli_args: str) -> tuple[str, ...]:
 
 
 @pure
-def merge_cli_args(base: tuple[str, ...], override: tuple[str, ...]) -> tuple[str, ...]:
-    """Merge CLI arguments, concatenating if both present."""
+def merge_tuples(base: tuple[str, ...], override: tuple[str, ...]) -> tuple[str, ...]:
+    """Merge tuples by concatenation, returning base unchanged if override is empty."""
     if override:
         return base + override
     return base
@@ -146,6 +153,18 @@ class HookDefinition(FrozenModel):
 # === Config Types ===
 
 
+AGENT_TYPE_CONCAT_TUPLE_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "cli_args",
+        "extra_provision_command",
+        "upload_file",
+        "create_directory",
+        "env",
+        "env_file",
+    }
+)
+
+
 class AgentTypeConfig(FrozenModel):
     """Defines a custom agent type that inherits from an existing type."""
 
@@ -170,6 +189,26 @@ class AgentTypeConfig(FrozenModel):
         default_factory=list,
         description="Explicit list of permissions (overrides parent type permissions)",
     )
+    extra_provision_command: tuple[str, ...] = Field(
+        default=(),
+        description="Shell commands to run during provisioning",
+    )
+    upload_file: tuple[str, ...] = Field(
+        default=(),
+        description="LOCAL:REMOTE file upload specs",
+    )
+    create_directory: tuple[str, ...] = Field(
+        default=(),
+        description="Directories to create on the remote",
+    )
+    env: tuple[str, ...] = Field(
+        default=(),
+        description="KEY=VALUE environment variables",
+    )
+    env_file: tuple[str, ...] = Field(
+        default=(),
+        description="Paths to env files",
+    )
 
     @field_validator("cli_args", mode="before")
     @classmethod
@@ -188,7 +227,7 @@ class AgentTypeConfig(FrozenModel):
         auto_dismiss_dialogs) are correctly preserved during merges.
 
         Scalar fields: override wins if explicitly set
-        Tuples (cli_args): concatenate
+        Tuple fields (see AGENT_TYPE_CONCAT_TUPLE_FIELDS): concatenate
         Lists (permissions): concatenate if explicitly set
         """
         # Allow override to be the same class or a base class of self (e.g., when
@@ -202,12 +241,13 @@ class AgentTypeConfig(FrozenModel):
         if not explicitly_set:
             return self
 
+        base_values = self.model_dump()
         override_values = override.model_dump()
         updates: list[tuple[str, Any]] = []
 
         for field_name in explicitly_set:
-            if field_name == "cli_args":
-                updates.append((field_name, merge_cli_args(self.cli_args, override.cli_args)))
+            if field_name in AGENT_TYPE_CONCAT_TUPLE_FIELDS:
+                updates.append((field_name, merge_tuples(base_values[field_name], override_values[field_name])))
             elif field_name == "permissions":
                 updates.append((field_name, merge_list_fields(self.permissions, override_values[field_name])))
             else:
@@ -235,6 +275,11 @@ class ProviderInstanceConfig(FrozenModel):
         default=None,
         description="How long (in seconds) a destroyed host's records are kept before permanent deletion. "
         "Overrides the global default_destroyed_host_persisted_seconds when set.",
+    )
+    min_online_host_age_seconds: float | None = Field(
+        default=None,
+        description="Minimum age (in seconds) before GC will destroy an online host with no agents. "
+        "Overrides the global default_min_online_host_age_seconds when set.",
     )
 
     def merge_with(self, override: "ProviderInstanceConfig") -> "ProviderInstanceConfig":
@@ -375,6 +420,40 @@ class CreateTemplate(FrozenModel):
         return self.__class__(options=merged_options)
 
 
+class RetryConfig(FrozenModel):
+    """Configuration for connection retry behavior.
+
+    Controls how many times and how frequently mngr retries SSH connections
+    to remote agents when connecting (via both ``mngr create --connect`` and
+    ``mngr connect``).
+    """
+
+    connect_retry_times: int = Field(
+        default=3,
+        description="Number of times to retry a failed SSH connection before giving up",
+    )
+    connect_retry_delay: str = Field(
+        default="5s",
+        description="Delay between connection retries (e.g., '5s', '1m')",
+    )
+
+    def merge_with(self, override: "RetryConfig") -> "RetryConfig":
+        """Merge this config with an override config.
+
+        Important note: despite the type signatures, any of these fields may be None in the override--this means that they were NOT set in the toml (and thus should be ignored)
+
+        Scalar fields: override wins if not None
+        """
+        return RetryConfig(
+            connect_retry_times=override.connect_retry_times
+            if override.connect_retry_times is not None
+            else self.connect_retry_times,
+            connect_retry_delay=override.connect_retry_delay
+            if override.connect_retry_delay is not None
+            else self.connect_retry_delay,
+        )
+
+
 class MngrConfig(FrozenModel):
     """Root configuration model for mngr."""
 
@@ -433,6 +512,10 @@ class MngrConfig(FrozenModel):
         default_factory=dict,
         description="Commands to run before CLI commands execute, keyed by command name (e.g., 'create': ['echo hello', 'validate.sh'])",
     )
+    retry: RetryConfig = Field(
+        default_factory=RetryConfig,
+        description="Connection retry configuration",
+    )
     logging: LoggingConfig = Field(
         default_factory=LoggingConfig,
         description="Logging configuration",
@@ -463,12 +546,22 @@ class MngrConfig(FrozenModel):
     )
     is_allowed_in_pytest: bool = Field(
         default=True,
-        description="Set this to False to prevent loading this config in pytest runs",
+        description=(
+            "Set this to False to prevent loading this config in pytest runs. "
+            "Tests that intentionally need to load a config with this set to False "
+            "(e.g. end-to-end tests of real mngr subprocesses) must set "
+            "MNGR_ALLOW_PYTEST=1 in the subprocess env as an explicit opt-in."
+        ),
     )
     default_destroyed_host_persisted_seconds: float = Field(
         default=_DEFAULT_DESTROYED_HOST_PERSISTED_SECONDS,
         description="Default number of seconds a destroyed host's records are kept before permanent deletion. "
         "Can be overridden per provider via destroyed_host_persisted_seconds in the provider config.",
+    )
+    default_min_online_host_age_seconds: float = Field(
+        default=_DEFAULT_MIN_ONLINE_HOST_AGE_SECONDS,
+        description="Default minimum age (in seconds) before GC will destroy an online host with no agents. "
+        "Can be overridden per provider via min_online_host_age_seconds in the provider config.",
     )
 
     def merge_with(self, override: Self) -> Self:
@@ -611,6 +704,16 @@ class MngrConfig(FrozenModel):
         if override.default_destroyed_host_persisted_seconds is not None:
             default_destroyed_host_persisted_seconds = override.default_destroyed_host_persisted_seconds
 
+        # Merge default_min_online_host_age_seconds (scalar - override wins if not None)
+        default_min_online_host_age_seconds = self.default_min_online_host_age_seconds
+        if override.default_min_online_host_age_seconds is not None:
+            default_min_online_host_age_seconds = override.default_min_online_host_age_seconds
+
+        # Merge retry (nested config - use merge_with if override.retry is not None)
+        merged_retry = self.retry
+        if override.retry is not None:
+            merged_retry = self.retry.merge_with(override.retry)
+
         # Merge logging (nested config - use merge_with if override.logging is not None)
         merged_logging = self.logging
         if override.logging is not None:
@@ -632,12 +735,14 @@ class MngrConfig(FrozenModel):
             pre_command_scripts=merged_pre_command_scripts,
             is_remote_agent_installation_allowed=is_remote_agent_installation_allowed,
             connect_command=merged_connect_command,
+            retry=merged_retry,
             logging=merged_logging,
             is_nested_tmux_allowed=merged_is_nested_tmux_allowed,
             headless=merged_headless,
             is_error_reporting_enabled=merged_is_error_reporting_enabled,
             is_allowed_in_pytest=is_allowed_in_pytest,
             default_destroyed_host_persisted_seconds=default_destroyed_host_persisted_seconds,
+            default_min_online_host_age_seconds=default_min_online_host_age_seconds,
         )
 
 
@@ -678,7 +783,7 @@ class MngrContext(FrozenModel):
     )
     project_root: Path | None = Field(
         default=None,
-        description="Project root directory (--context or git worktree root)",
+        description="Project root directory (git worktree root)",
     )
 
     def get_plugin_config(self, name: str, config_type: type[PluginConfigT]) -> PluginConfigT:
@@ -755,9 +860,6 @@ class CommonCliOptions(FrozenModel):
     verbose: int
     log_file: str | None
     log_commands: bool | None
-    log_command_output: bool | None
-    log_env_vars: bool | None
-    project_context_path: str | None
     plugin: tuple[str, ...]
     disable_plugin: tuple[str, ...]
     setting: tuple[str, ...] = ()
@@ -782,28 +884,21 @@ class CreateCliOptions(CommonCliOptions):
     type: str | None
     reuse: bool
     connect: bool
+    foreground: bool
     connect_command: str | None
     ensure_clean: bool
     name: str | None
     id: str | None
     name_style: str
-    command: str | None
     extra_window: tuple[str, ...]
     source: str | None
-    source_agent: str | None
-    source_host: str | None
-    source_path: str | None
-    target: str | None
     target_path: str | None
     transfer: str | None
     rsync: bool | None
     rsync_args: str | None
-    include_git: bool
     include_unclean: bool | None
     include_gitignored: bool
     branch: str
-    depth: int | None
-    shallow_since: str | None
     env: tuple[str, ...]
     env_file: tuple[str, ...]
     pass_env: tuple[str, ...]
@@ -820,12 +915,9 @@ class CreateCliOptions(CommonCliOptions):
     build_arg: tuple[str, ...]
     start_arg: tuple[str, ...]
     reconnect: bool
-    interactive: bool | None
     message: str | None
     message_file: str | None
     edit_message: bool
-    retry: int
-    retry_delay: str
     session_command: str | None
     idle_timeout: str | None
     idle_mode: str | None
@@ -836,7 +928,5 @@ class CreateCliOptions(CommonCliOptions):
     grant: tuple[str, ...]
     extra_provision_command: tuple[str, ...]
     upload_file: tuple[str, ...]
-    append_to_file: tuple[str, ...]
-    prepend_to_file: tuple[str, ...]
     update: bool
     yes: bool

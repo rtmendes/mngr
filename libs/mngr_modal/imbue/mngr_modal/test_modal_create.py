@@ -13,6 +13,7 @@ Or to run all tests including Modal tests:
 import importlib.resources
 import os
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -52,13 +53,15 @@ def test_mngr_create_echo_command_on_modal(
             "mngr",
             "create",
             f"{agent_name}@{agent_name}.modal",
-            "echo",
+            "--type",
+            "command",
             "--new-host",
             "--no-connect",
             "--no-ensure-clean",
             "--source",
             str(temp_source_dir),
             "--",
+            "echo",
             expected_output,
         ],
         capture_output=True,
@@ -91,7 +94,8 @@ def test_mngr_create_with_transfer_git_worktree_on_modal_raises_error(
             "mngr",
             "create",
             f"{agent_name}@{agent_name}.modal",
-            "echo",
+            "--type",
+            "command",
             "--new-host",
             "--transfer=git-worktree",
             "--no-connect",
@@ -99,6 +103,7 @@ def test_mngr_create_with_transfer_git_worktree_on_modal_raises_error(
             "--source",
             str(temp_source_dir),
             "--",
+            "echo",
             "hello",
         ],
         capture_output=True,
@@ -111,6 +116,52 @@ def test_mngr_create_with_transfer_git_worktree_on_modal_raises_error(
     assert result.returncode != 0, "Expected git-worktree on modal to fail"
     assert "git-worktree" in result.stderr.lower() or "git-worktree" in result.stdout.lower(), (
         f"Expected error message about git-worktree transfer mode. stderr: {result.stderr}\nstdout: {result.stdout}"
+    )
+
+
+@pytest.mark.acceptance
+@pytest.mark.timeout(120)
+def test_mngr_create_with_invalid_snapshot_id_fails(
+    temp_source_dir: Path,
+    modal_subprocess_env: ModalSubprocessTestEnv,
+) -> None:
+    """Test that --snapshot with a non-existent snapshot ID fails with a snapshot-context error.
+
+    snap-123abc is a fake snapshot ID that does not exist. This verifies the
+    --snapshot flag is accepted and that create propagates a meaningful error
+    when the snapshot cannot be resolved. There is no companion success-path
+    test since that would require a pre-existing snapshot in Modal.
+    """
+    agent_name = f"test-modal-bad-snapshot-{get_short_random_string()}"
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "mngr",
+            "create",
+            agent_name,
+            "--provider",
+            "modal",
+            "--snapshot",
+            "snap-123abc",
+            "--no-connect",
+            "--no-ensure-clean",
+            "--source",
+            str(temp_source_dir),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=modal_subprocess_env.env,
+    )
+
+    assert result.returncode != 0, "Expected create with invalid snapshot ID to fail"
+    combined = (result.stdout + result.stderr).lower()
+    # Require contextual evidence that the failure is snapshot-related; a bare
+    # "snap-123abc" alternative would match command echoes on any unrelated failure.
+    assert "snapshot" in combined or "host creation failed" in combined, (
+        f"Expected snapshot-context error. stderr: {result.stderr}\nstdout: {result.stdout}"
     )
 
 
@@ -135,7 +186,8 @@ def test_mngr_create_with_build_args_on_modal(
             "mngr",
             "create",
             f"{agent_name}@{agent_name}.modal",
-            "echo",
+            "--type",
+            "command",
             "--new-host",
             "--no-connect",
             "--no-ensure-clean",
@@ -150,6 +202,7 @@ def test_mngr_create_with_build_args_on_modal(
             "-b",
             "0.5",
             "--",
+            "echo",
             expected_output,
         ],
         capture_output=True,
@@ -204,7 +257,8 @@ RUN echo "custom-dockerfile-marker" > /dockerfile-marker.txt
             "mngr",
             "create",
             f"{agent_name}@{agent_name}.modal",
-            "echo",
+            "--type",
+            "command",
             "--new-host",
             "--no-connect",
             "--no-ensure-clean",
@@ -213,6 +267,7 @@ RUN echo "custom-dockerfile-marker" > /dockerfile-marker.txt
             "-b",
             f"--file={dockerfile_path}",
             "--",
+            "echo",
             expected_output,
         ],
         capture_output=True,
@@ -260,7 +315,8 @@ RUN echo "About to fail with marker: {unique_failure_marker}" && exit 1
             "mngr",
             "create",
             f"{agent_name}@{agent_name}.modal",
-            "echo",
+            "--type",
+            "command",
             "--new-host",
             "--no-connect",
             "--no-ensure-clean",
@@ -269,6 +325,7 @@ RUN echo "About to fail with marker: {unique_failure_marker}" && exit 1
             "-b",
             f"--file={dockerfile_path}",
             "--",
+            "echo",
             "should-not-reach-here",
         ],
         capture_output=True,
@@ -305,7 +362,7 @@ def test_mngr_create_transfers_git_repo_with_untracked_files(
     """Test that agent creation with git repo source succeeds on Modal.
 
     This tests that the file transfer flow completes without error:
-    1. Git repository is pushed via git push --mirror
+    1. All local branches and tags are pushed via git
     2. Untracked files are transferred via rsync
     3. Agent is created successfully
 
@@ -326,14 +383,16 @@ def test_mngr_create_transfers_git_repo_with_untracked_files(
             "mngr",
             "create",
             f"{agent_name}@{agent_name}.modal",
-            "generic",
+            "--type",
+            "command",
             "--new-host",
             "--no-connect",
             "--no-ensure-clean",
             "--source",
             str(temp_git_repo),
             "--",
-            "sleep 3600",
+            "sleep",
+            "100310",
         ],
         capture_output=True,
         text=True,
@@ -354,7 +413,7 @@ def test_mngr_create_transfers_git_repo_with_new_branch(
     """Test that git transfer creates a new branch on the remote.
 
     This tests the git branch creation functionality during transfer:
-    1. Git repository is pushed via git push --mirror
+    1. All local branches and tags are pushed via git
     2. A new branch is created with the specified prefix
     """
     agent_name = f"test-modal-branch-{get_short_random_string()}"
@@ -366,14 +425,16 @@ def test_mngr_create_transfers_git_repo_with_new_branch(
             "mngr",
             "create",
             f"{agent_name}@{agent_name}.modal",
-            "generic",
+            "--type",
+            "command",
             "--new-host",
             "--no-connect",
             "--no-ensure-clean",
             "--source",
             str(temp_git_repo),
             "--",
-            "git rev-parse --abbrev-ref HEAD && sleep 3600",
+            "sleep",
+            "100311",
         ],
         capture_output=True,
         text=True,
@@ -403,37 +464,57 @@ def test_mngr_create_with_default_dockerfile_on_modal(
 ) -> None:
     """Test creating an agent on Modal using the mngr default Dockerfile.
 
-    This verifies that the default Dockerfile in libs/mngr/imbue/mngr/resources/Dockerfile:
-    1. Builds successfully on Modal
-    2. Has the expected tools installed (uv, claude code)
-    3. Can run agents properly
+    This verifies that the default Dockerfile in libs/mngr/imbue/mngr/resources/Dockerfile
+    builds successfully on Modal and that ``mngr create`` can launch an agent on the
+    resulting image (reporting "Done.").
+
+    Assertions here are weak: ``mngr create`` returns as soon as the agent is launched
+    in its detached tmux session, so the agent's own command never gates the test.
+    A stronger check would add a synchronous ``mngr exec`` after create to verify
+    image contents (e.g. ``which uv && which claude``).
 
     This test is marked as release since it takes longer due to the image build.
     """
     agent_name = f"test-modal-default-df-{get_short_random_string()}"
-    unique_marker = f"default-dockerfile-{get_short_random_string()}"
 
     dockerfile_path = _get_mngr_default_dockerfile_path()
     assert dockerfile_path.exists(), f"Default Dockerfile not found at {dockerfile_path}"
 
+    # Resolve repo root from this test file's location so the test does not
+    # depend on the pytest cwd (offload sandboxes run pytest from a different
+    # cwd than /code/mngr, which is where .mngr/image_commit_hash and the
+    # make_tar_of_repo.sh script live).
+    repo_root = Path(__file__).resolve().parents[4]
+
     tar_dir = tmp_path / "tar_output"
     tar_dir.mkdir()
-    temp_dir_with_tar = str(tar_dir)
-    commit_hash = os.environ.get("GITHUB_SHA", "") or Path(".mngr/image_commit_hash").read_text().strip()
+    commit_hash = os.environ.get("GITHUB_SHA", "") or (repo_root / ".mngr/image_commit_hash").read_text().strip()
 
-    # go make the tar
+    # Package the repo at commit_hash via make_tar_of_repo.sh, then unpack
+    # producer-side so the Modal build context is a real source tree. The
+    # shared mngr Dockerfile no longer special-cases current.tar.gz; both
+    # mngr_schedule's deploy path and this test extract the tarball before
+    # handing it off as context_dir, matching offload's "context_dir is a
+    # real source tree" contract.
     subprocess.run(
         [
             "bash",
-            "-c",
-            f"./scripts/make_tar_of_repo.sh {commit_hash} {temp_dir_with_tar}",
+            str(repo_root / "scripts" / "make_tar_of_repo.sh"),
+            commit_hash,
+            str(tar_dir),
         ],
         capture_output=True,
         text=True,
         check=True,
         timeout=600,
         env=modal_subprocess_env.env,
+        cwd=repo_root,
     )
+    context_dir = tmp_path / "context"
+    context_dir.mkdir()
+    with tarfile.open(tar_dir / "current.tar.gz", "r:gz") as tf:
+        tf.extractall(context_dir, filter="data")
+
     # now we can try making the agent
     result = subprocess.run(
         [
@@ -441,8 +522,9 @@ def test_mngr_create_with_default_dockerfile_on_modal(
             "run",
             "mngr",
             "create",
-            f"{agent_name}@{agent_name}.modal",
-            "generic",
+            f"{agent_name}@{agent_name}.modal:/code/mngr",
+            "--type",
+            "command",
             "--new-host",
             "--no-connect",
             "--no-ensure-clean",
@@ -451,11 +533,10 @@ def test_mngr_create_with_default_dockerfile_on_modal(
             "-b",
             f"--file={dockerfile_path}",
             "-b",
-            f"context-dir={temp_dir_with_tar}",
-            "--target-path",
-            "/code/mngr",
+            f"context-dir={context_dir}",
             "--",
-            f"echo {unique_marker} && which uv && which claude && sleep 30",
+            "sleep",
+            "100312",
         ],
         capture_output=True,
         text=True,

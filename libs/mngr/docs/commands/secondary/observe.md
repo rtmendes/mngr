@@ -54,11 +54,8 @@ mngr observe [OPTIONS]
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
 | `--log-file` | path | Path to log file (overrides default ~/.mngr/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
-| `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
-| `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
 | `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNGR_HEADLESS env var or 'headless' config key. | `False` |
 | `--safe` | boolean | Always query all providers during discovery (disable event-stream optimization). Use this when interfacing with mngr from multiple machines. | `False` |
-| `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
 | `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
@@ -71,11 +68,12 @@ mngr observe [OPTIONS]
 | `--events-dir` | path | Base directory for event output files and lock. Defaults to MNGR_HOST_DIR (~/.mngr). | None |
 | `--discovery-only` | boolean | Stream only discovery events as JSONL (hosts and agents discovered/destroyed). Outputs a full snapshot, then tails the event file for updates. Periodically re-polls to catch any missed changes. Does not start activity streams or emit agent state events. | `False` |
 | `--on-error` | choice (`abort` &#x7C; `continue`) | What to do when errors occur: abort (stop immediately) or continue (keep going) | `abort` |
+| `--daemonize`, `--no-daemonize` | boolean | When not daemonized (default), exit if the parent process dies. Use --daemonize to keep running independently. | `False` |
 
 ## See Also
 
 - [mngr list](../primary/list.md) - List available agents
-- [mngr events](./events.md) - View events from an agent or host
+- [mngr event](./event.md) - View events from an agent or host
 
 ## Examples
 

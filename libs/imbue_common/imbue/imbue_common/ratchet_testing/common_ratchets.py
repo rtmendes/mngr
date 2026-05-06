@@ -91,11 +91,12 @@ PREVENT_GLOBAL_KEYWORD = RegexRatchetRule(
 PREVENT_BARE_PRINT = RegexRatchetRule(
     rule_name="bare print statements",
     rule_description=(
-        "Do not use bare print statements. Consider what kind of output you are producing: "
+        "Do not use bare print statements or direct sys.stdout/sys.stderr writes. "
+        "Consider what kind of output you are producing: "
         "for user-facing command output (results, tables, status messages), use write_human_line(); "
         "for diagnostic/debug messages, use logger.info(), logger.debug(), logger.warning(), etc."
     ),
-    pattern_string=r"^\s*print\s*\(",
+    pattern_string=r"^\s*print\s*\(|^\s*sys\.std(?:out|err)\.write\s*\(",
     is_multiline=True,
 )
 
@@ -222,8 +223,11 @@ PREVENT_NUM_PREFIX = RegexRatchetRule(
 
 PREVENT_TRAILING_COMMENTS = RegexRatchetRule(
     rule_name="trailing comments",
-    rule_description="Comments should be on their own line, not trailing after code. Trailing comments make code harder to read",
-    pattern_string=r"[^\s#].*[ \t]#(?!\s*ty:\s*ignore\[)",
+    rule_description=(
+        "Comments should be on their own line, not trailing after code. Trailing comments make code harder to read. "
+        "`# ty: ignore[code]` is exempt."
+    ),
+    pattern_string=r"[^\s#].*[ \t]#(?![0-9a-fA-F]{3,6}[;\s])(?!\s*ty:\s*ignore\[)",
 )
 
 PREVENT_INIT_DOCSTRINGS = RegexRatchetRule(
@@ -300,6 +304,18 @@ PREVENT_FSTRING_LOGGING = RegexRatchetRule(
         "logger.info('message {}', var) instead of logger.info(f'message {var}')"
     ),
     pattern_string=r"logger\.(trace|debug|info|warning|error|exception)\(f[\"']",
+)
+
+PREVENT_LOGGER_EXCEPTION = RegexRatchetRule(
+    rule_name="logger.exception() usages",
+    rule_description=(
+        "Never use logger.exception() -- it relies on sys.exc_info(), which is unreliable "
+        "in threaded code (the exception context can be cleared or replaced by another "
+        "thread between the except block and the actual log emission). Use "
+        "logger.opt(exception=exc).error(msg) instead so the exception is bound explicitly "
+        "and the traceback is captured deterministically."
+    ),
+    pattern_string=r"\w*logger\.exception\(",
 )
 
 PREVENT_CLICK_ECHO = RegexRatchetRule(
@@ -399,6 +415,19 @@ PREVENT_CAST_USAGE = RatchetRuleInfo(
     ),
 )
 
+PREVENT_SILENT_DECODE_ERROR_CATCH = RatchetRuleInfo(
+    rule_name="silent catches of TOMLDecodeError / JSONDecodeError",
+    rule_description=(
+        "Never silently swallow a TOMLDecodeError or JSONDecodeError. For user-authored config / "
+        "settings files: re-raise (optionally wrapping) so the user knows to fix the file. For "
+        "internal state, JSONL streams, and external input (subprocess / API output, CLI flag "
+        "values): at minimum log at warning+ level so the corruption is visible. Handlers that "
+        "re-raise or call any `.warning(...)` / `.error(...)` / `.exception(...)` logger method "
+        "(including chained forms like `logger.opt(...).error(...)`) do not count. See style "
+        "guide section 'Try/except'."
+    ),
+)
+
 PREVENT_ASSERT_ISINSTANCE = RatchetRuleInfo(
     rule_name="assert isinstance() usages",
     rule_description=(
@@ -455,11 +484,26 @@ PREVENT_HARDCODED_CLAUDE_DIR = RegexRatchetRule(
         "Use the accessor functions from claude_config.py instead of hardcoding "
         "Path.home() / '.claude' or Path.home() / '.claude.json'. "
         "For the config directory: get_claude_config_dir() / get_user_claude_config_dir(). "
-        "For the config file: get_claude_config_path() / get_user_claude_config_path(). "
+        "For the user config file: find_user_claude_config(). "
         "This allows paths to be overridden via CLAUDE_CONFIG_DIR "
         "and ORIGINAL_CLAUDE_CONFIG_DIR environment variables."
     ),
     pattern_string=r"""Path\.home\(\)\s*/\s*["']\.claude(\.json(\.bak)?)?["']""",
+)
+
+
+PREVENT_HARDCODED_GUARDED_BINARY = RegexRatchetRule(
+    rule_name="hardcoded guarded-binary paths",
+    rule_description=(
+        "Do not reference binaries guarded by the pytest resource guard by absolute path "
+        "(e.g. '/usr/local/bin/docker', '/opt/homebrew/bin/tmux'). Absolute paths bypass the "
+        "guard's PATH wrapper and defeat @pytest.mark.<binary> enforcement. Invoke the "
+        "binary by bare name so the wrapper can intercept it. If a test hits a resource "
+        "guard, add the corresponding mark (e.g. @pytest.mark.docker, @pytest.mark.tmux, "
+        "@pytest.mark.rsync, @pytest.mark.unison, @pytest.mark.modal, @pytest.mark.lima) "
+        "to the test rather than working around the guard with an absolute path."
+    ),
+    pattern_string=r"/(?:usr/local/bin|usr/bin|opt/homebrew/bin|opt/local/bin)/(?:docker|tmux|rsync|unison|modal|lima)(?![\w-])",
 )
 
 

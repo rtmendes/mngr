@@ -37,6 +37,24 @@ def test_get_unknown_backend_raises() -> None:
     assert "nonexistent" in str(exc_info.value)
 
 
+def test_get_unknown_backend_includes_plugin_install_hint_for_cataloged_backend() -> None:
+    """Unknown backend errors should name the actual package for cataloged plugins."""
+    with pytest.raises(UnknownBackendError) as exc_info:
+        get_backend("modal")
+    formatted = exc_info.value.format_message()
+    assert "imbue-mngr-modal" in formatted
+
+
+def test_get_unknown_backend_uses_generic_hint_for_uncataloged_backend() -> None:
+    """Unknown backend errors for uncataloged names should not fabricate a package name."""
+    with pytest.raises(UnknownBackendError) as exc_info:
+        get_backend("xyzzy")
+    formatted = exc_info.value.format_message()
+    assert "imbue-mngr-xyzzy" not in formatted
+    assert "do not recognize 'xyzzy'" in formatted
+    assert "third-party plugin" in formatted
+
+
 def test_get_local_provider_instance(temp_mngr_ctx: MngrContext) -> None:
     """Test getting a local provider instance."""
     provider = get_provider_instance(LOCAL_PROVIDER_NAME, temp_mngr_ctx)
@@ -188,6 +206,13 @@ def test_get_all_provider_instances_provider_names_with_configured_provider(
     assert "my-filtered-local" not in provider_names
 
 
+def test_get_provider_instance_returns_cached_instance(temp_mngr_ctx: MngrContext) -> None:
+    """get_provider_instance should return the same object for repeated calls with the same name."""
+    first = get_provider_instance(LOCAL_PROVIDER_NAME, temp_mngr_ctx)
+    second = get_provider_instance(LOCAL_PROVIDER_NAME, temp_mngr_ctx)
+    assert first is second
+
+
 def test_reset_provider_instances_clears_tracking(temp_mngr_ctx: MngrContext) -> None:
     """reset_provider_instances should clear cached instances so next call rebuilds them."""
     # Populate the cache by loading providers
@@ -200,6 +225,14 @@ def test_reset_provider_instances_clears_tracking(temp_mngr_ctx: MngrContext) ->
     # Loading again should succeed (rebuilds from scratch)
     providers_after = get_all_provider_instances(temp_mngr_ctx)
     assert len(providers_after) > 0
+
+
+def test_reset_provider_instances_invalidates_cache(temp_mngr_ctx: MngrContext) -> None:
+    """After reset, get_provider_instance should return a new instance."""
+    first = get_provider_instance(LOCAL_PROVIDER_NAME, temp_mngr_ctx)
+    reset_provider_instances()
+    second = get_provider_instance(LOCAL_PROVIDER_NAME, temp_mngr_ctx)
+    assert first is not second
 
 
 def test_is_backend_enabled_returns_true_when_no_enabled_backends(temp_mngr_ctx: MngrContext) -> None:

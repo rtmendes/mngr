@@ -5,10 +5,18 @@ from pathlib import Path
 
 import pytest
 
+from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.providers.docker.instance import DockerProviderInstance
+from imbue.mngr.providers.docker.testing import make_docker_provider_with_cleanup
 from imbue.mngr.providers.docker.testing import remove_all_containers_by_prefix
 from imbue.mngr.utils.testing import generate_test_environment_name
 from imbue.mngr.utils.testing import get_subprocess_test_env
 from imbue.mngr.utils.testing import run_mngr_subprocess
+
+
+@pytest.fixture
+def docker_provider(temp_mngr_ctx: MngrContext) -> Generator[DockerProviderInstance, None, None]:
+    yield from make_docker_provider_with_cleanup(temp_mngr_ctx)
 
 
 @pytest.fixture
@@ -48,6 +56,18 @@ def docker_subprocess_env(tmp_path: Path) -> Generator[dict[str, str], None, Non
     # was interrupted, or destroy failed silently), we still remove it here.
     # Subprocess tests use the default provider name "docker".
     remove_all_containers_by_prefix(prefix, provider_name="docker")
+
+
+@pytest.fixture
+def fake_docker_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point DOCKER_CONFIG at a temp directory and return its path.
+
+    Tests call ``write_fake_docker_context(path, name, url)`` to populate it.
+    """
+    config_dir = tmp_path / "docker-config"
+    config_dir.mkdir()
+    monkeypatch.setenv("DOCKER_CONFIG", str(config_dir))
+    return config_dir
 
 
 @pytest.fixture

@@ -61,9 +61,6 @@ def _make_opts(
         verbose=0,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=(),
         disable_plugin=(),
     )
@@ -653,6 +650,7 @@ def test_emit_result_json_with_errors(capsys: pytest.CaptureFixture[str]) -> Non
     assert data["errors"] == ["error-1"]
 
 
+@pytest.mark.allow_warnings(match=r"^(\d+ error\(s\) occurred:|  - (Failed to destroy|Timeout on) agent-)")
 def test_emit_result_human_with_errors(capsys: pytest.CaptureFixture[str]) -> None:
     """_emit_result should display errors in HUMAN format."""
     result = CleanupResult()

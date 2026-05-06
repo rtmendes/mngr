@@ -8,7 +8,7 @@ from typing import cast
 from imbue.mngr.interfaces.host import NamedCommand
 from imbue.mngr_ttyd.plugin import TTYD_COMMAND
 from imbue.mngr_ttyd.plugin import TTYD_INSTALL_COMMAND
-from imbue.mngr_ttyd.plugin import TTYD_SERVER_NAME
+from imbue.mngr_ttyd.plugin import TTYD_SERVICE_NAME
 from imbue.mngr_ttyd.plugin import TTYD_VERSION
 from imbue.mngr_ttyd.plugin import TTYD_WINDOW_NAME
 from imbue.mngr_ttyd.plugin import on_after_provisioning
@@ -130,12 +130,12 @@ def test_ttyd_command_enables_url_arg_dispatch() -> None:
     assert "ttyd -p 0 -a" in TTYD_COMMAND
 
 
-def test_ttyd_command_writes_server_log() -> None:
-    """Verify that the ttyd command writes to servers/events.jsonl for forwarding server discovery."""
-    assert "servers/events.jsonl" in TTYD_COMMAND
-    assert TTYD_SERVER_NAME in TTYD_COMMAND
+def test_ttyd_command_writes_service_log() -> None:
+    """Verify that the ttyd command writes to services/events.jsonl for forwarding service discovery."""
+    assert "services/events.jsonl" in TTYD_COMMAND
+    assert TTYD_SERVICE_NAME in TTYD_COMMAND
     assert "MNGR_AGENT_STATE_DIR" in TTYD_COMMAND
-    assert "server_registered" in TTYD_COMMAND
+    assert "service_registered" in TTYD_COMMAND
     assert "timestamp" in TTYD_COMMAND
     assert "event_id" in TTYD_COMMAND
 
@@ -183,6 +183,32 @@ def test_on_after_provisioning_writes_agent_script(tmp_path: Path) -> None:
     assert mode == "0755"
     assert b"#!/bin/bash" in content
     assert b"tmux attach" in content
+
+
+def test_agent_script_honors_target_agent_name_arg(tmp_path: Path) -> None:
+    """Verify that the ttyd agent.sh routes to a named agent's tmux session when $1 is set.
+
+    The frontend passes the agent name as a second URL arg (?arg=agent&arg=<name>).
+    The dispatch script must attach to the session "${MNGR_PREFIX}<name>" so that
+    users can deep-link to a sub-agent's terminal rather than always landing on
+    the primary agent's session where ttyd itself runs.
+    """
+    host_dir = tmp_path / "host"
+    host_dir.mkdir()
+    host = _FakeTtydHost(host_dir)
+
+    on_after_provisioning(
+        agent=cast(Any, SimpleNamespace(id="a1")), host=cast(Any, host), mngr_ctx=cast(Any, SimpleNamespace())
+    )
+
+    _, content, _ = host.written_files[0]
+    script = content.decode()
+    # Honors $1 as target agent name.
+    assert '_TARGET_AGENT="${1:-}"' in script
+    # Uses MNGR_PREFIX when building the session name.
+    assert "MNGR_PREFIX" in script
+    # Falls back to the ambient session when $1 is empty.
+    assert "display-message -p '#{session_name}'" in script
 
 
 def test_on_after_provisioning_creates_ttyd_directory(tmp_path: Path) -> None:

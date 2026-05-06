@@ -17,10 +17,6 @@ from imbue.mngr.primitives import PluginTier
 # Remove entries from here as they get published.
 UNPUBLISHED_PACKAGES: Final[frozenset[str]] = frozenset(
     {
-        "imbue-mngr-claude-mind",
-        "imbue-mngr-llm",
-        "imbue-mngr-mind",
-        "imbue-mngr-mind-chat",
         "imbue-mngr-schedule",
         "imbue-mngr-tmr",
     }
@@ -57,24 +53,24 @@ class PiSignalCheck(SignalCheck):
     command: tuple[str, ...] = ("sh", "-c", "pi --help 2>&1 | grep -q 'pi - AI coding assistant'")
 
 
-class LlmSignalCheck(SignalCheck):
-    """Detects whether Simon Willison's llm CLI is installed."""
-
-    command: tuple[str, ...] = ("sh", "-c", "llm --help 2>&1 | grep -q datasette.io")
-
-
 class ModalSignalCheck(SignalCheck):
     """Detects whether Modal credentials are configured."""
 
     command: tuple[str, ...] = ("sh", "-c", "test -f ~/.modal.toml")
 
 
+class LimaSignalCheck(SignalCheck):
+    """Detects whether the limactl CLI is installed."""
+
+    command: tuple[str, ...] = ("limactl", "--version")
+
+
 # Shared instances for use across catalog entries.
 _CLAUDE_SIGNAL: Final[ClaudeSignalCheck] = ClaudeSignalCheck()
 _OPENCODE_SIGNAL: Final[OpenCodeSignalCheck] = OpenCodeSignalCheck()
 _PI_SIGNAL: Final[PiSignalCheck] = PiSignalCheck()
-_LLM_SIGNAL: Final[LlmSignalCheck] = LlmSignalCheck()
 _MODAL_SIGNAL: Final[ModalSignalCheck] = ModalSignalCheck()
+_LIMA_SIGNAL: Final[LimaSignalCheck] = LimaSignalCheck()
 
 
 class CatalogEntry(FrozenModel):
@@ -86,6 +82,10 @@ class CatalogEntry(FrozenModel):
     tier: PluginTier = Field(description="INDEPENDENT (works alone) or DEPENDENT (needs another plugin's signal)")
     signal: SignalCheck | None = Field(default=None, description="Signal check, or None")
     is_recommended: bool = Field(default=False, description="Whether this plugin is recommended for most users")
+    cli_command_names: tuple[str, ...] = Field(
+        default=(),
+        description="Top-level CLI command names this plugin registers, when different from entry_point_name",
+    )
 
 
 # Descriptions sourced from each plugin's pyproject.toml.
@@ -115,19 +115,25 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
         signal=_PI_SIGNAL,
     ),
     CatalogEntry(
-        entry_point_name="llm",
-        package_name="imbue-mngr-llm",
-        description="LLM agent plugin for mngr - runs the llm CLI tool as an agent",
-        tier=PluginTier.INDEPENDENT,
-        signal=_LLM_SIGNAL,
-    ),
-    CatalogEntry(
         entry_point_name="modal",
         package_name="imbue-mngr-modal",
         description="Modal provider backend plugin for mngr",
         tier=PluginTier.INDEPENDENT,
         signal=_MODAL_SIGNAL,
         is_recommended=True,
+    ),
+    CatalogEntry(
+        entry_point_name="lima",
+        package_name="imbue-mngr-lima",
+        description="Lima VM provider backend plugin for mngr",
+        tier=PluginTier.INDEPENDENT,
+        signal=_LIMA_SIGNAL,
+    ),
+    CatalogEntry(
+        entry_point_name="vultr",
+        package_name="imbue-mngr-vultr",
+        description="Vultr provider backend plugin for mngr",
+        tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
         entry_point_name="tutor",
@@ -158,13 +164,6 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
         tier=PluginTier.DEPENDENT,
         signal=_CLAUDE_SIGNAL,
     ),
-    CatalogEntry(
-        entry_point_name="claude_mind",
-        package_name="imbue-mngr-claude-mind",
-        description="Claude mind agent plugin for mngr - base class for mind agents built on Claude Code",
-        tier=PluginTier.DEPENDENT,
-        signal=_CLAUDE_SIGNAL,
-    ),
     # --- INDEPENDENT, no signal ---
     CatalogEntry(
         entry_point_name="ttyd",
@@ -185,22 +184,11 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
         tier=PluginTier.INDEPENDENT,
     ),
     CatalogEntry(
-        entry_point_name="mind",
-        package_name="imbue-mngr-mind",
-        description="Common code for mind-based agents in mngr",
-        tier=PluginTier.INDEPENDENT,
-    ),
-    CatalogEntry(
-        entry_point_name="mind_chat",
-        package_name="imbue-mngr-mind-chat",
-        description="Chat command plugin for mngr - connect to mind chat sessions",
-        tier=PluginTier.INDEPENDENT,
-    ),
-    CatalogEntry(
         entry_point_name="notifications",
         package_name="imbue-mngr-notifications",
         description="Notification plugin for mngr - alerts when agents transition to WAITING state",
         tier=PluginTier.INDEPENDENT,
+        cli_command_names=("notify",),
     ),
     CatalogEntry(
         entry_point_name="pair",
@@ -239,6 +227,18 @@ PLUGIN_CATALOG: Final[tuple[CatalogEntry, ...]] = (
 _CATALOG_BY_ENTRY_POINT: Final[dict[str, CatalogEntry]] = {e.entry_point_name: e for e in PLUGIN_CATALOG}
 
 
+def _build_catalog_by_cli_command() -> dict[str, CatalogEntry]:
+    index: dict[str, CatalogEntry] = {}
+    for entry in PLUGIN_CATALOG:
+        names = entry.cli_command_names or (entry.entry_point_name,)
+        for name in names:
+            index.setdefault(name, entry)
+    return index
+
+
+_CATALOG_BY_CLI_COMMAND: Final[dict[str, CatalogEntry]] = _build_catalog_by_cli_command()
+
+
 def get_catalog_entry(entry_point_name: str) -> CatalogEntry | None:
     """Look up a catalog entry by its pluggy entry point name.
 
@@ -268,6 +268,44 @@ def check_signal(signal: SignalCheck) -> bool:
             return True
         except (ProcessError, FileNotFoundError, OSError):
             return False
+
+
+def _format_install_hint(entry: CatalogEntry) -> str:
+    return (
+        f"This plugin is provided by '{entry.package_name}' ({entry.description})."
+        f" Install it (e.g. reinstall the mngr uv tool with '--with {entry.package_name}')"
+        " and ensure the plugin is enabled."
+    )
+
+
+def get_plugin_install_hint(name: str) -> str:
+    """Return user-facing help text for a missing plugin entry point.
+
+    If the name appears in the catalog, names the actual PyPI package and
+    description. Otherwise returns a generic prompt to check installed
+    plugins, since fabricating a package name for an unknown name would be
+    misleading.
+    """
+    entry = get_catalog_entry(name)
+    if entry is not None:
+        return _format_install_hint(entry)
+    return (
+        f"We do not recognize '{name}'. If it is provided by a third-party"
+        " plugin, install that package and ensure the plugin is enabled."
+    )
+
+
+def get_install_hint_for_cli_command(command_name: str) -> str | None:
+    """Return install help for a CLI command provided by a known plugin, or None.
+
+    Returns None when the command name is not registered by any cataloged
+    plugin, so callers can fall back to the default click "no such command"
+    error without fabricating advice.
+    """
+    entry = _CATALOG_BY_CLI_COMMAND.get(command_name)
+    if entry is None:
+        return None
+    return _format_install_hint(entry)
 
 
 def get_installable_packages() -> tuple[CatalogEntry, ...]:

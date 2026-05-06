@@ -22,6 +22,7 @@ from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_FUNCTOOLS
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_GETATTR
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_GLOBAL_KEYWORD
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_HARDCODED_CLAUDE_DIR
+from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_HARDCODED_GUARDED_BINARY
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_IF_ELIF_WITHOUT_ELSE
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_IMPORTLIB_IMPORT_MODULE
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_IMPORT_DATETIME
@@ -30,6 +31,7 @@ from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_INIT_IN_N
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_INLINE_FUNCTIONS
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_INLINE_IMPORTS
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_LITERAL_MULTIPLE_OPTIONS
+from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_LOGGER_EXCEPTION
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_MODEL_COPY
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_MONKEYPATCH_SETATTR
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_NAMEDTUPLE
@@ -41,6 +43,7 @@ from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_RELATIVE_
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_RETURNS_IN_DOCSTRINGS
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_SETATTR
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_SHORT_UUID_IDS
+from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_SILENT_DECODE_ERROR_CATCH
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_TEST_CONTAINER_CLASSES
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_TIME_SLEEP
 from imbue.imbue_common.ratchet_testing.common_ratchets import PREVENT_TODOS
@@ -60,6 +63,7 @@ from imbue.imbue_common.ratchet_testing.ratchets import find_code_in_init_files
 from imbue.imbue_common.ratchet_testing.ratchets import find_if_elif_without_else
 from imbue.imbue_common.ratchet_testing.ratchets import find_init_methods_in_non_exception_classes
 from imbue.imbue_common.ratchet_testing.ratchets import find_inline_functions
+from imbue.imbue_common.ratchet_testing.ratchets import find_silent_decode_error_catches
 from imbue.imbue_common.ratchet_testing.ratchets import find_underscore_imports
 
 _SELF_EXCLUSION: tuple[str, ...] = ("test_ratchets.py", "standard_ratchet_checks.py")
@@ -98,8 +102,13 @@ def check_global_keyword(source_dir: Path, max_count: int) -> None:
     assert_ratchet(PREVENT_GLOBAL_KEYWORD, source_dir, max_count)
 
 
-def check_bare_print(source_dir: Path, max_count: int) -> None:
-    assert_ratchet(PREVENT_BARE_PRINT, source_dir, max_count)
+def check_bare_print(
+    source_dir: Path,
+    max_count: int,
+    excluded_patterns: tuple[str, ...] = (),
+) -> None:
+    chunks = check_ratchet_rule(PREVENT_BARE_PRINT, source_dir, _SELF_EXCLUSION + excluded_patterns)
+    assert len(chunks) <= max_count, PREVENT_BARE_PRINT.format_failure(chunks)
 
 
 # --- Exception handling ---
@@ -119,6 +128,11 @@ def check_base_exception_catch(source_dir: Path, max_count: int) -> None:
 
 def check_builtin_exception_raises(source_dir: Path, max_count: int) -> None:
     assert_ratchet(PREVENT_BUILTIN_EXCEPTION_RAISES, source_dir, max_count)
+
+
+def check_silent_decode_error_catches(source_dir: Path, max_count: int) -> None:
+    chunks = find_silent_decode_error_catches(source_dir, _SELF_EXCLUSION)
+    assert len(chunks) <= max_count, PREVENT_SILENT_DECODE_ERROR_CATCH.format_failure(chunks)
 
 
 # --- Import style ---
@@ -195,6 +209,15 @@ def check_hardcoded_claude_dir(source_dir: Path, max_count: int) -> None:
     assert len(chunks) <= max_count, PREVENT_HARDCODED_CLAUDE_DIR.format_failure(chunks)
 
 
+def check_hardcoded_guarded_binary(source_dir: Path, max_count: int) -> None:
+    # If a test is hitting a pytest resource guard (docker, tmux, rsync, unison, modal,
+    # lima), add the corresponding @pytest.mark.<binary> to the test rather than working
+    # around the guard by hardcoding an absolute path to the binary.
+    excluded = _SELF_EXCLUSION + ("common_ratchets.py",)
+    chunks = check_ratchet_rule(PREVENT_HARDCODED_GUARDED_BINARY, source_dir, excluded)
+    assert len(chunks) <= max_count, PREVENT_HARDCODED_GUARDED_BINARY.format_failure(chunks)
+
+
 # --- Naming conventions ---
 
 
@@ -252,6 +275,12 @@ def check_model_copy(source_dir: Path, max_count: int) -> None:
 
 def check_fstring_logging(source_dir: Path, max_count: int) -> None:
     assert_ratchet(PREVENT_FSTRING_LOGGING, source_dir, max_count)
+
+
+def check_logger_exception(source_dir: Path, max_count: int) -> None:
+    excluded = _SELF_EXCLUSION + ("common_ratchets.py",)
+    chunks = check_ratchet_rule(PREVENT_LOGGER_EXCEPTION, source_dir, excluded)
+    assert len(chunks) <= max_count, PREVENT_LOGGER_EXCEPTION.format_failure(chunks)
 
 
 def check_click_echo(source_dir: Path, max_count: int) -> None:

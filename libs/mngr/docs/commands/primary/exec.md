@@ -6,7 +6,7 @@
 **Synopsis:**
 
 ```text
-mngr [exec|x] [AGENTS...|-] COMMAND [--agent <AGENT>] [--user <USER>] [--cwd <DIR>] [--timeout <SECONDS>] [--on-error <MODE>]
+mngr [exec|x] [AGENTS...|-] COMMAND [--agent <AGENT>] [--cwd <DIR>] [--timeout <SECONDS>] [--on-error <MODE>] [--[no-]start]
 ```
 
 Execute a shell command on one or more agents' hosts.
@@ -45,7 +45,6 @@ mngr exec [OPTIONS] [AGENTS]... COMMAND
 
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
-| `--user` | text | User to run the command as | None |
 | `--cwd` | text | Working directory for the command (default: agent's work_dir) | None |
 | `--timeout` | float | Timeout in seconds for the command | None |
 
@@ -70,25 +69,19 @@ mngr exec [OPTIONS] [AGENTS]... COMMAND
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
 | `--log-file` | path | Path to log file (overrides default ~/.mngr/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
-| `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
-| `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
 | `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNGR_HEADLESS env var or 'headless' config key. | `False` |
 | `--safe` | boolean | Always query all providers during discovery (disable event-stream optimization). Use this when interfacing with mngr from multiple machines. | `False` |
-| `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
 | `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
 | `-h`, `--help` | boolean | Show this message and exit. | `False` |
-
-## Related Documentation
-
-- [Multi-target Options](../generic/multi_target.md) - Behavior when targeting multiple agents
 
 ## See Also
 
 - [mngr connect](./connect.md) - Connect to an agent interactively
 - [mngr message](../secondary/message.md) - Send a message to an agent
 - [mngr list](./list.md) - List available agents
+- [mngr help multi_target](../generic/multi_target.md) - Behavior when targeting multiple agents
 
 ## Examples
 
@@ -114,12 +107,6 @@ $ mngr list --ids | mngr exec - "echo hello"
 
 ```bash
 $ mngr exec my-agent "ls -la" --cwd /tmp
-```
-
-**Run as a different user**
-
-```bash
-$ mngr exec my-agent "whoami" --user root
 ```
 
 **Run with a timeout**

@@ -1,31 +1,32 @@
 import json
 from pathlib import Path
 
-from imbue.minds.config.data_types import MindPaths
-from imbue.minds.config.data_types import get_default_data_dir
+import pytest
+
+from imbue.minds.config.data_types import WorkspacePaths
 from imbue.minds.config.data_types import parse_agents_from_mngr_output
+from imbue.minds.errors import MalformedMngrOutputError
 from imbue.mngr.primitives import AgentId
 
 
-def test_mind_paths_mind_dir_uses_agent_id(tmp_path: Path) -> None:
-    """Verify mind_dir incorporates the agent_id into the path."""
-    paths = MindPaths(data_dir=tmp_path)
+def test_workspace_paths_workspace_dir_uses_agent_id(tmp_path: Path) -> None:
+    """Verify workspace_dir incorporates the agent_id into the path."""
+    paths = WorkspacePaths(data_dir=tmp_path)
     agent_id = AgentId()
 
-    result = paths.mind_dir(agent_id)
+    result = paths.workspace_dir(agent_id)
     assert result.parent == tmp_path
     assert str(agent_id) in str(result)
 
 
-def test_mind_paths_auth_dir_is_under_data_dir(tmp_path: Path) -> None:
-    paths = MindPaths(data_dir=tmp_path)
+def test_workspace_paths_auth_dir_is_under_data_dir(tmp_path: Path) -> None:
+    paths = WorkspacePaths(data_dir=tmp_path)
     assert paths.auth_dir == tmp_path / "auth"
 
 
-def test_get_default_data_dir_returns_home_minds() -> None:
-    result = get_default_data_dir()
-    assert result.name == ".minds"
-    assert result.parent == Path.home()
+def test_workspace_paths_mngr_host_dir_is_under_data_dir(tmp_path: Path) -> None:
+    paths = WorkspacePaths(data_dir=tmp_path)
+    assert paths.mngr_host_dir == tmp_path / "mngr"
 
 
 # -- parse_agents_from_mngr_output tests --
@@ -53,15 +54,22 @@ def test_parse_agents_from_mngr_output_handles_empty() -> None:
     assert agents == []
 
 
-def test_parse_agents_from_mngr_output_handles_non_json() -> None:
-    """Verify parse_agents_from_mngr_output handles non-JSON output gracefully."""
-    agents = parse_agents_from_mngr_output("not json at all")
-    assert agents == []
+def test_parse_agents_from_mngr_output_raises_on_non_json() -> None:
+    """Non-JSON output is treated as a real upstream bug rather than soft-failed."""
+    with pytest.raises(MalformedMngrOutputError, match="Expected JSON object"):
+        parse_agents_from_mngr_output("not json at all")
 
 
-def test_parse_agents_from_mngr_output_handles_mixed_output() -> None:
-    """Verify parse_agents_from_mngr_output handles SSH errors mixed with JSON."""
+def test_parse_agents_from_mngr_output_raises_on_mixed_output() -> None:
+    """stdout is reserved for JSON; if a log/warning leaks onto stdout the upstream is broken."""
     output = "WARNING: some SSH error\n" + json.dumps({"agents": [{"id": "agent-xyz", "name": "test"}]})
-    agents = parse_agents_from_mngr_output(output)
-    assert len(agents) == 1
-    assert agents[0]["id"] == "agent-xyz"
+    with pytest.raises(MalformedMngrOutputError, match="Expected JSON object"):
+        parse_agents_from_mngr_output(output)
+
+
+def test_parse_agents_from_mngr_output_raises_on_invalid_json_first_line() -> None:
+    """A line that starts with '{' but isn't valid JSON surfaces as JSONDecodeError."""
+    valid_json = json.dumps({"agents": [{"id": "agent-abc", "name": "test"}]})
+    output = "{invalid json here\n" + valid_json
+    with pytest.raises(json.JSONDecodeError):
+        parse_agents_from_mngr_output(output)

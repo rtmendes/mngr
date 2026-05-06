@@ -18,9 +18,9 @@ from imbue.mngr.config.data_types import PluginConfig
 from imbue.mngr.config.data_types import ProviderInstanceConfig
 from imbue.mngr.config.data_types import WorkDirExtraPathMode
 from imbue.mngr.config.data_types import get_or_create_user_id
-from imbue.mngr.config.data_types import merge_cli_args
 from imbue.mngr.config.data_types import merge_dict_fields
 from imbue.mngr.config.data_types import merge_list_fields
+from imbue.mngr.config.data_types import merge_tuples
 from imbue.mngr.config.data_types import split_cli_args_string
 from imbue.mngr.errors import ConfigParseError
 from imbue.mngr.errors import ParseSpecError
@@ -176,6 +176,40 @@ def test_agent_type_config_merge_with_concatenates_permissions() -> None:
     assert merged.permissions == [Permission("read"), Permission("write")]
 
 
+def test_agent_type_config_merge_with_concatenates_extra_provision_command() -> None:
+    """AgentTypeConfig.merge_with should concatenate extra_provision_command."""
+    base = AgentTypeConfig(extra_provision_command=("echo base",))
+    override = AgentTypeConfig(extra_provision_command=("echo override",))
+    merged = base.merge_with(override)
+    assert merged.extra_provision_command == ("echo base", "echo override")
+
+
+def test_agent_type_config_merge_with_concatenates_env() -> None:
+    """AgentTypeConfig.merge_with should concatenate env."""
+    base = AgentTypeConfig(env=("FOO=1",))
+    override = AgentTypeConfig(env=("BAR=2",))
+    merged = base.merge_with(override)
+    assert merged.env == ("FOO=1", "BAR=2")
+
+
+def test_agent_type_config_merge_with_concatenates_upload_file() -> None:
+    """AgentTypeConfig.merge_with should concatenate upload_file."""
+    base = AgentTypeConfig(upload_file=("a.txt:/a.txt",))
+    override = AgentTypeConfig(upload_file=("b.txt:/b.txt",))
+    merged = base.merge_with(override)
+    assert merged.upload_file == ("a.txt:/a.txt", "b.txt:/b.txt")
+
+
+def test_agent_type_config_merge_with_preserves_unset_provisioning_fields() -> None:
+    """AgentTypeConfig.merge_with should preserve base provisioning fields when override doesn't set them."""
+    base = AgentTypeConfig(extra_provision_command=("echo setup",), env=("KEY=val",))
+    override = AgentTypeConfig(cli_args=("--flag",))
+    merged = base.merge_with(override)
+    assert merged.extra_provision_command == ("echo setup",)
+    assert merged.env == ("KEY=val",)
+    assert merged.cli_args == ("--flag",)
+
+
 def test_agent_type_config_merge_with_preserves_subclass_fields() -> None:
     """AgentTypeConfig.merge_with on a subclass should preserve subclass-specific fields."""
     base = _TestAgentTypeConfig.model_construct(
@@ -213,27 +247,27 @@ def test_agent_type_config_merge_with_accepts_base_class_override() -> None:
     assert merged.custom_flag is True
 
 
-def test_merge_cli_args_concatenates_both_when_present() -> None:
-    """merge_cli_args should concatenate when both present."""
-    result = merge_cli_args(("--arg1",), ("--arg2",))
+def test_merge_tuples_concatenates_both_when_present() -> None:
+    """merge_tuples should concatenate when both present."""
+    result = merge_tuples(("--arg1",), ("--arg2",))
     assert result == ("--arg1", "--arg2")
 
 
-def test_merge_cli_args_returns_override_when_base_empty() -> None:
-    """merge_cli_args should return override when base is empty."""
-    result = merge_cli_args((), ("--arg",))
+def test_merge_tuples_returns_override_when_base_empty() -> None:
+    """merge_tuples should return override when base is empty."""
+    result = merge_tuples((), ("--arg",))
     assert result == ("--arg",)
 
 
-def test_merge_cli_args_returns_base_when_override_empty() -> None:
-    """merge_cli_args should return base when override is empty."""
-    result = merge_cli_args(("--arg",), ())
+def test_merge_tuples_returns_base_when_override_empty() -> None:
+    """merge_tuples should return base when override is empty."""
+    result = merge_tuples(("--arg",), ())
     assert result == ("--arg",)
 
 
-def test_merge_cli_args_returns_empty_when_both_empty() -> None:
-    """merge_cli_args should return empty when both empty."""
-    result = merge_cli_args((), ())
+def test_merge_tuples_returns_empty_when_both_empty() -> None:
+    """merge_tuples should return empty when both empty."""
+    result = merge_tuples((), ())
     assert result == ()
 
 
@@ -895,7 +929,7 @@ def test_split_cli_args_string_preserves_quoting_for_assemble_command() -> None:
 
     This is the end-to-end scenario: TOML string -> split -> tuple -> join -> command.
     """
-    cli_args_str = """--settings '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "./scripts/check_commit_status.sh"}]}, {"hooks": [{"type": "command", "timeout": 600, "command": "./scripts/main_claude_stop_hook.sh"}]}]}}'"""
+    cli_args_str = """--settings '{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "read INPUT; SID=$(echo \\"$INPUT\\" | jq -r \\".session_id // empty\\"); [ -n \\"$SID\\" ] && [ -n \\"${CLAUDE_ENV_FILE:-}\\" ] && echo \\"export MNGR_CLAUDE_SESSION_ID=$SID\\" >> \\"$CLAUDE_ENV_FILE\\" || true"}]}]}}'"""
     parts = split_cli_args_string(cli_args_str)
     reassembled = " ".join(parts)
     assert reassembled == cli_args_str
@@ -978,6 +1012,51 @@ def test_mngr_config_merge_keeps_base_destroyed_host_persisted_seconds_when_over
     )
     merged = base.merge_with(override)
     assert merged.default_destroyed_host_persisted_seconds == 86400.0
+
+
+# =============================================================================
+# Tests for min_online_host_age_seconds
+# =============================================================================
+
+
+def test_provider_instance_config_min_online_host_age_seconds_defaults_to_none() -> None:
+    config = ProviderInstanceConfig(backend=ProviderBackendName("test"))
+    assert config.min_online_host_age_seconds is None
+
+
+def test_provider_instance_config_merge_overrides_min_online_host_age_seconds() -> None:
+    base = ProviderInstanceConfig(backend=ProviderBackendName("test"), min_online_host_age_seconds=300.0)
+    override = ProviderInstanceConfig(backend=ProviderBackendName("test"), min_online_host_age_seconds=600.0)
+    merged = base.merge_with(override)
+    assert merged.min_online_host_age_seconds == 600.0
+
+
+def test_provider_instance_config_merge_keeps_base_min_online_host_age_seconds_when_override_none() -> None:
+    base = ProviderInstanceConfig(backend=ProviderBackendName("test"), min_online_host_age_seconds=300.0)
+    override = ProviderInstanceConfig(backend=ProviderBackendName("test"), min_online_host_age_seconds=None)
+    merged = base.merge_with(override)
+    assert merged.min_online_host_age_seconds == 300.0
+
+
+def test_mngr_config_default_min_online_host_age_seconds_is_ten_minutes(mngr_test_prefix: str) -> None:
+    config = MngrConfig(prefix=mngr_test_prefix)
+    assert config.default_min_online_host_age_seconds == 60.0 * 10.0
+
+
+def test_mngr_config_merge_overrides_default_min_online_host_age_seconds(mngr_test_prefix: str) -> None:
+    base = MngrConfig(prefix=mngr_test_prefix, default_min_online_host_age_seconds=600.0)
+    override = MngrConfig(prefix=mngr_test_prefix, default_min_online_host_age_seconds=300.0)
+    merged = base.merge_with(override)
+    assert merged.default_min_online_host_age_seconds == 300.0
+
+
+def test_mngr_config_merge_keeps_base_min_online_host_age_seconds_when_override_none(
+    mngr_test_prefix: str,
+) -> None:
+    base = MngrConfig(prefix=mngr_test_prefix, default_min_online_host_age_seconds=300.0)
+    override = MngrConfig.model_construct(prefix=mngr_test_prefix, default_min_online_host_age_seconds=None)
+    merged = base.merge_with(override)
+    assert merged.default_min_online_host_age_seconds == 300.0
 
 
 def test_mngr_config_merge_overrides_connect_command(mngr_test_prefix: str) -> None:

@@ -2,6 +2,8 @@
 
 The Modal provider creates agents in [Modal](https://modal.com) sandboxes. Each sandbox runs sshd and is accessed via SSH.
 
+For a step-by-step walkthrough of running coding agents on Modal, see the [Modal usage guide](../../concepts/modal_usage.md).
+
 ## Usage
 
 ```bash
@@ -147,7 +149,7 @@ See [`mngr snapshot`](../../commands/secondary/snapshot.md) for all options.
 
 ## Host Volume
 
-By default, mngr creates a persistent Modal Volume for each host's data directory. This volume stores logs, agent data, and other host state, making them accessible even when the host is offline (e.g., via `mngr events`).
+By default, mngr creates a persistent Modal Volume for each host's data directory. This volume stores logs, agent data, and other host state, making them accessible even when the host is offline (e.g., via `mngr event`).
 
 You can disable this behavior by setting `is_host_volume_created = false` in your provider configuration:
 

@@ -21,6 +21,7 @@ from imbue.mngr.agents.agent_registry import reset_agent_registry
 from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.main import load_plugin_hookspecs
 from imbue.mngr.plugins import hookspecs
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.providers.local.instance import LocalProviderInstance
@@ -56,6 +57,7 @@ def plugin_manager() -> Generator[pluggy.PluginManager, None, None]:
     pm = pluggy.PluginManager("mngr")
     pm.add_hookspecs(hookspecs)
     pm.load_setuptools_entrypoints("mngr")
+    load_plugin_hookspecs(pm)
     load_local_backend_only(pm)
     load_agents_from_plugins(pm)
 
@@ -111,9 +113,10 @@ def cg() -> Generator[ConcurrencyGroup, None, None]:
 def setup_git_config(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """Isolate git and provide user config for tests that run git commands.
 
-    Sets GIT_CONFIG_NOSYSTEM, GIT_TERMINAL_PROMPT, and GIT_CONFIG_GLOBAL
-    via the shared isolate_git() helper. Tests that need git should request
-    this fixture (or temp_git_repo, which depends on it).
+    Sets GIT_CONFIG_NOSYSTEM and GIT_TERMINAL_PROMPT, and writes a
+    .gitconfig to the fake HOME via the shared isolate_git() helper.
+    Tests that need git should request this fixture (or temp_git_repo,
+    which depends on it).
     """
     with isolate_git(monkeypatch):
         yield

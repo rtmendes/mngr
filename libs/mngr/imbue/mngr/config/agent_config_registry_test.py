@@ -121,6 +121,38 @@ def test_apply_custom_overrides_preserves_unset_subclass_fields() -> None:
     assert result.extra_str == "original"
 
 
+def test_apply_custom_overrides_concatenates_provisioning_fields() -> None:
+    """Provisioning tuple fields should be concatenated onto parent, not replaced."""
+    parent = AgentTypeConfig(
+        extra_provision_command=("echo parent",),
+        env=("PARENT=1",),
+    )
+    custom = AgentTypeConfig(
+        extra_provision_command=("echo child",),
+        env=("CHILD=2",),
+    )
+
+    result = _apply_custom_overrides_to_parent_config(parent, custom)
+
+    assert result.extra_provision_command == ("echo parent", "echo child")
+    assert result.env == ("PARENT=1", "CHILD=2")
+
+
+def test_apply_custom_overrides_preserves_parent_provisioning_when_unset() -> None:
+    """Parent provisioning fields should be preserved when custom config doesn't set them."""
+    parent = AgentTypeConfig(
+        extra_provision_command=("echo parent",),
+        upload_file=("a.txt:/a.txt",),
+    )
+    custom = AgentTypeConfig(cli_args=("--flag",))
+
+    result = _apply_custom_overrides_to_parent_config(parent, custom)
+
+    assert result.extra_provision_command == ("echo parent",)
+    assert result.upload_file == ("a.txt:/a.txt",)
+    assert result.cli_args == ("--flag",)
+
+
 # =============================================================================
 # Registry function tests
 # =============================================================================
@@ -161,6 +193,15 @@ def test_get_agent_class_raises_when_unknown_and_no_default() -> None:
     reset_agent_class_registry()
     with pytest.raises(MngrError, match="Unknown agent type 'nonexistent'"):
         get_agent_class("nonexistent")
+
+
+def test_get_agent_class_unknown_includes_install_hint_for_known_plugin() -> None:
+    """Unknown agent types that match a cataloged plugin should suggest installing it."""
+    reset_agent_class_registry()
+    with pytest.raises(MngrError) as exc_info:
+        get_agent_class("claude")
+    formatted = exc_info.value.format_message()
+    assert "imbue-mngr-claude" in formatted
 
 
 # =============================================================================

@@ -1,12 +1,10 @@
 """Tests for config loader."""
 
-from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
 import pluggy
 import pytest
-from loguru import logger
 from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
@@ -20,7 +18,7 @@ from imbue.mngr.config.data_types import PluginConfig
 from imbue.mngr.config.data_types import get_or_create_user_id
 from imbue.mngr.config.loader import _apply_plugin_overrides
 from imbue.mngr.config.loader import _merge_command_defaults
-from imbue.mngr.config.loader import _normalize_cli_args_for_construct
+from imbue.mngr.config.loader import _normalize_tuple_fields_for_construct
 from imbue.mngr.config.loader import _parse_agent_types
 from imbue.mngr.config.loader import _parse_command_env_vars
 from imbue.mngr.config.loader import _parse_commands
@@ -32,6 +30,8 @@ from imbue.mngr.config.loader import block_disabled_plugins
 from imbue.mngr.config.loader import get_or_create_profile_dir
 from imbue.mngr.config.loader import load_config
 from imbue.mngr.config.loader import parse_config
+from imbue.mngr.config.plugin_registry import _plugin_config_registry
+from imbue.mngr.config.plugin_registry import register_plugin_config
 from imbue.mngr.errors import ConfigParseError
 from imbue.mngr.plugins import hookspecs
 from imbue.mngr.primitives import AgentTypeName
@@ -43,15 +43,6 @@ from imbue.mngr.providers.registry import load_all_registries
 from imbue.mngr.utils.logging import LoggingConfig
 
 hookimpl = pluggy.HookimplMarker("mngr")
-
-
-@pytest.fixture()
-def log_warnings() -> Generator[list[str], None, None]:
-    """Capture loguru warning messages for assertion in tests."""
-    messages: list[str] = []
-    handler_id = logger.add(lambda msg: messages.append(msg.record["message"]), level="WARNING", format="{message}")
-    yield messages
-    logger.remove(handler_id)
 
 
 # =============================================================================
@@ -225,12 +216,13 @@ def test_parse_providers_raises_on_unknown_fields() -> None:
         _parse_providers(raw, disabled_plugins=frozenset())
 
 
+@pytest.mark.allow_warnings(match=r"Unknown fields in providers\.my-local.*typo_field")
 def test_parse_providers_warns_on_unknown_fields_when_not_strict(log_warnings: list[str]) -> None:
-    """_parse_providers with strict=False should warn about unknown fields and strip them."""
+    """_parse_providers with strict=False should warn about unknown fields and not apply them to the model."""
     raw = {"my-local": {"backend": "local", "typo_field": "value"}}
     result = _parse_providers(raw, disabled_plugins=frozenset(), strict=False)
     assert ProviderInstanceName("my-local") in result
-    assert "typo_field" not in raw["my-local"]
+    assert "typo_field" not in result[ProviderInstanceName("my-local")].model_dump()
     assert any("typo_field" in msg and "providers.my-local" in msg for msg in log_warnings)
 
 
@@ -273,6 +265,35 @@ def test_parse_providers_unknown_backend_mentions_disabled_plugins() -> None:
         _parse_providers(raw, disabled_plugins=frozenset({"modal"}))
 
 
+def test_parse_providers_skips_disabled_provider_with_unknown_backend() -> None:
+    """_parse_providers should skip providers with is_enabled=false when backend is unknown."""
+    raw = {"my-cloud": {"backend": "nonexistent", "is_enabled": False}}
+    result = _parse_providers(raw, disabled_plugins=frozenset())
+    assert len(result) == 0
+
+
+def test_parse_providers_preserves_disabled_provider_with_known_backend() -> None:
+    """_parse_providers should preserve is_enabled=false when backend is known (for merge)."""
+    raw = {"my-local": {"backend": "local", "is_enabled": False}}
+    result = _parse_providers(raw, disabled_plugins=frozenset())
+    assert ProviderInstanceName("my-local") in result
+    assert result[ProviderInstanceName("my-local")].is_enabled is False
+
+
+def test_parse_providers_still_raises_on_unknown_backend_when_enabled() -> None:
+    """_parse_providers should still raise for unknown backends when is_enabled is not false."""
+    raw = {"my-provider": {"backend": "nonexistent", "is_enabled": True}}
+    with pytest.raises(ConfigParseError, match="references unknown backend"):
+        _parse_providers(raw, disabled_plugins=frozenset())
+
+
+def test_parse_providers_still_raises_on_unknown_backend_when_is_enabled_unset() -> None:
+    """_parse_providers should still raise for unknown backends when is_enabled is not set."""
+    raw = {"my-provider": {"backend": "nonexistent"}}
+    with pytest.raises(ConfigParseError, match="references unknown backend"):
+        _parse_providers(raw, disabled_plugins=frozenset())
+
+
 # =============================================================================
 # Tests for _parse_agent_types
 # =============================================================================
@@ -299,13 +320,14 @@ def test_parse_agent_types_raises_on_unknown_fields() -> None:
         _parse_agent_types(raw, disabled_plugins=frozenset())
 
 
+@pytest.mark.allow_warnings(match=r"Unknown fields in agent_types\.claude.*bogus_option")
 def test_parse_agent_types_warns_on_unknown_fields_when_not_strict(log_warnings: list[str]) -> None:
-    """_parse_agent_types with strict=False should warn about unknown fields and strip them."""
+    """_parse_agent_types with strict=False should warn about unknown fields and not apply them to the model."""
     raw = {"claude": {"cli_args": "--verbose", "bogus_option": True}}
     result = _parse_agent_types(raw, disabled_plugins=frozenset(), strict=False)
     assert AgentTypeName("claude") in result
     assert result[AgentTypeName("claude")].cli_args == ("--verbose",)
-    assert "bogus_option" not in raw["claude"]
+    assert "bogus_option" not in result[AgentTypeName("claude")].model_dump()
     assert any("bogus_option" in msg and "agent_types.claude" in msg for msg in log_warnings)
 
 
@@ -426,13 +448,14 @@ def test_parse_plugins_raises_on_unknown_fields() -> None:
         _parse_plugins(raw)
 
 
+@pytest.mark.allow_warnings(match=r"Unknown fields in plugins\.my-plugin.*nonexistent_setting")
 def test_parse_plugins_warns_on_unknown_fields_when_not_strict(log_warnings: list[str]) -> None:
-    """_parse_plugins with strict=False should warn about unknown fields and strip them."""
+    """_parse_plugins with strict=False should warn about unknown fields and not apply them to the model."""
     raw = {"my-plugin": {"enabled": True, "nonexistent_setting": "abc"}}
     result = _parse_plugins(raw, strict=False)
     assert PluginName("my-plugin") in result
     assert result[PluginName("my-plugin")].enabled is True
-    assert "nonexistent_setting" not in raw["my-plugin"]
+    assert "nonexistent_setting" not in result[PluginName("my-plugin")].model_dump()
     assert any("nonexistent_setting" in msg and "plugins.my-plugin" in msg for msg in log_warnings)
 
 
@@ -480,6 +503,11 @@ def test_apply_plugin_overrides_enables_existing_plugin() -> None:
     assert "my-plugin" not in disabled
 
 
+# Marked flaky because session_cleanup occasionally blames this test for
+# leaked subprocesses spawned by other tests in the same xdist sandbox (e.g.
+# the documented `sleep 30` leak from concurrency_group_test). The test body
+# is pure config-dict manipulation and cannot itself leak -- retry is safe.
+@pytest.mark.flaky
 def test_apply_plugin_overrides_creates_disabled_plugin() -> None:
     """_apply_plugin_overrides should create new disabled plugins."""
     plugins: dict[PluginName, PluginConfig] = {}
@@ -516,12 +544,13 @@ def test_parse_logging_config_raises_on_unknown_fields() -> None:
         _parse_logging_config(raw)
 
 
+@pytest.mark.allow_warnings(match=r"Unknown fields in logging.*unknown_log_option")
 def test_parse_logging_config_warns_on_unknown_fields_when_not_strict(log_warnings: list[str]) -> None:
-    """_parse_logging_config with strict=False should warn about unknown fields and strip them."""
+    """_parse_logging_config with strict=False should warn about unknown fields and not apply them to the model."""
     raw = {"file_level": "DEBUG", "unknown_log_option": 42}
     result = _parse_logging_config(raw, strict=False)
     assert isinstance(result, LoggingConfig)
-    assert "unknown_log_option" not in raw
+    assert "unknown_log_option" not in result.model_dump()
     assert any("unknown_log_option" in msg for msg in log_warnings)
 
 
@@ -638,6 +667,7 @@ def test_parse_config_raises_on_unknown_top_level_field() -> None:
         parse_config(raw, disabled_plugins=frozenset())
 
 
+@pytest.mark.allow_warnings(match=r"^Unknown configuration fields: \['nonexistent_top_level'\]")
 def test_parse_config_warns_on_unknown_top_level_field_when_not_strict(log_warnings: list[str]) -> None:
     """parse_config with strict=False should warn about unknown top-level fields."""
     raw = {"prefix": "test-", "nonexistent_top_level": "value"}
@@ -655,6 +685,7 @@ def test_parse_config_raises_on_unknown_nested_field() -> None:
         parse_config(raw, disabled_plugins=frozenset())
 
 
+@pytest.mark.allow_warnings(match=r"Unknown fields in logging.*bad_field")
 def test_parse_config_warns_on_unknown_nested_field_when_not_strict(log_warnings: list[str]) -> None:
     """parse_config with strict=False should warn about unknown nested fields."""
     raw = {
@@ -749,6 +780,8 @@ def test_load_config_threads_every_field_from_toml(
     assert config.is_nested_tmux_allowed is True
     assert config.is_error_reporting_enabled is False
     assert config.default_destroyed_host_persisted_seconds == 12345.0
+    assert config.retry.connect_retry_times == 5
+    assert config.retry.connect_retry_delay == "10s"
     assert "TEST_VAR" in config.unset_vars
     assert ProviderBackendName("local") in config.enabled_backends
     assert ".venv" in config.work_dir_extra_paths
@@ -770,6 +803,7 @@ _SAMPLE_CONFIG_VALUES: dict[str, Any] = {
     "create_templates": {"modal": {"new_host": "modal"}},
     "pre_command_scripts": {"create": ["echo hello"]},
     "work_dir_extra_paths": {".venv": "SHARE", ".test_output": "COPY"},
+    "retry": {"connect_retry_times": 5, "connect_retry_delay": "10s"},
     "logging": {"file_level": "DEBUG"},
     "is_remote_agent_installation_allowed": False,
     "connect_command": "my-connect",
@@ -778,6 +812,7 @@ _SAMPLE_CONFIG_VALUES: dict[str, Any] = {
     "is_error_reporting_enabled": False,
     "is_allowed_in_pytest": True,
     "default_destroyed_host_persisted_seconds": 12345.0,
+    "default_min_online_host_age_seconds": 600.0,
 }
 
 _SAMPLE_TOML = """\
@@ -793,6 +828,7 @@ headless = true
 is_error_reporting_enabled = false
 is_allowed_in_pytest = true
 default_destroyed_host_persisted_seconds = 12345.0
+default_min_online_host_age_seconds = 600.0
 
 [commands.create]
 name = "test"
@@ -803,6 +839,10 @@ create = ["echo hello"]
 [work_dir_extra_paths]
 ".venv" = "SHARE"
 ".test_output" = "COPY"
+
+[retry]
+connect_retry_times = 5
+connect_retry_delay = "10s"
 
 [logging]
 file_level = "DEBUG"
@@ -1131,6 +1171,7 @@ def test_load_config_rejects_unknown_fields_by_default(
         load_config(pm=pm, context_dir=tmp_path, concurrency_group=cg)
 
 
+@pytest.mark.allow_warnings(match=r"^Unknown configuration fields: \['future_field'\]")
 def test_load_config_allows_unknown_fields_with_env_var(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1252,50 +1293,94 @@ def test_block_disabled_plugins_is_idempotent() -> None:
 
 
 # =============================================================================
-# Tests for _normalize_cli_args_for_construct
+# Tests for _normalize_tuple_fields_for_construct
 # =============================================================================
 
 
 def test_normalize_cli_args_no_cli_args_key() -> None:
-    """_normalize_cli_args_for_construct should return the input unchanged when no cli_args key."""
+    """_normalize_tuple_fields_for_construct should return the input unchanged when no cli_args key."""
     raw = {"some_key": "value"}
-    result = _normalize_cli_args_for_construct(raw)
+    result = _normalize_tuple_fields_for_construct(raw)
     assert result == {"some_key": "value"}
 
 
 def test_normalize_cli_args_string_value() -> None:
-    """_normalize_cli_args_for_construct should split a non-empty string into a tuple."""
+    """_normalize_tuple_fields_for_construct should split a non-empty string into a tuple."""
     raw = {"cli_args": "--verbose --model opus"}
-    result = _normalize_cli_args_for_construct(raw)
+    result = _normalize_tuple_fields_for_construct(raw)
     assert result["cli_args"] == ("--verbose", "--model", "opus")
 
 
 def test_normalize_cli_args_empty_string() -> None:
-    """_normalize_cli_args_for_construct should convert an empty string to an empty tuple."""
+    """_normalize_tuple_fields_for_construct should convert an empty string to an empty tuple."""
     raw = {"cli_args": ""}
-    result = _normalize_cli_args_for_construct(raw)
+    result = _normalize_tuple_fields_for_construct(raw)
     assert result["cli_args"] == ()
 
 
 def test_normalize_cli_args_list_value() -> None:
-    """_normalize_cli_args_for_construct should convert a list to a tuple."""
+    """_normalize_tuple_fields_for_construct should convert a list to a tuple."""
     raw = {"cli_args": ["--verbose", "--model", "opus"]}
-    result = _normalize_cli_args_for_construct(raw)
+    result = _normalize_tuple_fields_for_construct(raw)
     assert result["cli_args"] == ("--verbose", "--model", "opus")
 
 
 def test_normalize_cli_args_tuple_value() -> None:
-    """_normalize_cli_args_for_construct should pass through a tuple."""
+    """_normalize_tuple_fields_for_construct should pass through a tuple."""
     raw = {"cli_args": ("--verbose",)}
-    result = _normalize_cli_args_for_construct(raw)
+    result = _normalize_tuple_fields_for_construct(raw)
     assert result["cli_args"] == ("--verbose",)
 
 
 def test_normalize_cli_args_other_type_passes_through() -> None:
-    """_normalize_cli_args_for_construct should pass through unrecognized types."""
+    """_normalize_tuple_fields_for_construct should pass through unrecognized types."""
     raw = {"cli_args": 42}
-    result = _normalize_cli_args_for_construct(raw)
+    result = _normalize_tuple_fields_for_construct(raw)
     assert result["cli_args"] == 42
+
+
+def test_normalize_tuple_fields_converts_provisioning_lists() -> None:
+    """_normalize_tuple_fields_for_construct should convert TOML lists to tuples for provisioning fields."""
+    raw = {
+        "extra_provision_command": ["echo setup", "echo done"],
+        "env": ["FOO=1"],
+        "upload_file": ["a.txt:/a.txt"],
+    }
+    result = _normalize_tuple_fields_for_construct(raw)
+    assert result["extra_provision_command"] == ("echo setup", "echo done")
+    assert result["env"] == ("FOO=1",)
+    assert result["upload_file"] == ("a.txt:/a.txt",)
+
+
+def test_normalize_tuple_fields_ignores_missing_fields() -> None:
+    """_normalize_tuple_fields_for_construct should leave config unchanged when no tuple fields present."""
+    raw = {"parent_type": "claude", "command": "my-cmd"}
+    result = _normalize_tuple_fields_for_construct(raw)
+    assert result == {"parent_type": "claude", "command": "my-cmd"}
+
+
+def test_normalize_tuple_fields_handles_all_fields_together() -> None:
+    """_normalize_tuple_fields_for_construct should normalize cli_args and provisioning fields in one call."""
+    raw = {
+        "cli_args": "--verbose",
+        "extra_provision_command": ["echo hi"],
+        "create_directory": ["/tmp/test"],
+    }
+    result = _normalize_tuple_fields_for_construct(raw)
+    assert result["cli_args"] == ("--verbose",)
+    assert result["extra_provision_command"] == ("echo hi",)
+    assert result["create_directory"] == ("/tmp/test",)
+
+
+def test_normalize_tuple_fields_wraps_string_in_tuple() -> None:
+    """_normalize_tuple_fields_for_construct should wrap a bare string in a one-element tuple for provisioning fields."""
+    raw = {
+        "extra_provision_command": "echo setup",
+        "env": "FOO=1",
+    }
+    result = _normalize_tuple_fields_for_construct(raw)
+    assert result["extra_provision_command"] == ("echo setup",)
+    assert result["env"] == ("FOO=1",)
 
 
 # =============================================================================
@@ -1345,6 +1430,27 @@ def test_load_config_raises_when_in_pytest_and_not_allowed(
 
     with pytest.raises(ConfigParseError, match="Running mngr within pytest is not allowed"):
         load_config(pm=pm, concurrency_group=cg, context_dir=tmp_path)
+
+
+def test_load_config_allows_pytest_with_explicit_opt_in(
+    monkeypatch: pytest.MonkeyPatch, temp_host_dir: Path, cg: ConcurrencyGroup
+) -> None:
+    """MNGR_ALLOW_PYTEST=1 is the explicit opt-in for end-to-end test subprocesses
+    that intentionally want a real mngr with is_allowed_in_pytest=False in config.
+    The autouse setup_test_mngr_env fixture already provides HOME, MNGR_HOST_DIR
+    (pointing at tmp), PYTEST_CURRENT_TEST (pytest itself sets this), etc.; we only
+    need to add the opt-in and the settings file that triggers the guard."""
+    pm = pluggy.PluginManager("mngr")
+    pm.add_hookspecs(hookspecs)
+    load_all_registries(pm)
+
+    monkeypatch.setenv("MNGR_ALLOW_PYTEST", "1")
+
+    profile_dir = get_or_create_profile_dir(temp_host_dir)
+    (profile_dir / "settings.toml").write_text("is_allowed_in_pytest = false\n")
+
+    # Should NOT raise.
+    load_config(pm=pm, concurrency_group=cg, context_dir=temp_host_dir)
 
 
 # =============================================================================
@@ -1475,3 +1581,66 @@ def test_load_config_mngr_headless_env_overrides_config_file(
     mngr_ctx = load_config(pm=pm, concurrency_group=cg, context_dir=tmp_path)
 
     assert mngr_ctx.config.headless is False
+
+
+# =============================================================================
+# Tests for hyphen normalization in config field names
+# =============================================================================
+
+
+def test_parse_commands_normalizes_hyphens_to_underscores() -> None:
+    """_parse_commands should accept hyphenated TOML field names like `pass-env`."""
+    raw = {"create": {"pass-env": ["FOO", "BAR"]}}
+    result = _parse_commands(raw)
+    assert result["create"].defaults == {"pass_env": ["FOO", "BAR"]}
+
+
+def test_parse_commands_raises_on_hyphen_underscore_collision() -> None:
+    """_parse_commands should raise when both `pass-env` and `pass_env` are set."""
+    raw = {"create": {"pass-env": ["FOO"], "pass_env": ["BAR"]}}
+    with pytest.raises(ConfigParseError, match="both 'pass-env' and 'pass_env'"):
+        _parse_commands(raw)
+
+
+def test_parse_create_templates_normalizes_hyphens() -> None:
+    """_parse_create_templates should accept hyphenated TOML field names."""
+    raw = {"mytmpl": {"pass-env": ["FOO"], "new-host": True}}
+    result = _parse_create_templates(raw)
+    assert result[CreateTemplateName("mytmpl")].options == {"pass_env": ["FOO"], "new_host": True}
+
+
+def test_parse_config_normalizes_top_level_hyphens() -> None:
+    """parse_config should accept hyphenated top-level field names."""
+    raw = {"connect-command": "tmux attach"}
+    cfg = parse_config(raw, disabled_plugins=frozenset())
+    assert cfg.connect_command == "tmux attach"
+
+
+def test_parse_logging_config_normalizes_hyphens() -> None:
+    """_parse_logging_config should accept hyphenated TOML field names without raising."""
+    # Without normalization, an unknown `file-level` would raise (or warn); the
+    # presence of the field after normalization is what we are asserting.
+    raw = {"file-level": "DEBUG"}
+    result = _parse_logging_config(raw)
+    assert result.file_level == "DEBUG"
+
+
+def test_parse_plugins_normalizes_hyphens() -> None:
+    """_parse_plugins should accept hyphenated TOML field names within a plugin block."""
+
+    class _HyphenTestPluginConfig(PluginConfig):
+        custom_field: str = "default"
+
+    # The plugin config registry is populated at module-import time by external
+    # plugin packages (e.g. mngr_notifications), so a blanket reset here would
+    # wipe legitimate registrations and break tests in other packages that look
+    # them up. Snapshot and restore just this test's addition instead.
+    register_plugin_config("hyphen-test-plugin", _HyphenTestPluginConfig)
+    try:
+        raw = {"hyphen-test-plugin": {"custom-field": "value"}}
+        result = _parse_plugins(raw)
+        parsed = result[PluginName("hyphen-test-plugin")]
+        assert isinstance(parsed, _HyphenTestPluginConfig)
+        assert parsed.custom_field == "value"
+    finally:
+        _plugin_config_registry.pop(PluginName("hyphen-test-plugin"), None)

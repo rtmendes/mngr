@@ -30,9 +30,6 @@ def test_stop_cli_options_fields() -> None:
         verbose=0,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=(),
         disable_plugin=(),
     )
@@ -109,9 +106,6 @@ def test_stop_cli_options_accepts_all_optional_fields() -> None:
         verbose=2,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=("my-plugin",),
         disable_plugin=("other-plugin",),
     )
@@ -189,7 +183,7 @@ def test_stop_archive_sets_archived_at_label(
     temp_host_dir: Path,
 ) -> None:
     """stop --archive should stop the agent and set the archived_at label."""
-    create_test_agent("archive-test-agent")
+    create_test_agent("archive-test-agent", "sleep 300018")
 
     result = cli_runner.invoke(
         stop,

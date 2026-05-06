@@ -29,10 +29,12 @@ from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.pure import pure
 from imbue.mngr.api.discovery_events import FullDiscoverySnapshotEvent
+from imbue.mngr.api.discovery_events import HostDestroyedEvent
 from imbue.mngr.api.discovery_events import parse_discovery_event_line
 from imbue.mngr.api.list import list_agents
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.errors import BaseMngrError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.primitives import AgentId
@@ -40,6 +42,7 @@ from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import ErrorBehavior
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
+from imbue.mngr.utils.jsonl_warn import MalformedJsonLineWarner
 
 # === Constants ===
 
@@ -237,16 +240,13 @@ def load_base_state_from_history(
         return {}
 
     latest_agents_data: tuple[dict, ...] | None = None
+    warner = MalformedJsonLineWarner(source_description=f"observe events file '{events_path}'")
     with open(events_path) as f:
         for line in f:
-            stripped = line.strip()
-            if not stripped:
+            parsed = warner.parse(line)
+            if parsed is None:
                 continue
-            try:
-                data = json.loads(stripped)
-            except json.JSONDecodeError as e:
-                logger.trace("Skipping malformed line in event history: {}", e)
-                continue
+            data, _ = parsed
             if data.get("type") == ObserveEventType.AGENTS_FULL_STATE:
                 latest_agents_data = tuple(data.get("agents", ()))
 
@@ -324,7 +324,7 @@ class _KnownHost(FrozenModel):
 class AgentObserver(MutableModel):
     """Observes agent state changes across all hosts.
 
-    Uses 'mngr observe --discovery-only' to track hosts and 'mngr events' to stream
+    Uses 'mngr observe --discovery-only' to track hosts and 'mngr event' to stream
     activity events from each online host. When activity is detected,
     fetches agent state and emits events to local JSONL files:
 
@@ -381,7 +381,7 @@ class AgentObserver(MutableModel):
                     try:
                         with log_span("Performing periodic full state snapshot"):
                             self._do_full_state_snapshot()
-                    except (MngrError, OSError) as e:
+                    except (BaseMngrError, OSError) as e:
                         logger.warning("Periodic full state snapshot failed (continuing): {}", e)
             except KeyboardInterrupt:
                 pass
@@ -390,7 +390,7 @@ class AgentObserver(MutableModel):
                 activity_worker.join(timeout=5.0)
 
     def _on_activity_failure(self, e: BaseException):
-        logger.error("Activity worker thread failed: {}", e)
+        logger.opt(exception=e).error("Activity worker thread failed")
         self._stop_event.set()
 
     def stop(self) -> None:
@@ -400,7 +400,7 @@ class AgentObserver(MutableModel):
     def _start_discovery_stream(self) -> None:
         """Start the 'mngr observe --discovery-only' subprocess for host discovery."""
         self._discovery_stream_process = self._concurrency_group.run_process_in_background(
-            command=[self.mngr_binary, "observe", "--discovery-only", "--quiet"],
+            command=[self.mngr_binary, "observe", "--discovery-only", "--quiet", "--on-error", "continue"],
             on_output=self._on_discovery_stream_output,
         )
 
@@ -411,14 +411,15 @@ class AgentObserver(MutableModel):
         stripped = line.strip()
         if not stripped:
             return
-        try:
-            event = parse_discovery_event_line(stripped)
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.trace("Failed to parse discovery event: {}", e)
-            return
+
+        event = parse_discovery_event_line(stripped)
 
         if isinstance(event, FullDiscoverySnapshotEvent):
             self._handle_full_snapshot(event)
+        elif isinstance(event, HostDestroyedEvent):
+            self._handle_host_destroyed(event)
+        else:
+            pass
 
     def _handle_full_snapshot(self, event: FullDiscoverySnapshotEvent) -> None:
         """Update known hosts from a full discovery snapshot and sync activity streams."""
@@ -447,6 +448,13 @@ class AgentObserver(MutableModel):
             host = new_hosts[host_id_str]
             self._start_activity_stream(host_id_str, host.host_name)
 
+    def _handle_host_destroyed(self, event: HostDestroyedEvent) -> None:
+        """Remove a destroyed host from known hosts and stop its activity stream."""
+        host_id_str = str(event.host_id)
+        with self._lock:
+            self._known_hosts.pop(host_id_str, None)
+        self._stop_activity_stream(host_id_str)
+
     # FIXME: we'll need to be smarter about this when we have tons of hosts--add these options to the observe CLI and API:
     #  1. --local-watches-only to only observe the local host. If specified, don't bother starting an activity stream for anything besides the local host
     #  2. --no-watches to disable the activity streams entirely and just do periodic full snapshots (which will still emit change events, just with less granularity and more latency)
@@ -461,7 +469,7 @@ class AgentObserver(MutableModel):
             process = self._concurrency_group.run_process_in_background(
                 command=[
                     self.mngr_binary,
-                    "events",
+                    "event",
                     host_id_str,
                     str(ACTIVITY_EVENT_SOURCE),
                     "--follow",
@@ -471,7 +479,7 @@ class AgentObserver(MutableModel):
             )
             with self._lock:
                 self._events_processes[host_id_str] = process
-        except (MngrError, OSError) as e:
+        except (BaseMngrError, OSError) as e:
             logger.debug("Failed to start activity stream for host {}: {}", host_name, e)
 
     def _stop_activity_stream(self, host_id_str: str) -> None:
@@ -519,7 +527,7 @@ class AgentObserver(MutableModel):
                     break
                 try:
                     self._fetch_and_emit_agent_state_for_host(hid)
-                except (MngrError, OSError) as e:
+                except (BaseMngrError, OSError) as e:
                     logger.warning("Failed to fetch agent state for host {}: {}", hid, e)
 
     def _fetch_and_emit_agent_state_for_host(self, host_id_str: str) -> None:

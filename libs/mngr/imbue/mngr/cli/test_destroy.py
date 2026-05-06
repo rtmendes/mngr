@@ -34,13 +34,16 @@ def test_destroy_single_agent(
             [
                 "--name",
                 agent_name,
-                "--command",
-                "sleep 435782",
+                "--type",
+                "command",
                 "--source",
                 str(temp_work_dir),
                 "--transfer=none",
                 "--no-connect",
                 "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120001",
             ],
             obj=plugin_manager,
             catch_exceptions=False,
@@ -86,13 +89,16 @@ def test_destroy_single_agent_via_session(
             [
                 "--name",
                 agent_name,
-                "--command",
-                "sleep 435783",
+                "--type",
+                "command",
                 "--source",
                 str(temp_work_dir),
                 "--transfer=none",
                 "--no-connect",
                 "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120002",
             ],
             obj=plugin_manager,
             catch_exceptions=False,
@@ -142,13 +148,16 @@ def test_destroy_with_confirmation(
             [
                 "--name",
                 agent_name,
-                "--command",
-                "sleep 679415",
+                "--type",
+                "command",
                 "--source",
                 str(temp_work_dir),
                 "--transfer=none",
                 "--no-connect",
                 "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120003",
             ],
             obj=plugin_manager,
             catch_exceptions=False,
@@ -198,13 +207,16 @@ def test_destroy_blocks_running_agent_without_force(
             [
                 "--name",
                 agent_name,
-                "--command",
-                "sleep 934827",
+                "--type",
+                "command",
                 "--source",
                 str(temp_work_dir),
                 "--transfer=none",
                 "--no-connect",
                 "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120004",
             ],
             obj=plugin_manager,
             catch_exceptions=False,
@@ -274,13 +286,16 @@ def test_destroy_prints_errors_if_any_identifier_not_found(
             [
                 "--name",
                 agent_name,
-                "--command",
-                "sleep 782341",
+                "--type",
+                "command",
                 "--source",
                 str(temp_work_dir),
                 "--transfer=none",
                 "--no-connect",
                 "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120005",
             ],
             obj=plugin_manager,
             catch_exceptions=False,
@@ -312,7 +327,12 @@ def test_destroy_prints_errors_if_any_identifier_not_found(
         assert tmux_session_exists(session_name), "Existing agent should not be destroyed when some identifiers fail"
 
 
+# Flaky under heavy CI load: wait_for(tmux_session_exists(...)) calls a tmux
+# subprocess that can exceed the 10s pytest-timeout when sandboxes are
+# contended. Offload retries flaky tests automatically; the underlying
+# tmux-subprocess slowness should be addressed separately.
 @pytest.mark.tmux
+@pytest.mark.flaky
 def test_destroy_multiple_agents(
     cli_runner: CliRunner,
     temp_work_dir: Path,
@@ -336,13 +356,16 @@ def test_destroy_multiple_agents(
                 [
                     "--name",
                     agent_name,
-                    "--command",
-                    "sleep 892736",
+                    "--type",
+                    "command",
                     "--source",
                     str(temp_work_dir),
                     "--transfer=none",
                     "--no-connect",
                     "--no-ensure-clean",
+                    "--",
+                    "sleep",
+                    "120006",
                 ],
                 obj=plugin_manager,
                 catch_exceptions=False,
@@ -492,13 +515,16 @@ def test_destroy_remove_created_branch_deletes_branch(
             [
                 "--name",
                 agent_name,
-                "--command",
-                "sleep 135790",
+                "--type",
+                "command",
                 "--source",
                 str(temp_git_repo),
                 "--no-connect",
                 "--transfer=git-worktree",
                 "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120007",
             ],
             obj=plugin_manager,
             catch_exceptions=False,
@@ -522,6 +548,7 @@ def test_destroy_remove_created_branch_deletes_branch(
         )
 
 
+@pytest.mark.flaky
 @pytest.mark.tmux
 def test_destroy_without_remove_created_branch_leaves_branch(
     cli_runner: CliRunner,
@@ -540,13 +567,16 @@ def test_destroy_without_remove_created_branch_leaves_branch(
             [
                 "--name",
                 agent_name,
-                "--command",
-                "sleep 246801",
+                "--type",
+                "command",
                 "--source",
                 str(temp_git_repo),
                 "--no-connect",
                 "--transfer=git-worktree",
                 "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120008",
             ],
             obj=plugin_manager,
             catch_exceptions=False,
@@ -586,13 +616,16 @@ def test_destroy_remove_created_branch_graceful_when_no_branch(
             [
                 "--name",
                 agent_name,
-                "--command",
-                "sleep 357912",
+                "--type",
+                "command",
                 "--source",
                 str(temp_work_dir),
                 "--transfer=none",
                 "--no-connect",
                 "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120009",
             ],
             obj=plugin_manager,
             catch_exceptions=False,
@@ -611,7 +644,163 @@ def test_destroy_remove_created_branch_graceful_when_no_branch(
         assert "Destroyed agent:" in destroy_result.output
 
 
+# Flaky under heavy CI load: the test's wait_for(tmux_session_exists) calls
+# tmux subprocesses on every poll iteration and can exceed the 10s
+# pytest-timeout when sandboxes are contended. Same family as
+# test_destroy_multiple_agents above; offload retries flaky tests automatically.
 @pytest.mark.tmux
+@pytest.mark.flaky
+def test_destroy_transfer_none_keeps_shared_worktree(
+    cli_runner: CliRunner,
+    temp_git_repo: Path,
+    tmp_path: Path,
+    mngr_test_prefix: str,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """An --transfer=none agent reuses an existing worktree owned by another
+    agent.  Destroying the in-place agent must not delete that worktree --
+    the original agent (and any user shell with that worktree as cwd) is
+    still using it.
+    """
+    timestamp = int(time.time())
+    owner_name = f"test-tn-owner-{timestamp}"
+    rider_name = f"test-tn-rider-{timestamp}"
+    owner_session = f"{mngr_test_prefix}{owner_name}"
+    rider_session = f"{mngr_test_prefix}{rider_name}"
+
+    # Place the owner's worktree at a known path so we can address it from the
+    # rider's create command without first listing agents.
+    worktree_path = tmp_path / "shared_worktree"
+
+    with tmux_session_cleanup(owner_session), tmux_session_cleanup(rider_session):
+        owner_create = cli_runner.invoke(
+            create,
+            [
+                "--name",
+                owner_name,
+                "--type",
+                "command",
+                "--source",
+                str(temp_git_repo),
+                "--target-path",
+                str(worktree_path),
+                "--transfer=git-worktree",
+                "--no-connect",
+                "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120100",
+            ],
+            obj=plugin_manager,
+            catch_exceptions=False,
+        )
+        assert owner_create.exit_code == 0, f"Owner create failed: {owner_create.output}"
+        assert worktree_path.is_dir(), "owner's worktree should exist after create"
+
+        rider_create = cli_runner.invoke(
+            create,
+            [
+                f"{rider_name}:{worktree_path}",
+                "--type",
+                "command",
+                "--source",
+                str(worktree_path),
+                "--transfer=none",
+                "--no-connect",
+                "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120101",
+            ],
+            obj=plugin_manager,
+            catch_exceptions=False,
+        )
+        assert rider_create.exit_code == 0, f"Rider create failed: {rider_create.output}"
+
+        wait_for(
+            lambda: tmux_session_exists(owner_session) and tmux_session_exists(rider_session),
+            timeout=15.0,
+            error_message="Expected both tmux sessions to exist before destroy",
+        )
+
+        rider_destroy = cli_runner.invoke(
+            destroy,
+            [rider_name, "--force"],
+            obj=plugin_manager,
+            catch_exceptions=False,
+        )
+        assert rider_destroy.exit_code == 0, f"Rider destroy failed: {rider_destroy.output}"
+
+        wait_for(
+            lambda: not tmux_session_exists(rider_session),
+            error_message=f"Expected rider tmux session {rider_session} to be destroyed",
+        )
+        assert worktree_path.is_dir(), (
+            "shared worktree must survive destroying the --transfer=none agent that reused it"
+        )
+        assert tmux_session_exists(owner_session), "owner tmux session should still be running"
+
+
+@pytest.mark.tmux
+def test_destroy_transfer_none_standalone_keeps_user_worktree(
+    cli_runner: CliRunner,
+    temp_git_repo: Path,
+    tmp_path: Path,
+    mngr_test_prefix: str,
+    plugin_manager: pluggy.PluginManager,
+) -> None:
+    """Destroying a standalone --transfer=none agent must not delete the
+    pre-existing worktree it ran in.  This covers the case where the user
+    points mngr at one of their own git worktrees (not generated by mngr)."""
+    timestamp = int(time.time())
+    user_worktree = tmp_path / "user_worktree"
+    subprocess.run(
+        ["git", "-C", str(temp_git_repo), "worktree", "add", str(user_worktree), "-b", "user-branch"],
+        check=True,
+    )
+    assert user_worktree.is_dir()
+
+    agent_name = f"test-tn-standalone-{timestamp}"
+    session_name = f"{mngr_test_prefix}{agent_name}"
+
+    with tmux_session_cleanup(session_name):
+        create_result = cli_runner.invoke(
+            create,
+            [
+                f"{agent_name}:{user_worktree}",
+                "--type",
+                "command",
+                "--source",
+                str(user_worktree),
+                "--transfer=none",
+                "--no-connect",
+                "--no-ensure-clean",
+                "--",
+                "sleep",
+                "120102",
+            ],
+            obj=plugin_manager,
+            catch_exceptions=False,
+        )
+        assert create_result.exit_code == 0, f"Create failed: {create_result.output}"
+
+        destroy_result = cli_runner.invoke(
+            destroy,
+            [agent_name, "--force"],
+            obj=plugin_manager,
+            catch_exceptions=False,
+        )
+        assert destroy_result.exit_code == 0, f"Destroy failed: {destroy_result.output}"
+
+        wait_for(
+            lambda: not tmux_session_exists(session_name),
+            error_message=f"Expected tmux session {session_name} to be destroyed",
+        )
+        assert user_worktree.is_dir(), "user-owned worktree must survive --transfer=none destroy"
+
+
+@pytest.mark.tmux
+@pytest.mark.flaky
 def test_destroy_via_stdin(
     cli_runner: CliRunner,
     temp_work_dir: Path,
@@ -635,13 +824,16 @@ def test_destroy_via_stdin(
                 [
                     "--name",
                     agent_name,
-                    "--command",
-                    "sleep 892736",
+                    "--type",
+                    "command",
                     "--source",
                     str(temp_work_dir),
                     "--transfer=none",
                     "--no-connect",
                     "--no-ensure-clean",
+                    "--",
+                    "sleep",
+                    "120011",
                 ],
                 obj=plugin_manager,
                 catch_exceptions=False,

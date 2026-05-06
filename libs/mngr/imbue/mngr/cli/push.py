@@ -101,7 +101,7 @@ class PushCliOptions(CommonCliOptions):
     "--mirror",
     is_flag=True,
     default=False,
-    help="Force the agent's git state to match the source, overwriting all refs (branches, tags) and resetting the working tree (dangerous). Any commits or branches that exist only in the agent will be lost. Only applies to --sync-mode=git. Required when the agent and source have diverged (non-fast-forward). For remote agents, uses git push --mirror [future].",
+    help="Force the agent's git state to match the source, overwriting all refs (branches, tags) and resetting the working tree (dangerous). Any commits or branches that exist only in the agent will be lost. Only applies to --sync-mode=git. Required when the agent and source have diverged (non-fast-forward). For remote agents, pushes all local branches and tags [future].",
 )
 @optgroup.option(
     "--rsync-only",
@@ -236,7 +236,7 @@ def push(ctx: click.Context, **kwargs) -> None:
 CommandHelpMetadata(
     key="push",
     one_line_description="Push files or git commits from local machine to an agent [experimental]",
-    synopsis="mngr push [TARGET] [SOURCE] [--target-agent <AGENT>] [--dry-run] [--stop]",
+    synopsis="mngr push [TARGET] [SOURCE] [--target <TARGET>] [--source <DIR>] [--target-agent <AGENT>] [--sync-mode <MODE>] [--mirror] [--dry-run] [--stop]",
     description="""Syncs files or git state from a local directory to an agent's working directory.
 Default behavior uses rsync for efficient incremental file transfer.
 Use --sync-mode=git to push git branches instead of syncing files.

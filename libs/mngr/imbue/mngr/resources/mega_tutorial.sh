@@ -17,8 +17,8 @@ set -euo pipefail
 mngr create
 # the defaults are the following: agent=claude, provider=local, project=current dir
 
-# if you want the default behavior of claude (starting in-place), you can specify that:
-mngr create --in-place
+# you can run the agent in-place (directly in your source directory) without any transfer:
+mngr create my-task --transfer=none
 # mngr defaults to creating a new worktree for each agent because the whole point of mngr is to let you run multiple agents in parallel.
 # without creating a new worktree for each, they will make conflicting changes with one another.
 
@@ -46,13 +46,14 @@ mngr create my-task -- --model opus
 mngr create my-task --provider modal
 # see more details below in "CREATING AGENTS REMOTELY" for relevant options
 
-# you can run *any* literal command instead of a named agent type:
-mngr create my-task --command python -- my_script.py
+# to run an arbitrary shell command, use the built-in `command` agent type
+# and put the command (and its args) after `--`:
+mngr create my-task --type command -- python my_script.py
 # remember that the arguments to the "agent" (or command) come after the `--` separator
 
 # this enables some pretty interesting use cases, like running servers or other programs (besides AI agents)
 # this makes debugging easy--you can snapshot when a task is complete, then later connect to that exact machine state:
-mngr create my-task --command python --idle-mode run --idle-timeout 60 -- my_long_running_script.py extra-args
+mngr create my-task --type command --idle-mode run --idle-timeout 60 -- python my_long_running_script.py extra-args
 # see "RUNNING NON-AGENT PROCESSES" below for more details
 
 # alternatively, you can simply add extra tmux windows that run alongside your agent:
@@ -73,7 +74,7 @@ mngr create my-task --provider modal --edit-message
 ## SPECIFYING DATA FOR THE AGENT
 
 # by default, the agent uses the data from its current git repo (if any) or folder, but you can specify a different source:
-mngr create my-task --source-path /path/to/some/other/project
+mngr create my-task --from /path/to/some/other/project
 
 # similarly, by default the agent is tagged with a "project" label that matches the name of the current git repo (or folder), but you can specify a different project:
 mngr create my-task --project my-project
@@ -81,7 +82,7 @@ mngr create my-task --project my-project
 # mngr doesn't require git at all--if there's no git repo, it will just use the files from the folder as the source data
 mkdir -p /tmp/my_random_folder
 echo "print('hello world')" > /tmp/my_random_folder/script.py
-mngr create my-task --source-path /tmp/my_random_folder --command python -- script.py
+mngr create my-task --from /tmp/my_random_folder --type command -- python script.py
 
 # however, if you do use git, mngr makes that convenient
 # by default, it creates a new git branch for each agent (so that their changes don't conflict with each other):
@@ -112,13 +113,9 @@ mngr create my-task --branch main
 # you can create a "clone" instead of worktree or copy, which is a lightweight copy that shares git objects with the original repo but has its own separate working directory:
 mngr create my-task --clone
 
-# you can make a shallow clone for faster setup:
-mngr create my-task --depth 1
-# (--shallow-since clones since a specific date instead)
-
 # you can clone from an existing agent's work directory:
 mngr create my-task --from other-agent
-# (--source, --source-agent, and --source-host are alternative forms for more specific control)
+# (--source is an alias for --from; the format supports agent@host.provider:path)
 
 # you can use rsync to transfer extra data as well, beyond just the git data:
 mngr create my-task --provider modal --rsync --rsync-args "--exclude=node_modules"
@@ -173,11 +170,11 @@ mngr create my-task --provider docker -s "--gpus all"
 # these args are passed to "docker run", whereas the build args are passed to "docker build".
 
 # you can specify the target path where the agent's work directory will be mounted:
-mngr create my-task --provider modal --target-path /workspace
+mngr create my-task@.modal:/workspace
 
 # you can upload files and run custom commands during host provisioning:
 mngr create my-task --provider modal --upload-file ~/.ssh/config:/root/.ssh/config --extra-provision-command "pip install foo"
-# (--sudo-command runs as root; --append-to-file and --prepend-to-file are also available)
+# (--sudo-command runs as root)
 
 # by default, agents are started when a host is booted. This can be disabled:
 mngr create my-task --provider modal --no-start-on-boot
@@ -204,7 +201,7 @@ mngr create my-task --provider modal --pass-host-env MY_VAR
 # you can use templates to quickly apply a set of preconfigured options:
 echo '[create_templates.my_modal_template]' >> .mngr/settings.local.toml
 echo 'provider = "modal"' >> .mngr/settings.local.toml
-echo 'build_args = "cpu=4"' >> .mngr/settings.local.toml
+echo 'build_arg = ["cpu=4"]' >> .mngr/settings.local.toml
 mngr create my-task --template my_modal_template
 # templates are defined in your config (see the CONFIGURATION section for more) and can be stacked: --template modal --template codex
 # templates take exactly the same parameters as the create command
@@ -214,7 +211,7 @@ mngr create my-task --template my_modal_template
 mngr create my-task --plugin my-plugin --disable-plugin other-plugin
 
 # you should probably use aliases for making little shortcuts for yourself, because many of the commands can get a bit long:
-echo "alias mc='mngr create --in-place'" >> ~/.bashrc && source ~/.bashrc
+echo "alias mc='mngr create --transfer=none'" >> ~/.bashrc && source ~/.bashrc
 # or use a more sophisticated tool, like Espanso
 
 ## TIPS AND TRICKS
@@ -228,8 +225,10 @@ mngr create my-task --no-ensure-clean
 mngr create sisyphus --reuse --provider modal
 # if that agent already exists, it will be reused (and started) instead of creating a new one. If it doesn't exist, it will be created.
 
-# you can control connection retries and timeouts:
-mngr create my-task --provider modal --retry 5 --retry-delay 10s
+# you can control connection retries and timeouts via settings.toml:
+# [retry]
+# connect_retry_times = 5
+# connect_retry_delay = "10s"
 # (--reconnect / --no-reconnect controls auto-reconnect on disconnect)
 
 # you can use a custom connect command instead of the default (eg, useful for, say, connecting in a new iterm window instead of the current one)
@@ -292,6 +291,17 @@ mngr list --archived
 
 # show only active agents (anything not archived/destroyed/crashed/failed)
 mngr list --active
+
+# you can make any of those filters the default for "mngr list" by setting it in your config.
+# for example, to hide agents from dead/destroyed hosts by default:
+mngr config set commands.list.active true
+# to opt out for a single call, override the env var: MNGR_COMMANDS_LIST_ACTIVE=false mngr list
+
+# note: --active only excludes hosts in CRASHED/FAILED/DESTROYED state and archived agents,
+# *not* STOPPED or DONE agents. if you want to also hide STOPPED and DONE agents from the default,
+# use an exclude filter instead:
+#   [commands.list]
+#   exclude = ['state == "STOPPED"', 'state == "DONE"']
 
 # show only agents running locally
 mngr list --local
@@ -490,6 +500,9 @@ mngr archive my-task
 # stop all running agents
 mngr list --ids | mngr stop -
 
+# archive all stopped agents (handy for cleaning up "mngr list" after a batch of finished work).
+mngr list --stopped --ids | mngr archive -
+
 # dry-run to see what would be stopped
 mngr list --ids | mngr stop - --dry-run
 
@@ -639,26 +652,26 @@ watch -n60 mngr gc
 ##############################################################################
 
 # view all events for an agent
-mngr events my-task
+mngr event my-task
 # all events are json objects that are guaranteed to have at least the following fields: "event_id", "timestamp", "source" and "type"
 # events are printed as JSONL (one JSON object per line), so you can easily pipe them to jq for filtering and formatting, or to other tools for monitoring and alerting
 
 # follow events in real time (like tail -f). Extremely useful for scripting.
-mngr events my-task --follow
+mngr event my-task --follow
 
 # restrict the event stream to a specific type of event (source)
 # in this case we're looking at the "claude/common_transcript" events for a claude agent,
 # which shows the conversation messages in and out of the agent in a unified format
-mngr events my-task --follow claude/common_transcript
+mngr event my-task --follow claude/common_transcript
 
 # show only the last 20 events
-mngr events my-task --tail 20
+mngr event my-task --tail 20
 
 # show only the first 10 events
-mngr events my-task --head 10
+mngr event my-task --head 10
 
 # include only events matching a CEL expression
-mngr events my-task --include 'type == "user_message"'
+mngr event my-task --include 'type == "user_message"'
 
 # view the transcript of an agent's conversation
 mngr transcript my-task
@@ -668,6 +681,9 @@ mngr transcript my-task --role assistant
 
 # view the last 5 messages
 mngr transcript my-task --tail 5
+
+# quickly peek at an agent's most recent message without connecting (handy for sanity-checking many agents)
+mngr transcript my-task --tail 1
 
 # output transcript as JSONL for programmatic use
 mngr transcript my-task --format jsonl
@@ -788,6 +804,19 @@ mngr create my-task --project other-project
 
 # filter agents by project using CEL expressions
 mngr list --include 'project == "my-project"'
+
+# the literal "." is expanded to the current project (derived from your git worktree
+# root's remote origin, falling back to its source-repo dir name (for worktrees) or
+# folder name, so it stays correct from any subdirectory), so this lists agents for
+# the project you're currently in:
+mngr list --project .
+# this also works for "mngr kanpan --project ."
+
+# to make this the default, set it in the project-scoped config (.mngr/settings.toml).
+# project-scoped config only applies when run from inside that project, so you get a
+# per-project default for free:
+#   [commands.list]
+#   project = ["."]
 
 # see which projects have agents by looking at the project field
 mngr list --fields "name,project,state"
@@ -926,7 +955,7 @@ mngr config edit --scope project
 # in the editor, add something like:
 #   [create_templates.modal-big]
 #   provider = "modal"
-#   build_args = ["cpu=4", "memory=16"]
+#   build_arg = ["cpu=4", "memory=16"]
 #   idle_timeout = "120"
 #   agent_args = ["--dangerously-skip-permissions"]
 # then use the template when creating agents:
@@ -940,16 +969,16 @@ mngr create my-task --template modal-big --template with-tests
 
 ##############################################################################
 # CUSTOM AGENT TYPES
-#   Define your own agent types in config, or use any command in your PATH
-#   as an agent. Wrap existing tools with custom defaults and permissions.
+#   Define your own agent types in config, or use the built-in `command` type
+#   to run any shell command. Wrap existing tools with custom defaults and permissions.
 ##############################################################################
 
 # mngr supports multiple agent types out of the box (claude, codex, etc.)
-# you can also run any command as an "agent" using --command:
-mngr create my-server --command python -- -m http.server 8080
+# you can also run any shell command as an "agent" using the built-in `command` type:
+mngr create my-server --type command -- python -m http.server 8080
 
 # run a custom script as an agent
-mngr create my-task --command /path/to/my-tool -- --some-flag
+mngr create my-task --type command -- my-tool --some-flag
 
 # agent types are provided by plugins -- see MANAGING PLUGINS above
 # to see which agent types are available:
@@ -1079,7 +1108,7 @@ mngr create my-task --provider modal --idle-timeout 60
 mngr create my-task --provider modal --idle-mode ssh --idle-timeout 300
 
 # for long-running scripts, "run" mode stops the host when the script finishes
-mngr create my-task --provider modal --command python --idle-mode run --idle-timeout 60 -- long_job.py
+mngr create my-task --provider modal --type command --idle-mode run --idle-timeout 60 -- python long_job.py
 
 # TODO: make a few more examples here--there's lots of useful stuff you can do with this!
 
@@ -1110,16 +1139,16 @@ mngr stop agent-1
 ##############################################################################
 
 # run a Python script as a managed process
-mngr create my-server --command python -- -m http.server 8080
+mngr create my-server --type command -- python -m http.server 8080
 
 # run a long-running data pipeline
-mngr create etl-job --command python --idle-mode run --idle-timeout 60 -- etl_pipeline.py
+mngr create etl-job --type command --idle-mode run --idle-timeout 60 -- python etl_pipeline.py
 
 # run a dev server with extra tmux windows for logs
-mngr create dev-env --command "npm run dev" -w logs="tail -f /var/log/app.log"
+mngr create dev-env --type command -w logs="tail -f /var/log/app.log" -- npm run dev
 
 # use --idle-mode run so the host stops when the process finishes
-mngr create batch-job --provider modal --command bash --idle-mode run --idle-timeout 30 -- -c "python train.py && python evaluate.py"
+mngr create batch-job --provider modal --type command --idle-mode run --idle-timeout 30 -- bash -c "python train.py && python evaluate.py"
 # the container will be automatically snapshotted when completed, so you can later come back and connect (and start) to see the results:
 mngr conn batch-job
 
@@ -1159,6 +1188,26 @@ done
 #   These options are typically less commonly used or more advanced
 ##############################################################################
 
+# MNGR_HOST_DIR / default_host_dir: by default mngr stores its state (agent metadata, events,
+# discovery cache, etc.) under ~/.mngr. if you'd rather scope state per-project, point it at a
+# project-local directory. note that this completely isolates state per-project (you won't see
+# agents from other projects), so it's most useful for sandboxes or clean per-project setups.
+# the cleanest way to do this is with direnv -- add a .envrc to your project:
+#   export MNGR_HOST_DIR="$PWD/.mngr-state"
+# and then "direnv allow". you can also set it as an absolute path in config:
+#   default_host_dir = "/abs/path/to/project/.mngr-state"
+
+# work_dir_extra_paths: include extra files (outside of git) in each new agent work directory.
+# useful for things like .env files, .venv, build caches, or local config that aren't tracked in git.
+# add this to .mngr/settings.toml (or settings.local.toml):
+#   [work_dir_extra_paths]
+#   ".env" = "COPY"
+#   ".mngr/settings.local.toml" = "SHARE"
+#   ".venv" = "COPY"
+# "COPY" makes an independent copy via rsync (good for branch-dependent paths like .venv).
+# "SHARE" symlinks to the source on the same host (good for shared config like settings.local.toml,
+# so that editing the one file at the project root immediately applies to every local agent).
+# "SHARE" automatically falls back to a copy when transferring to a different host.
 
 ##############################################################################
 # OUTPUT FORMATS AND MACHINE-READABLE OUTPUT
@@ -1208,8 +1257,8 @@ mngr create my-task --provider modal --extra-provision-command "pip install nump
 # run a command as root during provisioning (if your default user is not root, assumes passwordless sudo for that user)
 mngr create my-task --provider modal --extra-provision-command "sudo apt-get update && apt-get install -y vim"
 
-# append content to a file on the host
-mngr create my-task --provider modal --append-to-file /root/.bashrc="export PATH=/opt/bin:\$PATH"
+# append content to a file on the host using a provision command
+mngr create my-task --provider modal --extra-provision-command "echo 'export PATH=/opt/bin:\$PATH' >> /root/.bashrc"
 
 # combine multiple setup steps
 mngr create my-task --provider modal \
@@ -1232,8 +1281,11 @@ for task in "fix-auth" "add-logging" "update-deps" "write-docs"; do
   mngr create "$task"@.modal --no-connect --message "Work on: $task"
 done
 
-# monitor all agents in a watch loop
-mngr list --watch 5 --running
+# monitor all agents in a refreshing dashboard (uses Unix watch(1))
+watch -n 5 mngr list --running
+
+# or get a JSONL stream of host/agent discovery events for programmatic consumers
+mngr observe --discovery-only
 
 # collect results from all agents
 for agent in "fix-auth" "add-logging" "update-deps" "write-docs"; do
@@ -1287,11 +1339,11 @@ mngr list --fields "name,state,host.provider,host.name"
 
 # auto-generated by Claude, remove when a human has sanctioned this
 # view recent events to understand what happened
-mngr events my-task --tail 20
+mngr event my-task --tail 20
 
 # auto-generated by Claude, remove when a human has sanctioned this
 # follow events in real time while reproducing an issue
-mngr events my-task --follow
+mngr event my-task --follow
 
 # auto-generated by Claude, remove when a human has sanctioned this
 # check the agent's transcript for error messages

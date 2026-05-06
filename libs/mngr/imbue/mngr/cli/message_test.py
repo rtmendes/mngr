@@ -31,9 +31,6 @@ _DEFAULT_OPTS = MessageCliOptions(
     verbose=0,
     log_file=None,
     log_commands=None,
-    log_command_output=None,
-    log_env_vars=None,
-    project_context_path=None,
     plugin=(),
     disable_plugin=(),
 )
@@ -54,9 +51,6 @@ def test_message_cli_options_has_expected_fields() -> None:
         verbose=0,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=(),
         disable_plugin=(),
     )
@@ -232,6 +226,7 @@ def test_emit_human_output_successful_agents_with_count(capsys: pytest.CaptureFi
     assert "Successfully sent message to 3 agent(s)" in output
 
 
+@pytest.mark.allow_warnings(match=r"^Failed to send message to agent-")
 def test_emit_human_output_only_failed_agents(capsys: pytest.CaptureFixture[str]) -> None:
     """Test _emit_human_output handles case with only failures."""
     result = MessageResult()

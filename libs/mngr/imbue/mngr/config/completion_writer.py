@@ -26,11 +26,14 @@ from imbue.mngr.utils.file_utils import atomic_write
 # For variadic commands (nargs=None), the last entry repeats.
 # Source identifiers: "agent_names", "host_names", "plugin_names", "config_keys"
 _POSITIONAL_COMPLETION_SPEC: Final[dict[str, list[list[str]]]] = {
+    "archive": [["agent_names"]],
+    "capture": [["agent_names"]],
     "connect": [["agent_names"]],
     "destroy": [["agent_names"]],
     "exec": [["agent_names"]],
     "limit": [["agent_names"]],
-    "events": [["agent_names", "host_names"], []],
+    "event": [["agent_names", "host_names"], []],
+    "label": [["agent_names"]],
     "message": [["agent_names"]],
     "pair": [["agent_names"]],
     "provision": [["agent_names"]],
@@ -39,6 +42,7 @@ _POSITIONAL_COMPLETION_SPEC: Final[dict[str, list[list[str]]]] = {
     "rename": [["agent_names"], []],
     "start": [["agent_names"]],
     "stop": [["agent_names"]],
+    "transcript": [["agent_names", "host_names"]],
 }
 
 # Per-position positional completion spec for group subcommands.
@@ -52,6 +56,9 @@ _POSITIONAL_COMPLETION_SUBCOMMAND_SPEC: Final[dict[str, list[list[str]]]] = {
     "config.get": [["config_keys"]],
     "config.set": [["config_keys"], ["config_value_for_key"]],
     "config.unset": [["config_keys"]],
+    "file.get": [["agent_names", "host_names"], []],
+    "file.put": [["agent_names", "host_names"], []],
+    "file.list": [["agent_names", "host_names"], []],
 }
 
 # Options (keyed as "command.--option") whose values should complete against
@@ -65,11 +72,7 @@ _GIT_BRANCH_OPTIONS: Final[frozenset[str]] = frozenset(
 
 # Options whose values should complete against host names from the discovery
 # event stream. Uses the same "command.--option" notation.
-_HOST_NAME_OPTIONS: Final[frozenset[str]] = frozenset(
-    {
-        "create.--target",
-    }
-)
+_HOST_NAME_OPTIONS: Final[frozenset[str]] = frozenset()
 
 # Click option names (--long forms) that should complete against plugin names.
 _PLUGIN_NAME_OPTION_NAMES: Final[frozenset[str]] = frozenset(

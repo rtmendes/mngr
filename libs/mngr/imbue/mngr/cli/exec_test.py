@@ -1,12 +1,10 @@
 """Unit tests for the exec CLI command."""
 
 import json
-from io import StringIO
 
 import pluggy
 import pytest
 from click.testing import CliRunner
-from loguru import logger
 
 from imbue.mngr.api.exec import ExecResult
 from imbue.mngr.api.exec import MultiExecResult
@@ -19,6 +17,7 @@ from imbue.mngr.cli.exec import _emit_output
 from imbue.mngr.cli.exec import exec_command
 from imbue.mngr.config.data_types import OutputOptions
 from imbue.mngr.primitives import OutputFormat
+from imbue.mngr.utils.testing import capture_loguru
 
 
 def test_exec_cli_options_fields() -> None:
@@ -27,7 +26,6 @@ def test_exec_cli_options_fields() -> None:
         agents=("my-agent",),
         agent_list=(),
         command_arg="echo hello",
-        user=None,
         cwd=None,
         timeout=None,
         start=True,
@@ -37,15 +35,11 @@ def test_exec_cli_options_fields() -> None:
         verbose=0,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=(),
         disable_plugin=(),
     )
     assert opts.agents == ("my-agent",)
     assert opts.command_arg == "echo hello"
-    assert opts.user is None
     assert opts.cwd is None
     assert opts.timeout is None
     assert opts.start is True
@@ -91,6 +85,7 @@ def test_emit_human_output_single_success(capsys: pytest.CaptureFixture[str]) ->
     assert "hello world" in captured.out
 
 
+@pytest.mark.allow_warnings(match=r"^Command failed on agent test-agent")
 def test_emit_human_output_single_failure(capsys: pytest.CaptureFixture[str]) -> None:
     """Test human output handles failed commands."""
     exec_result = ExecResult(agent_name="test-agent", stdout="", stderr="bad command\n", success=False)
@@ -255,6 +250,7 @@ def test_emit_human_output_stdout_without_trailing_newline(capsys: pytest.Captur
     assert "no trailing newline" in captured.out
 
 
+@pytest.mark.allow_warnings(match=r"^Command failed on agent test-agent")
 def test_emit_human_output_stderr_without_trailing_newline(capsys: pytest.CaptureFixture[str]) -> None:
     """Test human output adds trailing newline if stderr doesn't have one."""
     result = ExecResult(agent_name="test-agent", stdout="", stderr="error output", success=False)
@@ -270,12 +266,8 @@ def test_emit_human_output_failed_agents_logs_errors() -> None:
         successful_results=[],
         failed_agents=[("agent-x", "host offline"), ("agent-y", "timeout")],
     )
-    log_output = StringIO()
-    sink_id = logger.add(log_output, level="ERROR", format="{message}")
-    try:
+    with capture_loguru(level="ERROR") as log_output:
         _emit_human_output(multi_result)
-    finally:
-        logger.remove(sink_id)
     output = log_output.getvalue()
     assert "agent-x" in output
     assert "host offline" in output

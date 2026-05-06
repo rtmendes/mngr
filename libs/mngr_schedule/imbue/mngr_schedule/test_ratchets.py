@@ -4,6 +4,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from imbue.imbue_common.ratchet_testing import standard_ratchet_checks as rc
+from imbue.imbue_common.ratchet_testing.ratchets import TEST_FILE_PATTERNS
 from imbue.imbue_common.ratchet_testing.ratchets import check_no_ruff_errors
 from imbue.imbue_common.ratchet_testing.ratchets import check_no_type_errors
 
@@ -40,7 +41,7 @@ def test_prevent_global_keyword() -> None:
 
 
 def test_prevent_bare_print() -> None:
-    rc.check_bare_print(_DIR, snapshot(7))
+    rc.check_bare_print(_DIR, snapshot(10))
 
 
 # --- Exception handling ---
@@ -60,6 +61,10 @@ def test_prevent_base_exception_catch() -> None:
 
 def test_prevent_builtin_exception_raises() -> None:
     rc.check_builtin_exception_raises(_DIR, snapshot(7))
+
+
+def test_prevent_silent_decode_error_catches() -> None:
+    rc.check_silent_decode_error_catches(_DIR, snapshot(0))
 
 
 # --- Import style ---
@@ -127,6 +132,10 @@ def test_prevent_hardcoded_claude_dir() -> None:
     rc.check_hardcoded_claude_dir(_DIR, snapshot(0))
 
 
+def test_prevent_hardcoded_guarded_binary() -> None:
+    rc.check_hardcoded_guarded_binary(_DIR, snapshot(0))
+
+
 # --- Naming conventions ---
 
 
@@ -192,6 +201,10 @@ def test_prevent_click_echo() -> None:
     rc.check_click_echo(_DIR, snapshot(2))
 
 
+def test_prevent_logger_exception() -> None:
+    rc.check_logger_exception(_DIR, snapshot(0))
+
+
 # --- Testing conventions ---
 
 
@@ -200,7 +213,7 @@ def test_prevent_unittest_mock_imports() -> None:
 
 
 def test_prevent_monkeypatch_setattr() -> None:
-    rc.check_monkeypatch_setattr(_DIR, snapshot(0))
+    rc.check_monkeypatch_setattr(_DIR, snapshot(1))
 
 
 def test_prevent_test_container_classes() -> None:
@@ -223,7 +236,9 @@ def test_prevent_bare_urwid_tty_signal_keys() -> None:
 
 
 def test_prevent_direct_subprocess() -> None:
-    rc.check_direct_subprocess(_DIR, snapshot(5))
+    # testing.py files are test infrastructure and excluded alongside test files
+    excluded = TEST_FILE_PATTERNS + ("testing.py",)
+    rc.check_direct_subprocess(_DIR, snapshot(5), excluded_patterns=excluded)
 
 
 # --- AST-based ratchets ---

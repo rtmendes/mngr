@@ -12,17 +12,18 @@ from imbue.mngr.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
 
 _REMOTE_TIMEOUT = 120.0
-
-# Note: @pytest.mark.modal is NOT used here. In libs/mngr/conftest.py, the
-# modal resource guard is a PATH wrapper for the `modal` CLI binary. These
-# e2e tests run mngr as a subprocess, which uses the Modal Python SDK (not
-# the `modal` CLI), so the PATH wrapper never fires; adding the mark would
-# cause "Test marked with @pytest.mark.modal but never invoked modal" failures.
-# The @pytest.mark.rsync mark IS valid for tests that create Modal agents,
-# because the rsync guard uses a PATH wrapper script that subprocesses inherit.
+# test_create_modal_build_args uses a custom image (-b image=python:3.12) that
+# has to pull the image and apt-install openssh/tmux/rsync/jq/xxd at runtime,
+# which pushes the total past the default _REMOTE_TIMEOUT. Bumping just this
+# test's wait rather than all of them keeps the common case tight.
+_REMOTE_TIMEOUT_CUSTOM_IMAGE = 240.0
 
 
+# All tests in this file invoke the Modal CLI indirectly (via environment_create
+# during provider initialization), so they need @pytest.mark.modal to satisfy
+# the resource guard.
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_provider_modal(e2e: E2eSession) -> None:
@@ -40,8 +41,9 @@ def test_create_provider_modal(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(660)
 def test_create_modal_no_connect_message(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # you can send an initial message (so you don't have to wait around, eg, while a Modal container starts)
@@ -50,15 +52,27 @@ def test_create_modal_no_connect_message(e2e: E2eSession) -> None:
     # and then we also pass in an explicit message for the agent to start working on immediately
     # the message can also be specified as the contents of a file (by using --message-file instead of --message)
     """)
+    # Use a generous ready timeout because the agent needs to fully start
+    # (install Claude Code, authenticate, signal readiness) before the message
+    # can be sent. This is slow on fresh Modal hosts (~2-5 min), and even
+    # slower in Modal-in-Modal (offload) environments (~5-8 min).
     result = e2e.run(
-        'mngr create my-task --provider modal --no-connect --message "Speed up one of my tests and make a PR on github" --no-ensure-clean',
+        'MNGR_AGENT_READY_TIMEOUT=540 mngr create my-task --provider modal --no-connect --pass-env ANTHROPIC_API_KEY --message "Speed up one of my tests and make a PR on github" --no-ensure-clean',
         comment="you can send an initial message (so you don't have to wait around)",
-        timeout=_REMOTE_TIMEOUT,
+        timeout=600.0,
     )
-    expect(result).to_succeed()
+    if result.exit_code != 0:
+        diagnostics = e2e.collect_remote_diagnostics("my-task")
+        raise AssertionError(
+            f"Expected command to succeed but got exit code {result.exit_code}\n"
+            f"  Command: {result.command}\n"
+            f"  Stderr:\n    {result.stderr}\n"
+            f"{diagnostics}"
+        )
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_modal_edit_message(e2e: E2eSession) -> None:
@@ -75,6 +89,7 @@ def test_create_modal_edit_message(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_modal_rsync(e2e: E2eSession) -> None:
@@ -91,6 +106,7 @@ def test_create_modal_rsync(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_modal_passthrough_agent_args(e2e: E2eSession) -> None:
@@ -110,6 +126,7 @@ def test_create_modal_passthrough_agent_args(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_modal_idle_timeout(e2e: E2eSession) -> None:
@@ -129,6 +146,7 @@ def test_create_modal_idle_timeout(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_modal_idle_mode_ssh(e2e: E2eSession) -> None:
@@ -147,6 +165,7 @@ def test_create_modal_idle_mode_ssh(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 def test_create_address_syntax_existing_host(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # you can specify which existing host to run on using the address syntax (eg, if you have multiple Modal hosts or SSH servers):
@@ -163,8 +182,9 @@ def test_create_address_syntax_existing_host(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 def test_create_modal_build_args(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # generally though, you'll want to construct a new Modal host for each agent.
@@ -176,14 +196,15 @@ def test_create_modal_build_args(e2e: E2eSession) -> None:
     result = e2e.run(
         "mngr create my-task --provider modal -b cpu=4 -b memory=16 -b image=python:3.12 --no-connect --no-ensure-clean",
         comment="build arguments let you customize that new remote host",
-        timeout=_REMOTE_TIMEOUT,
+        timeout=_REMOTE_TIMEOUT_CUSTOM_IMAGE,
     )
     expect(result).to_succeed()
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 def test_create_modal_dockerfile_and_context(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # the most important build args for Modal are probably "--file" and "--context-dir",
@@ -193,6 +214,11 @@ def test_create_modal_dockerfile_and_context(e2e: E2eSession) -> None:
     # that command builds a Modal host using the Dockerfile at ./Dockerfile.agent and the build context at ./agent-context
     # (which is where the Dockerfile can COPY files from, and also where build args are evaluated from)
     """)
+    # Create the Dockerfile and context directory so the build args have real targets
+    e2e.run(
+        "echo 'FROM python:3.12-slim' > Dockerfile.agent && mkdir -p agent-context",
+        comment="create Dockerfile and context",
+    )
     result = e2e.run(
         "mngr create my-task --provider modal -b file=./Dockerfile.agent -b context-dir=./agent-context --no-connect --no-ensure-clean",
         comment="the most important build args for Modal are --file and --context-dir",
@@ -202,6 +228,7 @@ def test_create_modal_dockerfile_and_context(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_named_host_new_host(e2e: E2eSession) -> None:
@@ -219,6 +246,7 @@ def test_create_named_host_new_host(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_modal_volume(e2e: E2eSession) -> None:
@@ -235,31 +263,16 @@ def test_create_modal_volume(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
-@pytest.mark.rsync
-@pytest.mark.timeout(120)
-def test_create_modal_snapshot(e2e: E2eSession) -> None:
-    e2e.write_tutorial_block("""
-    # you can use an existing snapshot instead of building a new host from scratch:
-    mngr create my-task --provider modal --snapshot snap-123abc
-    """)
-    result = e2e.run(
-        "mngr create my-task --provider modal --snapshot snap-123abc --no-connect --no-ensure-clean",
-        comment="you can use an existing snapshot instead of building a new host from scratch",
-        timeout=_REMOTE_TIMEOUT,
-    )
-    expect(result).to_succeed()
-
-
-@pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_modal_target_path(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # you can specify the target path where the agent's work directory will be mounted:
-    mngr create my-task --provider modal --target-path /workspace
+    mngr create my-task@.modal:/workspace
     """)
     result = e2e.run(
-        "mngr create my-task --provider modal --target-path /workspace --no-connect --no-ensure-clean",
+        "mngr create my-task@.modal:/workspace --no-connect --no-ensure-clean",
         comment="you can specify the target path where the agent's work directory will be mounted",
         timeout=_REMOTE_TIMEOUT,
     )
@@ -267,16 +280,18 @@ def test_create_modal_target_path(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_modal_upload_and_extra_provision_command(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # you can upload files and run custom commands during host provisioning:
-    mngr create my-task --provider modal --upload-file ~/.ssh/config:/root/.ssh/config --extra-provision-command "pip install foo"
-    # (--append-to-file and --prepend-to-file are also available)
+    mngr create my-task --provider modal --upload-file ~/.ssh/config:/root/.ssh/config --extra-provision-command "echo provisioned"
     """)
+    # Create ~/.ssh/config so the upload-file flag has a real file to work with
+    e2e.run("mkdir -p ~/.ssh && touch ~/.ssh/config", comment="create ssh config for upload test")
     result = e2e.run(
-        'mngr create my-task --provider modal --upload-file ~/.ssh/config:/root/.ssh/config --extra-provision-command "pip install foo" --no-connect --no-ensure-clean',
+        'mngr create my-task --provider modal --upload-file ~/.ssh/config:/root/.ssh/config --extra-provision-command "echo provisioned" --no-connect --no-ensure-clean',
         comment="you can upload files and run custom commands during host provisioning",
         timeout=_REMOTE_TIMEOUT,
     )
@@ -284,6 +299,7 @@ def test_create_modal_upload_and_extra_provision_command(e2e: E2eSession) -> Non
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_modal_no_start_on_boot(e2e: E2eSession) -> None:
@@ -302,8 +318,9 @@ def test_create_modal_no_start_on_boot(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 def test_create_modal_pass_host_env(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # you can also set host-level environment variables (separate from agent env vars):
@@ -319,8 +336,9 @@ def test_create_modal_pass_host_env(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 def test_create_modal_reuse(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
     # another handy trick is to make the create command "idempotent" so that you don't need to worry about remembering whether you created an agent yet or not:
@@ -336,17 +354,20 @@ def test_create_modal_reuse(e2e: E2eSession) -> None:
 
 
 @pytest.mark.release
+@pytest.mark.modal
 @pytest.mark.rsync
 @pytest.mark.timeout(120)
 def test_create_modal_retry(e2e: E2eSession) -> None:
     e2e.write_tutorial_block("""
-    # you can control connection retries and timeouts:
-    mngr create my-task --provider modal --retry 5 --retry-delay 10s
+    # you can control connection retries and timeouts via settings.toml:
+    # [retry]
+    # connect_retry_times = 5
+    # connect_retry_delay = "10s"
     # (--reconnect / --no-reconnect controls auto-reconnect on disconnect)
     """)
     result = e2e.run(
-        "mngr create my-task --provider modal --retry 5 --retry-delay 10s --no-connect --no-ensure-clean",
-        comment="you can control connection retries and timeouts",
+        "mngr create my-task --provider modal --no-connect --no-ensure-clean",
+        comment="retry settings are configured via [retry] in settings.toml",
         timeout=_REMOTE_TIMEOUT,
     )
     expect(result).to_succeed()

@@ -30,18 +30,23 @@ from imbue.mngr.api.connect import run_connect_command
 from imbue.mngr.api.create import create as api_create
 from imbue.mngr.api.data_types import ConnectionOptions
 from imbue.mngr.api.data_types import CreateAgentResult
-from imbue.mngr.api.data_types import SourceLocation
 from imbue.mngr.api.discover import discover_hosts_and_agents
 from imbue.mngr.api.find import ResolvedSource
 from imbue.mngr.api.find import ensure_agent_started
 from imbue.mngr.api.find import ensure_host_started
 from imbue.mngr.api.find import get_host_from_list_by_id
+from imbue.mngr.api.find import parse_source_string
 from imbue.mngr.api.find import resolve_source_location
+from imbue.mngr.api.gc import register_generated_source_dir
 from imbue.mngr.api.providers import get_provider_instance
 from imbue.mngr.cli.common_opts import add_common_options
+from imbue.mngr.cli.common_opts import is_param_explicit
 from imbue.mngr.cli.common_opts import setup_command_context
 from imbue.mngr.cli.env_utils import resolve_env_vars
 from imbue.mngr.cli.env_utils import resolve_labels
+from imbue.mngr.cli.headless_runner import destroy_agent_on_exit
+from imbue.mngr.cli.headless_runner import is_streaming_headless_agent_type
+from imbue.mngr.cli.headless_runner import stream_or_accumulate_response
 from imbue.mngr.cli.help_formatter import CommandHelpMetadata
 from imbue.mngr.cli.help_formatter import add_pager_help_option
 from imbue.mngr.cli.output_helpers import emit_event
@@ -51,10 +56,12 @@ from imbue.mngr.config.data_types import CreateCliOptions
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import OutputOptions
 from imbue.mngr.errors import AgentNotFoundError
+from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import UserInputError
 from imbue.mngr.hosts.host import HostLocation
 from imbue.mngr.hosts.host import get_agent_state_dir_path
 from imbue.mngr.interfaces.agent import AgentInterface
+from imbue.mngr.interfaces.agent import StreamingHeadlessAgentMixin
 from imbue.mngr.interfaces.data_types import HostLifecycleOptions
 from imbue.mngr.interfaces.host import AgentDataOptions
 from imbue.mngr.interfaces.host import AgentEnvironmentOptions
@@ -64,19 +71,17 @@ from imbue.mngr.interfaces.host import AgentLifecycleOptions
 from imbue.mngr.interfaces.host import AgentPermissionsOptions
 from imbue.mngr.interfaces.host import AgentProvisioningOptions
 from imbue.mngr.interfaces.host import CreateAgentOptions
-from imbue.mngr.interfaces.host import FileModificationSpec
 from imbue.mngr.interfaces.host import HostEnvironmentOptions
 from imbue.mngr.interfaces.host import NamedCommand
 from imbue.mngr.interfaces.host import NewHostBuildOptions
 from imbue.mngr.interfaces.host import NewHostOptions
 from imbue.mngr.interfaces.host import OnlineHostInterface
-from imbue.mngr.interfaces.host import UploadFileSpec
+from imbue.mngr.interfaces.host import PROVISIONING_FIELD_MAP
 from imbue.mngr.primitives import ActivitySource
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import AgentNameStyle
 from imbue.mngr.primitives import AgentTypeName
-from imbue.mngr.primitives import CommandString
 from imbue.mngr.primitives import DiscoveredAgent
 from imbue.mngr.primitives import DiscoveredHost
 from imbue.mngr.primitives import HostId
@@ -93,12 +98,16 @@ from imbue.mngr.primitives import TransferMode
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.utils.duration import parse_duration_to_seconds
 from imbue.mngr.utils.editor import EditorSession
+from imbue.mngr.utils.git_utils import clone_git_url_to_managed_dir
+from imbue.mngr.utils.git_utils import derive_project_name_for_source
 from imbue.mngr.utils.git_utils import find_git_worktree_root
 from imbue.mngr.utils.git_utils import get_current_git_branch
+from imbue.mngr.utils.git_utils import is_git_url
 from imbue.mngr.utils.git_utils import parse_project_name_from_url
 from imbue.mngr.utils.logging import LoggingConfig
 from imbue.mngr.utils.logging import LoggingSuppressor
 from imbue.mngr.utils.name_generator import generate_agent_name
+from imbue.mngr.utils.name_generator import pick_agent_name_hint
 
 _DEFAULT_NEW_BRANCH_PATTERN: Final[str] = "mngr/*"
 _RECOVERED_MESSAGE_FILENAME: Final[str] = "recovered-message.txt"
@@ -122,6 +131,118 @@ class _CachedAgentHostLoader(MutableModel):
                 reset_caches=False,
             )[0]
         return self.cached_result
+
+
+@pure
+def _split_address_and_target_path(raw: str) -> tuple[str, Path | None]:
+    """Split an address string into the address part and an optional target path.
+
+    Uses the same first-colon splitting convention as parse_source_string,
+    but without the bare-path recognition (since the positional arg is always
+    an agent address, not a path).
+
+    Examples:
+      - "foo" -> ("foo", None)
+      - "foo:/tmp/work" -> ("foo", Path("/tmp/work"))
+      - "foo@host.modal:/root/work" -> ("foo@host.modal", Path("/root/work"))
+      - ":/tmp/work" -> ("", Path("/tmp/work"))
+      - ":./rel/path" -> ("", Path("./rel/path"))
+      - "foo:" -> ("foo", None)  [trailing colon with no path]
+    """
+    # Same first-colon splitting as parse_source_string
+    if ":" not in raw:
+        return raw, None
+
+    address_part, path_str = raw.split(":", 1)
+    path = Path(path_str) if path_str else None
+    return address_part, path
+
+
+@pure
+def _resolve_agent_type_name(
+    type_flag: str | None,
+    positional_agent_type: str | None,
+) -> str | None:
+    """Resolve the agent type name from CLI options.
+
+    Shared logic for both the early headless detection path and the full
+    _parse_agent_opts path. Returns the resolved type name, or None when
+    neither --type nor positional agent type is set (caller defaults to "claude").
+
+    Precedence: --type flag > positional argument.
+    """
+    return type_flag if type_flag is not None else positional_agent_type
+
+
+def _resolve_or_generate_agent_name(address: AgentAddress, opts: CreateCliOptions) -> AgentName:
+    """Return the agent name from the address, or auto-generate one from --name-style."""
+    if address.agent_name is not None:
+        return address.agent_name
+    return generate_agent_name(AgentNameStyle(opts.name_style.upper()))
+
+
+# Flags rejected on the headless path. Everything else (source resolution,
+# transfer, git, env, provisioning, agent identity) flows through the
+# shared pipeline and works for headless too. See
+# ``_reject_incompatible_headless_flags`` for rationale.
+_HEADLESS_INCOMPATIBLE_FLAGS: tuple[tuple[str, str], ...] = (
+    ("edit_message", "--edit-message"),
+    ("session_command", "--session-command"),
+    ("connect_command", "--connect-command"),
+)
+
+
+# Boolean-pair flags where only the positive form conflicts; passing
+# ``--no-<flag>`` is tolerated since it just re-asserts the headless default.
+# The value getter is a direct attribute access (rather than ``getattr``) so
+# the type checker verifies each field exists on ``CreateCliOptions``.
+_HEADLESS_INCOMPATIBLE_BOOLEAN_PAIR_FLAGS: tuple[tuple[str, Callable[[CreateCliOptions], bool], str], ...] = (
+    ("connect", lambda o: o.connect, "--connect"),
+    ("reconnect", lambda o: o.reconnect, "--reconnect"),
+    ("reuse", lambda o: o.reuse, "--reuse"),
+    ("update", lambda o: o.update, "--update"),
+    ("start_on_boot", lambda o: bool(o.start_on_boot), "--start-on-boot"),
+)
+
+
+def _reject_incompatible_headless_flags(
+    ctx: click.Context,
+    agent_type_name: str,
+    opts: CreateCliOptions,
+) -> None:
+    """Raise UserInputError if any flags incompatible with the headless path were explicitly set.
+
+    Headless agents stream and auto-destroy after one pass, so the
+    interactive post-create flow (connect, attach, reconnect-on-drop) does
+    not apply, neither does the send_message path used by --edit-message,
+    nor do long-lived-agent flags like --reuse/--update/--start-on-boot.
+    Everything else -- source resolution, transfer, git, env, provisioning,
+    agent identity -- is shared with the non-headless path and works
+    normally. This function catches the small set of genuinely incompatible
+    flags early so they are not silently ignored.
+    """
+    explicit_flags: list[str] = [
+        display_name for param_name, display_name in _HEADLESS_INCOMPATIBLE_FLAGS if is_param_explicit(ctx, param_name)
+    ]
+
+    # Boolean-pair flags: only the positive form conflicts with headless
+    # semantics. The --no-* form is redundant-but-compatible and is tolerated.
+    # Checks both is_param_explicit (to catch explicit use) and the resolved
+    # value (to distinguish --flag from --no-flag when they share a click
+    # param).
+    for param_name, value_getter, positive_display_name in _HEADLESS_INCOMPATIBLE_BOOLEAN_PAIR_FLAGS:
+        if is_param_explicit(ctx, param_name) and value_getter(opts):
+            explicit_flags.append(positive_display_name)
+
+    if explicit_flags:
+        flags_str = ", ".join(explicit_flags)
+        raise UserInputError(
+            f"Headless agent type '{agent_type_name}' does not support: {flags_str}. "
+            f"The headless flow streams output and auto-destroys, so flags for the "
+            f"post-create connect/attach phase (e.g. --reconnect, --session-command), "
+            f"for send-message-based delivery (--edit-message), and for long-lived "
+            f"agents (--reuse, --update, --start-on-boot) do not apply."
+        )
 
 
 @pure
@@ -216,10 +337,6 @@ class _CreateCommand(click.Command):
     help="Auto-generated name style",
 )
 @optgroup.option("--type", help="Which type of agent to run [default: claude]")
-@optgroup.option(
-    "--command",
-    help="Run a literal command using the generic agent type (mutually exclusive with --type)",
-)
 # FOLLOWUP: hmm... I wonder if the name of this should be changed to something more like "window" to be more closely aligned with the tmux primitive it actually creates...
 #  more generally, we probably need to do a pass at refining *all* of these option names...
 @optgroup.option(
@@ -229,6 +346,11 @@ class _CreateCommand(click.Command):
     help='Run extra command in additional window. Use name="command" to set window name. Note: ALL_UPPERCASE names (e.g., FOO="bar") are treated as env var assignments, not window names',
 )
 @optgroup.option("--label", multiple=True, help="Agent label KEY=VALUE [repeatable] [experimental]")
+@optgroup.option(
+    "--project",
+    default=".",
+    help="Project name for the agent (sets the 'project' label; '.' inherits from source agent's project label when --from references an agent, else uses the source's git remote origin, else the source's folder name) [default: .]",
+)
 @optgroup.group("Host Options")
 @optgroup.option(
     "--provider",
@@ -239,10 +361,6 @@ class _CreateCommand(click.Command):
     is_flag=True,
     default=False,
     help="Force creating a new host (requires a provider via address or --provider)",
-)
-@optgroup.option(
-    "--project",
-    help="Project name for the agent (sets the 'project' label) [default: derived from git remote origin or folder name]",
 )
 @optgroup.option("--host-label", multiple=True, help="Host metadata label KEY=VALUE [repeatable]")
 @optgroup.option(
@@ -267,33 +385,40 @@ class _CreateCommand(click.Command):
 )
 @optgroup.option("--connect/--no-connect", default=True, help="Connect to the agent after creation [default: connect]")
 @optgroup.option(
+    "--foreground",
+    is_flag=True,
+    default=False,
+    help="Run a headless agent in the foreground, streaming output and auto-destroying when done. Required for headless agent types",
+)
+@optgroup.option(
     "--auto-start/--no-auto-start",
     "start_host",
     default=True,
     show_default=True,
     help="Automatically start offline hosts (source and target) before proceeding",
 )
-@optgroup.group("Agent Source Data (what to include in the new agent)")
+@optgroup.group("Source Data (what to include in the new agent)")
 @optgroup.option(
     "--from",
     "--source",
     "source",
-    help="Directory to use as work_dir root [AGENT | AGENT@HOST | AGENT@HOST.PROVIDER:PATH | @HOST:PATH]. Defaults to current dir if no other source args are given",
+    help=(
+        "Source data for the agent [AGENT[@HOST[.PROVIDER]][:PATH] | @HOST:PATH | :PATH | GIT_URL]. "
+        "A bare name refers to an agent; use :PATH for a directory. GIT_URL (e.g. "
+        "https://github.com/owner/repo or git@gitlab.com:owner/repo.git) is cloned to "
+        "~/.mngr/clones/<name>-<id>/ using local git auth. Defaults to git root if omitted"
+    ),
 )
-@optgroup.option("--source-agent", "--from-agent", "source_agent", help="Source agent for cloning work_dir")
-@optgroup.option("--source-host", help="Source host")
-@optgroup.option("--source-path", help="Source path")
 @optgroup.option(
     "--rsync/--no-rsync",
     default=None,
     help="Use rsync for file transfer [default: yes if rsync-args are present or if git is disabled]",
 )
 @optgroup.option("--rsync-args", help="Additional arguments to pass to rsync")
-@optgroup.option("--include-git/--no-include-git", default=True, show_default=True, help="Include .git directory")
-@optgroup.group("Agent Target (where to put the new agent)")
-@optgroup.option("--target", help="Target [HOST][:PATH]. Defaults to current dir if no other target args are given")
+@optgroup.group("Target (where to put the new agent)")
 @optgroup.option(
-    "--target-path", help="Directory to mount source inside agent host. Incompatible with --transfer=none"
+    "--target-path",
+    help="Directory to mount source inside agent host (alternative to :PATH in address). Incompatible with --transfer=none",
 )
 @optgroup.option(
     "--transfer",
@@ -302,11 +427,11 @@ class _CreateCommand(click.Command):
     help="How to transfer the project into the agent. "
     "none: run in-place (no transfer). "
     "rsync: copy via rsync (non-git projects). "
-    "git-mirror: transfer via git push --mirror (git projects). "
+    "git-mirror: push all local branches and tags via git (git projects). "
     "git-worktree: create a git worktree (git projects, local only). "
     "[default: git-worktree for local git repos, git-mirror for remote git repos, rsync for non-git]",
 )
-@optgroup.group("Agent Git Configuration")
+@optgroup.group("Git Configuration")
 @optgroup.option(
     "--branch",
     default=f":{_DEFAULT_NEW_BRANCH_PATTERN}",
@@ -317,8 +442,6 @@ class _CreateCommand(click.Command):
     "Omit :NEW to use BASE directly without creating a branch. "
     f"Empty NEW (e.g. 'main:') defaults to {_DEFAULT_NEW_BRANCH_PATTERN}.",
 )
-@optgroup.option("--depth", type=int, help="Shallow clone depth [default: full]")
-@optgroup.option("--shallow-since", help="Shallow clone since date")
 @optgroup.option(
     "--ensure-clean/--no-ensure-clean", default=True, show_default=True, help="Abort if working tree is dirty"
 )
@@ -340,7 +463,7 @@ class _CreateCommand(click.Command):
     type=click.Path(),
     help="Base folder for git worktrees [default: ~/.mngr/worktrees/]",
 )
-@optgroup.group("Agent Environment Variables")
+@optgroup.group("Environment Variables")
 @optgroup.option("--env", multiple=True, help="Set environment variable KEY=VALUE")
 @optgroup.option(
     "--env-file",
@@ -349,7 +472,7 @@ class _CreateCommand(click.Command):
     help="Load env",
 )
 @optgroup.option("--pass-env", multiple=True, help="Forward variable from shell")
-@optgroup.group("Agent Provisioning")
+@optgroup.group("Provisioning")
 @optgroup.option("--grant", "grant", multiple=True, help="Grant a permission to the agent [repeatable]")
 @optgroup.option(
     "--extra-provision-command",
@@ -358,10 +481,6 @@ class _CreateCommand(click.Command):
     help="Run custom shell command during provisioning [repeatable]",
 )
 @optgroup.option("--upload-file", "upload_file", multiple=True, help="Upload LOCAL:REMOTE file pair [repeatable]")
-@optgroup.option("--append-to-file", "append_to_file", multiple=True, help="Append REMOTE:TEXT to file [repeatable]")
-@optgroup.option(
-    "--prepend-to-file", "prepend_to_file", multiple=True, help="Prepend REMOTE:TEXT to file [repeatable]"
-)
 @optgroup.group("New Host Environment Variables")
 @optgroup.option("--host-env", multiple=True, help="Set environment variable KEY=VALUE for host [repeatable]")
 @optgroup.option(
@@ -396,12 +515,6 @@ class _CreateCommand(click.Command):
 @optgroup.option(
     "--reconnect/--no-reconnect", default=True, show_default=True, help="Automatically reconnect if dropped"
 )
-@optgroup.option(
-    "--interactive/--no-interactive",
-    "interactive",
-    default=None,
-    help="Enable interactive mode [default: yes if TTY]",
-)
 @optgroup.option("--message", help="Initial message to send after the agent starts")
 @optgroup.option("--message-file", type=click.Path(exists=True), help="File containing initial message to send")
 @optgroup.option(
@@ -409,8 +522,6 @@ class _CreateCommand(click.Command):
     is_flag=True,
     help="Open an editor to compose the initial message (uses $EDITOR). Editor runs in parallel with agent creation. If --message or --message-file is provided, their content is used as initial editor content.",
 )
-@optgroup.option("--retry", type=int, default=3, show_default=True, help="Number of connection retries")
-@optgroup.option("--retry-delay", default="5s", show_default=True, help="Delay between retries (e.g., 5s, 1m)")
 @optgroup.option("--session-command", help="Command to run instead of attaching to main session")
 @optgroup.option(
     "--connect-command",
@@ -452,9 +563,13 @@ def create(ctx: click.Context, **kwargs) -> None:
     with suppressor:
         # Parse agent address from the positional argument or --name flag.
         # Both accept agent addresses; they are equivalent but mutually exclusive.
+        # The address may include an optional :PATH suffix for the target path
+        # (e.g. "myagent:/path/to/dir" or "myagent@host.modal:/path").
         if opts.positional_name and opts.name:
             raise UserInputError("Cannot specify both a positional agent address and --name. Use one or the other.")
-        address = parse_agent_address(opts.positional_name or opts.name or "")
+        raw_address = opts.positional_name or opts.name or ""
+        address_str, target_path = _split_address_and_target_path(raw_address)
+        address = parse_agent_address(address_str)
 
         # Merge --provider flag into the address (alternative to .PROVIDER in the address).
         if opts.provider:
@@ -469,6 +584,17 @@ def create(ctx: click.Context, **kwargs) -> None:
                     to_update(address.field_ref().provider_name, flag_provider),
                 )
 
+        # Merge --target-path flag into the address (alternative to :PATH in the address).
+        if opts.target_path:
+            flag_target_path = Path(opts.target_path)
+            if target_path is not None and target_path != flag_target_path:
+                raise UserInputError(
+                    f"Conflicting target paths: address has '{target_path}' "
+                    f"but --target-path is '{flag_target_path}'. Use one or the other."
+                )
+            if target_path is None:
+                target_path = flag_target_path
+
         # Apply --yes flag to auto-approve prompts (e.g., skill installation)
         if opts.yes:
             mngr_ctx = mngr_ctx.model_copy_update(
@@ -479,6 +605,36 @@ def create(ctx: click.Context, **kwargs) -> None:
         if opts.update and not opts.reuse:
             raise UserInputError("--update requires --reuse. Use --reuse --update together.")
 
+        # Validate conflicting agent types early (before the headless path
+        # returns). This is the single check; _parse_agent_opts uses the
+        # shared _resolve_agent_type_name helper which assumes no conflict.
+        if opts.positional_agent_type and opts.type and opts.type != opts.positional_agent_type:
+            raise UserInputError(
+                f"Conflicting agent types: positional argument says '{opts.positional_agent_type}' "
+                f"but --type says '{opts.type}'. Use one or the other."
+            )
+
+        # Detect headless agent types and enforce the --foreground flag.
+        # --foreground is required for headless types (makes the behavior explicit)
+        # and rejected for non-headless types (it doesn't apply).
+        resolved_agent_type = _resolve_agent_type_name(opts.type, opts.positional_agent_type)
+        is_headless = resolved_agent_type is not None and is_streaming_headless_agent_type(resolved_agent_type)
+
+        if is_headless and not opts.foreground:
+            raise UserInputError(
+                f"Agent type '{resolved_agent_type}' is a headless agent type. "
+                f"Use --foreground to run it (streams output and auto-destroys when done)."
+            )
+        if opts.foreground and not is_headless:
+            type_desc = f"'{resolved_agent_type}'" if resolved_agent_type else "'claude' (default)"
+            raise UserInputError(
+                f"--foreground is only valid with headless agent types, but {type_desc} is not headless."
+            )
+
+        if is_headless:
+            assert resolved_agent_type is not None
+            _reject_incompatible_headless_flags(ctx, resolved_agent_type, opts)
+
         # Collect plugin-registered CLI params so they can be merged into plugin_data.
         # Filter None (unset single options) and empty tuples (unset multiple options).
         plugin_cli_params: dict[str, Any] = {
@@ -486,12 +642,20 @@ def create(ctx: click.Context, **kwargs) -> None:
         }
 
         # Setup (validation, editor session, source resolution, etc.)
-        setup = _setup_create(mngr_ctx, output_opts, opts, logging_config, address, plugin_cli_params)
+        setup = _setup_create(mngr_ctx, output_opts, opts, logging_config, address, plugin_cli_params, target_path)
 
-        # Create agent
+        # Create agent. Shared across headless and non-headless so that
+        # source resolution, transfer, git, env, and provisioning all work
+        # the same way for both. The fork is what happens afterwards: a
+        # headless agent is streamed and destroyed; an interactive agent
+        # is connected to and the command returns after finish.
         create_result, connection_opts = _create_agent(mngr_ctx, output_opts, opts, setup)
-        _post_create(create_result, connection_opts, opts, mngr_ctx)
-        _finish_create(create_result, setup, output_opts)
+
+        if is_headless:
+            _stream_and_destroy_headless_agent(create_result, output_opts)
+        else:
+            _post_create(create_result, connection_opts, opts, mngr_ctx)
+            _finish_create(create_result, setup, output_opts)
 
 
 class _AutoLabels(FrozenModel):
@@ -510,6 +674,9 @@ class _CreateSetup(FrozenModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     address: AgentAddress = Field(description="Parsed agent address from the positional argument")
+    target_path: Path | None = Field(
+        default=None, description="Target path from :PATH in the address or --target-path"
+    )
     initial_message: str | None = Field(
         description="Resolved initial message content (from --message or --message-file)"
     )
@@ -523,6 +690,19 @@ class _CreateSetup(FrozenModel):
     )
 
 
+def _resolve_initial_message_content(opts: CreateCliOptions) -> str | None:
+    """Return the message content from --message / --message-file, or None.
+
+    Raises UserInputError if both flags are set. Shared between the
+    headless and non-headless create paths so they resolve the same way.
+    """
+    if opts.message is not None and opts.message_file is not None:
+        raise UserInputError("Cannot provide both --message and --message-file")
+    if opts.message_file is not None:
+        return Path(opts.message_file).read_text()
+    return opts.message
+
+
 def _setup_create(
     mngr_ctx: MngrContext,
     output_opts: OutputOptions,
@@ -530,21 +710,11 @@ def _setup_create(
     logging_config: LoggingConfig,
     address: AgentAddress,
     plugin_cli_params: dict[str, Any] | None = None,
+    target_path: Path | None = None,
 ) -> _CreateSetup:
     """Validate options, resolve messages, start editor session, resolve source location."""
-    # Validate that both --message and --message-file are not provided
-    if opts.message is not None and opts.message_file is not None:
-        raise UserInputError("Cannot provide both --message and --message-file")
-
-    # Read message from file if --message-file is provided (used as initial content for editor if --edit-message)
-    initial_message_content: str | None
-    if opts.message_file is not None:
-        message_file_path = Path(opts.message_file)
-        initial_message_content = message_file_path.read_text()
-    elif opts.message is not None:
-        initial_message_content = opts.message
-    else:
-        initial_message_content = None
+    # Read message from --message or --message-file (used as initial content for editor if --edit-message)
+    initial_message_content: str | None = _resolve_initial_message_content(opts)
 
     # If --edit-message is set, start the editor immediately
     # The editor runs in parallel with agent creation
@@ -577,6 +747,7 @@ def _setup_create(
 
     return _CreateSetup(
         address=address,
+        target_path=target_path,
         initial_message=initial_message,
         editor_session=editor_session,
         agent_and_host_loader=agent_and_host_loader,
@@ -630,6 +801,7 @@ def _create_agent(
         source_location=setup.resolved_source.location,
         source_agent_state_dir=source_agent_state_dir,
         mngr_ctx=mngr_ctx,
+        target_path=setup.target_path,
     )
 
     # Merge plugin-registered CLI params into plugin_data so plugin hooks can access them
@@ -642,10 +814,9 @@ def _create_agent(
     # parse the connection options
     connection_opts = ConnectionOptions(
         is_reconnect=opts.reconnect,
-        is_interactive=opts.interactive,
         message=None,
-        retry_count=opts.retry,
-        retry_delay=opts.retry_delay,
+        retry_count=mngr_ctx.config.retry.connect_retry_times,
+        retry_delay=mngr_ctx.config.retry.connect_retry_delay,
         session_command=opts.session_command,
     )
 
@@ -665,9 +836,10 @@ def _create_agent(
                 existing_agent, existing_host = reuse_result
                 logger.info("Updating existing agent: {}", existing_agent.name)
                 existing_host.stop_agents([existing_agent.id])
-                # If the user didn't explicitly set --target-path, default to
-                # the existing agent's work_dir so we update in place.
-                # If they did set one, honor it (the agent moves to the new path).
+                # If the user didn't specify a target path (via :PATH in the address
+                # or --target-path), default to the existing agent's work_dir so we
+                # update in place. If they did set one, honor it (the agent moves
+                # to the new path).
                 resolved_target = (
                     agent_opts.target_path if agent_opts.target_path is not None else existing_agent.work_dir
                 )
@@ -754,6 +926,31 @@ def _create_agent(
     return create_result, connection_opts
 
 
+def _stream_and_destroy_headless_agent(
+    create_result: CreateAgentResult,
+    output_opts: OutputOptions,
+) -> None:
+    """Stream the just-created headless agent's output and destroy it on exit.
+
+    Used instead of _post_create / _finish_create when the agent type is a
+    StreamingHeadlessAgentMixin. We reuse the full _setup_create +
+    _create_agent pipeline (so source resolution, transfer, git,
+    provisioning, etc. work identically to the interactive path) and only
+    diverge after the agent has been created.
+    """
+    agent = create_result.agent
+    # Put the runtime isinstance check inside the destroy-on-exit scope so any
+    # failure after the agent has been created still triggers cleanup. Matches
+    # the same pattern in ``headless_agent_output`` in cli/headless_runner.py.
+    with destroy_agent_on_exit(create_result.host, agent):
+        if not isinstance(agent, StreamingHeadlessAgentMixin):
+            raise MngrError(f"Expected streaming headless agent, got {type(agent).__name__}")
+        stream_or_accumulate_response(
+            chunks=agent.stream_output(),
+            output_format=output_opts.output_format,
+        )
+
+
 def _post_create(
     create_result: CreateAgentResult,
     connection_opts: ConnectionOptions,
@@ -832,8 +1029,7 @@ def _rescue_editor_content(
     """Save editor content to a recovery file so the user does not lose their work.
 
     Reads the content from the editor's temp file (which still exists before cleanup)
-    and writes it to ~/.mngr/recovered-message.txt. Uses logger.warning which will be
-    buffered if logging is suppressed and replayed when suppression is disabled.
+    and writes it to ~/.mngr/recovered-message.txt.
     """
     if not editor_session.temp_file_path.exists():
         return
@@ -858,7 +1054,7 @@ def _rescue_editor_content(
         logger.trace("Failed to write recovery file {}: {}", recovery_path, e)
         return
 
-    logger.warning("Your editor message has been saved to: {}", recovery_path)
+    logger.info("Your editor message has been saved to: {}", recovery_path)
 
 
 def _handle_editor_message(
@@ -913,25 +1109,18 @@ def _parse_project_name(
 ) -> str:
     """Determine the project name for a new agent.
 
-    Priority: explicit --project flag > source agent's project label > git remote > folder name.
+    Priority: --project flag (when not the literal "." sentinel) > source agent's
+    project label > git remote > folder name. "." is the click default and triggers
+    the derivation chain (it is not used as a literal project name).
     """
-    if opts.project:
+    if opts.project and opts.project != ".":
         return opts.project
-
-    # If creating from an existing agent, inherit its project label
-    if resolved_source.agent is not None:
-        source_project = resolved_source.agent.labels.get("project")
-        if source_project is not None:
-            return source_project
-
-    # Derive from the already-fetched remote URL (works for both local and remote hosts)
-    if remote_url is not None:
-        project_name = parse_project_name_from_url(remote_url)
-        if project_name is not None:
-            return project_name
-
-    # Fall back to the source directory name (resolve to normalize symlinks / '..' components)
-    return resolved_source.location.path.resolve().name
+    source_project_label = resolved_source.agent.labels.get("project") if resolved_source.agent is not None else None
+    return derive_project_name_for_source(
+        resolved_source.location.path,
+        remote_url=remote_url,
+        source_project_label=source_project_label,
+    )
 
 
 def _try_reuse_existing_agent(
@@ -993,7 +1182,7 @@ def _try_reuse_existing_agent(
     if agent is None:
         # Agent not found on online host - this could happen if the host came online
         # but the agent data is stale. Return None to create a new agent.
-        logger.warning("Agent {} not found on host after starting, will create new agent", agent_name)
+        logger.info("Agent {} not found on host after starting, will create new agent", agent_name)
         return None
 
     # Ensure the agent is started (reusing shared logic from find.py)
@@ -1016,7 +1205,7 @@ def _check_source_does_not_contain_state_dir(source_path: Path, mngr_ctx: MngrCo
             f"Source directory '{source_path}' contains the mngr state directory "
             f"('{state_dir}'). Copying this directory would recursively copy agent "
             f"data (including the copy destination itself). "
-            f"Use --source-path to specify a more specific directory."
+            f"Use --from with a more specific path (e.g. --from :path/to/subdir)."
         )
 
 
@@ -1028,44 +1217,42 @@ def _resolve_source_location(
     is_start_desired: bool,
 ) -> ResolvedSource:
     """Resolve the source location and optionally the source agent ID and labels."""
-    # figure out the agent source data
-    if opts.source is None and opts.source_agent is None and opts.source_host is None:
-        # easy, source location is on current host
-        source_path = opts.source_path
-        if source_path is None:
-            git_root = find_git_worktree_root(None, mngr_ctx.concurrency_group)
-            if git_root is not None:
-                source_path = str(git_root)
-            else:
-                raise UserInputError(
-                    "Not inside a git repository. Either run from within a git repo, "
-                    "or specify --source-path to set the source directory explicitly."
-                )
+    if opts.source is None:
+        # No --from specified: default to git root
+        git_root = find_git_worktree_root(None, mngr_ctx.concurrency_group)
+        if git_root is not None:
+            source_path = str(git_root)
+        else:
+            raise UserInputError(
+                "Not inside a git repository. Either run from within a git repo, "
+                "or specify --from to set the source explicitly."
+            )
         _check_source_does_not_contain_state_dir(Path(source_path), mngr_ctx)
         provider = get_provider_instance(LOCAL_PROVIDER_NAME, mngr_ctx)
         host = provider.get_host(HostName(LOCAL_HOST_NAME))
         online_host, _ = ensure_host_started(host, is_start_desired=is_start_desired, provider=provider)
         return ResolvedSource(location=HostLocation(host=online_host, path=Path(source_path)))
 
-    # Parse the source first to check if it's just a local path.
-    # When --source is a plain filesystem path (no agent or host component),
-    # we can resolve it locally without loading all providers. Loading all
+    # Git URL: clone to a managed directory and treat as a local path
+    if is_git_url(opts.source):
+        provider = get_provider_instance(LOCAL_PROVIDER_NAME, mngr_ctx)
+        host = provider.get_host(HostName(LOCAL_HOST_NAME))
+        online_host, _ = ensure_host_started(host, is_start_desired=is_start_desired, provider=provider)
+        clones_base = online_host.host_dir / "clones"
+        name_hint = pick_agent_name_hint(opts.positional_name, opts.name, parse_project_name_from_url(opts.source))
+        cloned_path = clone_git_url_to_managed_dir(opts.source, clones_base, name_hint, mngr_ctx.concurrency_group)
+        register_generated_source_dir(online_host, cloned_path)
+        return ResolvedSource(location=HostLocation(host=online_host, path=cloned_path))
+
+    # Parse the --from string once
+    parsed = parse_source_string(opts.source)
+
+    # When --from is just a local path (no agent or host component),
+    # resolve it locally without loading all providers. Loading all
     # providers is expensive and can fail if a provider's external service
     # (e.g. Docker daemon, Modal credentials) is unavailable.
-    parsed = _parse_source_string(opts.source) if opts.source else None
-    has_agent_or_host = (
-        (parsed is not None and (parsed.agent_name is not None or parsed.host_name is not None))
-        or opts.source_agent is not None
-        or opts.source_host is not None
-    )
-    if not has_agent_or_host:
-        # Just a local path -- use the fast local-provider path
-        if parsed is not None and parsed.path is not None:
-            source_path = str(parsed.path)
-        elif opts.source_path is not None:
-            source_path = opts.source_path
-        else:
-            source_path = os.getcwd()
+    if parsed.agent is None and parsed.host is None:
+        source_path = parsed.path if parsed.path is not None else os.getcwd()
         _check_source_does_not_contain_state_dir(Path(source_path), mngr_ctx)
         provider = get_provider_instance(LOCAL_PROVIDER_NAME, mngr_ctx)
         host = provider.get_host(HostName(LOCAL_HOST_NAME))
@@ -1075,10 +1262,7 @@ def _resolve_source_location(
     # Need full resolution across providers
     agents_by_host = agent_and_host_loader()
     return resolve_source_location(
-        opts.source,
-        opts.source_agent,
-        opts.source_host,
-        opts.source_path,
+        parsed,
         agents_by_host,
         mngr_ctx,
         is_start_desired=is_start_desired,
@@ -1104,34 +1288,6 @@ def _resolve_target_host(
     else:
         resolved_target_host = target_host
     return resolved_target_host
-
-
-def _find_source_location(
-    source: str | None, source_agent: str | None, source_host: str | None, source_path: str | None
-) -> SourceLocation:
-    # Assemble source - parse the unified --source string if provided
-    parsed_source_path: Path | None = None
-    parsed_source_agent = source_agent
-    parsed_source_host = source_host
-
-    if source:
-        # Parse [AGENT[@HOST[.PROVIDER]]]:PATH format
-        parsed = _parse_source_string(source)
-        parsed_source_path = parsed.path
-        parsed_source_agent = parsed.agent_name
-        parsed_source_host = parsed.host_name
-
-    # Override with explicit options if provided
-    if source_path:
-        parsed_source_path = Path(source_path)
-
-    # Build location first so we can use it for validation
-    source_location = SourceLocation(
-        path=parsed_source_path,
-        agent_name=AgentName(parsed_source_agent) if parsed_source_agent else None,
-        host_name=HostName(parsed_source_host) if parsed_source_host else None,
-    )
-    return source_location
 
 
 def _get_current_git_branch(source_location: HostLocation, mngr_ctx: MngrContext) -> str | None:
@@ -1171,6 +1327,7 @@ def _resolve_transfer_mode(
     address: AgentAddress,
     source_location: HostLocation,
     mngr_ctx: MngrContext,
+    target_path: Path | None,
 ) -> TransferMode:
     """Resolve the transfer mode from CLI flags and context.
 
@@ -1186,8 +1343,8 @@ def _resolve_transfer_mode(
 
     # Check if target path points to the same location as source
     is_same_path = False
-    if opts.target_path is not None:
-        target_resolved = Path(opts.target_path).resolve()
+    if target_path is not None:
+        target_resolved = target_path.resolve()
         source_resolved = source_location.path.resolve()
         if target_resolved == source_resolved and not is_remote:
             is_same_path = True
@@ -1209,8 +1366,8 @@ def _resolve_transfer_mode(
     # Validate the transfer mode against the context
     if is_same_path and transfer_mode != TransferMode.NONE:
         raise UserInputError(
-            f"--transfer={opts.transfer} is not compatible with --target-path pointing to the source directory. "
-            f"Use --transfer=none or omit --target-path."
+            f"--transfer={opts.transfer} is not compatible with a target path pointing to the source directory. "
+            f"Use --transfer=none or omit the target path."
         )
 
     if is_git_repo and transfer_mode == TransferMode.RSYNC:
@@ -1230,10 +1387,10 @@ def _resolve_transfer_mode(
             "--transfer=git-worktree only works for local agents. Use --transfer=git-mirror for remote agents."
         )
 
-    if transfer_mode == TransferMode.NONE and opts.target_path is not None and not is_same_path:
+    if transfer_mode == TransferMode.NONE and target_path is not None and not is_same_path:
         raise UserInputError(
-            "--transfer=none is incompatible with --target-path pointing to a different directory. "
-            "Use a different --transfer mode, or omit --target-path."
+            "--transfer=none is incompatible with a target path pointing to a different directory. "
+            "Use a different --transfer mode, or omit the target path."
         )
 
     return transfer_mode
@@ -1246,18 +1403,14 @@ def _parse_agent_opts(
     source_location: HostLocation,
     mngr_ctx: MngrContext,
     source_agent_state_dir: Path | None = None,
+    target_path: Path | None = None,
 ) -> tuple[CreateAgentOptions, bool]:
     # Get agent name from address (which incorporates both positional and --name),
-    # otherwise auto-generate
-    parsed_agent_name: AgentName
-    if address.agent_name is not None:
-        parsed_agent_name = address.agent_name
-    else:
-        parsed_name_style = AgentNameStyle(opts.name_style.upper())
-        parsed_agent_name = generate_agent_name(parsed_name_style)
+    # otherwise auto-generate.
+    parsed_agent_name = _resolve_or_generate_agent_name(address, opts)
 
     # Determine transfer mode
-    transfer_mode = _resolve_transfer_mode(opts, address, source_location, mngr_ctx)
+    transfer_mode = _resolve_transfer_mode(opts, address, source_location, mngr_ctx, target_path)
 
     # Parse --branch flag: [BASE_BRANCH][:NEW_BRANCH]
     base_branch, new_branch_name, has_explicit_base = _parse_branch_flag(opts.branch, parsed_agent_name)
@@ -1280,9 +1433,6 @@ def _parse_agent_opts(
         git = AgentGitOptions(
             base_branch=base_branch or _get_current_git_branch(source_location, mngr_ctx),
             new_branch_name=new_branch_name,
-            depth=opts.depth,
-            shallow_since=opts.shallow_since,
-            is_git_synced=opts.include_git,
             is_include_unclean=is_include_unclean,
             is_include_gitignored=opts.include_gitignored,
         )
@@ -1317,47 +1467,24 @@ def _parse_agent_opts(
     # Parse label options
     label_options = resolve_labels(opts.label)
 
-    # Parse provisioning options
-    provisioning = AgentProvisioningOptions(
-        extra_provision_commands=opts.extra_provision_command,
-        upload_files=tuple(UploadFileSpec.from_string(f) for f in opts.upload_file),
-        append_to_files=tuple(FileModificationSpec.from_string(f) for f in opts.append_to_file),
-        prepend_to_files=tuple(FileModificationSpec.from_string(f) for f in opts.prepend_to_file),
-    )
+    # Parse provisioning options using the shared field map.
+    # getattr with default () because not all map entries have CLI flags
+    # (e.g. create_directory is agent-type-only).
+    prov_kwargs: dict[str, tuple[Any, ...]] = {}
+    for config_field, target_field, parser in PROVISIONING_FIELD_MAP:
+        raw_values: tuple[str, ...] = getattr(opts, config_field, ())
+        if raw_values:
+            prov_kwargs[target_field] = tuple(parser(s) for s in raw_values)
+    provisioning = AgentProvisioningOptions(**prov_kwargs)
 
-    # Parse target_path if provided
-    parsed_target_path = Path(opts.target_path) if opts.target_path else None
+    # target_path comes from :PATH in the address or --target-path (merged upstream)
 
-    # Determine agent type: --type and positional are equivalent; specifying both
-    # with different values is an error. _CreateCommand.parse_args handles --
-    # correctly so positional_agent_type is always a real positional.
-    #
-    # Special case: --command implies using the "generic" agent type, which simply
-    # runs the provided command. If --type is also specified to something other
-    # than "generic", that's an error (they are mutually exclusive).
-    resolved_agent_type = opts.type
+    # Determine agent type using the shared resolution logic.
+    # Conflicting types are already validated in the create() entry point.
     resolved_agent_args = opts.agent_args
+    resolved_agent_type = _resolve_agent_type_name(opts.type, opts.positional_agent_type)
 
-    if opts.positional_agent_type and resolved_agent_type and resolved_agent_type != opts.positional_agent_type:
-        raise UserInputError(
-            f"Conflicting agent types: positional argument says '{opts.positional_agent_type}' "
-            f"but --type says '{resolved_agent_type}'. Use one or the other."
-        )
-    if opts.positional_agent_type and resolved_agent_type is None:
-        resolved_agent_type = opts.positional_agent_type
-
-    # Handle --command: it implies using the "generic" agent type
-    if opts.command:
-        if resolved_agent_type is not None and resolved_agent_type != "generic":
-            raise UserInputError(
-                f"--command and --type are mutually exclusive. "
-                f"Use --command to run a literal command (implicitly uses 'generic' agent type), "
-                f"or use --type to specify an agent type like '{resolved_agent_type}'."
-            )
-        # Automatically use the "generic" agent type when --command is provided
-        resolved_agent_type = "generic"
-
-    is_clone = opts.source_agent is not None
+    is_clone = source_agent_state_dir is not None
 
     # Parse worktree base folder
     parsed_worktree_base_folder = Path(opts.worktree_base_folder).expanduser() if opts.worktree_base_folder else None
@@ -1366,10 +1493,9 @@ def _parse_agent_opts(
         agent_id=AgentId(opts.id) if opts.id else None,
         agent_type=AgentTypeName(resolved_agent_type) if resolved_agent_type else None,
         name=parsed_agent_name,
-        command=CommandString(opts.command) if opts.command else None,
         additional_commands=tuple(NamedCommand.from_string(c) for c in opts.extra_window),
         agent_args=resolved_agent_args,
-        target_path=parsed_target_path,
+        target_path=target_path,
         worktree_base_folder=parsed_worktree_base_folder,
         transfer_mode=transfer_mode,
         initial_message=initial_message,
@@ -1542,77 +1668,22 @@ def _parse_branch_flag(branch: str, agent_name: AgentName) -> tuple[str | None, 
     return (base or None, resolved_new, bool(base))
 
 
-class ParsedSourceString(FrozenModel):
-    """Result of parsing a source string in [AGENT[@HOST[.PROVIDER]]]:PATH format."""
-
-    path: Path | None = Field(description="Path component")
-    agent_name: str | None = Field(description="Agent name component")
-    host_name: str | None = Field(description="Host name component (may include .PROVIDER suffix)")
-
-
-@pure
-def _parse_source_string(source_str: str) -> ParsedSourceString:
-    """Parse [AGENT[@[HOST][.PROVIDER]]][:PATH] format into components.
-
-    Without a colon and without '@', the string is treated as a plain path
-    (the common case for --source ./some/dir). When '@' is present, the string
-    is parsed as an agent address regardless of whether a colon follows. With a
-    colon, the part before the colon is the address and the part after is the path.
-
-    The host_name field may include a .PROVIDER suffix (e.g. "myhost.modal").
-    """
-    if ":" not in source_str:
-        if "@" in source_str:
-            # Agent address without a path (e.g. "my-agent@my-host")
-            address = parse_agent_address(source_str)
-            host_str = _host_str_from_address_components(address.host_name, address.provider_name)
-            return ParsedSourceString(
-                path=None,
-                agent_name=str(address.agent_name) if address.agent_name else None,
-                host_name=host_str,
-            )
-        # No colon or @ -- treat as a plain path (most common case: --source ./dir)
-        return ParsedSourceString(path=Path(source_str), agent_name=None, host_name=None)
-
-    prefix, path_str = source_str.split(":", 1)
-    path = Path(path_str) if path_str else None
-
-    if not prefix:
-        return ParsedSourceString(path=path, agent_name=None, host_name=None)
-
-    address = parse_agent_address(prefix)
-    host_str = _host_str_from_address_components(address.host_name, address.provider_name)
-    return ParsedSourceString(
-        path=path,
-        agent_name=str(address.agent_name) if address.agent_name else None,
-        host_name=host_str,
-    )
-
-
-@pure
-def _host_str_from_address_components(
-    host_name: HostName | None, provider_name: ProviderInstanceName | None
-) -> str | None:
-    """Combine host and provider name components into a single host string."""
-    if host_name is not None and provider_name is not None:
-        return f"{host_name}.{provider_name}"
-    if host_name is not None:
-        return str(host_name)
-    if provider_name is not None:
-        return f".{provider_name}"
-    return None
-
-
 # === Helper Functions (stubs) ===
 
 
 def _apply_host_labels(host: OnlineHostInterface, label_strings: tuple[str, ...]) -> None:
-    """Parse KEY=VALUE host label strings and apply them to an existing host."""
+    """Parse KEY=VALUE host label strings and apply them to an existing host.
+
+    Raises UserInputError for any entry without ``=``. Mirrors the new-host
+    validation in ``_parse_target_host``; on the existing-host and local-host
+    branches this helper is the only place that validates --host-label.
+    """
     labels_to_add: dict[str, str] = {}
     for label_string in label_strings:
-        if "=" in label_string:
-            key, value = label_string.split("=", 1)
-            labels_to_add[key.strip()] = value.strip()
+        if "=" not in label_string:
+            raise UserInputError(f"Host label must be in KEY=VALUE format, got: {label_string}")
+        key, value = label_string.split("=", 1)
+        labels_to_add[key.strip()] = value.strip()
     if labels_to_add:
         host.add_tags(labels_to_add)
 
@@ -1674,16 +1745,19 @@ _CREATE_HELP_METADATA = CommandHelpMetadata(
     [--label KEY=VALUE] [--host-label KEY=VALUE] [--project <PROJECT>] [--from <SOURCE>] [--transfer <MODE>]
     [--[no-]rsync] [--rsync-args <ARGS>] [--branch [BASE][:NEW]] [--[no-]ensure-clean]
     [--snapshot <ID>] [-b <BUILD_ARG>] [-s <START_ARG>]
-    [--env <KEY=VALUE>] [--env-file <FILE>] [--grant <PERMISSION>] [--extra-provision-command <COMMAND>] [--upload-file <LOCAL:REMOTE>]
+    [--env <KEY=VALUE>] [--env-file <FILE>] [--pass-env <KEY>] [--grant <PERMISSION>] [--extra-provision-command <COMMAND>] [--upload-file <LOCAL:REMOTE>]
     [--idle-timeout <SECONDS>] [--idle-mode <MODE>] [--start-on-boot|--no-start-on-boot] [--reuse|--no-reuse]
-    [--[no-]connect] [--[no-]auto-start] [--] [<AGENT_ARGS>...]""",
+    [--message <TEXT>] [--message-file <FILE>] [--edit-message]
+    [--[no-]connect] [--[no-]auto-start] [-y|--yes] [--] [<AGENT_ARGS>...]""",
     aliases=("c",),
-    arguments_description="""- `ADDRESS`: Agent address in `[NAME][@[HOST][.PROVIDER]]` format (all parts optional):
+    arguments_description="""- `ADDRESS`: Agent address in `[NAME][@[HOST][.PROVIDER]][:PATH]` format (all parts optional):
   - `NAME` -- agent name only, creates on local host (default)
   - `NAME@HOST` -- agent on existing host
   - `NAME@HOST.PROVIDER` -- agent on existing host (with provider for disambiguation)
   - `NAME@.PROVIDER` -- agent on a new host (auto-generated host name); implies `--new-host`
   - `NAME@HOST.PROVIDER --new-host` -- agent on a new host with the given name
+  - `NAME:PATH` -- agent with a target path for the working directory
+  - `:PATH` -- auto-named agent with a target path (equivalent to omitting the name)
 - `AGENT_TYPE`: Which type of agent to run (default: `claude`). Can also be specified via `--type`
 - `AGENT_ARGS`: Additional arguments passed to the agent""",
     description="""This command sets up an agent's working directory, optionally provisions a
@@ -1695,13 +1769,19 @@ or an rsync copy (for non-git projects). Specify a host in the agent address
 (e.g. NAME@HOST.PROVIDER) to target a remote host, or use NAME@.PROVIDER
 to create a new one.
 
-The agent type defaults to 'claude' if not specified. Any command in your
-PATH can also be used as an agent type. Arguments after -- are passed
-directly to the agent command.
+The agent type defaults to 'claude' if not specified. Arguments after --
+are passed directly to the agent command. To run an arbitrary shell
+command, use the built-in 'command' agent type:
+`mngr create my-task --type command -- sleep 3600`.
+
+Headless agent types (those implementing StreamingHeadlessAgentMixin,
+like headless_command and headless_claude) require the --foreground flag.
+The agent streams its output to stdout and is destroyed when done instead
+of being connected to.
 
 For local agents in git repos, mngr creates a git worktree that shares objects
 with your original repository. For remote agents, the repo is transferred
-via git push --mirror. Use --transfer to override the default.""",
+by pushing all local branches and tags via git. Use --transfer to override the default.""",
     examples=(
         ("Create an agent locally in a new git worktree (default)", "mngr create my-agent"),
         ("Create an agent in a new Docker container", "mngr create my-agent@.docker"),
@@ -1718,11 +1798,13 @@ via git push --mirror. Use --transfer to override the default.""",
         ("Create without connecting", "mngr create my-agent --no-connect"),
         ("Add extra tmux windows", 'mngr create my-agent -w server="npm run dev"'),
         ("Reuse existing agent or create if not found", "mngr create my-agent --reuse"),
+        ("Run a headless agent", "mngr create --type headless_command --foreground -t my-command-template"),
     ),
     see_also=(
         ("connect", "Connect to an existing agent"),
         ("list", "List existing agents"),
         ("destroy", "Destroy agents"),
+        ("limit", "Configure agent resource limits"),
     ),
     group_intros=(
         (
@@ -1736,12 +1818,6 @@ via git push --mirror. Use --transfer to override the default.""",
         (
             "Host Options",
             "By default, `mngr create` uses the local host. Use the agent address to specify a different host.",
-        ),
-    ),
-    additional_sections=(
-        (
-            "Agent Limits",
-            "See [Limit Options](../secondary/limit.md)",
         ),
     ),
 )

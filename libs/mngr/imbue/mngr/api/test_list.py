@@ -136,7 +136,9 @@ def test_agent_details_to_cel_context_basic_fields() -> None:
     assert context["type"] == "claude"
     assert context["name"] == "test-agent"
     assert context["host"]["name"] == "test-host"
+    # Both names are exposed so CEL filters and templates can use either.
     assert context["host"]["provider"] == "local"
+    assert context["host"]["provider_name"] == "local"
     assert "age" in context
 
 
@@ -370,6 +372,36 @@ def test_apply_cel_filters_with_host_provider_filter() -> None:
     assert result is True
 
 
+def test_apply_cel_filters_accepts_host_provider_name() -> None:
+    """host.provider_name should also work in CEL filters (alongside the short host.provider)."""
+    host_details = HostDetails(
+        id=HostId.generate(),
+        name="test-host",
+        provider_name=ProviderInstanceName("local"),
+    )
+    agent_details = AgentDetails(
+        id=AgentId.generate(),
+        name=AgentName("test-agent"),
+        type="claude",
+        command=CommandString("sleep 100"),
+        work_dir=Path("/work/dir"),
+        initial_branch="mngr/test-agent",
+        create_time=datetime.now(timezone.utc),
+        start_on_boot=False,
+        state=AgentLifecycleState.RUNNING,
+        host=host_details,
+    )
+
+    include_filters, exclude_filters = compile_cel_filters(
+        include_filters=('host.provider_name == "local"',),
+        exclude_filters=(),
+    )
+
+    result = _apply_cel_filters(agent_details, include_filters, exclude_filters)
+
+    assert result is True
+
+
 def test_list_agents_returns_empty_when_no_agents(
     temp_mngr_ctx: MngrContext,
 ) -> None:
@@ -397,7 +429,7 @@ def test_list_agents_with_agent(
 
     with tmux_session_cleanup(session_name):
         create_test_agent_via_cli(
-            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, agent_cmd="sleep 847291"
+            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, command="sleep 847291"
         )
 
         result = list_agents(mngr_ctx=temp_mngr_ctx, is_streaming=False)
@@ -421,7 +453,7 @@ def test_list_agents_with_include_filter(
 
     with tmux_session_cleanup(session_name):
         create_test_agent_via_cli(
-            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, agent_cmd="sleep 938274"
+            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, command="sleep 938274"
         )
 
         result = list_agents(
@@ -448,7 +480,7 @@ def test_list_agents_with_exclude_filter(
 
     with tmux_session_cleanup(session_name):
         create_test_agent_via_cli(
-            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, agent_cmd="sleep 726485"
+            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, command="sleep 726485"
         )
 
         result = list_agents(
@@ -480,7 +512,7 @@ def test_list_agents_with_callbacks(
 
     with tmux_session_cleanup(session_name):
         create_test_agent_via_cli(
-            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, agent_cmd="sleep 619274"
+            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, command="sleep 619274"
         )
 
         result = list_agents(
@@ -953,7 +985,7 @@ def test_list_agents_populates_idle_mode(
 
     with tmux_session_cleanup(session_name):
         create_test_agent_via_cli(
-            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, agent_cmd="sleep 123456"
+            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, command="sleep 123456"
         )
 
         result = list_agents(mngr_ctx=temp_mngr_ctx, is_streaming=False)
@@ -979,7 +1011,7 @@ def test_list_agents_populates_lock_fields_for_online_host(
 
     with tmux_session_cleanup(session_name):
         create_test_agent_via_cli(
-            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, agent_cmd="sleep 847292"
+            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, command="sleep 847292"
         )
 
         result = list_agents(mngr_ctx=temp_mngr_ctx, is_streaming=False)
@@ -1012,7 +1044,7 @@ def test_list_agents_streaming_with_callback(
 
     with tmux_session_cleanup(session_name):
         create_test_agent_via_cli(
-            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, agent_cmd="sleep 519283"
+            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, command="sleep 519283"
         )
 
         result = list_agents(
@@ -1078,7 +1110,7 @@ def test_list_agents_with_provider_names_filter(
 
     with tmux_session_cleanup(session_name):
         create_test_agent_via_cli(
-            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, agent_cmd="sleep 234567"
+            cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, command="sleep 234567"
         )
 
         result = list_agents(mngr_ctx=temp_mngr_ctx, provider_names=("local",), is_streaming=False)

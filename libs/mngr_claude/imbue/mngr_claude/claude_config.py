@@ -2,6 +2,7 @@ import copy
 import fcntl
 import json
 import os
+import re
 import shutil
 from collections.abc import Generator
 from collections.abc import Mapping
@@ -101,37 +102,37 @@ def get_user_claude_config_dir() -> Path:
     return get_claude_config_dir()
 
 
-def get_claude_config_path() -> Path:
-    """Return the path to the Claude config file (.claude.json).
+def find_user_claude_config() -> Path:
+    """Find the user-scope Claude config file (.claude.json).
 
-    When $CLAUDE_CONFIG_DIR is set, returns $CLAUDE_CONFIG_DIR/.claude.json.
-    Otherwise returns ~/.claude.json (Claude Code's default location).
+    Returns the first candidate path that exists on disk. If none exist,
+    returns the first candidate as the default creation path.
+
+    Inside an mngr agent, $CLAUDE_CONFIG_DIR points to the agent's isolated
+    config dir. This function looks for the *user's* original config instead.
+
+    Candidate paths when $ORIGINAL_CLAUDE_CONFIG_DIR is set:
+    1. $ORIGINAL_CLAUDE_CONFIG_DIR/.claude.json (custom CLAUDE_CONFIG_DIR convention)
+    2. Parent of $ORIGINAL_CLAUDE_CONFIG_DIR / .claude.json (default layout where the
+       config file lives *beside* the config dir: ~/.claude/ dir -> ~/.claude.json file)
+
+    Without $ORIGINAL_CLAUDE_CONFIG_DIR:
+    1. ~/.claude.json (Claude Code's default location)
     """
-    env_dir = os.environ.get("CLAUDE_CONFIG_DIR")
-    if env_dir:
-        return Path(env_dir) / ".claude.json"
-    return Path.home() / ".claude.json"
+    candidates: list[Path] = []
 
-
-def get_user_claude_config_path() -> Path:
-    """Return the path to the user-scope Claude config file (.claude.json).
-
-    Inside an mngr agent, $CLAUDE_CONFIG_DIR points to the agent's config dir.
-    Use this function to get the user's original .claude.json path.
-
-    Resolution order mirrors get_user_claude_config_dir():
-    1. $ORIGINAL_CLAUDE_CONFIG_DIR/.claude.json
-    2. Falls back to get_claude_config_path()
-    """
     original = os.environ.get("ORIGINAL_CLAUDE_CONFIG_DIR")
     if original:
-        return Path(original) / ".claude.json"
-    return get_claude_config_path()
+        original_path = Path(original)
+        candidates.append(original_path / ".claude.json")
+        candidates.append(original_path.parent / ".claude.json")
 
+    candidates.append(Path.home() / ".claude.json")
 
-def get_claude_config_backup_path() -> Path:
-    """Return the path to the Claude config backup file (.claude.json.bak)."""
-    return get_claude_config_path().with_suffix(".json.bak")
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 
 # =============================================================================
@@ -452,15 +453,26 @@ def find_project_config(projects: Mapping[str, Any], path: Path) -> dict[str, An
 # Project Directory Encoding
 # =============================================================================
 
+# Matches every character that Claude Code's project-dir encoder maps to '-'
+# (i.e. everything that is not an ASCII alphanumeric or literal '-').
+_NON_DASH_ALNUM_ASCII: Final = re.compile(r"[^A-Za-z0-9-]")
+
 
 @pure
 def encode_claude_project_dir_name(path: Path) -> str:
     """Encode a filesystem path into Claude Code's project directory name.
 
     Claude Code stores per-project data in ~/.claude/projects/<encoded-path>/.
-    The encoding replaces '/' and '.' with '-'.
+    The encoding keeps only ASCII alphanumerics and ``-``, mapping every
+    other character (``/``, ``.``, ``_``, space, ``@``, ``+``, accented
+    letters, CJK, etc.) to ``-`` -- per the algorithm documented in
+    anthropics/claude-code#19972. If this encoder diverges from Claude
+    Code's, ``on_after_provisioning`` writes the adopted JSONL to a
+    project subdir Claude Code never reads on resume, the find guard in
+    ``assemble_command`` returns no match, and ``--adopt-session``
+    silently spawns a fresh session via the ``||`` fallback.
     """
-    return str(path).replace("/", "-").replace(".", "-")
+    return _NON_DASH_ALNUM_ASCII.sub("-", str(path))
 
 
 # =============================================================================
@@ -487,7 +499,11 @@ def build_readiness_hooks_config() -> dict[str, Any]:
     - PostToolUseFailure: removes 'permissions_waiting' file (tool failed/denied, permission resolved)
     - Notification (idle_prompt): removes 'active' and 'permissions_waiting' files
     - Stop: runs wait_for_stop_hook.sh which waits for all other stop hooks to
-      finish, then removes 'active' and 'permissions_waiting' and emits an activity event
+      finish, then runs post-completion actions (uploads the current commit's
+      autofix issue file to the Modal code-review-json volume when the
+      code-guardian orchestrator wrote .reviewer/outputs/orchestrator_success,
+      and invokes notify_user best-effort), and finally removes 'active' and
+      'permissions_waiting' and emits an activity event
 
     File semantics:
     - session_started: Claude Code session has started (for initial message timing)
@@ -512,7 +528,7 @@ def build_readiness_hooks_config() -> dict[str, Any]:
                         {
                             "type": "command",
                             "command": _SESSION_GUARD
-                            + 'echo "The base branch for this work is: ${GIT_BASE_BRANCH:-main}"',
+                            + 'echo "The base branch for this work is: ${MNGR_GIT_BASE_BRANCH:-main}"',
                         },
                         {
                             "type": "command",
@@ -596,6 +612,60 @@ def build_readiness_hooks_config() -> dict[str, Any]:
                         {
                             "type": "command",
                             "command": _SESSION_GUARD + 'bash "$MNGR_AGENT_STATE_DIR/commands/wait_for_stop_hook.sh"',
+                        },
+                    ],
+                }
+            ],
+        }
+    }
+
+
+@pure
+def build_permission_auto_allow_hooks_config() -> dict[str, Any]:
+    """Build hooks configuration that auto-allows all permission dialogs.
+
+    Adds a PermissionRequest hook with a wildcard matcher that outputs a JSON
+    decision to allow every tool use without pausing for user approval.
+    """
+    return {
+        "hooks": {
+            "PermissionRequest": [
+                {
+                    "matcher": "*",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "echo "
+                                '\'{"hookSpecificOutput":{"hookEventName":"PermissionRequest",'
+                                '"decision":{"behavior":"allow"}}}\''
+                            ),
+                            "timeout": 5,
+                        }
+                    ],
+                }
+            ],
+        }
+    }
+
+
+@pure
+def build_credential_sync_hooks_config() -> dict[str, Any]:
+    """Build the hooks configuration for credential sync on macOS.
+
+    Installs a Notification:auth_success hook that propagates keychain
+    credentials from the current agent to all other per-agent keychain entries
+    after a successful login.
+    """
+    return {
+        "hooks": {
+            "Notification": [
+                {
+                    "matcher": "auth_success",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": 'python3 "$MNGR_AGENT_STATE_DIR/commands/sync_keychain_credentials.py"',
                         },
                     ],
                 }

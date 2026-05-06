@@ -6,6 +6,7 @@ Modal credentials or SSH connections.
 """
 
 import contextlib
+from collections.abc import Mapping
 from datetime import datetime
 from datetime import timezone
 from io import StringIO
@@ -26,11 +27,17 @@ from imbue.mngr.interfaces.data_types import VolumeFileType
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
+from imbue.mngr.primitives import HostState
 from imbue.mngr.primitives import ProviderBackendName
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SnapshotId
 from imbue.mngr.primitives import SnapshotName
 from imbue.mngr.primitives import VolumeId
+from imbue.mngr.providers.listing_utils import build_listing_collection_script
+from imbue.mngr.providers.listing_utils import parse_optional_float
+from imbue.mngr.providers.listing_utils import parse_optional_int
+from imbue.mngr.utils.testing import generate_test_environment_name
+from imbue.mngr_modal.backend import MODAL_NAME_MAX_LENGTH
 from imbue.mngr_modal.backend import ModalAppContextHandle
 from imbue.mngr_modal.backend import ModalProviderBackend
 from imbue.mngr_modal.backend import _create_environment
@@ -40,6 +47,7 @@ from imbue.mngr_modal.backend import _lookup_persistent_app_with_env_retry
 from imbue.mngr_modal.backend import register_provider_backend
 from imbue.mngr_modal.config import ModalMode
 from imbue.mngr_modal.config import ModalProviderConfig
+from imbue.mngr_modal.errors import ModalMngrError
 from imbue.mngr_modal.errors import NoSnapshotsModalMngrError
 from imbue.mngr_modal.instance import HOST_VOLUME_INFIX
 from imbue.mngr_modal.instance import HostRecord
@@ -50,11 +58,8 @@ from imbue.mngr_modal.instance import TAG_HOST_ID
 from imbue.mngr_modal.instance import TAG_HOST_NAME
 from imbue.mngr_modal.instance import TAG_USER_PREFIX
 from imbue.mngr_modal.instance import _build_image_from_dockerfile_contents
-from imbue.mngr_modal.instance import _build_listing_collection_script
 from imbue.mngr_modal.instance import _build_modal_secrets_from_env
 from imbue.mngr_modal.instance import _build_modal_volumes
-from imbue.mngr_modal.instance import _parse_optional_float
-from imbue.mngr_modal.instance import _parse_optional_int
 from imbue.mngr_modal.instance import _parse_volume_spec
 from imbue.mngr_modal.instance import _substitute_dockerfile_build_args
 from imbue.mngr_modal.routes.deployment import deploy_function
@@ -64,10 +69,40 @@ from imbue.mngr_modal.testing import make_snapshot
 from imbue.mngr_modal.testing import make_testing_modal_interface
 from imbue.mngr_modal.testing import make_testing_provider
 from imbue.mngr_modal.testing import setup_host_with_sandbox
+from imbue.mngr_modal.volume import ModalVolume
 from imbue.mngr_modal.volume import _proxy_file_entry_type_to_volume_file_type
+from imbue.modal_proxy.data_types import FileEntry
 from imbue.modal_proxy.data_types import FileEntryType as ProxyFileEntryType
 from imbue.modal_proxy.errors import ModalProxyError
+from imbue.modal_proxy.errors import ModalProxyRateLimitError
+from imbue.modal_proxy.interface import VolumeInterface
 from imbue.modal_proxy.testing import TestingModalInterface
+
+
+class _RateLimitingVolumeStub(VolumeInterface):
+    """Stub that raises ModalProxyRateLimitError on every operation."""
+
+    def get_name(self) -> str | None:
+        return None
+
+    def listdir(self, path: str) -> list[FileEntry]:
+        raise ModalProxyRateLimitError("rate limit exceeded")
+
+    def read_file(self, path: str) -> bytes:
+        raise ModalProxyRateLimitError("rate limit exceeded")
+
+    def remove_file(self, path: str, *, recursive: bool = False) -> None:
+        raise ModalProxyRateLimitError("rate limit exceeded")
+
+    def write_files(self, file_contents_by_path: Mapping[str, bytes]) -> None:
+        raise ModalProxyRateLimitError("rate limit exceeded")
+
+    def reload(self) -> None:
+        pass
+
+    def commit(self) -> None:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Host Record CRUD Tests
@@ -168,39 +203,6 @@ def test_save_failed_host_record(testing_provider: ModalProviderInstance) -> Non
     assert record.certified_host_data.build_log == "Error: dependency not found"
     # Failed hosts have no SSH info
     assert record.ssh_host is None
-
-
-def test_clear_snapshots_from_host_record(testing_provider: ModalProviderInstance) -> None:
-    host_id = HostId.generate()
-    snapshots = [
-        make_snapshot("snap-1", "s1"),
-        make_snapshot("snap-2", "s2"),
-    ]
-    record = make_host_record(host_id=host_id, snapshots=snapshots)
-    testing_provider._write_host_record(record)
-
-    testing_provider._clear_snapshots_from_host_record(host_id)
-
-    updated = testing_provider._read_host_record(host_id, use_cache=False)
-    assert updated is not None
-    assert len(updated.certified_host_data.snapshots) == 0
-
-
-def test_clear_snapshots_noop_when_no_snapshots(testing_provider: ModalProviderInstance) -> None:
-    host_id = HostId.generate()
-    record = make_host_record(host_id=host_id, snapshots=[])
-    testing_provider._write_host_record(record)
-
-    testing_provider._clear_snapshots_from_host_record(host_id)
-
-    updated = testing_provider._read_host_record(host_id, use_cache=False)
-    assert updated is not None
-    assert len(updated.certified_host_data.snapshots) == 0
-
-
-def test_clear_snapshots_noop_when_no_record(testing_provider: ModalProviderInstance) -> None:
-    # Should not raise
-    testing_provider._clear_snapshots_from_host_record(HostId.generate())
 
 
 # ---------------------------------------------------------------------------
@@ -871,10 +873,11 @@ def test_destroy_host(
     with pytest.raises(ModalProxyError, match="terminated"):
         sandbox.exec("echo", "should fail")
 
-    # Snapshots cleared
+    # Snapshots preserved (for gc_snapshots to age-gate), but host marked DESTROYED
     updated = testing_provider._read_host_record(host_id, use_cache=False)
     assert updated is not None
-    assert len(updated.certified_host_data.snapshots) == 0
+    assert len(updated.certified_host_data.snapshots) == 1
+    assert updated.certified_host_data.stop_reason == HostState.DESTROYED.value
 
     # Agents removed
     agents = testing_provider.list_persisted_agent_data_for_host(host_id)
@@ -945,6 +948,38 @@ def test_build_provider_instance_testing_mode(
 
     # Clean up the app registry
     ModalProviderBackend.close_app("build-test")
+
+
+def test_build_provider_instance_environment_name_derived_from_prefix(
+    temp_mngr_ctx: MngrContext,
+) -> None:
+    """Verify that the Modal environment name is prefix + user_id.
+
+    This test is trivial but necessary for the validity of the prefix check in
+    make_modal_provider_real (conftest.py): we validate the prefix against
+    TEST_ENV_PATTERN as a proxy for the Modal environment name. That proxy is
+    only valid if environment_name == f"{prefix}{user_id}" remains the formula
+    in build_provider_instance. If this test breaks, the prefix check no longer
+    guarantees correct environment naming.
+    """
+    config = ModalProviderConfig(
+        mode=ModalMode.TESTING,
+        app_name="env-name-test",
+        host_dir=temp_mngr_ctx.config.default_host_dir,
+    )
+    instance = ModalProviderBackend.build_provider_instance(
+        name=ProviderInstanceName("test"),
+        config=config,
+        mngr_ctx=temp_mngr_ctx,
+    )
+    assert isinstance(instance, ModalProviderInstance)
+
+    expected_env_name = f"{temp_mngr_ctx.config.prefix}{temp_mngr_ctx.get_profile_user_id()}"
+    if len(expected_env_name) > MODAL_NAME_MAX_LENGTH:
+        expected_env_name = expected_env_name[:MODAL_NAME_MAX_LENGTH]
+    assert instance.environment_name == expected_env_name
+
+    ModalProviderBackend.close_app("env-name-test")
 
 
 def test_build_provider_instance_truncates_long_names(
@@ -1216,6 +1251,13 @@ def test_modal_volume_wrapper(testing_provider: ModalProviderInstance) -> None:
     # Remove directory
     vol.write_files({"/rmdir/file.txt": b"x"})
     vol.remove_directory("/rmdir")
+
+
+def test_modal_volume_translates_rate_limit_error_to_mngr_error() -> None:
+    """ModalProxyRateLimitError from the proxy layer is translated to ModalMngrError."""
+    vol = ModalVolume.model_construct(modal_volume=_RateLimitingVolumeStub())
+    with pytest.raises(ModalMngrError, match="rate limit exceeded"):
+        vol.listdir("/any")
 
 
 # ---------------------------------------------------------------------------
@@ -1714,16 +1756,16 @@ def test_proxy_file_entry_type_directory_maps_to_volume_directory() -> None:
     ("value", "expected"),
     [("42", 42), ("  123  ", 123), ("0", 0), ("", None), ("   ", None), ("not_a_number", None), ("12.5", None)],
 )
-def test_parse_optional_int(value: str, expected: int | None) -> None:
-    assert _parse_optional_int(value) == expected
+def testparse_optional_int(value: str, expected: int | None) -> None:
+    assert parse_optional_int(value) == expected
 
 
 @pytest.mark.parametrize(
     ("value", "expected"),
     [("3.14", 3.14), ("  42.0  ", 42.0), ("0", 0.0), ("100", 100.0), ("", None), ("   ", None), ("abc", None)],
 )
-def test_parse_optional_float(value: str, expected: float | None) -> None:
-    assert _parse_optional_float(value) == expected
+def testparse_optional_float(value: str, expected: float | None) -> None:
+    assert parse_optional_float(value) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -1803,8 +1845,9 @@ def test_parse_build_args_unknown_arg_raises(
 
 def test_create_environment(tmp_path: Path, cg: ConcurrencyGroup) -> None:
     modal = make_testing_modal_interface(tmp_path, cg)
-    _create_environment("test-env", modal)
-    assert "test-env" in modal._environments
+    name = f"{generate_test_environment_name()}-happy-path"
+    _create_environment(name, modal)
+    assert name in modal._environments
 
 
 def test_create_environment_rejects_bad_mngr_prefix(tmp_path: Path, cg: ConcurrencyGroup) -> None:
@@ -1815,8 +1858,26 @@ def test_create_environment_rejects_bad_mngr_prefix(tmp_path: Path, cg: Concurre
 
 def test_create_environment_allows_mngr_test_prefix(tmp_path: Path, cg: ConcurrencyGroup) -> None:
     modal = make_testing_modal_interface(tmp_path, cg)
-    _create_environment("mngr_test-good-name", modal)
-    assert "mngr_test-good-name" in modal._environments
+    name = f"{generate_test_environment_name()}-good-name"
+    _create_environment(name, modal)
+    assert name in modal._environments
+
+
+def test_create_environment_rejects_non_test_prefix_during_pytest(tmp_path: Path, cg: ConcurrencyGroup) -> None:
+    """Second-line guard: under pytest, reject env names that don't match the
+    mngr_test-YYYY-MM-DD-HH-MM-SS pattern. Protects against in-process mngr
+    spawns that forget MNGR_PREFIX (the earlier guard only catches `mngr_`
+    underscore; this one also catches dash-prefixed default names like
+    `mngr-<uuid>` and any ad-hoc custom name)."""
+    modal = make_testing_modal_interface(tmp_path, cg)
+    # PYTEST_CURRENT_TEST is set by pytest itself; no monkeypatch needed.
+    with pytest.raises(MngrError, match="during pytest"):
+        _create_environment("mngr-abc123", modal)
+    with pytest.raises(MngrError, match="during pytest"):
+        _create_environment("custom-env", modal)
+    # Even a mngr_test- prefix without the timestamp shape fails.
+    with pytest.raises(MngrError, match="during pytest"):
+        _create_environment("mngr_test-not-a-timestamp", modal)
 
 
 def test_lookup_persistent_app_with_env_retry(tmp_path: Path, cg: ConcurrencyGroup) -> None:
@@ -2486,6 +2547,6 @@ def test_discover_hosts_empty_volume_and_no_sandboxes(
 
 
 def test_build_listing_script_uses_host_dir() -> None:
-    script = _build_listing_collection_script("/custom/host/dir", "test-prefix-")
+    script = build_listing_collection_script("/custom/host/dir", "test-prefix-")
     assert "/custom/host/dir" in script
     assert "test-prefix-" in script

@@ -5,6 +5,7 @@ import sys
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
+from typing import Final
 from typing import Generator
 from uuid import uuid4
 
@@ -14,20 +15,24 @@ import pluggy
 import psutil
 import pytest
 from click.testing import CliRunner
+from loguru import logger
 from urwid.widget.listbox import SimpleFocusListWalker
 
 import imbue.mngr.main
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.agents.agent_registry import load_agents_from_plugins
 from imbue.mngr.agents.agent_registry import reset_agent_registry
+from imbue.mngr.api.providers import reset_provider_instances
 from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.errors import BaseMngrError
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.plugin_catalog import get_independent_entry_point_names
 from imbue.mngr.plugins import hookspecs
 from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import ProviderInstanceName
+from imbue.mngr.providers.docker.instance import create_docker_client
 from imbue.mngr.providers.docker.testing import remove_docker_container_and_volume
 from imbue.mngr.providers.docker.volume import LABEL_PROVIDER
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
@@ -41,6 +46,9 @@ from imbue.mngr.utils.testing import isolate_tmux_server
 from imbue.mngr.utils.testing import make_mngr_ctx
 from imbue.mngr.utils.testing import setup_mngr_test_environment
 from imbue.mngr.utils.testing import worker_test_ids
+
+# Resource guards (tmux, rsync, unison, modal, docker_cli, docker_sdk) are
+# registered automatically via the resource_guards entry point group.
 
 # The urwid import above triggers creation of deprecated module aliases.
 # These are the deprecated module aliases that urwid 3.x creates for backwards
@@ -150,9 +158,10 @@ def tmp_home_dir(tmp_path: Path) -> Generator[Path, None, None]:
 def setup_git_config(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """Isolate git and provide user config for tests that run git commands.
 
-    Sets GIT_CONFIG_NOSYSTEM, GIT_TERMINAL_PROMPT, and GIT_CONFIG_GLOBAL
-    via the shared isolate_git() helper. Tests that need git should request
-    this fixture (or temp_git_repo, which depends on it).
+    Sets GIT_CONFIG_NOSYSTEM and GIT_TERMINAL_PROMPT, and writes a
+    .gitconfig to the fake HOME via the shared isolate_git() helper.
+    Tests that need git should request this fixture (or temp_git_repo,
+    which depends on it).
     """
     with isolate_git(monkeypatch):
         yield
@@ -254,6 +263,9 @@ def temp_mngr_ctx(
     cg = ConcurrencyGroup(name="test")
     with cg:
         yield make_mngr_ctx(temp_config, plugin_manager, temp_profile_dir, concurrency_group=cg)
+    # Clear the provider instance cache so cached instances don't outlive
+    # the ConcurrencyGroup that was just torn down.
+    reset_provider_instances()
 
 
 @pytest.fixture
@@ -287,6 +299,25 @@ def per_host_dir(temp_host_dir: Path) -> Path:
 def cli_runner() -> CliRunner:
     """Create a Click CLI runner for testing CLI commands."""
     return CliRunner()
+
+
+@pytest.fixture()
+def log_warnings() -> Generator[list[str], None, None]:
+    """Capture loguru warning messages for assertion in tests.
+
+    Tolerates handler removal during the test (e.g. setup_logging() calls
+    logger.remove() which clears all handlers, so the handler we added may
+    no longer exist by the time teardown runs).
+    """
+    messages: list[str] = []
+    handler_id = logger.add(lambda msg: messages.append(msg.record["message"]), level="WARNING", format="{message}")
+    try:
+        yield messages
+    finally:
+        try:
+            logger.remove(handler_id)
+        except ValueError:
+            pass
 
 
 # =============================================================================
@@ -356,7 +387,7 @@ _WORKSPACE_PACKAGES = (
 
 
 @pytest.fixture
-def isolated_mngr_venv(tmp_path: Path) -> Path:
+def isolated_mngr_venv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Create a temporary venv with mngr installed for subprocess-based tests.
 
     Returns the venv directory. Use ``venv / "bin" / "mngr"`` to run mngr
@@ -381,6 +412,11 @@ def isolated_mngr_venv(tmp_path: Path) -> Path:
 
     python_path = str(venv_dir / "bin" / "python")
 
+    # Undo the autouse fixture's UV_OFFLINE/UV_FROZEN so uv can fetch
+    # packages into the fresh venv from its local cache.
+    monkeypatch.delenv("UV_OFFLINE", raising=False)
+    monkeypatch.delenv("UV_FROZEN", raising=False)
+
     cg = ConcurrencyGroup(name="isolated-venv-setup")
     with cg:
         # Export mngr's pinned transitive deps from the lockfile (no editable/comment lines)
@@ -398,11 +434,11 @@ def isolated_mngr_venv(tmp_path: Path) -> Path:
         cg.run_process_to_completion(("uv", "venv", str(venv_dir)))
         # Install pinned deps from cache (no resolution or network needed)
         cg.run_process_to_completion(
-            ("uv", "pip", "install", "--python", python_path, "--no-deps", "-r", str(reqs_file))
+            ("uv", "pip", "install", "--python", python_path, "--no-deps", "-r", str(reqs_file)),
         )
         # Install workspace packages as editable (no-deps since deps are already installed)
         cg.run_process_to_completion(
-            ("uv", "pip", "install", "--python", python_path, "--no-deps", *workspace_install_args)
+            ("uv", "pip", "install", "--python", python_path, "--no-deps", *workspace_install_args),
         )
 
     # Write a uv-receipt.toml so plugin add/remove recognise this as a
@@ -449,9 +485,10 @@ def plugin_manager(
     # Reset the module-level plugin manager singleton before each test
     imbue.mngr.main.reset_plugin_manager()
 
-    # Clear the registries to ensure clean state
+    # Clear the registries and caches to ensure clean state
     reset_backend_registry()
     reset_agent_registry()
+    reset_provider_instances()
 
     # Discover all entry-point plugins and block everything except enabled_plugins
     all_eps = {ep.name for ep in importlib.metadata.entry_points(group="mngr")}
@@ -477,6 +514,7 @@ def plugin_manager(
     imbue.mngr.main.reset_plugin_manager()
     reset_backend_registry()
     reset_agent_registry()
+    reset_provider_instances()
 
 
 # =============================================================================
@@ -550,7 +588,7 @@ def _get_stale_docker_test_containers(max_age_seconds: int = 3600) -> list[tuple
       generated by the autouse mngr_test_prefix fixture).
     """
     try:
-        client = docker.from_env()
+        client = create_docker_client()
     except docker.errors.DockerException:
         return []
 
@@ -636,7 +674,7 @@ def _remove_docker_containers(containers: list[tuple[str, str]]) -> None:
         return
 
     try:
-        client = docker.from_env()
+        client = create_docker_client()
     except docker.errors.DockerException:
         return
 
@@ -649,6 +687,79 @@ def _remove_docker_containers(containers: list[tuple[str, str]]) -> None:
                 pass
     finally:
         client.close()
+
+
+class _DockerdStartupError(BaseMngrError):
+    """Raised when the release-test session fixture cannot bring dockerd up."""
+
+
+# Number of times _ensure_dockerd_for_release will invoke start-dockerd.sh
+# before giving up. Kept as a named constant so the loop bound and the
+# message in the raised _DockerdStartupError stay in lockstep.
+_DOCKERD_STARTUP_ATTEMPTS: Final[int] = 3
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_dockerd_for_release() -> None:
+    """Start the Docker daemon if running inside a release test sandbox.
+
+    The Dockerfile.release installs /start-dockerd.sh. The sandbox CMD also
+    runs it at launch, but offload overrides the entrypoint, so this session
+    fixture is how dockerd actually comes up for release tests.
+
+    start-dockerd.sh is idempotent and polls `docker info` internally until
+    the daemon is ready. On gVisor the first attempt can flake (iptables
+    setup, IPv6 disable, dockerd bind race), so we retry up to
+    _DOCKERD_STARTUP_ATTEMPTS times and verify /var/run/docker.sock exists
+    before returning. If we still cannot bring dockerd up, we raise --
+    otherwise every docker/docker_sdk test in the session would fail with
+    an opaque FileNotFoundError on the socket.
+    """
+    start_script = Path("/start-dockerd.sh")
+    if not start_script.exists():
+        return
+
+    docker_sock = Path("/var/run/docker.sock")
+    if docker_sock.exists():
+        # dockerd already running -- typically started by the Dockerfile.release
+        # CMD at sandbox launch. Skip the startup script entirely. Some Modal
+        # sandboxes have a read-only /etc/resolv.conf, and running the script
+        # when dockerd is already up would otherwise fail there for no reason.
+        return
+
+    last_result = None
+    for attempt in range(_DOCKERD_STARTUP_ATTEMPTS):
+        cg = ConcurrencyGroup(name=f"ensure-dockerd-{attempt}")
+        with cg:
+            last_result = cg.run_process_to_completion(
+                [str(start_script)],
+                is_checked_after=False,
+            )
+        if last_result.returncode == 0 and docker_sock.exists():
+            logger.info("[_ensure_dockerd_for_release] dockerd ready on attempt {}", attempt + 1)
+            return
+        logger.warning(
+            "[_ensure_dockerd_for_release] attempt {} failed: returncode={} socket_exists={}\nstdout: {}\nstderr: {}",
+            attempt + 1,
+            last_result.returncode,
+            docker_sock.exists(),
+            last_result.stdout,
+            last_result.stderr,
+        )
+
+    # `last_result` is guaranteed non-None: range(_DOCKERD_STARTUP_ATTEMPTS)
+    # is non-empty (the constant is >= 1) and each iteration assigns it
+    # unconditionally before the early-return check. Assert to document the
+    # invariant and narrow the type for Pyright so the error template can
+    # reference `last_result.X!r` directly.
+    assert last_result is not None
+    raise _DockerdStartupError(
+        f"Failed to start dockerd after {_DOCKERD_STARTUP_ATTEMPTS} attempts. "
+        f"Last returncode={last_result.returncode}, "
+        f"socket_exists={docker_sock.exists()}. "
+        f"stdout={last_result.stdout!r} "
+        f"stderr={last_result.stderr!r}"
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)

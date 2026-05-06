@@ -20,6 +20,18 @@ from imbue.imbue_common.primitives import NonEmptyStr
 # === Enums ===
 
 
+class DockerBuilder(UpperCaseStrEnum):
+    """Image builder backend used by the docker provider.
+
+    DOCKER selects native ``docker build``. DEPOT selects ``depot build --load``,
+    which uses depot.dev's remote builders with shared layer cache and bypasses
+    Docker Hub anonymous pull rate limits.
+    """
+
+    DOCKER = auto()
+    DEPOT = auto()
+
+
 class AgentNameStyle(UpperCaseStrEnum):
     """Style for auto-generated agent names."""
 
@@ -137,7 +149,7 @@ class TransferMode(UpperCaseStrEnum):
 
     NONE: Run in-place, no transfer.
     RSYNC: Transfer files via rsync (non-git projects only).
-    GIT_MIRROR: Transfer via git push --mirror (git projects, works locally and remotely).
+    GIT_MIRROR: Push all local branches and tags via git (git projects, works locally and remotely).
     GIT_WORKTREE: Create a git worktree (git projects, local agents only).
     """
 

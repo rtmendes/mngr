@@ -7,8 +7,8 @@
 `mngr` loads configuration from multiple sources with the following precedence (lowest to highest):
 
 1. User config: `~/.mngr/profiles/<profile_id>/settings.toml`
-2. Project config: `.mngr/settings.toml` (at git root, context dir, or `MNGR_PROJECT_DIR`)
-3. Local config: `.mngr/settings.local.toml` (at git root, context dir, or `MNGR_PROJECT_DIR`)
+2. Project config: `.mngr/settings.toml` (at git root, context dir, or `MNGR_PROJECT_CONFIG_DIR`)
+3. Local config: `.mngr/settings.local.toml` (at git root, context dir, or `MNGR_PROJECT_CONFIG_DIR`)
 4. Environment variables: `MNGR_PREFIX`, `MNGR_HOST_DIR`, `MNGR_ROOT_NAME`
 5. CLI arguments (highest precedence)
 
@@ -85,7 +85,7 @@ Command defaults are particularly useful for:
 - Personal preferences (e.g., prefer fantasy names over english)
 - Team conventions (e.g., standard provider or host settings)
 
-**Note:** Some CLI arguments (like `--context`) affect which config file is loaded, so they are parsed before config defaults are applied. The implementation handles this correctly by loading the config first, then applying defaults only to parameters that weren't explicitly specified.
+**Note:** Config defaults are applied only to parameters that weren't explicitly specified on the command line.
 
 ### Create Templates
 

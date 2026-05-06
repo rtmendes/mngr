@@ -1,6 +1,8 @@
 from typing import Mapping
 from typing import Sequence
 
+from pydantic import PrivateAttr
+
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.hosts.host import Host
 from imbue.mngr.hosts.offline_host import OfflineHost
@@ -21,6 +23,21 @@ class BaseProviderInstance(ProviderInstanceInterface):
 
     Useful because it communicates that the concrete Host class (not HostInterface) is returned from these methods.
     """
+
+    _host_by_id_cache: dict[HostId, HostInterface] = PrivateAttr(default_factory=dict)
+
+    def _evict_cached_host(self, host_id: HostId, replacement: HostInterface | None = None) -> None:
+        """Remove a Host from the cache, disconnecting it if it holds an SSH connection.
+
+        If replacement is provided and is a different instance than the cached one, the old
+        Host is disconnected before being evicted. If replacement is None, the entry is simply
+        removed (with disconnect if applicable).
+        """
+        old_host = self._host_by_id_cache.pop(host_id, None)
+        if old_host is not None and old_host is not replacement and isinstance(old_host, Host):
+            old_host.disconnect()
+        if replacement is not None:
+            self._host_by_id_cache[host_id] = replacement
 
     def reset_caches(self) -> None:
         pass
@@ -76,3 +93,11 @@ class BaseProviderInstance(ProviderInstanceInterface):
             return provider_config.destroyed_host_persisted_seconds
         # Fall back to the global default
         return self.mngr_ctx.config.default_destroyed_host_persisted_seconds
+
+    def get_min_online_host_age_seconds(self) -> float:
+        # Check for a provider-level override first
+        provider_config = self.mngr_ctx.config.providers.get(self.name)
+        if provider_config is not None and provider_config.min_online_host_age_seconds is not None:
+            return provider_config.min_online_host_age_seconds
+        # Fall back to the global default
+        return self.mngr_ctx.config.default_min_online_host_age_seconds

@@ -9,9 +9,19 @@ from typing import Any
 
 import pytest
 
+from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.utils.plugin_testing import register_plugin_test_fixtures
 
+# The tmux mark is registered globally via the resource_guards entry
+# point group; no per-project mark registration is needed.
 register_plugin_test_fixtures(globals())
+
+
+@pytest.fixture
+def test_cg() -> Generator[ConcurrencyGroup, None, None]:
+    """Provide a ConcurrencyGroup for tests that need one."""
+    with ConcurrencyGroup(name="test") as cg:
+        yield cg
 
 
 def _fake_run_kanpan(

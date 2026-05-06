@@ -12,6 +12,7 @@ import modal.exception
 import pluggy
 import pytest
 import toml
+from loguru import logger
 from modal.environments import delete_environment
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
@@ -20,8 +21,9 @@ from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import ConfigStructureError
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import UserId
+from imbue.mngr.utils.env_utils import TEST_ENV_PATTERN
+from imbue.mngr.utils.env_utils import TEST_ENV_PREFIX
 from imbue.mngr.utils.testing import ModalSubprocessTestEnv
-from imbue.mngr.utils.testing import TEST_ENV_PREFIX
 from imbue.mngr.utils.testing import delete_modal_apps_in_environment
 from imbue.mngr.utils.testing import delete_modal_environment
 from imbue.mngr.utils.testing import delete_modal_volumes_in_environment
@@ -57,13 +59,20 @@ def make_modal_provider_real(
     an initial snapshot. Tests that specifically need to test initial snapshot
     behavior should pass is_snapshotted_after_create=True.
     """
+    prefix = mngr_ctx.config.prefix
+    if not TEST_ENV_PATTERN.match(prefix):
+        raise ConfigStructureError(
+            f"Modal test prefix '{prefix}' does not match the required pattern "
+            f"'mngr_test-YYYY-MM-DD-HH-MM-SS-*'. Use the modal_mngr_ctx fixture "
+            f"(not temp_mngr_ctx) when creating real Modal providers, so that "
+            f"test environments can be identified and cleaned up by CI."
+        )
     config = ModalProviderConfig(
         app_name=app_name,
         host_dir=Path("/mngr"),
         default_sandbox_timeout=300,
-        # FIXME: we really should bump CPU up to 1.0 and memory up to at least 4gb for more stable tests
-        default_cpu=0.5,
-        default_memory=0.5,
+        default_cpu=1.0,
+        default_memory=2.0,
         is_persistent=is_persistent,
         is_snapshotted_after_create=is_snapshotted_after_create,
     )
@@ -337,7 +346,8 @@ def _get_leaked_modal_apps() -> list[tuple[str, str]]:
             for app in apps
             if app.get("Description", "") in worker_modal_app_names and app.get("State", "") != "stopped"
         ]
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError) as e:
+        logger.warning("Failed to list leaked modal apps: {}", e)
         return []
 
 
@@ -363,7 +373,8 @@ def _get_leaked_modal_volumes() -> list[str]:
             return []
         volumes = json.loads(result.stdout)
         return [v.get("Name", "") for v in volumes if v.get("Name", "") in worker_modal_volume_names]
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError) as e:
+        logger.warning("Failed to list leaked modal volumes: {}", e)
         return []
 
 
@@ -389,7 +400,8 @@ def _get_leaked_modal_environments() -> list[str]:
             return []
         envs = json.loads(result.stdout)
         return [e.get("name", "") for e in envs if e.get("name", "") in worker_modal_environment_names]
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError) as e:
+        logger.warning("Failed to list leaked modal environments: {}", e)
         return []
 
 

@@ -8,14 +8,16 @@ from imbue.mngr.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
 
 
+@pytest.mark.rsync
 @pytest.mark.release
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_multiple_agents_coexist(e2e: E2eSession) -> None:
-    for name in ["agent-a", "agent-b", "agent-c"]:
+    # Pin a unique sleep value per agent so leaked processes trace back to the specific create call.
+    for name, sleep_seconds in [("agent-a", 100101), ("agent-b", 100118), ("agent-c", 100119)]:
         expect(
             e2e.run(
-                f"mngr create {name} --command 'sleep 99999' --no-ensure-clean --no-connect",
+                f"mngr create {name} --type command --no-ensure-clean --no-connect -- sleep {sleep_seconds}",
                 comment=f"Create {name}",
             )
         ).to_succeed()
@@ -35,14 +37,16 @@ def test_multiple_agents_coexist(e2e: E2eSession) -> None:
         expect(exec_result.stdout).to_contain(name)
 
 
+@pytest.mark.rsync
 @pytest.mark.release
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_destroy_all_via_stdin(e2e: E2eSession) -> None:
-    for name in ["agent-x", "agent-y"]:
+    # Pin a unique sleep value per agent so leaked processes trace back to the specific create call.
+    for name, sleep_seconds in [("agent-x", 100102), ("agent-y", 100120)]:
         expect(
             e2e.run(
-                f"mngr create {name} --command 'sleep 99999' --no-ensure-clean --no-connect",
+                f"mngr create {name} --type command --no-ensure-clean --no-connect -- sleep {sleep_seconds}",
                 comment=f"Create {name}",
             )
         ).to_succeed()
@@ -64,14 +68,16 @@ def test_destroy_all_via_stdin(e2e: E2eSession) -> None:
     expect(list_after.stdout).to_contain("No agents found")
 
 
+@pytest.mark.rsync
 @pytest.mark.release
 @pytest.mark.tmux
 @pytest.mark.modal
 def test_list_filter_by_state(e2e: E2eSession) -> None:
-    for name in ["running-agent", "stopped-agent"]:
+    # Pin a unique sleep value per agent so leaked processes trace back to the specific create call.
+    for name, sleep_seconds in [("running-agent", 100103), ("stopped-agent", 100121)]:
         expect(
             e2e.run(
-                f"mngr create {name} --command 'sleep 99999' --no-ensure-clean --no-connect",
+                f"mngr create {name} --type command --no-ensure-clean --no-connect -- sleep {sleep_seconds}",
                 comment=f"Create {name}",
             )
         ).to_succeed()

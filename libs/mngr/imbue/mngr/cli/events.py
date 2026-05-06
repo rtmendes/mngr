@@ -15,6 +15,7 @@ from imbue.mngr.cli.help_formatter import add_pager_help_option
 from imbue.mngr.config.data_types import CommonCliOptions
 from imbue.mngr.errors import UserInputError
 from imbue.mngr.utils.cel_utils import compile_cel_filters
+from imbue.mngr.utils.parent_process import start_parent_death_watcher
 
 
 class EventsCliOptions(CommonCliOptions):
@@ -31,6 +32,7 @@ class EventsCliOptions(CommonCliOptions):
     follow: bool
     tail: int | None
     head: int | None
+    daemonize: bool = False
 
 
 def _write_and_flush_stdout(content: str) -> None:
@@ -39,7 +41,7 @@ def _write_and_flush_stdout(content: str) -> None:
     sys.stdout.flush()
 
 
-@click.command(name="events")
+@click.command(name="event")
 @click.argument("target")
 @click.argument("sources", nargs=-1)
 @optgroup.group("Display")
@@ -77,15 +79,26 @@ def _write_and_flush_stdout(content: str) -> None:
     multiple=True,
     help="CEL expression; events matching any exclude filter are dropped (repeatable).",
 )
+@click.option(
+    "--daemonize/--no-daemonize",
+    default=False,
+    show_default=True,
+    help="When not daemonized (default), exit if the parent process dies. "
+    "Use --daemonize to keep running independently.",
+)
 @add_common_options
 @click.pass_context
 def events(ctx: click.Context, **kwargs: Any) -> None:
     mngr_ctx, _output_opts, opts = setup_command_context(
         ctx=ctx,
-        command_name="events",
+        command_name="event",
         command_class=EventsCliOptions,
         is_format_template_supported=False,
     )
+
+    # Start parent death watcher unless running as a daemon
+    if not opts.daemonize:
+        start_parent_death_watcher(mngr_ctx.concurrency_group)
 
     # Validate mutually exclusive options
     if opts.head is not None and opts.tail is not None:
@@ -148,9 +161,9 @@ def _stream_all_events_cli(
 
 # Register help metadata for git-style help formatting
 CommandHelpMetadata(
-    key="events",
+    key="event",
     one_line_description="View events from an agent or host",
-    synopsis="mngr events TARGET [SOURCES...] [--source SOURCE] [--include CEL] [--exclude CEL] [--follow] [--tail N] [--head N]",
+    synopsis="mngr event TARGET [SOURCES...] [--source SOURCE] [--include CEL] [--exclude CEL] [--follow] [--tail N] [--head N]",
     arguments_description=(
         "- `TARGET`: Agent or host name/ID whose events to view\n"
         "- `SOURCES`: Event sources to include (optional; includes all sources if omitted). "
@@ -171,17 +184,17 @@ is online, it reads files directly. When offline, it falls back to polling
 the volume. The command handles online/offline transitions automatically.
 Press Ctrl+C to stop.""",
     examples=(
-        ("Stream all events for an agent", "mngr events my-agent"),
-        ("Stream only message events", "mngr events my-agent messages"),
-        ("Stream events from multiple sources", "mngr events my-agent messages logs/mngr"),
-        ("Same thing using --source", "mngr events my-agent --source messages --source logs/mngr"),
+        ("Stream all events for an agent", "mngr event my-agent"),
+        ("Stream only message events", "mngr event my-agent messages"),
+        ("Stream events from multiple sources", "mngr event my-agent messages logs/mngr"),
+        ("Same thing using --source", "mngr event my-agent --source messages --source logs/mngr"),
         (
             "Include only user messages",
-            "mngr events my-agent --include 'source == \"messages\"' --include 'data.role == \"user\"'",
+            "mngr event my-agent --include 'source == \"messages\"' --include 'data.role == \"user\"'",
         ),
-        ("Exclude log events", "mngr events my-agent --exclude 'source.startsWith(\"logs/\")'"),
-        ("View last 100 events", "mngr events my-agent --tail 100"),
-        ("Follow all events in real-time", "mngr events my-agent --follow"),
+        ("Exclude log events", "mngr event my-agent --exclude 'source.startsWith(\"logs/\")'"),
+        ("View last 100 events", "mngr event my-agent --tail 100"),
+        ("Follow all events in real-time", "mngr event my-agent --follow"),
     ),
     see_also=(
         ("list", "List available agents"),

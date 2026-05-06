@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 from typing import cast
 
-import pluggy
 import pytest
 
 from imbue.imbue_common.model_update import to_update
@@ -29,7 +28,6 @@ from imbue.mngr.interfaces.host import AgentLabelOptions
 from imbue.mngr.interfaces.host import CreateAgentOptions
 from imbue.mngr.interfaces.host import NewHostOptions
 from imbue.mngr.interfaces.host import OnlineHostInterface
-from imbue.mngr.plugins import hookspecs
 from imbue.mngr.plugins.hookspecs import OnBeforeCreateArgs
 from imbue.mngr.primitives import AgentName
 from imbue.mngr.primitives import AgentTypeName
@@ -39,6 +37,8 @@ from imbue.mngr.primitives import LOCAL_PROVIDER_NAME
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import TransferMode
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
+from imbue.mngr.utils.testing import init_git_repo
+from imbue.mngr.utils.testing import make_ctx_with_plugins
 from imbue.mngr.utils.testing import tmux_session_cleanup
 from imbue.mngr.utils.testing import tmux_session_exists
 
@@ -101,7 +101,7 @@ def test_create_simple_echo_agent(
         local_host, source_location = _get_local_host_and_location(temp_mngr_ctx, temp_work_dir)
 
         agent_options = CreateAgentOptions(
-            agent_type=AgentTypeName("echo"),
+            agent_type=AgentTypeName("command"),
             name=agent_name,
             command=CommandString("echo 'Hello from mngr test' && sleep 365817"),
         )
@@ -135,7 +135,7 @@ def test_create_agent_with_new_host(
         local_host, source_location = _get_local_host_and_location(temp_mngr_ctx, temp_work_dir)
 
         agent_options = CreateAgentOptions(
-            agent_type=AgentTypeName("echo"),
+            agent_type=AgentTypeName("command"),
             name=agent_name,
             command=CommandString("echo 'Created with new host' && sleep 816394"),
         )
@@ -236,40 +236,32 @@ def test_agent_state_is_persisted(
 # =============================================================================
 
 
-@pytest.mark.tmux
-def test_create_agent_with_unknown_type_uses_type_as_command(
+def test_create_agent_with_unknown_type_and_no_command_raises(
     temp_mngr_ctx: MngrContext,
     temp_work_dir: Path,
 ) -> None:
-    """Test that creating an agent with an unknown type uses the type name as the command.
+    """Test that creating an agent with an unknown type and no command raises UserInputError.
 
-    This verifies the documented "Direct command" fallback behavior where an unrecognized
-    agent type (e.g., 'echo') is treated as a command to run.
+    With no registered type and no command_override / config command / agent_args,
+    BaseAgent.assemble_command has nothing to build into a shell command, so it
+    raises UserInputError with a message pointing the user at `--type command`.
     """
-    agent_name = AgentName(f"test-direct-cmd-{int(time.time())}")
-    session_name = f"{temp_mngr_ctx.config.prefix}{agent_name}"
+    agent_name = AgentName(f"test-unknown-type-no-cmd-{int(time.time())}")
 
-    with tmux_session_cleanup(session_name):
-        local_host, source_location = _get_local_host_and_location(temp_mngr_ctx, temp_work_dir)
+    local_host, source_location = _get_local_host_and_location(temp_mngr_ctx, temp_work_dir)
 
-        # Use a custom agent type name that will be treated as a command
-        agent_options = CreateAgentOptions(
-            agent_type=AgentTypeName("my-custom-command"),
-            name=agent_name,
-        )
+    agent_options = CreateAgentOptions(
+        agent_type=AgentTypeName("my-custom-command"),
+        name=agent_name,
+    )
 
-        result = create(
+    with pytest.raises(UserInputError, match=r"has no command configured"):
+        create(
             source_location=source_location,
             target_host=local_host,
             agent_options=agent_options,
             mngr_ctx=temp_mngr_ctx,
         )
-
-        # The agent should be created successfully
-        assert result.agent.id is not None
-        assert result.host.id is not None
-        # The command should be the agent type name since no explicit command was provided
-        assert result.agent.get_command() == "my-custom-command"
 
 
 # =============================================================================
@@ -482,6 +474,191 @@ def test_worktree_already_checked_out_gives_helpful_error(
             agent_options=agent_options,
             mngr_ctx=temp_mngr_ctx,
         )
+
+
+def test_worktree_in_repo_with_no_commits_gives_helpful_error(
+    temp_mngr_ctx: MngrContext,
+    tmp_path: Path,
+    setup_git_config: None,
+) -> None:
+    """Worktree mode in a freshly init'd repo with no commits raises a clear UserInputError.
+
+    Mirrors the default `mngr create` flow, which passes both base_branch (current
+    branch, e.g. "main") and a new_branch_name. Without an initial commit, the
+    base branch reference does not resolve and `git worktree add` would fail with
+    a cryptic "fatal: invalid reference" error.
+    """
+    empty_repo = tmp_path / "empty_repo"
+    init_git_repo(empty_repo, initial_commit=False)
+
+    local_host, source_location = _get_local_host_and_location(temp_mngr_ctx, empty_repo)
+
+    agent_options = CreateAgentOptions(
+        agent_type=AgentTypeName("worktree-test"),
+        name=AgentName("test-no-commits"),
+        command=CommandString("sleep 60"),
+        transfer_mode=TransferMode.GIT_WORKTREE,
+        git=AgentGitOptions(
+            base_branch="main",
+            new_branch_name="mngr/no-commits",
+        ),
+    )
+
+    with pytest.raises(UserInputError, match="no commits"):
+        create(
+            source_location=source_location,
+            target_host=local_host,
+            agent_options=agent_options,
+            mngr_ctx=temp_mngr_ctx,
+        )
+
+
+# =============================================================================
+# Branch Cleanup on Create Failure
+# =============================================================================
+
+
+class _RaiseAfterFileCopy:
+    """Plugin that raises after work_dir creation to simulate a late-stage failure."""
+
+    @hookimpl
+    def on_after_initial_file_copy(
+        self, agent_options: CreateAgentOptions, host: OnlineHostInterface, work_dir_path: Path
+    ) -> None:
+        raise RuntimeError("simulated failure after file copy")
+
+
+def _list_branches(repo: Path) -> list[str]:
+    """List local branch names in the given git repo."""
+    result = subprocess.run(
+        ["git", "-C", str(repo), "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [line for line in result.stdout.splitlines() if line]
+
+
+def _list_worktree_paths(repo: Path) -> set[Path]:
+    """List worktree paths (excluding the source repo itself) for the given git repo."""
+    result = subprocess.run(
+        ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    paths: set[Path] = set()
+    repo_resolved = repo.resolve()
+    for block in result.stdout.strip().split("\n\n"):
+        for line in block.splitlines():
+            if line.startswith("worktree "):
+                path = Path(line.removeprefix("worktree ")).resolve()
+                if path != repo_resolved:
+                    paths.add(path)
+                break
+    return paths
+
+
+def test_worktree_branch_is_cleaned_up_when_create_fails(
+    temp_mngr_ctx: MngrContext,
+    temp_git_repo: Path,
+) -> None:
+    """If create fails after we made a new worktree branch, the branch and the worktree are removed.
+
+    Reuses the destroy-time safety mechanism: only the branch we created
+    (recorded in created_branch_name) is deleted; pre-existing branches are not.
+    The worktree itself is always removed because we always create it ourselves.
+    """
+    agent_name = AgentName(f"test-cleanup-fail-{int(time.time())}")
+    leaked_branch = f"mngr/{agent_name}"
+
+    test_ctx = make_ctx_with_plugins(temp_mngr_ctx, [_RaiseAfterFileCopy()])
+    local_host, source_location = _get_local_host_and_location(test_ctx, temp_git_repo)
+
+    agent_options = CreateAgentOptions(
+        agent_type=AgentTypeName("worktree-test"),
+        name=agent_name,
+        command=CommandString("sleep 60"),
+        transfer_mode=TransferMode.GIT_WORKTREE,
+        git=AgentGitOptions(new_branch_name=leaked_branch),
+    )
+
+    branches_before = _list_branches(temp_git_repo)
+    assert leaked_branch not in branches_before
+    worktrees_before = _list_worktree_paths(temp_git_repo)
+
+    with pytest.raises(RuntimeError, match="simulated failure after file copy"):
+        create(
+            source_location=source_location,
+            target_host=local_host,
+            agent_options=agent_options,
+            mngr_ctx=test_ctx,
+        )
+
+    branches_after = _list_branches(temp_git_repo)
+    assert leaked_branch not in branches_after, (
+        f"branch {leaked_branch} should have been cleaned up after create failure, "
+        f"but is still present: {branches_after}"
+    )
+    worktrees_after = _list_worktree_paths(temp_git_repo)
+    leaked_worktrees = worktrees_after - worktrees_before
+    assert not leaked_worktrees, (
+        f"worktree(s) should have been removed after create failure, but found: {leaked_worktrees}"
+    )
+    for path in leaked_worktrees:
+        assert not path.exists(), f"worktree directory {path} should be removed"
+
+
+def test_preexisting_branch_is_preserved_when_create_fails(
+    temp_mngr_ctx: MngrContext,
+    temp_git_repo: Path,
+) -> None:
+    """When create fails on a pre-existing branch (not created by us), keep the branch but remove the worktree.
+
+    Mirrors the destroy-time safety: created_branch_name is None when the user
+    reused an existing branch, so branch deletion is skipped. The worktree
+    itself is always removed because we always create it ourselves.
+    """
+    existing_branch = "feature/preexisting"
+    subprocess.run(
+        ["git", "-C", str(temp_git_repo), "branch", existing_branch],
+        check=True,
+    )
+
+    test_ctx = make_ctx_with_plugins(temp_mngr_ctx, [_RaiseAfterFileCopy()])
+    local_host, source_location = _get_local_host_and_location(test_ctx, temp_git_repo)
+
+    agent_options = CreateAgentOptions(
+        agent_type=AgentTypeName("worktree-test"),
+        name=AgentName(f"test-preserve-{int(time.time())}"),
+        command=CommandString("sleep 60"),
+        transfer_mode=TransferMode.GIT_WORKTREE,
+        # No new_branch_name -- agent attaches to the existing branch.
+        git=AgentGitOptions(base_branch=existing_branch),
+    )
+
+    worktrees_before = _list_worktree_paths(temp_git_repo)
+
+    with pytest.raises(RuntimeError, match="simulated failure after file copy"):
+        create(
+            source_location=source_location,
+            target_host=local_host,
+            agent_options=agent_options,
+            mngr_ctx=test_ctx,
+        )
+
+    branches_after = _list_branches(temp_git_repo)
+    assert existing_branch in branches_after, (
+        f"pre-existing branch {existing_branch} must not be deleted by create cleanup"
+    )
+    worktrees_after = _list_worktree_paths(temp_git_repo)
+    leaked_worktrees = worktrees_after - worktrees_before
+    assert not leaked_worktrees, (
+        f"worktree(s) should have been removed after create failure even though branch was preserved, "
+        f"but found: {leaked_worktrees}"
+    )
+    for path in leaked_worktrees:
+        assert not path.exists(), f"worktree directory {path} should be removed"
 
 
 # =============================================================================
@@ -873,7 +1050,7 @@ def test_create_rejects_duplicate_agent_name_on_same_host(
         local_host, source_location = _get_local_host_and_location(temp_mngr_ctx, temp_work_dir)
 
         agent_options = CreateAgentOptions(
-            agent_type=AgentTypeName("echo"),
+            agent_type=AgentTypeName("command"),
             name=agent_name,
             command=CommandString("sleep 847291"),
         )
@@ -893,7 +1070,7 @@ def test_create_rejects_duplicate_agent_name_on_same_host(
                 source_location=source_location,
                 target_host=local_host,
                 agent_options=CreateAgentOptions(
-                    agent_type=AgentTypeName("echo"),
+                    agent_type=AgentTypeName("command"),
                     name=agent_name,
                     command=CommandString("sleep 847292"),
                 ),
@@ -925,7 +1102,7 @@ def test_create_with_update_flag_updates_existing_agent(
 
         # Step 1: Create the agent normally
         original_options = CreateAgentOptions(
-            agent_type=AgentTypeName("echo"),
+            agent_type=AgentTypeName("command"),
             name=agent_name,
             command=CommandString("sleep 847291"),
             label_options=AgentLabelOptions(labels={"project": "old-project"}),
@@ -946,7 +1123,7 @@ def test_create_with_update_flag_updates_existing_agent(
         # Step 3: Call create() with is_update=True and the same agent_id + work_dir
         update_options = CreateAgentOptions(
             agent_id=original_agent_id,
-            agent_type=AgentTypeName("echo"),
+            agent_type=AgentTypeName("command"),
             name=agent_name,
             command=CommandString("sleep 847292"),
             target_path=original_work_dir,
@@ -1048,15 +1225,7 @@ def test_on_before_create_hook_modifies_agent_options(
     temp_work_dir: Path,
 ) -> None:
     """Test that on_before_create hook can modify agent_options."""
-    # Create a new plugin manager with our test plugin
-    pm = pluggy.PluginManager("mngr")
-    pm.add_hookspecs(hookspecs)
-    pm.register(PluginModifyingAgentOptions())
-
-    # Create a modified context with our test plugin manager
-    test_ctx = temp_mngr_ctx.model_copy_update(
-        to_update(temp_mngr_ctx.field_ref().pm, pm),
-    )
+    test_ctx = make_ctx_with_plugins(temp_mngr_ctx, [PluginModifyingAgentOptions()])
 
     local_host = _get_local_host_for_test(test_ctx)
 
@@ -1081,13 +1250,7 @@ def test_on_before_create_hook_modifies_create_work_dir(
     temp_work_dir: Path,
 ) -> None:
     """Test that on_before_create hook can modify create_work_dir."""
-    pm = pluggy.PluginManager("mngr")
-    pm.add_hookspecs(hookspecs)
-    pm.register(PluginModifyingCreateWorkDir())
-
-    test_ctx = temp_mngr_ctx.model_copy_update(
-        to_update(temp_mngr_ctx.field_ref().pm, pm),
-    )
+    test_ctx = make_ctx_with_plugins(temp_mngr_ctx, [PluginModifyingCreateWorkDir()])
 
     local_host = _get_local_host_for_test(test_ctx)
 
@@ -1110,13 +1273,7 @@ def test_on_before_create_hook_returning_none_passes_through(
     temp_work_dir: Path,
 ) -> None:
     """Test that on_before_create returning None passes values unchanged."""
-    pm = pluggy.PluginManager("mngr")
-    pm.add_hookspecs(hookspecs)
-    pm.register(PluginReturningNone())
-
-    test_ctx = temp_mngr_ctx.model_copy_update(
-        to_update(temp_mngr_ctx.field_ref().pm, pm),
-    )
+    test_ctx = make_ctx_with_plugins(temp_mngr_ctx, [PluginReturningNone()])
 
     local_host = _get_local_host_for_test(test_ctx)
 
@@ -1141,15 +1298,8 @@ def test_on_before_create_hooks_chain_in_order(
     temp_work_dir: Path,
 ) -> None:
     """Test that multiple on_before_create hooks chain properly."""
-    pm = pluggy.PluginManager("mngr")
-    pm.add_hookspecs(hookspecs)
     # Register plugins in order A, B
-    pm.register(PluginChainA())
-    pm.register(PluginChainB())
-
-    test_ctx = temp_mngr_ctx.model_copy_update(
-        to_update(temp_mngr_ctx.field_ref().pm, pm),
-    )
+    test_ctx = make_ctx_with_plugins(temp_mngr_ctx, [PluginChainA(), PluginChainB()])
 
     local_host = _get_local_host_for_test(test_ctx)
 

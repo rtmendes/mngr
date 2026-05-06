@@ -1,8 +1,7 @@
 """Shared utilities for agent supporting service scripts.
 
 Provides common watchdog integration, logging, and polling infrastructure
-used by supporting services in mngr_llm (conversation_watcher, webchat_server)
-and mngr_claude_mind (event_watcher).
+used by supporting services that need watcher infrastructure.
 
 Lives in mngr_recursive so that all plugins that need watcher infrastructure
 can depend on it without introducing circular dependencies.
@@ -14,7 +13,6 @@ import json
 import os
 import sys
 import threading
-import tomllib
 from collections.abc import Callable
 from datetime import timezone
 from pathlib import Path
@@ -26,6 +24,11 @@ from loguru import logger
 from watchdog.events import FileSystemEvent
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
+
+from imbue.imbue_common.logging import cleanup_old_rotated_files
+from imbue.imbue_common.logging import generate_rotation_timestamp
+from imbue.imbue_common.logging import rotation_lock
+from imbue.mngr.config.pre_readers import try_load_toml
 
 
 class MngrNotInstalledError(RuntimeError):
@@ -71,8 +74,8 @@ DEFAULT_CEL_EXCLUDE_FILTERS: Final[tuple[str, ...]] = (
     'source == "mngr/agents"',
     # mngr/agent_states events for non-mind agents
     """source == 'mngr/agent_states' && !(has(agent.labels.mind))""",
-    # server_registered events are infrastructure used by the forwarding server for backend discovery
-    'source == "servers"',
+    # service_registered events are infrastructure used by the forwarding service for backend discovery
+    'source == "services"',
 )
 
 
@@ -114,18 +117,25 @@ def _format_nanosecond_timestamp(dt: Any) -> str:
     return utc_dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{utc_dt.microsecond * 1000:09d}Z"
 
 
+_DEFAULT_MAX_ROTATED_COUNT: Final[int] = 10
+
+
 def _make_jsonl_file_sink(
     file_path: str,
     event_type: str,
     event_source: str,
     max_size_bytes: int = 10 * 1024 * 1024,
+    max_rotated_count: int = _DEFAULT_MAX_ROTATED_COUNT,
 ) -> Callable[..., None]:
     """Create a loguru sink function that writes flat JSONL to a rotating file."""
-    state: dict[str, Any] = {"file": None, "size": 0}
+    state: dict[str, Any] = {"file": None, "size": 0, "cleaned_up": False}
 
     def _ensure_file() -> Any:
         if state["file"] is None:
             Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+            if not state["cleaned_up"]:
+                cleanup_old_rotated_files(Path(file_path).parent, max_rotated_count)
+                state["cleaned_up"] = True
             state["file"] = open(file_path, "a")
             try:
                 state["size"] = Path(file_path).stat().st_size
@@ -135,13 +145,27 @@ def _make_jsonl_file_sink(
 
     def _rotate_if_needed() -> None:
         if state["size"] >= max_size_bytes:
-            if state["file"] is not None:
-                state["file"].close()
-                state["file"] = None
             path = Path(file_path)
-            rotation_idx = next(idx for idx in range(1, 10000) if not path.with_name(f"{path.name}.{idx}").exists())
-            path.rename(path.with_name(f"{path.name}.{rotation_idx}"))
-            state["size"] = 0
+            with rotation_lock(path.parent):
+                # Re-check actual file size: another process may have already rotated
+                try:
+                    actual_size = path.stat().st_size
+                except OSError:
+                    actual_size = 0
+                if actual_size < max_size_bytes:
+                    if state["file"] is not None:
+                        state["file"].close()
+                        state["file"] = None
+                    state["size"] = actual_size
+                    return
+                if state["file"] is not None:
+                    state["file"].close()
+                    state["file"] = None
+                timestamp = generate_rotation_timestamp()
+                rotated = path.with_name(f"{path.name}.{timestamp}")
+                path.rename(rotated)
+                cleanup_old_rotated_files(path.parent, max_rotated_count)
+                state["size"] = 0
 
     def sink(message: Any) -> None:
         record = message.record
@@ -202,19 +226,16 @@ def read_event_ids_from_jsonl(file_path: Path) -> set[str]:
 
 
 def load_watchers_section(agent_work_dir: Path) -> dict[str, Any]:
-    """Load the [watchers] section from minds.toml.
+    """Load the [watchers] section from minds.toml, or {} if the file is missing.
 
-    Returns an empty dict on any error (missing file, corrupt TOML, etc.).
+    Delegates parsing to try_load_toml so a corrupt minds.toml raises ConfigParseError
+    (minds.toml is user-authored config -- problems must surface to the user, not be
+    silently dropped; see style guide section 'Try/except').
     """
-    settings_path = agent_work_dir / "minds.toml"
-    try:
-        if not settings_path.exists():
-            return {}
-        raw = tomllib.loads(settings_path.read_text())
-        return raw.get("watchers", {})
-    except (OSError, tomllib.TOMLDecodeError, ValueError, KeyError) as exc:
-        logger.warning("Failed to load watcher settings: {}", exc)
+    raw = try_load_toml(agent_work_dir / "minds.toml")
+    if raw is None:
         return {}
+    return raw.get("watchers", {})
 
 
 def mtime_poll_files(

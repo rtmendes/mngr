@@ -25,12 +25,14 @@ Usage:
 """
 
 import dataclasses
+import importlib.metadata
 import os
 import shutil
 import stat
 import tempfile
 from collections.abc import Callable
 from collections.abc import Generator
+from collections.abc import Iterable
 from enum import StrEnum
 from enum import auto
 from pathlib import Path
@@ -38,7 +40,12 @@ from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
+import pluggy
 import pytest
+
+# Entry point group through which packages declare their resource guard
+# registrations. See register_all_resource_guards() for usage.
+RESOURCE_GUARDS_ENTRY_POINT_GROUP = "resource_guards"
 
 
 class ResourceGuardViolation(Exception):
@@ -61,12 +68,29 @@ class _PerTestGuardState:
 # process via the _PYTEST_GUARD_WRAPPER_DIR env var.
 # _session_env_patcher is the patch.dict that manages PATH and _PYTEST_GUARD_WRAPPER_DIR;
 # stopping it automatically restores PATH to its original value.
-# _guarded_resources is populated by register_resource_guard() and extended by
-# create_sdk_resource_guards(); the hooks read from it at session start.
+# _binary_guarded_resources is populated only by register_resource_guard() and drives
+# PATH wrapper script creation. _guarded_resources is the union of binary and SDK
+# guard names (populated by register_resource_guard() and register_sdk_guard()); it
+# drives pytest mark registration, per-test env var setup, and violation checks. The
+# distinction matters so we only create wrapper scripts for names that were meant to
+# guard a real binary -- SDK-only names must not produce stray wrapper scripts.
 _guard_wrapper_dir: str | None = None
 _owns_guard_wrapper_dir: bool = False
 _session_env_patcher: patch.dict | None = None  # ty: ignore[invalid-type-form]
+_binary_guarded_resources: list[str] = []
 _guarded_resources: list[str] = []
+
+# Module-level state for the _ResourceGuardPlugin registration. Mirrors the
+# _owns_guard_wrapper_dir pattern: start_resource_guards() only records a plugin
+# here when it actually registered a new one on the session's pluginmanager, and
+# stop_resource_guards() only unregisters when this ownership flag is set. This
+# keeps start/stop symmetric even when start is called with a pluginmanager that
+# already has a plugin registered (from a parent conftest / outer session), which
+# would otherwise let the stop half of a self-test rip the outer session's hooks
+# out and leave every subsequent test without its runtest_setup/teardown.
+_owns_guard_plugin: bool = False
+_guard_plugin: "_ResourceGuardPlugin | None" = None
+_guard_plugin_manager: pluggy.PluginManager | None = None
 
 # Module-level state for SDK guards. Each entry is (name, install_fn, cleanup_fn).
 # Populated by register_sdk_guard() before create_sdk_resource_guards() runs.
@@ -76,15 +100,65 @@ _registered_sdk_guards: list[tuple[str, Callable[[], None], Callable[[], None]]]
 def register_resource_guard(name: str) -> None:
     """Register a binary to be guarded by PATH wrapper scripts.
 
-    Call this from each project's conftest.py before register_conftest_hooks().
     The resource name must correspond to both a binary on PATH and a pytest
     mark name (e.g., register_resource_guard("tmux") guards the tmux binary
-    and enforces @pytest.mark.tmux).
+    and enforces @pytest.mark.tmux). Call register_guarded_resource_markers()
+    from pytest_configure to register the corresponding pytest marks.
 
     Duplicate registrations are ignored.
     """
+    if name not in _binary_guarded_resources:
+        _binary_guarded_resources.append(name)
     if name not in _guarded_resources:
         _guarded_resources.append(name)
+
+
+def get_guarded_resource_names() -> tuple[str, ...]:
+    """Return the guarded resource names (binary + SDK guards)."""
+    return tuple(_guarded_resources)
+
+
+def register_all_resource_guards(
+    entry_points: Callable[..., Iterable[Any]] = importlib.metadata.entry_points,
+) -> None:
+    """Register every guard declared via the resource_guards entry point group.
+
+    Each entry point's value must be a callable that takes no arguments and
+    registers one or more guards via register_resource_guard() and/or
+    register_sdk_guard()/create_sdk_method_guard(). This is the canonical way
+    for libraries in the monorepo to advertise their guards: the set of
+    guarded resources is a global property, so projects don't need to
+    re-declare it in their conftest.py.
+
+    Safe to call multiple times: every individual registration function below
+    deduplicates by guard name. The entry_points argument is dependency-
+    injected to keep the test path free of importlib monkeypatching; callers
+    should leave the default in place.
+    """
+    for entry_point in entry_points(group=RESOURCE_GUARDS_ENTRY_POINT_GROUP):
+        register_fn = entry_point.load()
+        register_fn()
+
+
+def register_guarded_resource_markers(
+    config: pytest.Config,
+    *,
+    skip_names: set[str] | None = None,
+) -> None:
+    """Register pytest markers for all guarded resources.
+
+    Call this from pytest_configure to register marks for every resource
+    registered via register_resource_guard() or register_sdk_guard().
+
+    Resources that overlap with existing markers can be skipped via skip_names.
+    """
+    skip = skip_names or set()
+    for name in _guarded_resources:
+        if name not in skip:
+            config.addinivalue_line(
+                "markers",
+                f"{name}: marks tests that use the {name} resource",
+            )
 
 
 def generate_wrapper_script(resource: str, real_path: str) -> str:
@@ -154,11 +228,13 @@ exit 127
 
 
 def create_resource_guard_wrappers() -> None:
-    """Create wrapper scripts for guarded resources and prepend to PATH.
+    """Create wrapper scripts for binary-guarded resources and prepend to PATH.
 
     Each wrapper intercepts calls to the corresponding binary and enforces
     that the test has the appropriate pytest mark. The list of resources
-    comes from prior register_resource_guard() calls.
+    comes from prior register_resource_guard() calls; SDK-only guards are
+    intentionally excluded so they do not produce stray wrapper scripts
+    named after internal SDK identifiers.
 
     For xdist: the controller creates the wrappers and modifies PATH. Workers
     inherit the modified PATH and wrapper directory via environment variables.
@@ -179,7 +255,7 @@ def create_resource_guard_wrappers() -> None:
     _guard_wrapper_dir = tempfile.mkdtemp(prefix="pytest_resource_guards_")
     _owns_guard_wrapper_dir = True
 
-    for resource in _guarded_resources:
+    for resource in _binary_guarded_resources:
         real_path = shutil.which(resource)
         wrapper_path = Path(_guard_wrapper_dir) / resource
         if real_path is not None:
@@ -269,10 +345,15 @@ def register_sdk_guard(
     before register_conftest_hooks() to push SDK-specific guard
     implementations into the infrastructure. Deduplicates by name so
     multiple conftest files can safely call the registration function.
+
+    Adds the guard name to _guarded_resources and defers the install/cleanup
+    functions to create_sdk_resource_guards().
     """
     registered_names = {entry[0] for entry in _registered_sdk_guards}
     if name not in registered_names:
         _registered_sdk_guards.append((name, install, cleanup))
+        if name not in _guarded_resources:
+            _guarded_resources.append(name)
 
 
 class MethodKind(StrEnum):
@@ -355,15 +436,12 @@ def create_sdk_method_guard(
 
 
 def create_sdk_resource_guards() -> None:
-    """Install all registered SDK guards and add their names to _guarded_resources.
+    """Install all registered SDK guards.
 
-    Iterates through guards registered via register_sdk_guard(), calls each
-    install function, and extends _guarded_resources so the per-test hooks
-    set up env vars for them.
+    Iterates through guards registered via register_sdk_guard() and calls
+    each install function.
     """
-    for name, install, _cleanup in _registered_sdk_guards:
-        if name not in _guarded_resources:
-            _guarded_resources.append(name)
+    for _name, install, _cleanup in _registered_sdk_guards:
         install()
 
 
@@ -381,19 +459,42 @@ def start_resource_guards(session: pytest.Session) -> None:
     only binary guards, only SDK guards, or both registered.
 
     Idempotent: if the guard plugin is already registered (e.g., from a
-    parent conftest.py), the call is a no-op for plugin registration.
+    parent conftest.py), the call is a no-op for plugin registration,
+    and the matching stop_resource_guards() will NOT unregister that
+    pre-existing plugin -- ownership is tracked per caller.
     """
+    global _owns_guard_plugin, _guard_plugin, _guard_plugin_manager
+
     create_resource_guard_wrappers()
     create_sdk_resource_guards()
     if session.config.pluginmanager.get_plugin("resource_guards") is None:
-        session.config.pluginmanager.register(_ResourceGuardPlugin(), "resource_guards")
+        plugin = _ResourceGuardPlugin()
+        session.config.pluginmanager.register(plugin, "resource_guards")
+        _owns_guard_plugin = True
+        _guard_plugin = plugin
+        _guard_plugin_manager = session.config.pluginmanager
 
 
 def stop_resource_guards() -> None:
     """Clean up all resource guards (SDK monkeypatches and binary wrappers).
 
-    Call this from pytest_sessionfinish. Reverses start_resource_guards().
+    Call this from pytest_sessionfinish. Reverses start_resource_guards(),
+    including unregistering the _ResourceGuardPlugin iff this call to start
+    was the one that registered it.
     """
+    global _owns_guard_plugin, _guard_plugin, _guard_plugin_manager
+
+    # Only the caller that registered the plugin clears its own bookkeeping.
+    # A non-owner stop must leave _owns_guard_plugin / _guard_plugin /
+    # _guard_plugin_manager untouched so the real owner's later stop still
+    # finds the state it needs to unregister the plugin. Mirrors the
+    # _owns_guard_wrapper_dir handling in cleanup_resource_guard_wrappers().
+    if _owns_guard_plugin and _guard_plugin is not None and _guard_plugin_manager is not None:
+        _guard_plugin_manager.unregister(_guard_plugin)
+        _owns_guard_plugin = False
+        _guard_plugin = None
+        _guard_plugin_manager = None
+
     cleanup_sdk_resource_guards()
     cleanup_resource_guard_wrappers()
 

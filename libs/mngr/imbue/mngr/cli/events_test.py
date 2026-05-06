@@ -28,9 +28,6 @@ def _make_events_opts(
         verbose=0,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=(),
         disable_plugin=(),
         target=target,
@@ -42,6 +39,11 @@ def _make_events_opts(
         tail=tail,
         head=head,
     )
+
+
+def test_events_cli_command_is_named_event_singular() -> None:
+    """The CLI command is registered as singular `event` for consistency with other commands."""
+    assert events.name == "event"
 
 
 def test_events_cli_options_can_be_constructed() -> None:

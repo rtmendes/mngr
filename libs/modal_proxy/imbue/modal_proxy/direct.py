@@ -28,7 +28,7 @@ from modal.volume import FileEntryType as ModalFileEntryType
 from pydantic import ConfigDict
 from pydantic import Field
 from tenacity import retry
-from tenacity import retry_if_exception_type
+from tenacity import retry_if_exception
 from tenacity import stop_after_attempt
 from tenacity import wait_exponential
 
@@ -41,8 +41,10 @@ from imbue.modal_proxy.errors import ModalProxyError
 from imbue.modal_proxy.errors import ModalProxyInternalError
 from imbue.modal_proxy.errors import ModalProxyInvalidError
 from imbue.modal_proxy.errors import ModalProxyNotFoundError
+from imbue.modal_proxy.errors import ModalProxyRateLimitError
 from imbue.modal_proxy.errors import ModalProxyRemoteError
 from imbue.modal_proxy.errors import ModalProxyTypeError
+from imbue.modal_proxy.errors import is_environment_not_found_error
 from imbue.modal_proxy.interface import AppInterface
 from imbue.modal_proxy.interface import ExecOutput
 from imbue.modal_proxy.interface import ExecProcess
@@ -75,6 +77,8 @@ def _translate_modal_error(e: modal.exception.Error) -> ModalProxyError:
         return ModalProxyInvalidError(str(e))
     if isinstance(e, modal.exception.InternalError):
         return ModalProxyInternalError(str(e))
+    if isinstance(e, modal.exception.ResourceExhaustedError):
+        return ModalProxyRateLimitError(str(e))
     if isinstance(e, modal.exception.RemoteError):
         return ModalProxyRemoteError(str(e))
     return ModalProxyError(str(e))
@@ -161,9 +165,28 @@ def _unwrap_secret(iface: SecretInterface) -> modal.Secret:
 # Retry parameters for volume operations
 # ---------------------------------------------------------------------------
 
-_VOLUME_RETRY = retry_if_exception_type((modal.exception.InternalError, StreamTerminatedError, ProtocolError))
-_VOLUME_STOP = stop_after_attempt(3)
-_VOLUME_WAIT = wait_exponential(multiplier=1, min=1, max=3)
+
+def _should_retry_volume_op(e: BaseException) -> bool:
+    """Decide whether a volume operation's exception should be retried.
+
+    Retries transient connection/server errors, plus environment-level
+    not-found errors (which can be transient during eventual-consistency
+    races or network issues). Path-level not-found errors are NOT retried
+    since they're expected during normal operations.
+    """
+    if isinstance(
+        e,
+        (modal.exception.InternalError, StreamTerminatedError, ProtocolError, modal.exception.ResourceExhaustedError),
+    ):
+        return True
+    if isinstance(e, modal.exception.NotFoundError) and is_environment_not_found_error(e):
+        return True
+    return False
+
+
+_VOLUME_RETRY = retry_if_exception(_should_retry_volume_op)
+_VOLUME_STOP = stop_after_attempt(5)
+_VOLUME_WAIT = wait_exponential(multiplier=1, min=1, max=10)
 
 
 # ---------------------------------------------------------------------------

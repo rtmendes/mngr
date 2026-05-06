@@ -14,6 +14,9 @@ class SSHHostConfig(FrozenModel):
     port: int = Field(default=22, description="SSH port number")
     user: str = Field(default="root", description="SSH username")
     key_file: Path | None = Field(default=None, description="Path to SSH private key file")
+    known_hosts_file: Path | None = Field(
+        default=None, description="Path to known_hosts file for host key verification"
+    )
 
 
 class SSHProviderConfig(ProviderInstanceConfig):
@@ -30,4 +33,8 @@ class SSHProviderConfig(ProviderInstanceConfig):
     hosts: dict[str, SSHHostConfig] = Field(
         default_factory=dict,
         description="Map of host name to SSH configuration",
+    )
+    dynamic_hosts_file: Path | None = Field(
+        default=None,
+        description="Path to a TOML file with dynamically registered hosts. Defaults to <profile_dir>/providers/<instance-name>/dynamic_hosts.toml",
     )

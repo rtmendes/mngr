@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from io import StringIO
 from pathlib import Path
 from typing import Final
 from typing import IO
@@ -29,6 +30,7 @@ from pydantic import Field
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.imbue_common.frozen_model import FrozenModel
+from imbue.imbue_common.model_update import to_update
 from imbue.mngr.cli.create import create as create_command
 from imbue.mngr.config.consts import PROFILES_DIRNAME
 from imbue.mngr.config.data_types import MngrConfig
@@ -38,6 +40,7 @@ from imbue.mngr.hosts.tmux import build_tmux_capture_pane_command
 from imbue.mngr.interfaces.data_types import AgentDetails
 from imbue.mngr.interfaces.data_types import HostDetails
 from imbue.mngr.interfaces.data_types import SnapshotInfo
+from imbue.mngr.plugins import hookspecs
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import AgentLifecycleState
 from imbue.mngr.primitives import AgentName
@@ -51,14 +54,10 @@ from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.primitives import SSHInfo
 from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.instance import LocalProviderInstance
+from imbue.mngr.providers.registry import load_local_backend_only
+from imbue.mngr.utils.env_utils import TEST_ENV_PATTERN
+from imbue.mngr.utils.env_utils import TEST_ENV_PREFIX
 from imbue.mngr.utils.polling import wait_for
-
-# Prefix used for test environments
-TEST_ENV_PREFIX: Final[str] = "mngr_test-"
-
-# Pattern to match test environment names: mngr_test-YYYY-MM-DD-HH-MM-SS
-# The name may have additional suffixes (like user_id)
-TEST_ENV_PATTERN: Final[re.Pattern[str]] = re.compile(r"^mngr_test-(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})")
 
 # =============================================================================
 # Resource tracking lists for cleanup verification
@@ -139,6 +138,13 @@ def isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     or modifying the real home directory. Use this directly for lightweight
     test suites (e.g. minds). For full mngr test isolation (MNGR_HOST_DIR,
     MNGR_PREFIX, tmux server, etc.) use setup_test_mngr_env instead.
+
+    Also writes a minimal .gitconfig with `safe.directory = *` so subprocess
+    git invocations (e.g. mngr schedule add shelling out to
+    `git rev-parse --show-toplevel` inside /code/mngr on release sandboxes)
+    don't get blocked by git's repo-ownership guard. The image-time entry
+    /root/.gitconfig is invisible once HOME is redirected, so every
+    isolate_home() call must re-establish the exemption.
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
@@ -146,6 +152,12 @@ def isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # to the temp HOME, not an inherited agent config dir.
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("ORIGINAL_CLAUDE_CONFIG_DIR", raising=False)
+
+    # Write a minimal .gitconfig with safe.directory='*' so subprocess git
+    # calls from this HOME don't trip git's ownership check. isolate_git()
+    # overwrites this with a richer config when both are used together.
+    gitconfig = tmp_path / ".gitconfig"
+    gitconfig.write_text("[safe]\n\tdirectory = *\n")
 
 
 @contextmanager
@@ -208,20 +220,42 @@ def isolate_git(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """Isolate git from system config and provide default user config.
 
     Sets GIT_CONFIG_NOSYSTEM to skip /etc/gitconfig, GIT_TERMINAL_PROMPT to
-    prevent interactive credential prompts, and writes a .gitconfig in the
-    fake HOME (set by isolate_home) with default user info and
-    ``init.defaultBranch``.
+    prevent interactive credential prompts, and (over)writes a .gitconfig in
+    the fake HOME (set by isolate_home) with default user info,
+    ``init.defaultBranch``, and ``safe.directory = *``. The .gitconfig is
+    always rewritten -- isolate_home() also writes a minimal [safe]-only
+    .gitconfig, so overwriting here ensures this function's richer contents
+    win regardless of fixture call order.
+
+    ``isolate_home()`` MUST have been called first. This function unconditionally
+    overwrites ``Path.home() / ".gitconfig"``, so without HOME redirection it
+    would clobber the developer's real ``~/.gitconfig``. The contract is
+    enforced via ``assert_home_is_temp_directory()`` -- a misuse raises an
+    AssertionError before any write happens.
 
     Tests that create git repos should use a subdirectory of tmp_path rather
     than tmp_path itself, so that .gitconfig does not appear as an untracked
     file in ``git status --porcelain``.
     """
+    # Safety check before the unconditional .gitconfig overwrite below:
+    # refuse to run if HOME is not in a temp directory, so a caller who
+    # forgets to run isolate_home() first cannot wipe the real ~/.gitconfig.
+    assert_home_is_temp_directory()
+
     for key, value in _GIT_ISOLATION_ENV.items():
         monkeypatch.setenv(key, value)
 
+    # Overwrite the minimal .gitconfig isolate_home() wrote with the richer
+    # [user] + [init] + [safe] config this function promises. safe.directory='*'
+    # is load-bearing for release tests: they run as root against /code/mngr
+    # in the offload sandbox, and the image-time /root/.gitconfig exemption is
+    # invisible once isolate_home() points HOME at a tmp dir.
     gitconfig = Path.home() / ".gitconfig"
-    if not gitconfig.exists():
-        gitconfig.write_text("[user]\n\tname = Test User\n\temail = test@test.com\n[init]\n\tdefaultBranch = main\n")
+    gitconfig.write_text(
+        "[user]\n\tname = Test User\n\temail = test@example.com\n"
+        "[init]\n\tdefaultBranch = main\n"
+        "[safe]\n\tdirectory = *\n"
+    )
 
     yield
 
@@ -270,7 +304,7 @@ def setup_mngr_test_environment(
     monkeypatch.setenv("MNGR_HOST_DIR", str(host_dir))
     monkeypatch.setenv("MNGR_PREFIX", prefix)
     monkeypatch.setenv("MNGR_ROOT_NAME", root_name)
-    monkeypatch.delenv("MNGR_PROJECT_DIR", raising=False)
+    monkeypatch.delenv("MNGR_PROJECT_CONFIG_DIR", raising=False)
 
     # Unison derives its config directory from $HOME. Since we override HOME
     # above, unison tries to create its config dir inside the temp home, which
@@ -595,12 +629,14 @@ def create_test_agent_via_cli(
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
     agent_name: str,
-    agent_cmd: str = "sleep 482917",
+    command: str,
 ) -> str:
     """Create a test agent via the CLI and return the session name.
 
-    This encapsulates the common pattern of creating a source agent for
-    integration tests that need an existing agent (e.g., clone, migrate).
+    Uses the ``command`` agent type and passes ``command`` after ``--``
+    (typically ``"sleep <N>"`` with a pinned per-test value so leaked
+    processes grep back to the test). Used by integration tests that just
+    need an existing agent to operate on (e.g., clone, migrate, destroy).
 
     The caller should wrap this call inside a tmux_session_cleanup context
     manager to ensure the session is cleaned up even if assertions fail.
@@ -612,13 +648,15 @@ def create_test_agent_via_cli(
         [
             "--name",
             agent_name,
-            "--command",
-            agent_cmd,
+            "--type",
+            "command",
             "--source",
             str(temp_work_dir),
             "--transfer=none",
             "--no-connect",
             "--no-ensure-clean",
+            "--",
+            *shlex.split(command),
         ],
         obj=plugin_manager,
         catch_exceptions=False,
@@ -686,6 +724,29 @@ def make_mngr_ctx(
     )
 
 
+def make_ctx_with_plugins(
+    mngr_ctx: MngrContext,
+    plugins: Sequence[object],
+    *,
+    load_backends: bool = False,
+) -> MngrContext:
+    """Create a MngrContext with a fresh plugin manager and the given plugins registered.
+
+    Use this when a test needs to inject custom hookimpl plugins (e.g., to test
+    hook error paths or modify hook behavior) without affecting the shared
+    plugin_manager fixture.
+
+    If load_backends is True, also loads the local provider backend into the PM.
+    """
+    pm = pluggy.PluginManager("mngr")
+    pm.add_hookspecs(hookspecs)
+    if load_backends:
+        load_local_backend_only(pm)
+    for plugin in plugins:
+        pm.register(plugin)
+    return mngr_ctx.model_copy_update(to_update(mngr_ctx.field_ref().pm, pm))
+
+
 def make_test_agent_details(
     name: str = "test-agent",
     state: AgentLifecycleState = AgentLifecycleState.RUNNING,
@@ -732,6 +793,57 @@ def make_test_agent_details(
 
 def get_short_random_string() -> str:
     return uuid4().hex[:8]
+
+
+# Stack of opt-out frames for the autouse "no unexpected loguru warnings"
+# check. Each frame is either None (allow any warning) or a compiled regex
+# (allow only warnings whose message matches it; non-matching ones still fail
+# the test). The top frame governs. capture_loguru and allow_warnings push
+# frames; the autouse fixture in conftest.py pushes a frame when the test
+# carries ``@pytest.mark.allow_warnings``. This name is public because the
+# project conftest reads/mutates it as well as this module.
+WARNINGS_ALLOWED_STACK: list[re.Pattern[str] | None] = []
+
+
+@contextmanager
+def allow_warnings(match: str | None = None) -> Generator[None, None, None]:
+    """Suppress the autouse "no unexpected loguru warnings" check inside this scope.
+
+    The autouse fixture in libs/mngr/conftest.py fails any test that emits a
+    loguru WARNING-level (or higher) record. Wrap code that intentionally emits
+    such records in this context manager. For whole-test opt-out use
+    ``@pytest.mark.allow_warnings`` (optionally ``@pytest.mark.allow_warnings(match=...)``).
+
+    If ``match`` is given, only warning messages whose text matches the regex
+    (via ``re.search``) are allowed; non-matching warnings still fail the test.
+    """
+    pattern = re.compile(match) if match is not None else None
+    WARNINGS_ALLOWED_STACK.append(pattern)
+    try:
+        yield
+    finally:
+        WARNINGS_ALLOWED_STACK.pop()
+
+
+@contextmanager
+def capture_loguru(level: str = "WARNING") -> Generator[StringIO, None, None]:
+    """Capture loguru output at the given level into a StringIO buffer.
+
+    Loguru's handlers don't follow CliRunner's sys.stderr replacement, so
+    tests that need to verify logged messages should use this context manager
+    instead of checking result.output.
+
+    Implicitly opts out of the autouse "no unexpected loguru warnings" check
+    while the context is active, since tests using ``capture_loguru`` are
+    inspecting warnings on purpose.
+    """
+    log_output = StringIO()
+    sink_id = logger.add(log_output, level=level, format="{message}")
+    try:
+        with allow_warnings():
+            yield log_output
+    finally:
+        logger.remove(sink_id)
 
 
 def run_git_command(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -1202,6 +1314,20 @@ AllowUsers {current_user}
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+
+
+def build_test_known_hosts_file(host_key_path: Path, port: int, output_path: Path) -> Path:
+    """Build a known_hosts file for a local sshd instance.
+
+    Reads the public key from host_key_path.with_suffix(".pub") and writes a
+    known_hosts entry in the format expected by SSH for a localhost host on
+    the given port.
+
+    Returns the output_path for convenience.
+    """
+    host_pub_key = host_key_path.with_suffix(".pub").read_text().strip()
+    output_path.write_text(f"[127.0.0.1]:{port} {host_pub_key}\n")
+    return output_path
 
 
 # =============================================================================

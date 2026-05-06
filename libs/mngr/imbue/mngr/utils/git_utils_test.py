@@ -7,6 +7,12 @@ import pytest
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.mngr.errors import MngrError
+from imbue.mngr.errors import UserInputError
+from imbue.mngr.utils.git_utils import GIT_MIRROR_PUSH_REFSPECS
+from imbue.mngr.utils.git_utils import build_project_filter_clause
+from imbue.mngr.utils.git_utils import clone_git_url_to_managed_dir
+from imbue.mngr.utils.git_utils import delete_git_branch
+from imbue.mngr.utils.git_utils import derive_project_name_for_source
 from imbue.mngr.utils.git_utils import derive_project_name_from_path
 from imbue.mngr.utils.git_utils import find_git_common_dir
 from imbue.mngr.utils.git_utils import find_git_worktree_root
@@ -16,8 +22,10 @@ from imbue.mngr.utils.git_utils import get_git_author_info
 from imbue.mngr.utils.git_utils import get_git_remote_url
 from imbue.mngr.utils.git_utils import get_head_commit
 from imbue.mngr.utils.git_utils import is_git_repository
+from imbue.mngr.utils.git_utils import is_git_url
 from imbue.mngr.utils.git_utils import parse_project_name_from_url
 from imbue.mngr.utils.git_utils import parse_worktree_git_file
+from imbue.mngr.utils.git_utils import resolve_project_filter_values
 
 
 def test_github_https_url() -> None:
@@ -72,6 +80,131 @@ def test_empty_url() -> None:
     """Test parsing an empty URL returns None."""
     url = ""
     assert parse_project_name_from_url(url) is None
+
+
+def test_resolve_project_filter_values_passes_through_non_dot_values(cg: ConcurrencyGroup) -> None:
+    """Non-dot values are returned unchanged."""
+    assert resolve_project_filter_values(("foo", "bar"), cg) == ("foo", "bar")
+
+
+def test_resolve_project_filter_values_expands_dot_to_current_project(
+    tmp_path: Path, cg: ConcurrencyGroup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The literal '.' is expanded to the current project name (derived from cwd)."""
+    project_dir = tmp_path / "my-project"
+    project_dir.mkdir()
+    monkeypatch.chdir(project_dir)
+
+    assert resolve_project_filter_values((".",), cg) == ("my-project",)
+    assert resolve_project_filter_values((".", "other"), cg) == ("my-project", "other")
+
+
+def test_resolve_project_filter_values_handles_empty(cg: ConcurrencyGroup) -> None:
+    """Empty input returns empty output without resolving the project."""
+    assert resolve_project_filter_values((), cg) == ()
+
+
+def test_resolve_project_filter_values_dedupes_preserving_order(
+    tmp_path: Path, cg: ConcurrencyGroup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Duplicate values (including duplicate '.' expansions) collapse, in insertion order."""
+    project_dir = tmp_path / "my-project"
+    project_dir.mkdir()
+    monkeypatch.chdir(project_dir)
+
+    # Plain duplicates collapse.
+    assert resolve_project_filter_values(("foo", "foo"), cg) == ("foo",)
+    # Duplicate '.' expansions collapse to a single project name.
+    assert resolve_project_filter_values((".", "."), cg) == ("my-project",)
+    # Mixed duplicates collapse and preserve relative insertion order of distinct values.
+    assert resolve_project_filter_values(("foo", ".", "foo", "."), cg) == ("foo", "my-project")
+
+
+def test_resolve_project_filter_values_uses_project_root_over_cwd(
+    tmp_path: Path, cg: ConcurrencyGroup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When project_root is provided, '.' resolves from there, not the (possibly nested) cwd."""
+    project_dir = tmp_path / "my-project"
+    project_dir.mkdir()
+    nested = project_dir / "nested" / "subdir"
+    nested.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project_dir, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/owner/remote-project.git"],
+        cwd=project_dir,
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.chdir(nested)
+
+    # Without project_root, the cwd-based derivation cannot find the remote and falls back to the
+    # subdir name -- a wrong answer for "the current project". With project_root pointing at the
+    # worktree root, the remote is found and the correct project name is returned.
+    assert resolve_project_filter_values((".",), cg) == ("subdir",)
+    assert resolve_project_filter_values((".",), cg, project_root=project_dir) == ("remote-project",)
+
+
+def test_build_project_filter_clause_returns_none_for_empty(cg: ConcurrencyGroup) -> None:
+    """Empty input returns None so callers can skip appending a filter."""
+    assert build_project_filter_clause((), cg) is None
+
+
+def test_build_project_filter_clause_single_value(cg: ConcurrencyGroup) -> None:
+    """A single project name produces a single CEL equality clause."""
+    assert build_project_filter_clause(("foo",), cg) == 'labels.project == "foo"'
+
+
+def test_build_project_filter_clause_multiple_values_or_joined(cg: ConcurrencyGroup) -> None:
+    """Multiple project names are OR-joined in a single clause."""
+    assert build_project_filter_clause(("foo", "bar"), cg) == 'labels.project == "foo" || labels.project == "bar"'
+
+
+def test_build_project_filter_clause_expands_dot(
+    tmp_path: Path, cg: ConcurrencyGroup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The literal '.' is expanded to the cwd-derived project name in the resulting clause."""
+    project_dir = tmp_path / "my-project"
+    project_dir.mkdir()
+    monkeypatch.chdir(project_dir)
+
+    assert build_project_filter_clause((".",), cg) == 'labels.project == "my-project"'
+
+
+def test_derive_project_name_for_source_prefers_label(tmp_path: Path) -> None:
+    """source_project_label wins over remote_url and path."""
+    project_dir = tmp_path / "path-name"
+    project_dir.mkdir()
+
+    result = derive_project_name_for_source(
+        project_dir,
+        remote_url="https://github.com/owner/url-name.git",
+        source_project_label="label-name",
+    )
+
+    assert result == "label-name"
+
+
+def test_derive_project_name_for_source_uses_remote_url(tmp_path: Path) -> None:
+    """remote_url is used when no source_project_label is given."""
+    project_dir = tmp_path / "path-name"
+    project_dir.mkdir()
+
+    result = derive_project_name_for_source(
+        project_dir,
+        remote_url="https://github.com/owner/url-name.git",
+    )
+
+    assert result == "url-name"
+
+
+def test_derive_project_name_for_source_falls_back_to_path(tmp_path: Path) -> None:
+    """With no hints, falls back to the path's directory name."""
+    project_dir = tmp_path / "path-name"
+    project_dir.mkdir()
+
+    result = derive_project_name_for_source(project_dir)
+
+    assert result == "path-name"
 
 
 def test_derive_from_folder_name_when_no_git(tmp_path: Path, cg: ConcurrencyGroup) -> None:
@@ -454,3 +587,232 @@ def test_get_head_commit_returns_none_for_non_git_dir(tmp_path: Path, cg: Concur
     plain_dir.mkdir()
     result = get_head_commit(plain_dir, cg)
     assert result is None
+
+
+# =============================================================================
+# delete_git_branch Tests
+# =============================================================================
+
+
+def test_delete_git_branch_removes_branch(temp_git_repo: Path, cg: ConcurrencyGroup) -> None:
+    """delete_git_branch returns True and removes a branch that exists."""
+    branch_name = "feature/to-delete"
+    subprocess.run(
+        ["git", "-C", str(temp_git_repo), "branch", branch_name],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert delete_git_branch(branch_name, temp_git_repo, cg) is True
+
+    list_result = subprocess.run(
+        ["git", "-C", str(temp_git_repo), "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert branch_name not in list_result.stdout.splitlines()
+
+
+@pytest.mark.allow_warnings(match=r"Failed to delete branch does-not-exist")
+def test_delete_git_branch_returns_false_for_missing_branch(temp_git_repo: Path, cg: ConcurrencyGroup) -> None:
+    """delete_git_branch returns False (and does not raise) when the branch does not exist; a warning is emitted at the call site so the failure is visible."""
+    assert delete_git_branch("does-not-exist", temp_git_repo, cg) is False
+
+
+@pytest.mark.allow_warnings(match=r"Failed to delete branch any-branch")
+def test_delete_git_branch_returns_false_for_non_git_dir(tmp_path: Path, cg: ConcurrencyGroup) -> None:
+    """delete_git_branch returns False (and does not raise) when the path is not a git repo; a warning is emitted so the failure is visible."""
+    plain_dir = tmp_path / "plain"
+    plain_dir.mkdir()
+    assert delete_git_branch("any-branch", plain_dir, cg) is False
+
+
+# =============================================================================
+# GIT_MIRROR_PUSH_REFSPECS Tests
+# =============================================================================
+
+
+def test_mirror_push_refspecs_do_not_push_remote_tracking_refs(temp_git_repo: Path, tmp_path: Path) -> None:
+    """GIT_MIRROR_PUSH_REFSPECS must not push remote-tracking refs to the target.
+
+    Pushing remote-tracking refs (refs/remotes/*) causes "inconsistent aliased
+    update" errors on git 2.45+ when the source has symbolic refs like
+    refs/remotes/origin/HEAD. GIT_MIRROR_PUSH_REFSPECS provides explicit
+    refspecs for branches and tags only, ensuring remote-tracking refs are
+    never pushed.
+    """
+    # Set up the source repo with remote-tracking refs including the symbolic
+    # refs/remotes/origin/HEAD that triggers the bug over SSH.
+    upstream = tmp_path / "upstream.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(temp_git_repo), str(upstream)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(upstream)],
+        cwd=temp_git_repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "fetch", "origin"],
+        cwd=temp_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Create a tag so we can verify tag refspecs work too
+    subprocess.run(
+        ["git", "tag", "v1.0.0"],
+        cwd=temp_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Verify the source has remote-tracking refs (precondition for the test)
+    ref_result = subprocess.run(
+        ["git", "for-each-ref", "--format=%(refname)", "refs/remotes/"],
+        cwd=temp_git_repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "refs/remotes/origin/" in ref_result.stdout, "Source must have remote-tracking refs"
+
+    # Determine the actual branch name (depends on system git config)
+    source_branch_result = subprocess.run(
+        ["git", "-C", str(temp_git_repo), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    source_branch = source_branch_result.stdout.strip()
+
+    # Create a fresh bare target repo and push using GIT_MIRROR_PUSH_REFSPECS
+    target = tmp_path / "target.git"
+    subprocess.run(
+        ["git", "init", "--bare", str(target)],
+        check=True,
+        capture_output=True,
+    )
+    push_result = subprocess.run(
+        ["git", "-C", str(temp_git_repo), "push", "--force", "--prune", str(target), *GIT_MIRROR_PUSH_REFSPECS],
+        capture_output=True,
+        text=True,
+    )
+    assert push_result.returncode == 0, f"Push with GIT_MIRROR_PUSH_REFSPECS failed:\n{push_result.stderr}"
+
+    # Verify branches were pushed
+    branch_result = subprocess.run(
+        ["git", "-C", str(target), "branch"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert source_branch in branch_result.stdout, (
+        f"Branch '{source_branch}' should be pushed to the target, got: {branch_result.stdout}"
+    )
+
+    # Verify tags were pushed
+    tag_result = subprocess.run(
+        ["git", "-C", str(target), "tag"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "v1.0.0" in tag_result.stdout, f"Tag 'v1.0.0' should be pushed to the target, got: {tag_result.stdout}"
+
+    # Verify NO remote-tracking refs were pushed -- this is the key assertion.
+    # Without explicit refspecs, git push --mirror pushes refs/remotes/* to
+    # the target, which causes "inconsistent aliased update" errors over SSH
+    # on git 2.45+ due to symbolic refs like refs/remotes/origin/HEAD.
+    target_refs = subprocess.run(
+        ["git", "-C", str(target), "for-each-ref", "--format=%(refname)", "refs/remotes/"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert target_refs.stdout.strip() == "", (
+        f"Remote-tracking refs should NOT be pushed to the target, but found:\n{target_refs.stdout}"
+    )
+
+
+# =============================================================================
+# is_git_url Tests
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/owner/repo",
+        "https://github.com/owner/repo.git",
+        "http://example.com/owner/repo",
+        "https://gitlab.com/group/subgroup/repo.git",
+        "https://self-hosted.example.com:8080/team/repo.git",
+        "git@github.com:owner/repo.git",
+        "git@github.com:owner/repo",
+        "git@gitlab.com:group/subgroup/repo.git",
+        "ssh://git@github.com/owner/repo.git",
+        "ssh://user@host.example.com:22/owner/repo",
+        "git://github.com/owner/repo.git",
+        "file:///tmp/local/repo.git",
+    ],
+)
+def test_is_git_url_recognizes_git_urls(url: str) -> None:
+    """is_git_url accepts all standard git URL shapes."""
+    assert is_git_url(url) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "foo",
+        "my-agent",
+        "my-agent@my-host",
+        "my-agent@my-host.modal",
+        "/abs/path",
+        "./rel",
+        "../rel",
+        ":path",
+        "@host:/path",
+        "user@host:file",
+    ],
+)
+def test_is_git_url_rejects_non_urls(value: str) -> None:
+    """is_git_url returns False for agent addresses, paths, and empty strings."""
+    assert is_git_url(value) is False
+
+
+# =============================================================================
+# clone_git_url_to_managed_dir Tests
+# =============================================================================
+
+
+def test_clone_git_url_to_managed_dir_clones_local_repo(
+    cg: ConcurrencyGroup, tmp_path: Path, temp_git_repo: Path
+) -> None:
+    """clone_git_url_to_managed_dir produces a working clone at <base>/<name>-<hex>."""
+    base_dir = tmp_path / "clones"
+    dest = clone_git_url_to_managed_dir(str(temp_git_repo), base_dir, "my-agent", cg)
+
+    assert dest.parent == base_dir
+    assert dest.name.startswith("my-agent-")
+    assert (dest / ".git").exists()
+
+
+def test_clone_git_url_to_managed_dir_raises_on_invalid_url(
+    cg: ConcurrencyGroup, tmp_path: Path, setup_git_config: None
+) -> None:
+    """clone_git_url_to_managed_dir raises UserInputError when git clone fails."""
+    base_dir = tmp_path / "clones"
+    with pytest.raises(UserInputError, match="Failed to clone"):
+        clone_git_url_to_managed_dir(str(tmp_path / "does-not-exist"), base_dir, "agent", cg)
+
+    # The failed-clone destination should not be left behind.
+    if base_dir.exists():
+        assert list(base_dir.iterdir()) == []

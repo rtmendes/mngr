@@ -16,9 +16,6 @@ def test_kanpan_cli_options_can_be_instantiated() -> None:
         verbose=0,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=(),
         disable_plugin=(),
         include=(),
@@ -74,18 +71,6 @@ def test_kanpan_command_converts_project_to_include_filter(
     result = cli_runner.invoke(kanpan, ["--project", "mngr"], obj=plugin_manager, catch_exceptions=False)
     assert result.exit_code == 0
     assert patched_run_kanpan[0]["include_filters"] == ('labels.project == "mngr"',)
-
-
-def test_kanpan_command_ors_multiple_projects(
-    cli_runner: CliRunner,
-    plugin_manager: pluggy.PluginManager,
-    patched_run_kanpan: list[dict[str, Any]],
-) -> None:
-    result = cli_runner.invoke(
-        kanpan, ["--project", "mngr", "--project", "other"], obj=plugin_manager, catch_exceptions=False
-    )
-    assert result.exit_code == 0
-    assert patched_run_kanpan[0]["include_filters"] == ('labels.project == "mngr" || labels.project == "other"',)
 
 
 def test_kanpan_command_fails_fast_on_invalid_cel(

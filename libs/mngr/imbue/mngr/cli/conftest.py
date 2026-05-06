@@ -51,9 +51,6 @@ def default_create_cli_opts() -> CreateCliOptions:
         verbose=0,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=(),
         disable_plugin=(),
         setting=(),
@@ -64,27 +61,20 @@ def default_create_cli_opts() -> CreateCliOptions:
         type=None,
         reuse=False,
         connect=True,
+        foreground=False,
         ensure_clean=True,
         name=None,
         id=None,
         name_style="coolname",
-        command=None,
         extra_window=(),
         source=None,
-        source_agent=None,
-        source_host=None,
-        source_path=None,
-        target=None,
         target_path=None,
         transfer=None,
         rsync=None,
         rsync_args=None,
-        include_git=True,
         include_unclean=None,
         include_gitignored=False,
         branch=":mngr/*",
-        depth=None,
-        shallow_since=None,
         env=(),
         env_file=(),
         pass_env=(),
@@ -93,7 +83,7 @@ def default_create_cli_opts() -> CreateCliOptions:
         host_name_style="coolname",
         host_label=(),
         label=(),
-        project=None,
+        project=".",
         host_env=(),
         host_env_file=(),
         pass_host_env=(),
@@ -101,12 +91,9 @@ def default_create_cli_opts() -> CreateCliOptions:
         build_arg=(),
         start_arg=(),
         reconnect=True,
-        interactive=None,
         message=None,
         message_file=None,
         edit_message=False,
-        retry=3,
-        retry_delay="5s",
         session_command=None,
         connect_command=None,
         idle_timeout=None,
@@ -118,8 +105,6 @@ def default_create_cli_opts() -> CreateCliOptions:
         grant=(),
         extra_provision_command=(),
         upload_file=(),
-        append_to_file=(),
-        prepend_to_file=(),
         update=False,
         yes=False,
     )
@@ -138,17 +123,12 @@ def default_connect_cli_opts() -> ConnectCliOptions:
         verbose=0,
         log_file=None,
         log_commands=None,
-        log_command_output=None,
-        log_env_vars=None,
-        project_context_path=None,
         plugin=(),
         disable_plugin=(),
         setting=(),
         agent=None,
         start=True,
         reconnect=True,
-        retry=3,
-        retry_delay="5s",
         session_command=None,
         allow_unknown_host=False,
     )
@@ -177,11 +157,16 @@ def _create_and_track_test_agent(
     plugin_manager: pluggy.PluginManager,
     created_sessions: list[str],
     agent_name: str,
-    agent_cmd: str = "sleep 482917",
+    command: str,
 ) -> str:
     """Create a test agent via CLI and track its session for cleanup."""
     session_name = create_test_agent_via_cli(
-        cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, agent_name, agent_cmd
+        cli_runner,
+        temp_work_dir,
+        mngr_test_prefix,
+        plugin_manager,
+        agent_name,
+        command=command,
     )
     created_sessions.append(session_name)
     return session_name
@@ -193,20 +178,32 @@ def create_test_agent(
     temp_work_dir: Path,
     mngr_test_prefix: str,
     plugin_manager: pluggy.PluginManager,
-) -> Generator[Callable[..., str], None, None]:
+) -> Generator[Callable[[str, str], str], None, None]:
     """Factory fixture that creates test agents via CLI and cleans up automatically.
 
     Usage:
         def test_something(create_test_agent):
-            session_name = create_test_agent("my-agent")
+            session_name = create_test_agent("my-agent", "sleep 987654")
+            # or with a custom command the agent should run:
+            session_name = create_test_agent("my-agent", "echo MARKER && sleep 99")
             # ... test logic ...
             # cleanup happens automatically on fixture teardown
+
+    The command is required and should be a pinned shell command
+    (typically ``"sleep <N>"`` with a per-test-unique value) so leaked
+    agents are grep-able in ``ps`` back to the specific test.
 
     Supports creating multiple agents per test -- all are cleaned up.
     """
     created_sessions: list[str] = []
-    yield lambda agent_name, agent_cmd="sleep 482917": _create_and_track_test_agent(
-        cli_runner, temp_work_dir, mngr_test_prefix, plugin_manager, created_sessions, agent_name, agent_cmd
+    yield lambda agent_name, command: _create_and_track_test_agent(
+        cli_runner,
+        temp_work_dir,
+        mngr_test_prefix,
+        plugin_manager,
+        created_sessions,
+        agent_name,
+        command,
     )
 
     for session_name in created_sessions:
@@ -244,7 +241,7 @@ _HELP_TEST_CASES: list[tuple[click.Command, list[str], str]] = [
     (help_command, ["--help"], "help"),
     (label, ["--help"], "label"),
     (limit, ["--help"], "limit"),
-    (events, ["--help"], "events"),
+    (events, ["--help"], "event"),
     (transcript, ["--help"], "transcript"),
     (message, ["--help"], "message"),
     (migrate, ["--help"], "migrate"),
@@ -286,7 +283,7 @@ _NONEXISTENT_AGENT_CASES: list[tuple[click.Command, list[str], str]] = [
     (exec_command, ["nonexistent-agent-99999", "echo hello"], "exec"),
     (label, ["nonexistent-agent-44321", "--label", "key=value"], "label"),
     (limit, ["nonexistent-agent-77234", "--idle-timeout", "300"], "limit"),
-    (events, ["nonexistent-agent-34892"], "events"),
+    (events, ["nonexistent-agent-34892"], "event"),
     (transcript, ["nonexistent-agent-82341"], "transcript"),
     (provision, ["nonexistent-agent-77412"], "provision"),
     (pull, ["nonexistent-agent-66201"], "pull"),

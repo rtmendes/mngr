@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import docker
+import docker.context
 import docker.errors
 import docker.models.containers
 import docker.models.images
@@ -45,6 +46,7 @@ from imbue.mngr.interfaces.volume import HostVolume
 from imbue.mngr.primitives import ActivitySource
 from imbue.mngr.primitives import AgentId
 from imbue.mngr.primitives import DiscoveredHost
+from imbue.mngr.primitives import DockerBuilder
 from imbue.mngr.primitives import HostId
 from imbue.mngr.primitives import HostName
 from imbue.mngr.primitives import HostState
@@ -169,6 +171,49 @@ def _get_ssh_host_from_docker_config(docker_host_url: str) -> str:
     return "127.0.0.1"
 
 
+def _get_docker_context_host() -> str | None:
+    """Read the Docker endpoint from the active Docker context.
+
+    Returns the ``Host`` URL (e.g. ``unix:///Users/x/.docker/run/docker.sock``)
+    if a non-default context is active, or ``None`` if the context cannot be
+    read or the default context is selected (in which case ``docker.from_env``
+    already does the right thing).
+    """
+    try:
+        ctx = docker.context.ContextAPI.get_current_context()
+    except Exception as e:
+        # The Docker SDK raises bare ``Exception`` when context metadata is
+        # corrupted, so we must catch broadly here.  This is a best-effort
+        # lookup; any failure falls back to ``docker.from_env()``.
+        logger.debug("Failed to read Docker context (falling back to default): {}", e)
+        return None
+
+    if ctx is None or ctx.Name == "default":
+        return None
+
+    host: str | None = ctx.Host
+    return host if host else None
+
+
+def create_docker_client() -> docker.DockerClient:
+    """Create a Docker client using the same resolution order as the Docker CLI.
+
+    1. ``DOCKER_HOST`` environment variable (via ``docker.from_env()``).
+    2. The active Docker context (read from ``~/.docker/config.json``).
+    3. Platform default (via ``docker.from_env()``).
+
+    Use this instead of ``docker.from_env()`` directly to avoid connection
+    failures on macOS Docker Desktop, where the default socket path
+    (``/var/run/docker.sock``) may not exist but the Docker context points
+    to the correct socket.
+    """
+    if not os.environ.get("DOCKER_HOST"):
+        context_host = _get_docker_context_host()
+        if context_host is not None:
+            return docker.DockerClient(base_url=context_host)
+    return docker.from_env()
+
+
 class DockerProviderInstance(BaseProviderInstance):
     """Provider instance for managing Docker containers as hosts.
 
@@ -185,7 +230,6 @@ class DockerProviderInstance(BaseProviderInstance):
 
     # Instance-level caches
     _container_cache_by_id: dict[HostId, docker.models.containers.Container] = PrivateAttr(default_factory=dict)
-    _host_by_id_cache: dict[HostId, HostInterface] = PrivateAttr(default_factory=dict)
 
     @property
     def supports_snapshots(self) -> bool:
@@ -207,6 +251,11 @@ class DockerProviderInstance(BaseProviderInstance):
     def _docker_client(self) -> docker.DockerClient:
         """Lazily create a Docker client.
 
+        When ``self.config.host`` is set, connects to that explicit URL.
+        Otherwise delegates to ``create_docker_client()`` which resolves
+        via DOCKER_HOST, then the active Docker context, then the platform
+        default.
+
         Raises ProviderUnavailableError (a MngrError subclass) instead of
         DockerException when the daemon is unreachable, so callers that catch
         MngrError handle the failure gracefully.
@@ -214,7 +263,7 @@ class DockerProviderInstance(BaseProviderInstance):
         try:
             if self.config.host:
                 return docker.DockerClient(base_url=self.config.host)
-            return docker.from_env()
+            return create_docker_client()
         except docker.errors.DockerException as e:
             raise ProviderUnavailableError(self.name, str(e)) from e
 
@@ -504,6 +553,27 @@ kill -TERM 1
             )
             self._host_store.write_host_record(updated_host_record)
 
+    def _mark_host_destroyed(self, host_id: HostId) -> None:
+        """Set stop_reason to DESTROYED on the host record.
+
+        Marks the host as DESTROYED for state derivation while preserving
+        snapshot records so gc_snapshots can age-gate their deletion.
+        """
+        host_record = self._host_store.read_host_record(host_id, use_cache=False)
+        if host_record is None:
+            return
+
+        updated_certified_data = host_record.certified_host_data.model_copy_update(
+            to_update(host_record.certified_host_data.field_ref().stop_reason, HostState.DESTROYED.value),
+            to_update(host_record.certified_host_data.field_ref().updated_at, datetime.now(timezone.utc)),
+        )
+        self._host_store.write_host_record(
+            host_record.model_copy_update(
+                to_update(host_record.field_ref().certified_host_data, updated_certified_data),
+            )
+        )
+        logger.debug("Marked host as DESTROYED: {}", host_id)
+
     def _save_failed_host_record(
         self,
         host_id: HostId,
@@ -537,12 +607,24 @@ kill -TERM 1
         env = dict(os.environ)
         if self.config.host:
             env["DOCKER_HOST"] = self.config.host
+        # BuildKit's default progress mode emits ANSI cursor/color escapes that
+        # show up as garbage in the BUILD log channel. `plain` produces clean
+        # line-oriented output. The env form is preferred over `--progress=plain`
+        # because it is silently ignored by the legacy builder, so mngr does not
+        # require buildx to be installed.
+        env.setdefault("BUILDKIT_PROGRESS", "plain")
         return env
 
-    def _run_docker_creation_command(self, args: list[str], timeout: float = 300) -> FinishedProcess:
-        """Run a docker CLI command and return the result."""
+    def _run_docker_creation_command(
+        self, args: list[str], timeout: float = 300, executable: DockerBuilder = DockerBuilder.DOCKER
+    ) -> FinishedProcess:
+        """Run a docker-compatible CLI command and return the result.
+
+        `executable` defaults to DOCKER; pass DEPOT to use the depot.dev remote
+        builder (only valid for build subcommands).
+        """
         return self.mngr_ctx.concurrency_group.run_process_to_completion(
-            ["docker"] + args,
+            [executable.value.lower()] + args,
             timeout=timeout,
             env=self._docker_env(),
             on_output=self._log_docker_creation_command_output,
@@ -555,10 +637,13 @@ kill -TERM 1
             logger.log(LogLevel.BUILD.value, "{}", line.rstrip(), source="docker")
 
     def _build_image(self, build_args: Sequence[str], tag: str) -> str:
-        """Build a Docker image using native docker build with passthrough args."""
-        cmd = ["build", "-t", tag] + list(build_args)
-        with log_span("Running docker build with {} args", len(build_args)):
-            self._run_docker_creation_command(cmd)
+        """Build a Docker image using the configured builder (docker or depot)."""
+        builder = self.config.builder
+        # depot requires --load to import the resulting image into the local daemon.
+        extra_args = ["--load"] if builder is DockerBuilder.DEPOT else []
+        args = ["build", *extra_args, "-t", tag, *build_args]
+        with log_span("Running {} build with {} args", builder.value.lower(), len(build_args)):
+            self._run_docker_creation_command(args, executable=builder)
         return tag
 
     def _build_default_image(self, tag: str) -> str:
@@ -709,6 +794,10 @@ kill -TERM 1
         """Create a Host object from a running Docker container.
 
         Returns None if the host record doesn't exist.
+
+        If a cached Host already exists for this host_id and the SSH
+        connection details (host, port, key) have not changed, the cached
+        Host is returned as-is to preserve the existing SSH connection.
         """
         labels = container.labels or {}
         host_id, name, provider_name, user_tags = parse_container_labels(labels)
@@ -721,6 +810,18 @@ kill -TERM 1
         if host_record.ssh_host is None or host_record.ssh_port is None or host_record.ssh_host_public_key is None:
             logger.warning("Skipped container {}: missing SSH info (likely failed host)", container.short_id)
             return None
+
+        # Reuse the cached Host if the SSH details have not changed.
+        # This avoids creating a new pyinfra connector (and eventually a
+        # new SSH connection) on every discovery poll when the underlying
+        # container is the same.
+        cached = self._host_by_id_cache.get(host_id)
+        if isinstance(cached, Host):
+            cached_name = cached.connector.name
+            expected_name = host_record.ssh_host
+            cached_port = cached.connector.host.data.get("ssh_port")
+            if cached_name == expected_name and cached_port == host_record.ssh_port:
+                return cached
 
         add_host_to_known_hosts(
             self._known_hosts_path,
@@ -788,6 +889,16 @@ kill -TERM 1
         host_id = HostId.generate()
         logger.info("Creating host {} in {} ...", name, self.name)
 
+        # Fail fast if a container with this name already exists, before the
+        # expensive image build step.
+        container_name = f"{self.mngr_ctx.config.prefix}{name}"
+        existing = self._find_container_by_name(name)
+        if existing is not None:
+            raise MngrError(
+                f"A container named '{container_name}' already exists (id: {existing.short_id}). "
+                f"Remove it with 'mngr destroy {name}' or 'docker rm -f {container_name}' first."
+            )
+
         base_image = str(image) if image else (self.config.default_image or DEFAULT_IMAGE)
         effective_start_args = tuple(self.config.default_start_args) + tuple(start_args or ())
 
@@ -814,7 +925,6 @@ kill -TERM 1
                 image_name = self._pull_image(base_image)
 
             labels = build_container_labels(host_id, name, str(self.name), tags)
-            container_name = f"{self.mngr_ctx.config.prefix}{name}"
 
             # Create the per-host volume directory before starting the container
             # so the symlink target exists when the setup script runs.
@@ -918,11 +1028,11 @@ kill -TERM 1
         host_id = host.id if isinstance(host, HostInterface) else host
         logger.info("Stopping Docker container: {}", host_id)
 
-        # Disconnect SSH before stopping
-        cached_host = self._host_by_id_cache.get(host_id)
-        host_to_disconnect = cached_host if cached_host is not None else host
-        if isinstance(host_to_disconnect, Host):
-            host_to_disconnect.disconnect()
+        # Disconnect SSH before stopping (also disconnect the passed-in host
+        # in case it is a different instance than the cached one).
+        if isinstance(host, Host):
+            host.disconnect()
+        self._evict_cached_host(host_id)
 
         container = self._find_container_by_host_id(host_id)
         if container is not None:
@@ -953,7 +1063,6 @@ kill -TERM 1
             )
 
         self._container_cache_by_id.pop(host_id, None)
-        self._host_by_id_cache.pop(host_id, None)
 
     def start_host(
         self,
@@ -1000,7 +1109,7 @@ kill -TERM 1
                 container.start()
 
             self._container_cache_by_id[host_id] = container
-            self._host_by_id_cache.pop(host_id, None)
+            self._evict_cached_host(host_id)
 
             if host_record is None:
                 raise HostNotFoundError(host_id)
@@ -1021,7 +1130,7 @@ kill -TERM 1
                 host_data=host_record.certified_host_data,
             )
 
-            self._host_by_id_cache[host_id] = restored_host
+            self._evict_cached_host(host_id, replacement=restored_host)
             return restored_host
 
         # No container found, try snapshot restore
@@ -1095,7 +1204,7 @@ kill -TERM 1
             raise MngrError(f"Failed to create container from snapshot: {e}") from e
 
         self._container_cache_by_id[host_id] = new_container
-        self._host_by_id_cache.pop(host_id, None)
+        self._evict_cached_host(host_id)
 
         restored_host, _, _, _ = self._setup_container_ssh_and_create_host(
             container=new_container,
@@ -1106,15 +1215,19 @@ kill -TERM 1
             host_data=host_record.certified_host_data,
         )
 
-        self._host_by_id_cache[host_id] = restored_host
+        self._evict_cached_host(host_id, replacement=restored_host)
         return restored_host
 
-    def destroy_host(
-        self,
-        host: HostInterface | HostId,
-        delete_snapshots: bool = True,
-    ) -> None:
-        """Destroy a Docker container permanently."""
+    def destroy_host(self, host: HostInterface | HostId) -> None:
+        """Destroy a Docker container permanently.
+
+        Stops and removes the container, then marks the host record as
+        DESTROYED via stop_reason. Snapshot records, snapshot images, and
+        the host volume directory are preserved so gc_snapshots can
+        age-gate their deletion (and so users can recover via
+        ``mngr create --snapshot``). Use ``delete_host`` to permanently
+        purge all records.
+        """
         host_id = host.id if isinstance(host, HostInterface) else host
 
         # Stop the host first (without creating a snapshot since we're destroying)
@@ -1128,19 +1241,28 @@ kill -TERM 1
             except docker.errors.DockerException as e:
                 logger.warning("Error removing container: {}", e)
 
-        if delete_snapshots:
-            # Delete snapshot images
-            host_record = self._host_store.read_host_record(host_id)
-            if host_record is not None:
-                for snap in host_record.certified_host_data.snapshots:
-                    try:
-                        self._docker_client.images.remove(snap.id)
-                    except docker.errors.DockerException as e:
-                        logger.warning("Error removing snapshot image {}: {}", snap.id, e)
+        self._mark_host_destroyed(host_id)
 
-            self._host_store.delete_host_record(host_id)
+        self._container_cache_by_id.pop(host_id, None)
+        self._evict_cached_host(host_id)
 
-        # Clean up the host volume directory
+    def delete_host(self, host: HostInterface) -> None:
+        """Permanently delete all records associated with a (destroyed) host.
+
+        Removes snapshot images, the host volume directory, and the host
+        record. Called by gc_machines once a destroyed host has aged past
+        ``destroyed_host_persisted_seconds``.
+        """
+        host_id = host.id
+
+        host_record = self._host_store.read_host_record(host_id, use_cache=False)
+        if host_record is not None:
+            for snap in host_record.certified_host_data.snapshots:
+                try:
+                    self._docker_client.images.remove(snap.id)
+                except docker.errors.DockerException as e:
+                    logger.warning("Error removing snapshot image {}: {}", snap.id, e)
+
         if self.config.is_host_volume_created:
             volume_id = self._volume_id_for_host(host_id)
             try:
@@ -1148,19 +1270,14 @@ kill -TERM 1
             except (FileNotFoundError, OSError, MngrError) as e:
                 logger.trace("No host volume to clean up for {}: {}", host_id, e)
 
+        self._host_store.delete_host_record(host_id)
         self._container_cache_by_id.pop(host_id, None)
-        self._host_by_id_cache.pop(host_id, None)
-
-    def delete_host(self, host: HostInterface) -> None:
-        """Permanently delete all records associated with a (destroyed) host."""
-        self._host_store.delete_host_record(host.id)
-        self._container_cache_by_id.pop(host.id, None)
-        self._host_by_id_cache.pop(host.id, None)
+        self._evict_cached_host(host_id)
 
     def on_connection_error(self, host_id: HostId) -> None:
         """Clear all caches for a host on connection error."""
         self._container_cache_by_id.pop(host_id, None)
-        self._host_by_id_cache.pop(host_id, None)
+        self._evict_cached_host(host_id)
         self._host_store.clear_cache()
 
     # =========================================================================
@@ -1214,7 +1331,7 @@ kill -TERM 1
                         break
 
         if host_obj is not None:
-            self._host_by_id_cache[host_obj.id] = host_obj
+            self._evict_cached_host(host_obj.id, replacement=host_obj)
             return host_obj
 
         raise HostNotFoundError(host)
@@ -1276,7 +1393,10 @@ kill -TERM 1
                     host_obj = self._create_host_from_host_record(host_record)
                     # OfflineHost.get_state() uses certified data only (no SSH),
                     # so it's safe to call here unlike Host.get_state().
-                    hosts_with_state.append((host_obj, host_obj.get_state()))
+                    state = host_obj.get_state()
+                    if state == HostState.DESTROYED and not include_destroyed:
+                        continue
+                    hosts_with_state.append((host_obj, state))
                 except (OSError, ValueError, KeyError) as e:
                     logger.warning("Failed to create host from record {}: {}", host_id, e)
 
@@ -1293,7 +1413,7 @@ kill -TERM 1
                     logger.warning("Failed to create host from container {}: {}", host_id, e)
 
         for h, _ in hosts_with_state:
-            self._host_by_id_cache[h.id] = h
+            self._evict_cached_host(h.id, replacement=h)
 
         return [
             DiscoveredHost(host_id=h.id, host_name=h.get_name(), provider_name=self.name, host_state=state)

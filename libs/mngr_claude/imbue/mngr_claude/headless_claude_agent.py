@@ -1,36 +1,38 @@
 from __future__ import annotations
 
 import json
+import shlex
+import time
+from collections.abc import Iterable
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from typing import Callable
-from typing import Never
 
 from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.pure import pure
+from imbue.mngr.agents.base_headless_agent import BaseHeadlessAgent
+from imbue.mngr.agents.base_headless_agent import TAIL_POLL_INTERVAL
+from imbue.mngr.agents.base_headless_agent import TAIL_POLL_TIMEOUT
+from imbue.mngr.agents.base_headless_agent import render_file_diagnostic
 from imbue.mngr.config.data_types import AgentTypeConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import NoCommandDefinedError
-from imbue.mngr.errors import SendMessageError
 from imbue.mngr.interfaces.agent import AgentInterface
 from imbue.mngr.interfaces.agent import NoPermissionsAgentMixin
-from imbue.mngr.interfaces.agent import StreamingHeadlessAgentMixin
 from imbue.mngr.interfaces.host import CreateAgentOptions
 from imbue.mngr.interfaces.host import OnlineHostInterface
-from imbue.mngr.primitives import AgentLifecycleState
 from imbue.mngr.primitives import CommandString
 from imbue.mngr.utils.polling import poll_until
 from imbue.mngr_claude import hookimpl
 from imbue.mngr_claude.plugin import ClaudeAgent
 from imbue.mngr_claude.plugin import ClaudeAgentConfig
 
-_TAIL_POLL_INTERVAL: float = 0.05
-_TAIL_POLL_TIMEOUT: float = 300.0
 # Grace period before trusting lifecycle state. Claude can take several seconds
 # to start (especially on first run or via nvm), during which the tmux pane shows
 # bash as the current command, making the agent look DONE/STOPPED.
@@ -38,19 +40,26 @@ _STARTUP_GRACE_SECONDS: float = 10.0
 
 
 @pure
-def extract_text_delta(line: str) -> str | None:
-    """Extract text from a stream-json content_block_delta event.
+def _parse_stream_line(line: str) -> dict[str, Any] | None:
+    """Decode a single stream-json line into a dict.
 
-    Returns the delta text if the line is a content_block_delta with a text_delta,
-    or None otherwise.
+    Returns the parsed dict on success, or None if the line is not valid
+    JSON or does not decode to a JSON object. Non-JSON lines (blank lines,
+    debug output that claude sometimes leaks to stdout) are expected and
+    silently skipped.
     """
     try:
         parsed = json.loads(line)
     except (json.JSONDecodeError, ValueError):
-        # Expected: the stream contains non-JSON lines (blank lines, debug
-        # output that claude sometimes leaks to stdout). Skip them silently.
         return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
 
+
+@pure
+def _extract_text_delta_from_parsed(parsed: dict[str, Any]) -> str | None:
+    """Extract text from an already-parsed stream-json content_block_delta event."""
     if parsed.get("type") != "stream_event":
         return None
 
@@ -76,14 +85,137 @@ def extract_text_delta(line: str) -> str | None:
 
 
 @pure
-def _is_result_event(line: str) -> bool:
-    """Check if a stream-json line is a result event (signals completion)."""
-    try:
-        parsed = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
-        # Expected: non-JSON lines in the stream (see extract_text_delta).
-        return False
-    return parsed.get("type") == "result"
+def extract_text_delta(line: str) -> str | None:
+    """Extract text from a stream-json content_block_delta event.
+
+    Returns the delta text if the line is a content_block_delta with a text_delta,
+    or None otherwise. This handles the partial-message envelope emitted by
+    `claude --output-format stream-json --include-partial-messages`.
+    """
+    parsed = _parse_stream_line(line)
+    if parsed is None:
+        return None
+    return _extract_text_delta_from_parsed(parsed)
+
+
+@pure
+def _extract_assistant_text_from_parsed(parsed: dict[str, Any]) -> str | None:
+    """Extract concatenated text from an already-parsed top-level `assistant` event."""
+    if parsed.get("type") != "assistant":
+        return None
+
+    message = parsed.get("message")
+    if not isinstance(message, dict):
+        return None
+
+    content_blocks = message.get("content")
+    if not isinstance(content_blocks, list):
+        return None
+
+    text_parts: list[str] = []
+    for block in content_blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "text":
+            continue
+        text = block.get("text")
+        if isinstance(text, str):
+            text_parts.append(text)
+
+    if not text_parts:
+        return None
+    return "".join(text_parts)
+
+
+@pure
+def extract_assistant_text(line: str) -> str | None:
+    """Extract concatenated text from a top-level `assistant` event's content blocks.
+
+    Without `--include-partial-messages`, `claude --output-format stream-json`
+    emits one `{"type":"assistant","message":{"content":[{"type":"text","text":...},...]}}`
+    line per assistant turn. Returns the concatenation of all text blocks, or
+    None if the line is not an `assistant` event with at least one text block.
+    """
+    parsed = _parse_stream_line(line)
+    if parsed is None:
+        return None
+    return _extract_assistant_text_from_parsed(parsed)
+
+
+@pure
+def _extract_assistant_message_id_from_parsed(parsed: dict[str, Any]) -> str | None:
+    """Extract `message.id` from an already-parsed top-level `assistant` event."""
+    if parsed.get("type") != "assistant":
+        return None
+    message = parsed.get("message")
+    if not isinstance(message, dict):
+        return None
+    message_id = message.get("id")
+    if isinstance(message_id, str):
+        return message_id
+    return None
+
+
+@pure
+def extract_assistant_message_id(line: str) -> str | None:
+    """Extract `message.id` from a top-level `assistant` event, if present."""
+    parsed = _parse_stream_line(line)
+    if parsed is None:
+        return None
+    return _extract_assistant_message_id_from_parsed(parsed)
+
+
+@pure
+def _extract_message_start_id_from_parsed(parsed: dict[str, Any]) -> str | None:
+    """Extract `message.id` from an already-parsed partial-stream `message_start` event."""
+    if parsed.get("type") != "stream_event":
+        return None
+    event = parsed.get("event")
+    if not isinstance(event, dict):
+        return None
+    if event.get("type") != "message_start":
+        return None
+    message = event.get("message")
+    if not isinstance(message, dict):
+        return None
+    message_id = message.get("id")
+    if isinstance(message_id, str):
+        return message_id
+    return None
+
+
+@pure
+def extract_message_start_id(line: str) -> str | None:
+    """Extract `message.id` from a partial-stream `message_start` event, if present.
+
+    With `--include-partial-messages`, claude emits a
+    `{"type":"stream_event","event":{"type":"message_start","message":{"id":"...",...}}}`
+    line at the start of each assistant message. The id lets us correlate
+    subsequent text deltas with a later top-level `assistant` summary that
+    carries the same id.
+    """
+    parsed = _parse_stream_line(line)
+    if parsed is None:
+        return None
+    return _extract_message_start_id_from_parsed(parsed)
+
+
+@pure
+def _result_error_from_parsed(parsed: dict[str, Any]) -> str | None:
+    """Extract error text from an already-parsed stream-json result event.
+
+    Returns the error message when `parsed` is a `result` event with
+    `is_error=true`, None otherwise (including for non-`result` events).
+    Falls back to "unknown error" when the `result` field is missing or
+    not a string, so the declared `str | None` return type is honored
+    even if claude emits a non-string `result` payload.
+    """
+    if parsed.get("type") == "result" and parsed.get("is_error"):
+        result_value = parsed.get("result")
+        if isinstance(result_value, str):
+            return result_value
+        return "unknown error"
+    return None
 
 
 @pure
@@ -92,25 +224,10 @@ def _extract_result_error(line: str) -> str | None:
 
     Returns the error message if this is an error result, None otherwise.
     """
-    try:
-        parsed = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
-        # Expected: non-JSON lines in the stream (see extract_text_delta).
+    parsed = _parse_stream_line(line)
+    if parsed is None:
         return None
-    if parsed.get("type") == "result" and parsed.get("is_error"):
-        return parsed.get("result", "unknown error")
-    return None
-
-
-def _yield_text_deltas_from_lines(lines: list[str]) -> Iterator[str]:
-    """Yield text deltas parsed from stream-json lines, skipping blanks and non-delta events."""
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        text = extract_text_delta(stripped)
-        if text is not None:
-            yield text
+    return _result_error_from_parsed(parsed)
 
 
 class _StreamTailState(MutableModel):
@@ -123,24 +240,166 @@ class _StreamTailState(MutableModel):
     stdout_path: Path
     host: OnlineHostInterface
     is_finished: Callable[[], bool]
+    # Monotonic deadline before which is_finished() is only trusted if the
+    # stdout file has some content. Guards against the race where tmux still
+    # shows the pre-send-keys idle pane at the moment we first check
+    # lifecycle; without this gate tail_until_done's loop exits immediately
+    # and we raise "no output" seconds before claude's output arrives.
+    startup_deadline: float
     last_mtime: datetime | None = None
     chars_consumed: int = 0
     line_buffer: str = ""
     result_error: str | None = None
+    # Set to True once a stream-json `result` event has been seen. Once set,
+    # the tail loop stops; further lines (typically there are none) are not
+    # consumed.
+    got_result: bool = False
+    # Id of the assistant message currently being streamed via partial deltas
+    # (from `--include-partial-messages`'s `message_start` event), if any.
+    # Used to correlate deltas with the later top-level `assistant` summary
+    # that carries the same id. None when no partial-stream context is active.
+    streaming_message_id: str | None = None
+    # Chunks of text already yielded for the in-progress turn, in order. Used
+    # to compute the trailing diff when the `assistant` summary arrives, so
+    # that text present in the summary but not in the deltas is still emitted
+    # without re-emitting text already streamed. Stored as a list (and joined
+    # lazily on summary arrival) to avoid O(N*M) repeated concatenation when
+    # a turn contains many small deltas.
+    yielded_text_chunks: list[str] = Field(default_factory=list)
+
+    def _authoritatively_finished(self) -> bool:
+        if time.monotonic() < self.startup_deadline:
+            try:
+                return self.is_finished() and self.host.read_text_file(self.stdout_path) != ""
+            except FileNotFoundError:
+                return False
+        return self.is_finished()
 
     def _has_new_data_or_finished(self) -> bool:
         current_mtime = self.host.get_file_mtime(self.stdout_path)
         if current_mtime is not None and current_mtime != self.last_mtime:
             return True
-        return self.is_finished()
+        return self._authoritatively_finished()
+
+    def _reset_turn_state(self) -> None:
+        self.streaming_message_id = None
+        self.yielded_text_chunks = []
+
+    def _yield_text_for_parsed(self, parsed: dict[str, Any]) -> Iterator[str]:
+        # Dispatch an already-parsed stream-json line on its `type`, then
+        # delegate to the module-level extract helpers (their dict-accepting
+        # variants) so dict-walking logic lives in one place. The string-
+        # accepting public helpers are thin wrappers around the same dict logic.
+        match parsed.get("type"):
+            case "stream_event":
+                yield from self._handle_stream_event(parsed)
+            case "assistant":
+                yield from self._handle_assistant_event(parsed)
+            case other_event_type:
+                # Other event types (system, user, ping, future event types,
+                # etc.) carry no text to surface here and are intentionally
+                # skipped. Trace-log for debugging when something looks off.
+                logger.trace("Skipped stream-json event of type {!r} (no text to surface)", other_event_type)
+
+    def _handle_stream_event(self, parsed: dict[str, Any]) -> Iterator[str]:
+        # message_start (partial stream): begin a new turn. Any deltas for
+        # the previous turn whose summary never arrived have already been
+        # yielded directly, so dropping the buffer here is safe.
+        start_id = _extract_message_start_id_from_parsed(parsed)
+        if start_id is not None:
+            self._reset_turn_state()
+            self.streaming_message_id = start_id
+            return
+
+        # text_delta (partial stream): yield the delta and record it in the
+        # per-turn buffer so we can subtract it from the matching summary.
+        delta_text = _extract_text_delta_from_parsed(parsed)
+        if delta_text is not None:
+            self.yielded_text_chunks.append(delta_text)
+            yield delta_text
+            return
+
+        # Other inner stream_event types (content_block_start, content_block_stop,
+        # message_stop, ping, future event types, etc.) carry no text to surface
+        # and are intentionally skipped. Trace-log for consistency with the
+        # outer dispatcher's handling of unknown top-level types.
+        event = parsed.get("event")
+        inner_event_type = event.get("type") if isinstance(event, dict) else None
+        logger.trace("Skipped stream-json stream_event with inner type {!r} (no text to surface)", inner_event_type)
+
+    def _handle_assistant_event(self, parsed: dict[str, Any]) -> Iterator[str]:
+        # Top-level assistant event: reconcile against the per-turn buffer.
+        # An assistant event always ends the current turn (it is the message
+        # summary), so the per-turn state is reset unconditionally on exit --
+        # even when the message has no text (e.g. tool_use-only, or the rare
+        # case of a single empty text block) and no reconciliation is needed.
+        # The truthiness check skips the empty-text case for free, matching
+        # the `if trailing_text:` guard one branch deeper that prevents
+        # yielding an empty string.
+        assistant_text = _extract_assistant_text_from_parsed(parsed)
+        if assistant_text:
+            assistant_id = _extract_assistant_message_id_from_parsed(parsed)
+            is_definitely_different_message = (
+                self.streaming_message_id is not None
+                and assistant_id is not None
+                and assistant_id != self.streaming_message_id
+            )
+
+            if is_definitely_different_message:
+                # The streamed deltas belonged to a previous message whose summary
+                # never arrived. Yield the full summary for this new message; the
+                # per-turn buffer is irrelevant here so we don't bother joining it.
+                yield assistant_text
+            else:
+                # Materialize the per-turn buffer once, here, instead of after every
+                # delta -- this turns an O(N*M) per-turn cost into O(M).
+                yielded_so_far = "".join(self.yielded_text_chunks)
+                if assistant_text.startswith(yielded_so_far):
+                    # Summary continues / matches what we already yielded; emit only
+                    # the trailing extra text (empty string when they match exactly).
+                    trailing_text = assistant_text[len(yielded_so_far) :]
+                    if trailing_text:
+                        yield trailing_text
+                else:
+                    # Buffer is not a prefix of the summary. Either deltas drifted from
+                    # the summary or this is a different message we cannot disambiguate
+                    # by id. Yield the full summary; better a possible partial double-
+                    # emit than dropping the assistant message entirely.
+                    yield assistant_text
+
+        self._reset_turn_state()
+
+    def _yield_text_from_lines(self, lines: Iterable[str]) -> Iterator[str]:
+        """Process already-split stream-json lines, yielding text deltas.
+
+        Skips blank/non-JSON lines, records `result_error` and sets
+        `got_result` when a `result` event is seen (then stops iterating;
+        any lines after a result event are not consumed). Other events are
+        dispatched through `_yield_text_for_parsed` which yields any text.
+        """
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            parsed = _parse_stream_line(stripped)
+            if parsed is None:
+                # Non-JSON output that claude leaked to stdout (debug, banners,
+                # warnings) or, more rarely, valid JSON that isn't an object.
+                # Truncate so a runaway line cannot blow up the log.
+                logger.trace("Skipped stream-json line that did not decode to a JSON object: {!r}", stripped[:200])
+                continue
+            if parsed.get("type") == "result":
+                self.result_error = _result_error_from_parsed(parsed)
+                self.got_result = True
+                return
+            yield from self._yield_text_for_parsed(parsed)
 
     def tail_until_done(self) -> Iterator[str]:
-        got_result = False
-        while not got_result and not self.is_finished():
+        while not self.got_result and not self._authoritatively_finished():
             poll_until(
                 self._has_new_data_or_finished,
-                timeout=_TAIL_POLL_TIMEOUT,
-                poll_interval=_TAIL_POLL_INTERVAL,
+                timeout=TAIL_POLL_TIMEOUT,
+                poll_interval=TAIL_POLL_INTERVAL,
             )
             self.last_mtime = self.host.get_file_mtime(self.stdout_path)
 
@@ -160,19 +419,9 @@ class _StreamTailState(MutableModel):
                 if not combined.endswith("\n"):
                     self.line_buffer = lines.pop()
 
-                for line in lines:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    if _is_result_event(stripped):
-                        self.result_error = _extract_result_error(stripped)
-                        got_result = True
-                        break
-                    text = extract_text_delta(stripped)
-                    if text is not None:
-                        yield text
+                yield from self._yield_text_from_lines(lines)
 
-        if not got_result:
+        if not self.got_result:
             # Final drain after agent exits
             try:
                 content = self.host.read_text_file(self.stdout_path)
@@ -180,16 +429,7 @@ class _StreamTailState(MutableModel):
                 return
             remaining = self.line_buffer + content[self.chars_consumed :]
             if remaining:
-                for line in remaining.split("\n"):
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    if _is_result_event(stripped):
-                        self.result_error = _extract_result_error(stripped)
-                        break
-                    text = extract_text_delta(stripped)
-                    if text is not None:
-                        yield text
+                yield from self._yield_text_from_lines(remaining.split("\n"))
 
 
 class NoPermissionsClaudeAgent(ClaudeAgent, NoPermissionsAgentMixin):
@@ -227,7 +467,14 @@ class HeadlessClaudeAgentConfig(ClaudeAgentConfig):
     )
 
 
-class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
+_MNGR_PROMPT_FILE: str = ".mngr-prompt"
+# Canonical form of the "read the staged prompt" arg. Written by
+# stage_initial_message under $MNGR_AGENT_STATE_DIR so it is cleaned up
+# when the agent is destroyed.
+_MNGR_PROMPT_CAT_ARG: str = f'"$(cat "$MNGR_AGENT_STATE_DIR/{_MNGR_PROMPT_FILE}")"'
+
+
+class HeadlessClaude(NoPermissionsClaudeAgent, BaseHeadlessAgent[ClaudeAgentConfig]):
     """Agent type for non-interactive (headless) Claude usage.
 
     Runs `claude --print` with stdout redirected to a file so callers can
@@ -235,21 +482,37 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
     interactive messages, paste detection, or TUI readiness checking.
     """
 
+    _no_output_error_subject: str = "claude"
     _startup_grace_seconds: float = _STARTUP_GRACE_SECONDS
-    _stdout_poll_timeout: float = _TAIL_POLL_TIMEOUT
+
+    def stage_initial_message(self, initial_message: str) -> None:
+        """Persist ``initial_message`` to ``.mngr-prompt`` inside the agent's state dir.
+
+        The command assembled by ``assemble_command`` reads this file via
+        ``cat`` so we can pass very long prompts without hitting tmux /
+        shell arg length limits. Writing to the state dir (rather than the
+        work dir) means the file is cleaned up when the agent is destroyed
+        and does not leak into an in-place source directory.
+        """
+        prompt_path = self._get_agent_dir() / _MNGR_PROMPT_FILE
+        self.host.write_text_file(prompt_path, initial_message)
 
     def _preflight_send_message(self, tmux_target: str) -> None:
-        """Headless agents do not accept interactive messages."""
-        raise SendMessageError(
-            str(self.name),
-            "Headless claude agents do not accept interactive messages.",
-        )
+        """Headless agents do not accept interactive messages.
+
+        Must be defined here because ClaudeAgent overrides BaseAgent's no-op
+        _preflight_send_message with dialog-checking logic. Without this
+        explicit override, the MRO resolves to ClaudeAgent's implementation
+        instead of BaseHeadlessAgent's, since ClaudeAgent appears earlier
+        in HeadlessClaude's MRO.
+        """
+        BaseHeadlessAgent._preflight_send_message(self, tmux_target)
 
     def uses_paste_detection_send(self) -> bool:
-        return False
+        return BaseHeadlessAgent.uses_paste_detection_send(self)
 
     def get_tui_ready_indicator(self) -> str | None:
-        return None
+        return BaseHeadlessAgent.get_tui_ready_indicator(self)
 
     def wait_for_ready_signal(
         self, is_creating: bool, start_action: Callable[[], None], timeout: float | None = None
@@ -264,6 +527,7 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
         host: OnlineHostInterface,
         agent_args: tuple[str, ...],
         command_override: CommandString | None,
+        initial_message: str | None = None,
     ) -> CommandString:
         """Build a simplified command for headless operation.
 
@@ -280,9 +544,40 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
 
         parts = [base, "--print"]
 
-        all_extra_args = self.agent_config.cli_args + agent_args
+        # cli_args reach here already shell-safe: string-form configs go through split_cli_args_string
+        # (non-POSIX shlex that preserves quote chars in tokens). agent_args, by contrast, are raw
+        # argv strings passed through Click as click.UNPROCESSED -- the OS shell stripped quote chars
+        # when it built argv at invocation time, so we must re-quote each element before splicing it
+        # into a shell command string.
+        quoted_agent_args = tuple(shlex.quote(arg) for arg in agent_args)
+        all_extra_args = self.agent_config.cli_args + quoted_agent_args
         if all_extra_args:
             parts.extend(all_extra_args)
+
+        # When the caller supplied --message (or --message-file),
+        # stage_initial_message writes the prompt to
+        # $MNGR_AGENT_STATE_DIR/.mngr-prompt. Append a cat reference so
+        # claude reads it on startup.
+        #
+        # ``initial_message`` is passed in by ``Host.create_agent_state``
+        # from ``CreateAgentOptions.initial_message``. We deliberately do
+        # NOT read ``self.get_initial_message()`` here: ``assemble_command``
+        # runs inside ``create_agent_state`` *before* ``data.json`` is
+        # written, so the persisted initial_message is not yet visible via
+        # ``_read_data``.
+        #
+        # The "already referenced" check is an exact-equality membership
+        # test against the *unquoted* inputs (``agent_args`` and
+        # ``cli_args``), not a substring scan of the joined args: a
+        # substring scan would falsely match any arg containing
+        # `.mngr-prompt` (e.g. an unrelated path) and silently drop the
+        # prompt. We cannot test against ``all_extra_args`` because each
+        # element of ``quoted_agent_args`` has been wrapped by
+        # ``shlex.quote`` and so will not compare equal to the canonical
+        # ``_MNGR_PROMPT_CAT_ARG`` literal.
+        already_referenced = _MNGR_PROMPT_CAT_ARG in agent_args or _MNGR_PROMPT_CAT_ARG in self.agent_config.cli_args
+        if initial_message is not None and not already_referenced:
+            parts.append(_MNGR_PROMPT_CAT_ARG)
 
         cmd_str = " ".join(parts)
         return CommandString(f'{cmd_str} > "$MNGR_AGENT_STATE_DIR/stdout.jsonl" 2> "$MNGR_AGENT_STATE_DIR/stderr.log"')
@@ -295,166 +590,71 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
         """Return the path to the stderr.log file for this agent."""
         return self._get_agent_dir() / "stderr.log"
 
-    def _is_agent_finished(self) -> bool:
-        """Check if the agent process has exited (tmux lifecycle) or is no longer running."""
-        state = self.get_lifecycle_state()
-        return state in (AgentLifecycleState.STOPPED, AgentLifecycleState.DONE)
+    def _get_extra_error_sources(self) -> list[str]:
+        """Return the stream-json stdout error (if any) and the work-dir diagnostic.
 
-    def _file_exists_on_host(self, path: Path) -> bool:
-        """Check if a file exists on the agent's host (works for both local and remote)."""
-        return self.host.get_file_mtime(path) is not None
-
-    def _wait_for_stdout_file(self, stdout_path: Path) -> bool:
-        """Wait for the stdout file to be created or the agent to exit.
-
-        Returns True if the file exists, False if the agent exited without creating it.
-
-        Two phases:
-        1. Startup grace period -- wait for the file only, ignoring lifecycle
-           state. Claude can take several seconds to start (nvm resolution,
-           node startup), during which tmux shows bash as the current command
-           and lifecycle detection incorrectly reports DONE.
-        2. After the grace period, also check lifecycle state so we don't wait
-           forever if claude genuinely failed to start.
+        The work-dir diagnostic is always appended -- it's cheap to compute
+        and most valuable for silent-exit post-mortems (e.g. the
+        test_ask_simple_query failure mode, where stdout/stderr are both
+        empty because the stream-json error check can't find a result event).
+        Listing the .mngr-prompt / .mngr-system-prompt files that the command
+        substitution reads helps distinguish "claude never ran because its
+        prompt inputs were empty/missing" from "claude ran but produced no
+        output." When a stream-json error *is* present, the work-dir
+        diagnostic still provides useful triage context alongside it.
         """
-        # Phase 1: wait for stdout file, ignoring lifecycle state
-        if poll_until(
-            lambda: self._file_exists_on_host(stdout_path),
-            timeout=self._startup_grace_seconds,
-            poll_interval=_TAIL_POLL_INTERVAL,
-        ):
-            return True
-        # Phase 2: file didn't appear during grace period, now also check lifecycle
-        poll_until(
-            lambda: self._file_exists_on_host(stdout_path) or self._is_agent_finished(),
-            timeout=self._stdout_poll_timeout - self._startup_grace_seconds,
-            poll_interval=_TAIL_POLL_INTERVAL,
-        )
-        return self._file_exists_on_host(stdout_path)
-
-    def output(self) -> str:
-        """Wait for the agent to finish and return its complete output."""
-        return "".join(self.stream_output())
-
-    def _raise_no_output_error(self) -> Never:
-        """Raise MngrError collecting all available error detail.
-
-        Collects errors from all file-based sources (stderr.log and stdout.jsonl)
-        since they can contain complementary information (e.g. stderr has a stack
-        trace while stdout has the user-facing error message). Falls back to tmux
-        pane capture only when neither redirect file exists (the shell never ran).
-
-        Error sources:
-
-        - stderr.log: claude CLI crashes (unhandled promise rejections) write
-          stack traces here. Claude's stderr behavior is unreliable (some errors
-          leak to stdout instead), so this rarely fires in practice.
-
-        - stdout.jsonl stream-json error result: the primary error channel.
-          With --output-format stream-json --verbose, auth failures and API
-          errors appear as result events with is_error=true.
-
-        - tmux pane capture: last resort when neither redirect file exists,
-          meaning the shell itself failed before running the command. Extremely
-          unlikely since the shell redirect creates both files before executing.
-        """
-        parts: list[str] = []
-        # stderr: crashes, stack traces, tool errors
-        stderr_error = self._get_stderr_error_message()
-        if stderr_error:
-            parts.append(stderr_error)
-        # stdout: stream-json result events with is_error=true
+        sources: list[str] = []
         stdout_error = self._get_stdout_stream_json_error()
         if stdout_error:
-            parts.append(stdout_error)
-        # pane capture: only if the shell never created the redirect files
-        if not parts:
-            stderr_exists = self._file_exists_on_host(self._get_stderr_path())
-            stdout_exists = self._file_exists_on_host(self._get_stdout_path())
-            if not stderr_exists and not stdout_exists:
-                pane_error = self._get_pane_error_message()
-                if pane_error:
-                    parts.append(pane_error)
-        if parts:
-            detail = "\n".join(parts)
-            raise MngrError(f"claude exited without producing output:\n{detail}")
-        raise MngrError("claude exited without producing output (no details available)")
+            sources.append(stdout_error)
+        sources.append(f"[work-dir]\n{self._get_work_dir_diagnostic()}")
+        return sources
 
-    def _get_stderr_error_message(self) -> str | None:
-        """Read stderr.log for error output from the claude process.
+    def _get_work_dir_diagnostic(self) -> str:
+        """Summarize the agent's work dir for silent-exit post-mortems.
 
-        Relevant when: claude crashes with an unhandled exception (the Node.js
-        runtime writes the stack trace to stderr), or other tools in the
-        shell pipeline write errors to stderr.
+        Lists the .mngr-prompt and .mngr-system-prompt files by existence +
+        char count. Delegates per-file rendering to
+        :func:`render_file_diagnostic` so the format stays in lockstep with
+        BaseHeadlessAgent's state-dir diagnostic.
         """
-        stderr_path = self._get_stderr_path()
-        try:
-            content = self.host.read_text_file(stderr_path)
-        except FileNotFoundError:
-            return None
-        stripped = content.strip()
-        return stripped if stripped else None
+        work_dir = self.work_dir
+        lines: list[str] = [f"work_dir: {work_dir}"]
+        for name in (".mngr-prompt", ".mngr-system-prompt"):
+            # show_path=False: the `work_dir:` line already reports the
+            # directory, so per-file lines only need the filename label.
+            lines.append(render_file_diagnostic(self.host, work_dir / name, f"  {name}", show_path=False))
+        return "\n".join(lines)
 
     def _get_stdout_stream_json_error(self) -> str | None:
-        """Extract error message from a stream-json result event in stdout.jsonl.
-
-        Relevant when: claude starts successfully but encounters an error
-        (auth failure, API error, rate limit). With --output-format stream-json
-        --verbose, these appear as {"type": "result", "is_error": true,
-        "result": "Not logged in"} events in the stdout stream. This is the
-        primary error channel for headless claude.
-        """
+        """Extract error message from a stream-json result event in stdout.jsonl."""
         stdout_path = self._get_stdout_path()
         try:
             content = self.host.read_text_file(stdout_path)
         except FileNotFoundError:
             return None
         for line in content.split("\n"):
-            line = line.strip()
-            if not line:
+            stripped = line.strip()
+            if not stripped:
                 continue
-            try:
-                parsed = json.loads(line)
-                if parsed.get("type") == "result" and parsed.get("is_error"):
-                    return parsed.get("result", "unknown error")
-            except (json.JSONDecodeError, ValueError):
-                # Non-JSON in stdout.jsonl after an error -- could indicate
-                # debug output leaking to stdout (known claude CLI bug).
-                logger.debug("Non-JSON line in stdout.jsonl during error recovery: {}", line)
-                continue
+            error = _extract_result_error(stripped)
+            if error is not None:
+                return error
         return None
-
-    def _get_pane_error_message(self) -> str | None:
-        """Capture the tmux pane content to extract an error message.
-
-        Relevant when: the shell command never ran far enough to create the
-        redirect files (stderr.log, stdout.jsonl). This would happen if tmux
-        send-keys failed to reach a shell prompt, or the shell itself crashed
-        before executing the redirect. Extremely unlikely in practice --
-        mostly defense-in-depth.
-        """
-        content = self.capture_pane_content()
-        if content is None:
-            return None
-        stripped = content.strip()
-        return stripped if stripped else None
 
     def stream_output(self) -> Iterator[str]:
         """Stream text output as it becomes available.
 
         Tails $MNGR_AGENT_STATE_DIR/stdout.jsonl via the host interface so it
-        works for both local and remote hosts. Uses mtime checks via
-        host.get_file_mtime() (through poll_until) to detect new data instead
-        of busy-polling with time.sleep.
-
-        Yields text delta chunks parsed from stream-json events. Completes when
-        the agent process exits and the file is fully consumed.
+        works for both local and remote hosts. Yields text delta chunks parsed
+        from stream-json events.
 
         Raises MngrError if the stream-json result event has is_error=true
         (even if some text was yielded before the error), or if the agent exits
         without producing any output (startup failure, auth error, etc.).
         """
         stdout_path = self._get_stdout_path()
+        startup_deadline = time.monotonic() + self._startup_grace_seconds
 
         if not self._wait_for_stdout_file(stdout_path):
             self._raise_no_output_error()
@@ -463,17 +663,14 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
             stdout_path=stdout_path,
             host=self.host,
             is_finished=self._is_agent_finished,
+            startup_deadline=startup_deadline,
         )
-        yielded_any = False
+        is_any_output_yielded = False
         for chunk in state.tail_until_done():
-            yielded_any = True
+            is_any_output_yielded = True
             yield chunk
 
-        # After streaming completes, check for errors. result_error is
-        # captured from the stream-json result event during tailing (covers
-        # both "error with no output" and "error after partial output").
-        # Also check stderr since it may have complementary info (e.g. a
-        # stack trace alongside the user-facing error in the result event).
+        # After streaming completes, check for errors
         if state.result_error:
             parts = [state.result_error]
             stderr_error = self._get_stderr_error_message()
@@ -481,9 +678,7 @@ class HeadlessClaude(NoPermissionsClaudeAgent, StreamingHeadlessAgentMixin):
                 parts.append(stderr_error)
             detail = "\n".join(parts)
             raise MngrError(f"claude returned an error:\n{detail}")
-        # If nothing was yielded and no result error was captured, fall back
-        # to the full error chain (re-reads stdout for errors, checks pane).
-        if not yielded_any:
+        if not is_any_output_yielded:
             self._raise_no_output_error()
 
 

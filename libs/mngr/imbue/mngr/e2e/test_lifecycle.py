@@ -6,6 +6,7 @@ from imbue.mngr.e2e.conftest import E2eSession
 from imbue.skitwright.expect import expect
 
 
+@pytest.mark.rsync
 @pytest.mark.release
 @pytest.mark.tmux
 @pytest.mark.modal
@@ -13,7 +14,7 @@ def test_full_lifecycle(e2e: E2eSession) -> None:
     # Create
     expect(
         e2e.run(
-            "mngr create my-task --command 'sleep 99999' --no-ensure-clean --no-connect",
+            "mngr create my-task --type command --no-ensure-clean --no-connect -- sleep 100100",
             comment="Create agent for full lifecycle test",
         )
     ).to_succeed()

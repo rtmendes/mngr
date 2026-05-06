@@ -15,10 +15,10 @@ from click.core import ParameterSource
 from click_option_group import GroupedOption
 from click_option_group import OptionGroup
 from click_option_group import optgroup
+from loguru import logger
 
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.errors import ProcessError
-from imbue.concurrency_group.executor import ConcurrencyGroupExecutor
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.pure import pure
@@ -27,14 +27,18 @@ from imbue.mngr.config.data_types import CreateTemplateName
 from imbue.mngr.config.data_types import MngrConfig
 from imbue.mngr.config.data_types import MngrContext
 from imbue.mngr.config.data_types import OutputOptions
+from imbue.mngr.config.loader import block_disabled_plugins
 from imbue.mngr.config.loader import load_config
 from imbue.mngr.config.loader import parse_config
+from imbue.mngr.config.loader import resolve_strict_from_env
+from imbue.mngr.errors import ConfigParseError
 from imbue.mngr.errors import ParseSpecError
 from imbue.mngr.errors import UserInputError
 from imbue.mngr.primitives import LogLevel
 from imbue.mngr.primitives import OutputFormat
 from imbue.mngr.utils.logging import LoggingConfig
 from imbue.mngr.utils.logging import setup_logging
+from imbue.mngr.utils.thread_cleanup import mngr_executor
 
 # The set of built-in format names (case-insensitive). Any --format value not
 # matching one of these is treated as a format template string.
@@ -57,10 +61,7 @@ def add_common_options(command: TDecorated) -> TDecorated:
     - -v, --verbose: Increase verbosity
     - --log-file: Override log file path
     - --log-commands: Log executed commands
-    - --log-command-output: Log command output
-    - --log-env-vars: Log environment variables
     - --headless: Disable all interactive behavior
-    - --context: Project context directory
     - --plugin: Enable plugins
     - --disable-plugin: Disable plugins
     - -S, --setting: Override config settings for this invocation (KEY=VALUE, dot-separated paths)
@@ -78,12 +79,6 @@ def add_common_options(command: TDecorated) -> TDecorated:
         command
     )
     command = optgroup.option(
-        "--context",
-        "project_context_path",
-        type=click.Path(exists=True),
-        help="Project context directory (for build context and loading project-specific config) [default: local .git root]",
-    )(command)
-    command = optgroup.option(
         "--safe",
         is_flag=True,
         default=False,
@@ -95,12 +90,6 @@ def add_common_options(command: TDecorated) -> TDecorated:
         is_flag=True,
         default=False,
         help="Disable all interactive behavior (prompts, TUI, editor). Also settable via MNGR_HEADLESS env var or 'headless' config key.",
-    )(command)
-    command = optgroup.option(
-        "--log-env-vars/--no-log-env-vars", default=None, help="Log environment variables (security risk)"
-    )(command)
-    command = optgroup.option(
-        "--log-command-output/--no-log-command-output", default=None, help="Log stdout/stderr from commands"
     )(command)
     command = optgroup.option(
         "--log-commands/--no-log-commands", default=None, help="Log commands that were executed"
@@ -164,13 +153,17 @@ def setup_command_context(
     # wrapped in ConcurrencyExceptionGroup, which would break Click's error handling.
     ctx.call_on_close(lambda: cg.__exit__(None, None, None))
 
+    # Resolve strict here so the same policy applies to both load_config (which
+    # validates section field names) and apply_config_defaults below (which
+    # validates command parameter names).
+    if strict is None:
+        strict = resolve_strict_from_env()
+
     # Load config (is_interactive will be resolved below)
-    context_dir = Path(initial_opts.project_context_path) if initial_opts.project_context_path else None
     pm = ctx.obj
     mngr_ctx = load_config(
         pm,
         cg,
-        context_dir=context_dir,
         enabled_plugins=initial_opts.plugin,
         disabled_plugins=initial_opts.disable_plugin,
         is_interactive=False,
@@ -206,11 +199,19 @@ def setup_command_context(
         )
 
     # Apply config defaults to parameters that came from defaults (not user-specified)
-    updated_params = apply_config_defaults(ctx, mngr_ctx.config, command_name)
+    updated_params = apply_config_defaults(ctx, mngr_ctx.config, command_name, strict=strict)
 
     # Apply create template if this is the create command and a template was specified
     if command_name == "create":
         updated_params = apply_create_template(ctx, updated_params, mngr_ctx.config)
+
+    # Block plugins that were disabled via command defaults or create templates
+    # (e.g. disable_plugin from [commands.create] in settings.toml). load_config
+    # only blocks plugins from CLI args and [plugins] config sections; command
+    # defaults are applied later and need a second blocking pass.
+    updated_disable_plugin = updated_params.get("disable_plugin", ())
+    if updated_disable_plugin:
+        block_disabled_plugins(pm, frozenset(updated_disable_plugin))
 
     # Allow plugins to override command options before creating the options object
     _apply_plugin_option_overrides(pm, command_name, command_class, updated_params)
@@ -231,8 +232,6 @@ def setup_command_context(
         verbose=opts.verbose,
         log_file=opts.log_file,
         log_commands=opts.log_commands,
-        log_command_output=opts.log_command_output,
-        log_env_vars=opts.log_env_vars,
         config=mngr_ctx.config,
     )
 
@@ -280,8 +279,6 @@ def parse_output_options(
     verbose: int,
     log_file: str | None,
     log_commands: bool | None,
-    log_command_output: bool | None,
-    log_env_vars: bool | None,
     config: MngrConfig,
 ) -> tuple[OutputOptions, LoggingConfig]:
     """Parse output-related CLI options. CLI flags can override config values.
@@ -326,12 +323,6 @@ def parse_output_options(
     # Use CLI overrides if provided, otherwise use config
     is_log_commands = log_commands if log_commands is not None else config.logging.is_logging_commands
 
-    is_log_command_output = (
-        log_command_output if log_command_output is not None else config.logging.is_logging_command_output
-    )
-
-    is_log_env_vars = log_env_vars if log_env_vars is not None else config.logging.is_logging_env_vars
-
     # Build the resolved logging config with CLI overrides applied to TOML defaults
     resolved_logging_config = LoggingConfig(
         file_level=config.logging.file_level,
@@ -340,8 +331,8 @@ def parse_output_options(
         console_level=console_level,
         log_file_path=log_file_path,
         is_logging_commands=is_log_commands,
-        is_logging_command_output=is_log_command_output,
-        is_logging_env_vars=is_log_env_vars,
+        is_logging_command_output=config.logging.is_logging_command_output,
+        is_logging_env_vars=config.logging.is_logging_env_vars,
     )
 
     output_opts = OutputOptions(
@@ -437,7 +428,13 @@ def apply_settings_to_config(
     return config.merge_with(settings_config)
 
 
-def apply_config_defaults(ctx: click.Context, config: MngrConfig, command_name: str) -> dict[str, Any]:
+def apply_config_defaults(
+    ctx: click.Context,
+    config: MngrConfig,
+    command_name: str,
+    *,
+    strict: bool = True,
+) -> dict[str, Any]:
     """Apply config defaults to parameters that were not explicitly set by the user.
 
     Uses ctx.get_parameter_source() to detect which parameters came from defaults.
@@ -446,6 +443,10 @@ def apply_config_defaults(ctx: click.Context, config: MngrConfig, command_name: 
     Special handling for tuple/list parameters:
     - An empty string value ("") clears the list (sets it to an empty tuple)
     - This allows env vars like MNGR_COMMANDS_CREATE_ADD_COMMAND= to clear config defaults
+
+    When strict=True, raises ConfigParseError for unknown parameter names; when
+    strict=False, logs a warning and skips them. Callers should resolve the
+    policy from MNGR_ALLOW_UNKNOWN_CONFIG once and pass the result through.
     """
     # Get command defaults from config
     command_defaults = config.commands.get(command_name)
@@ -460,7 +461,14 @@ def apply_config_defaults(ctx: click.Context, config: MngrConfig, command_name: 
     for param_name, config_value in command_defaults.defaults.items():
         # Check if this parameter exists in the context
         if param_name not in ctx.params:
-            continue
+            msg = (
+                f"Unknown parameter '{param_name}' in commands.{command_name} config. "
+                f"Valid parameters: {sorted(ctx.params.keys())}"
+            )
+            if not strict:
+                logger.warning(msg)
+                continue
+            raise ConfigParseError(msg)
 
         # Check the source of the parameter value
         source = ctx.get_parameter_source(param_name)
@@ -496,13 +504,14 @@ def apply_create_template(
 
     Templates are named presets of create command arguments that can be applied
     using --template <name>. Multiple templates can be specified and are applied
-    in order, stacking their values. Template values act as defaults - they only
-    override parameters that came from DEFAULT source, not user-specified values.
+    in order, stacking their values.
 
-    When multiple templates are specified, later templates override earlier ones
-    for the same parameter.
-
-    CLI arguments always take precedence over template values.
+    Merge semantics (matching config file merge behavior):
+    - Scalar params: latest template wins; CLI arguments always take precedence.
+    - List/tuple params (env, pass_env, etc.): concatenated with existing values
+      (from config defaults, earlier templates, or CLI). An explicit empty list
+      [] resets the parameter, clearing all values from earlier in the chain
+      (but not CLI-specified values).
 
     This function should only be called for the 'create' command.
     """
@@ -513,7 +522,7 @@ def apply_create_template(
     # Start with existing params
     updated_params = params.copy()
 
-    # Apply each template in order (later templates override earlier ones)
+    # Apply each template in order
     for template_name in template_names:
         try:
             template_key = CreateTemplateName(template_name)
@@ -534,15 +543,32 @@ def apply_create_template(
 
         template = config.create_templates[template_key]
 
-        # Apply template options only for parameters that came from defaults (not CLI)
         for param_name, template_value in template.options.items():
             if template_value is None:
                 continue
             if param_name not in params:
                 continue
             source = ctx.get_parameter_source(param_name)
-            if source == ParameterSource.DEFAULT:
+            existing_value = updated_params[param_name]
+
+            # List/tuple params: concatenate (or reset on explicit empty list)
+            if isinstance(template_value, (list, tuple)) and isinstance(existing_value, (list, tuple)):
+                if not template_value:
+                    # Explicit empty list resets values from config defaults and
+                    # earlier templates, but CLI-specified values are preserved
+                    if source == ParameterSource.DEFAULT:
+                        updated_params[param_name] = ()
+                    else:
+                        pass
+                else:
+                    # Concatenate existing values with template values
+                    updated_params[param_name] = tuple(existing_value) + tuple(template_value)
+            elif source == ParameterSource.DEFAULT:
+                # Scalar params from defaults: template value wins
                 updated_params[param_name] = template_value
+            else:
+                # CLI-specified scalar params: CLI wins (no change)
+                pass
 
     return updated_params
 
@@ -620,7 +646,7 @@ def _run_pre_command_scripts(config: MngrConfig, command_name: str, cg: Concurre
     # Run all scripts in parallel
     failures: list[tuple[str, int, str, str]] = []
     futures: list[Future[tuple[str, int, str, str]]] = []
-    with ConcurrencyGroupExecutor(parent_cg=cg, name="pre_command_scripts", max_workers=32) as executor:
+    with mngr_executor(parent_cg=cg, name="pre_command_scripts", max_workers=32) as executor:
         for script in scripts:
             futures.append(executor.submit(_run_single_script, script, cg, cwd))
     for future in futures:

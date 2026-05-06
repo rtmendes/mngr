@@ -12,7 +12,6 @@ from typing import assert_never
 
 from loguru import logger
 
-from imbue.concurrency_group.executor import ConcurrencyGroupExecutor
 from imbue.imbue_common.logging import log_call
 from imbue.imbue_common.logging import log_span
 from imbue.imbue_common.model_update import to_update
@@ -26,11 +25,11 @@ from imbue.mngr.errors import HostConnectionError
 from imbue.mngr.errors import HostOfflineError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import ProviderUnavailableError
+from imbue.mngr.hosts.common import get_seconds_since_last_activity
 from imbue.mngr.interfaces.data_types import BuildCacheInfo
 from imbue.mngr.interfaces.data_types import LogFileInfo
 from imbue.mngr.interfaces.data_types import SizeBytes
 from imbue.mngr.interfaces.data_types import WorkDirInfo
-from imbue.mngr.interfaces.host import HostInterface
 from imbue.mngr.interfaces.host import OnlineHostInterface
 from imbue.mngr.interfaces.provider_instance import ProviderInstanceInterface
 from imbue.mngr.primitives import DiscoveredHost
@@ -38,6 +37,7 @@ from imbue.mngr.primitives import ErrorBehavior
 from imbue.mngr.primitives import HostState
 from imbue.mngr.primitives import ProviderInstanceName
 from imbue.mngr.utils.git_utils import parse_worktree_git_file
+from imbue.mngr.utils.thread_cleanup import mngr_executor
 
 
 @log_call
@@ -186,9 +186,7 @@ def gc_work_dirs(
 ) -> None:
     """Garbage collect orphaned work directories."""
     futures: list[Future[None]] = []
-    with ConcurrencyGroupExecutor(
-        parent_cg=mngr_ctx.concurrency_group, name="gc_machines", max_workers=32
-    ) as executor:
+    with mngr_executor(parent_cg=mngr_ctx.concurrency_group, name="gc_machines", max_workers=32) as executor:
         for provider_instance, host_refs in hosts_by_provider:
             for host_ref in host_refs:
                 if host_ref.host_state == HostState.DESTROYED:
@@ -233,6 +231,34 @@ def _gc_single_host_work_dir(
                     result.errors.append(error_msg)
                     _handle_error(error_msg, error_behavior, exc=e)
 
+            # Source dirs (e.g. mngr-managed clones from --source <url>) are tracked
+            # separately and kept around while any worktree still points at them.
+            try:
+                deletable_source_dirs, kept_source_dirs = _get_orphaned_source_dirs(
+                    host=host, provider_name=provider_instance.name
+                )
+            except HostOfflineError:
+                logger.trace("Skipped source dir GC because host is offline", host_id=host.id)
+            except HostAuthenticationError:
+                logger.trace("Skipped source dir GC because host authentication failed", host_id=host.id)
+            else:
+                for info in kept_source_dirs:
+                    logger.warning(
+                        "Keeping source repo {} because it has local branches not on any remote. "
+                        "Push or delete them to allow future gc.",
+                        info.path,
+                    )
+                result.source_dirs_kept_due_to_unpushed_branches.extend(kept_source_dirs)
+                for source_dir_info in deletable_source_dirs:
+                    try:
+                        if not dry_run:
+                            _clean_source_dir(host=host, source_dir_path=source_dir_info.path)
+                        result.source_dirs_destroyed.append(source_dir_info)
+                    except MngrError as e:
+                        error_msg = f"Failed to clean source dir {source_dir_info.path}: {e}"
+                        result.errors.append(error_msg)
+                        _handle_error(error_msg, error_behavior, exc=e)
+
 
 def gc_machines(
     mngr_ctx: MngrContext,
@@ -247,9 +273,7 @@ def gc_machines(
     for provider, host_refs in hosts_by_provider:
         # Process hosts in parallel to avoid sequential SSH timeouts for offline hosts
         futures: list[Future[None]] = []
-        with ConcurrencyGroupExecutor(
-            parent_cg=mngr_ctx.concurrency_group, name="gc_machines", max_workers=32
-        ) as executor:
+        with mngr_executor(parent_cg=mngr_ctx.concurrency_group, name="gc_machines", max_workers=32) as executor:
             for host_ref in host_refs:
                 futures.append(
                     executor.submit(
@@ -328,20 +352,73 @@ def _gc_single_host(
             agent_refs = host.discover_agents()
             if len(agent_refs) > 0:
                 return
-            host_to_destroy: HostInterface = host
-        except HostAuthenticationError:
-            # hosts that fail to authenticate should be destroyed--we assume all hosts are reachable
-            logger.warning("Failed to authenticate with host during GC, destroying: {}", host.id)
-            host_to_destroy = host.to_offline_host()
+        except HostAuthenticationError as e:
+            # Transient auth failures (network blip, infrastructure hiccup) must
+            # not trigger destruction -- we cannot verify the host has no agents
+            # or determine its age when we cannot authenticate.
+            logger.warning("Failed to authenticate with host {} during GC, skipping: {}", host.id, e)
+            return
         except HostConnectionError as e:
             # we skip hosts that suddenly appear offline for now--it's hard to tell exactly what happened
             logger.warning("Failed to connect to host {} during gc, skipping: {}", host.id, e)
             return
 
+        # Only destroy hosts that have been quiet for long enough.  Young or
+        # recently-touched hosts may be mid-setup, being debugged via SSH, or
+        # otherwise in active use outside of mngr's view.
+        try:
+            seconds_since_activity = get_seconds_since_last_activity(host)
+        except (HostAuthenticationError, HostConnectionError) as e:
+            # Cannot determine activity -- err on the side of caution.  HostConnectionError
+            # also catches its HostOfflineError subclass.
+            logger.warning("Cannot determine last activity of host {} during GC, skipping: {}", host.id, e)
+            return
+        min_age_seconds = provider.get_min_online_host_age_seconds()
+        if seconds_since_activity is not None and seconds_since_activity < min_age_seconds:
+            logger.trace(
+                "Skipped GC for host {} (last activity {:.0f}s ago < minimum {:.0f}s)",
+                host.id,
+                seconds_since_activity,
+                min_age_seconds,
+            )
+            return
+        if seconds_since_activity is None:
+            # No activity recorded -- typically means the host crashed before
+            # anything had a chance to write an activity file.  Fall back to
+            # created_at for the setup grace period, and require a terminal
+            # state so we don't destroy hosts that are still booting/healthy.
+            try:
+                certified_data = host.get_certified_data()
+            except (HostAuthenticationError, HostConnectionError) as e:
+                logger.warning("Cannot read certified data for host {} during GC, skipping: {}", host.id, e)
+                return
+            host_age_seconds = (datetime.now(timezone.utc) - certified_data.created_at).total_seconds()
+            if host_age_seconds < min_age_seconds:
+                logger.trace(
+                    "Skipped GC for host {} (no activity, age {:.0f}s < minimum {:.0f}s)",
+                    host.id,
+                    host_age_seconds,
+                    min_age_seconds,
+                )
+                return
+            try:
+                state = host.get_state()
+            except (HostAuthenticationError, HostConnectionError) as e:
+                logger.warning("Cannot determine state of host {} during GC, skipping: {}", host.id, e)
+                return
+            if state not in (HostState.CRASHED, HostState.FAILED):
+                logger.trace(
+                    "Skipped GC for host {} (no activity, past grace period, but state {} is not terminal)",
+                    host.id,
+                    state,
+                )
+                return
+            # Past grace period, no activity, in terminal state -- fall through to destroy.
+
         if not dry_run:
-            mngr_ctx.pm.hook.on_before_host_destroy(host=host_to_destroy)
-            provider.destroy_host(host_to_destroy)
-            mngr_ctx.pm.hook.on_host_destroyed(host=host_to_destroy)
+            mngr_ctx.pm.hook.on_before_host_destroy(host=host, mngr_ctx=mngr_ctx)
+            provider.destroy_host(host)
+            mngr_ctx.pm.hook.on_host_destroyed(host=host, mngr_ctx=mngr_ctx)
             emit_host_destroyed(mngr_ctx.config, host_ref.host_id, [])
 
         with results_lock:
@@ -360,36 +437,55 @@ def gc_snapshots(
     error_behavior: ErrorBehavior,
     result: GcResult,
 ) -> None:
-    """Garbage collect snapshots from destroyed hosts.
+    """Garbage collect old snapshots from destroyed hosts.
 
-    Only deletes snapshots from hosts that are in DESTROYED state -- these
-    snapshots serve no purpose because the host can never be resumed.
+    Only deletes snapshots from hosts that were in DESTROYED state at
+    discovery time, and only after the snapshot exceeds the provider's
+    ``destroyed_host_persisted_seconds`` threshold (default 7 days).
+    Younger snapshots are preserved so users can recover via
+    ``mngr create --snapshot``.
+
+    Uses the host_state from the pre-computed discovery results rather than
+    calling get_host(), because gc_machines may have already destroyed the
+    host (and its record) earlier in the same GC run.
 
     Snapshots on RUNNING, PAUSED, and STOPPED hosts are never deleted:
     - PAUSED/STOPPED hosts need their snapshots for resumption
     - RUNNING hosts may have snapshots for backup/restore purposes
     """
+    now = datetime.now(timezone.utc)
     for provider, host_refs in hosts_by_provider:
         if not provider.supports_snapshots:
             logger.trace("Skipped provider {} (does not support snapshots)", provider.name)
             continue
 
+        destroyed_host_persisted_seconds = provider.get_max_destroyed_host_persisted_seconds()
+
         try:
             for host_ref in host_refs:
                 try:
-                    host = provider.get_host(host_ref.host_id)
-                    host_state = host.get_state()
-                    if host_state != HostState.DESTROYED:
+                    if host_ref.host_state != HostState.DESTROYED:
                         logger.trace(
                             "Skipped snapshot GC for host {} (state: {})",
                             host_ref.host_id,
-                            host_state,
+                            host_ref.host_state,
                         )
                         continue
 
                     snapshots = provider.list_snapshots(host_ref.host_id)
 
                     for snapshot in snapshots:
+                        snapshot_age_seconds = (now - snapshot.created_at).total_seconds()
+                        if snapshot_age_seconds < destroyed_host_persisted_seconds:
+                            logger.trace(
+                                "Skipped snapshot {} on host {} (age {:.0f}s < threshold {:.0f}s)",
+                                snapshot.id,
+                                host_ref.host_id,
+                                snapshot_age_seconds,
+                                destroyed_host_persisted_seconds,
+                            )
+                            continue
+
                         if not dry_run:
                             provider.delete_snapshot(host_ref.host_id, snapshot.id)
 
@@ -700,12 +796,162 @@ def _remove_work_dir_from_certified_data(host: OnlineHostInterface, work_dir_pat
     host.set_certified_data(updated_data)
 
 
+def register_generated_source_dir(host: OnlineHostInterface, source_dir: Path) -> None:
+    """Record `source_dir` as an mngr-managed source repo on `host` so GC can clean it later."""
+    certified_data = host.get_certified_data()
+    existing_dirs = set(certified_data.generated_source_dirs)
+    existing_dirs.add(str(source_dir))
+    updated_data = certified_data.model_copy_update(
+        to_update(certified_data.field_ref().generated_source_dirs, tuple(sorted(existing_dirs))),
+    )
+    host.set_certified_data(updated_data)
+
+
+def _find_source_repo_of_worktree_on_host(host: OnlineHostInterface, worktree_path: Path) -> Path | None:
+    """Host-aware counterpart to git_utils.find_source_repo_of_worktree.
+
+    Reads the worktree's .git file through host.read_text_file so this works for
+    both local and remote hosts. Returns None if the path is not a worktree or
+    the .git file cannot be read.
+    """
+    try:
+        content = host.read_text_file(worktree_path / ".git")
+    except (FileNotFoundError, OSError):
+        return None
+    return parse_worktree_git_file(content)
+
+
+def _get_orphaned_source_dirs(
+    host: OnlineHostInterface, provider_name: ProviderInstanceName
+) -> tuple[list[WorkDirInfo], list[WorkDirInfo]]:
+    """Partition mngr-tracked source repos into (safe-to-delete, kept-due-to-unpushed-branches).
+
+    A source repo is "in use" if a living agent's work_dir either is the source itself
+    or is a git worktree backed by it. Anything else is orphan; an orphan with no local
+    branches outside every remote is safe to delete.
+    """
+    certified_data = host.get_certified_data()
+    source_dirs = set(certified_data.generated_source_dirs)
+    if not source_dirs:
+        return [], []
+
+    in_use_sources: set[str] = set()
+    for agent in host.get_agents():
+        work_dir_str = str(agent.work_dir)
+        if work_dir_str in source_dirs:
+            in_use_sources.add(work_dir_str)
+            continue
+        source_of_worktree = _find_source_repo_of_worktree_on_host(host, agent.work_dir)
+        if source_of_worktree is not None and str(source_of_worktree) in source_dirs:
+            in_use_sources.add(str(source_of_worktree))
+
+    deletable: list[WorkDirInfo] = []
+    kept: list[WorkDirInfo] = []
+    for source_dir_str in sorted(source_dirs - in_use_sources):
+        source_path = Path(source_dir_str)
+        info = _build_source_dir_info(host, provider_name, source_path)
+        unpushed = _local_branches_not_on_any_remote_on_host(host, source_path)
+        if unpushed:
+            logger.debug("Source {} has unpushed branches: {}", source_path, unpushed)
+            kept.append(info)
+        else:
+            deletable.append(info)
+    return deletable, kept
+
+
+_BRANCH_LISTING_FAILED_SENTINEL: Final[str] = "<branch listing failed>"
+
+
+def _local_branches_not_on_any_remote_on_host(host: OnlineHostInterface, repo_path: Path) -> list[str]:
+    """Return local branches in repo_path whose tip is not contained in any remote ref.
+
+    Runs git via host.execute_idempotent_command so this works for both local and remote
+    hosts. Failure is treated as "possibly unpushed" to stay on the safe side: we return
+    a non-empty list containing a sentinel so the caller keeps the repo instead of
+    deleting it.
+    """
+    quoted_path = shlex.quote(str(repo_path))
+    list_result = host.execute_idempotent_command(
+        f"git -C {quoted_path} for-each-ref --format={shlex.quote('%(refname:short)')} refs/heads/"
+    )
+    if not list_result.success:
+        logger.warning(
+            "Failed to list local branches in {} ({}); treating as possibly-unpushed to avoid data loss.",
+            repo_path,
+            list_result.stderr.strip(),
+        )
+        return [_BRANCH_LISTING_FAILED_SENTINEL]
+
+    unpushed: list[str] = []
+    for branch in list_result.stdout.splitlines():
+        branch = branch.strip()
+        if not branch:
+            continue
+        contains_result = host.execute_idempotent_command(
+            f"git -C {quoted_path} branch -r --contains {shlex.quote(branch)}"
+        )
+        if not contains_result.success or not contains_result.stdout.strip():
+            unpushed.append(branch)
+    return unpushed
+
+
+def _build_source_dir_info(
+    host: OnlineHostInterface, provider_name: ProviderInstanceName, source_path: Path
+) -> WorkDirInfo:
+    size = SizeBytes(0)
+    try:
+        result = host.execute_idempotent_command(f"du -sb {shlex.quote(str(source_path))} | cut -f1")
+        if result.success and result.stdout.strip():
+            size = SizeBytes(int(result.stdout.strip()))
+    except (ValueError, OSError):
+        pass
+
+    created_at = datetime.now(timezone.utc)
+    try:
+        stat_result = host.execute_idempotent_command(f"stat -c %Y {shlex.quote(str(source_path))}")
+        if stat_result.success and stat_result.stdout.strip():
+            created_at = datetime.fromtimestamp(int(stat_result.stdout.strip()), tz=timezone.utc)
+    except (ValueError, OSError):
+        pass
+
+    return WorkDirInfo(
+        path=source_path,
+        size_bytes=size,
+        host_id=host.id,
+        provider_name=provider_name,
+        is_local=host.is_local,
+        created_at=created_at,
+    )
+
+
+def _clean_source_dir(host: OnlineHostInterface, source_dir_path: Path) -> None:
+    """Remove a managed source repo and drop it from the host's certified data."""
+    with host.lock_cooperatively():
+        _remove_directory(host, source_dir_path)
+        certified_data = host.get_certified_data()
+        existing_dirs = set(certified_data.generated_source_dirs)
+        existing_dirs.discard(str(source_dir_path))
+        updated_data = certified_data.model_copy_update(
+            to_update(certified_data.field_ref().generated_source_dirs, tuple(sorted(existing_dirs))),
+        )
+        host.set_certified_data(updated_data)
+
+
 def _remove_directory(host: OnlineHostInterface, path: Path) -> None:
-    """Remove a directory and all its contents."""
+    """Remove a directory and all its contents.
+
+    Tries without sudo first, then retries with sudo if the initial
+    attempt fails (e.g. on Lima VMs where the SSH user is not root but
+    has passwordless sudo).
+    """
     result = host.execute_idempotent_command(f"test -e {shlex.quote(str(path))}")
     if result.success:
-        cmd = f"rm -rf {shlex.quote(str(path))}"
-        result = host.execute_idempotent_command(cmd)
+        quoted = shlex.quote(str(path))
+        result = host.execute_idempotent_command(f"rm -rf {quoted}")
+
+        if not result.success:
+            logger.debug("rm -rf failed for {}, retrying with sudo: {}", path, result.stderr)
+            result = host.execute_idempotent_command(f"sudo rm -rf {quoted}")
 
         if not result.success:
             raise MngrError(f"Failed to remove directory {path}: {result.stderr}")
@@ -722,7 +968,7 @@ def _handle_error(error_msg: str, error_behavior: ErrorBehavior, exc: Exception 
             raise MngrError(error_msg)
         case ErrorBehavior.CONTINUE:
             if exc:
-                logger.exception(exc)
+                logger.opt(exception=exc).error(error_msg)
             else:
                 logger.error(error_msg)
         case _ as unreachable:

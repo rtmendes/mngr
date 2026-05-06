@@ -21,6 +21,7 @@ from imbue.mngr.api.events import _handle_online_offline_transition
 from imbue.mngr.api.events import _maybe_emit_source_mismatch_warning
 from imbue.mngr.api.events import _parse_discovered_files
 from imbue.mngr.api.events import _pygtail_offset_file_path
+from imbue.mngr.api.events import _record_from_event_data
 from imbue.mngr.api.events import _sort_rotated_files_oldest_first
 from imbue.mngr.api.events import _start_tail_thread
 from imbue.mngr.api.events import _tail_source_thread_local
@@ -33,6 +34,7 @@ from imbue.mngr.api.events import resolve_events_target
 from imbue.mngr.api.events import sort_events_by_timestamp
 from imbue.mngr.api.events import stream_all_events
 from imbue.mngr.config.data_types import MngrContext
+from imbue.mngr.errors import MalformedJsonlLineError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.errors import UserInputError
 from imbue.mngr.interfaces.host import OnlineHostInterface
@@ -42,6 +44,7 @@ from imbue.mngr.providers.local.instance import LOCAL_HOST_NAME
 from imbue.mngr.providers.local.volume import LocalVolume
 from imbue.mngr.utils.cel_utils import compile_cel_filters
 from imbue.mngr.utils.polling import poll_for_value
+from imbue.mngr.utils.testing import capture_loguru
 
 
 @pytest.fixture
@@ -286,25 +289,29 @@ def test_parse_event_line_missing_source_uses_hint() -> None:
     assert record.source == "my_source"
 
 
-def test_parse_event_line_missing_timestamp_returns_none() -> None:
+def test_parse_event_line_missing_timestamp_raises() -> None:
+    """Event JSON without a timestamp envelope field is treated as upstream corruption."""
     line = '{"type":"test","event_id":"evt-abc","source":"messages"}'
-    record = parse_event_line(line, source_hint="fallback")
-    assert record is None
+    with pytest.raises(MalformedJsonlLineError, match="timestamp"):
+        parse_event_line(line, source_hint="fallback")
 
 
-def test_parse_event_line_malformed_json_returns_none() -> None:
-    record = parse_event_line("not json at all", source_hint="fallback")
-    assert record is None
+def test_parse_event_line_malformed_json_raises() -> None:
+    """Malformed JSON surfaces as JSONDecodeError; callers that need partial-write tolerance use MalformedJsonLineWarner."""
+    with pytest.raises(json.JSONDecodeError):
+        parse_event_line("not json at all", source_hint="fallback")
 
 
-def test_parse_event_line_empty_string_returns_none() -> None:
-    record = parse_event_line("", source_hint="fallback")
-    assert record is None
+def test_parse_event_line_empty_string_raises() -> None:
+    """parse_event_line is for individual non-empty lines; the watcher pre-strips empties before calling."""
+    with pytest.raises(json.JSONDecodeError):
+        parse_event_line("", source_hint="fallback")
 
 
-def test_parse_event_line_whitespace_only_returns_none() -> None:
-    record = parse_event_line("   \n  ", source_hint="fallback")
-    assert record is None
+def test_parse_event_line_whitespace_only_raises() -> None:
+    """Whitespace-only input is treated identically to empty: not a valid event line."""
+    with pytest.raises(json.JSONDecodeError):
+        parse_event_line("   \n  ", source_hint="fallback")
 
 
 # =============================================================================
@@ -337,9 +344,19 @@ def test_sort_events_by_timestamp_stable_for_equal_timestamps() -> None:
 
 
 def test_sort_rotated_files_oldest_first() -> None:
-    files = ["events.jsonl.1", "events.jsonl.3", "events.jsonl.2"]
+    files = [
+        "events.jsonl.20260415130000000000",
+        "events.jsonl.20260415110000000000",
+        "events.jsonl.20260415120000000000",
+    ]
     result = _sort_rotated_files_oldest_first(files)
-    assert result == snapshot(["events.jsonl.3", "events.jsonl.2", "events.jsonl.1"])
+    assert result == snapshot(
+        [
+            "events.jsonl.20260415110000000000",
+            "events.jsonl.20260415120000000000",
+            "events.jsonl.20260415130000000000",
+        ]
+    )
 
 
 def test_sort_rotated_files_empty_list() -> None:
@@ -347,9 +364,9 @@ def test_sort_rotated_files_empty_list() -> None:
 
 
 def test_sort_rotated_files_ignores_non_matching() -> None:
-    files = ["events.jsonl.1", "events.jsonl", "other.log"]
+    files = ["events.jsonl.20260415110000000000", "events.jsonl", "other.log"]
     result = _sort_rotated_files_oldest_first(files)
-    assert result == snapshot(["events.jsonl.1"])
+    assert result == snapshot(["events.jsonl.20260415110000000000"])
 
 
 # =============================================================================
@@ -359,7 +376,9 @@ def test_sort_rotated_files_ignores_non_matching() -> None:
 
 def test_parse_discovered_files_groups_by_directory() -> None:
     find_output = (
-        "/tmp/events/messages/events.jsonl\n/tmp/events/messages/events.jsonl.1\n/tmp/events/logs/mngr/events.jsonl\n"
+        "/tmp/events/messages/events.jsonl\n"
+        "/tmp/events/messages/events.jsonl.20260415110000000000\n"
+        "/tmp/events/logs/mngr/events.jsonl\n"
     )
     sources = _parse_discovered_files(find_output, "/tmp/events")
     assert len(sources) == 2
@@ -369,7 +388,7 @@ def test_parse_discovered_files_groups_by_directory() -> None:
     assert sources[0].rotated_files == ()
     assert sources[1].source_path == "messages"
     assert sources[1].is_current_file_present is True
-    assert sources[1].rotated_files == ("events.jsonl.1",)
+    assert sources[1].rotated_files == ("events.jsonl.20260415110000000000",)
 
 
 def test_parse_discovered_files_handles_empty_output() -> None:
@@ -378,11 +397,11 @@ def test_parse_discovered_files_handles_empty_output() -> None:
 
 
 def test_parse_discovered_files_only_rotated_file() -> None:
-    find_output = "/tmp/events/old_source/events.jsonl.1\n"
+    find_output = "/tmp/events/old_source/events.jsonl.20260415110000000000\n"
     sources = _parse_discovered_files(find_output, "/tmp/events")
     assert len(sources) == 1
     assert sources[0].is_current_file_present is False
-    assert sources[0].rotated_files == ("events.jsonl.1",)
+    assert sources[0].rotated_files == ("events.jsonl.20260415110000000000",)
 
 
 # =============================================================================
@@ -398,7 +417,9 @@ def test_discover_event_sources_via_volume(tmp_path: Path) -> None:
     # Create multiple source directories
     (events_dir / "messages").mkdir()
     (events_dir / "messages" / "events.jsonl").write_text('{"timestamp":"2026-01-01T00:00:00Z"}\n')
-    (events_dir / "messages" / "events.jsonl.1").write_text('{"timestamp":"2025-12-01T00:00:00Z"}\n')
+    (events_dir / "messages" / "events.jsonl.20251201000000000000").write_text(
+        '{"timestamp":"2025-12-01T00:00:00Z"}\n'
+    )
 
     (events_dir / "logs" / "mngr").mkdir(parents=True)
     (events_dir / "logs" / "mngr" / "events.jsonl").write_text('{"timestamp":"2026-01-02T00:00:00Z"}\n')
@@ -413,7 +434,7 @@ def test_discover_event_sources_via_volume(tmp_path: Path) -> None:
 
     messages_source = next(s for s in sources if s.source_path == "messages")
     assert messages_source.is_current_file_present is True
-    assert messages_source.rotated_files == ("events.jsonl.1",)
+    assert messages_source.rotated_files == ("events.jsonl.20251201000000000000",)
 
 
 def test_discover_event_sources_via_volume_empty_dir(tmp_path: Path) -> None:
@@ -528,6 +549,49 @@ def test_read_all_historical_events_includes_rotated_files(tmp_path: Path) -> No
     events, _ = read_all_historical_events(target, sources, [], [])
 
     assert [e.event_id for e in events] == ["old1", "new1"]
+
+
+def test_read_all_historical_events_warns_on_mid_file_corruption(tmp_path: Path) -> None:
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    (events_dir / "src").mkdir()
+    # Three lines: valid, malformed (mid-file), valid. The malformed line is followed
+    # by a valid line, proving it was not a partial write at EOF.
+    (events_dir / "src" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"e1","source":"src"}\n'
+        "this is not valid json {{{\n"
+        '{"timestamp":"2026-01-02T00:00:00Z","event_id":"e2","source":"src"}\n'
+    )
+    volume = LocalVolume(root_path=events_dir)
+    target = EventsTarget(volume=volume, display_name="test")
+    sources = [EventSourceInfo(source_path="src", rotated_files=(), is_current_file_present=True)]
+
+    with capture_loguru(level="WARNING") as log_output:
+        events, _ = read_all_historical_events(target, sources, [], [])
+
+    assert [e.event_id for e in events] == ["e1", "e2"]
+    output = log_output.getvalue()
+    assert "Skipped corrupt JSONL line" in output
+    assert "this is not valid json" in output
+
+
+def test_read_all_historical_events_silent_when_only_last_line_corrupted(tmp_path: Path) -> None:
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    (events_dir / "src").mkdir()
+    # Last line is malformed and not newline-terminated -- treat as partial write at EOF.
+    (events_dir / "src" / "events.jsonl").write_text(
+        '{"timestamp":"2026-01-01T00:00:00Z","event_id":"e1","source":"src"}\nincomplete{'
+    )
+    volume = LocalVolume(root_path=events_dir)
+    target = EventsTarget(volume=volume, display_name="test")
+    sources = [EventSourceInfo(source_path="src", rotated_files=(), is_current_file_present=True)]
+
+    with capture_loguru(level="WARNING") as log_output:
+        events, _ = read_all_historical_events(target, sources, [], [])
+
+    assert [e.event_id for e in events] == ["e1"]
+    assert log_output.getvalue() == ""
 
 
 def test_read_all_historical_events_with_cel_filter(tmp_path: Path) -> None:
@@ -1097,7 +1161,7 @@ def test_check_for_new_archived_events_finds_newly_rotated_files(tmp_path: Path)
     )
 
     # Simulate a new rotated file appearing
-    (events_dir / "src" / "events.jsonl.1").write_text(
+    (events_dir / "src" / "events.jsonl.20260101000000000000").write_text(
         '{"timestamp":"2026-01-01T00:00:00Z","event_id":"old1","source":"src"}\n'
     )
 
@@ -1105,7 +1169,7 @@ def test_check_for_new_archived_events_finds_newly_rotated_files(tmp_path: Path)
 
     assert len(new_events) == 1
     assert new_events[0].event_id == "old1"
-    assert "events.jsonl.1" in state.known_rotated_files["src"]
+    assert "events.jsonl.20260101000000000000" in state.known_rotated_files["src"]
 
 
 def test_check_for_new_archived_events_skips_already_known(tmp_path: Path) -> None:
@@ -1113,7 +1177,7 @@ def test_check_for_new_archived_events_skips_already_known(tmp_path: Path) -> No
     events_dir = tmp_path / "events"
     (events_dir / "src").mkdir(parents=True)
     (events_dir / "src" / "events.jsonl").write_text("")
-    (events_dir / "src" / "events.jsonl.1").write_text(
+    (events_dir / "src" / "events.jsonl.20260101000000000000").write_text(
         '{"timestamp":"2026-01-01T00:00:00Z","event_id":"old1","source":"src"}\n'
     )
 
@@ -1123,7 +1187,7 @@ def test_check_for_new_archived_events_skips_already_known(tmp_path: Path) -> No
     # State already knows about the rotated file
     state = _AllEventsStreamState(
         known_source_paths={"src"},
-        known_rotated_files={"src": {"events.jsonl.1"}},
+        known_rotated_files={"src": {"events.jsonl.20260101000000000000"}},
     )
 
     new_events = _check_for_new_archived_events(target, state, [], [])
@@ -1261,7 +1325,11 @@ def test_handle_online_offline_transition_no_change_when_same_state(tmp_path: Pa
 def test_build_event_sources_from_grouped_files_multiple_dirs() -> None:
     """Multiple directories should produce multiple EventSourceInfo objects."""
     files_by_dir = {
-        "messages": ["events.jsonl", "events.jsonl.1", "events.jsonl.2"],
+        "messages": [
+            "events.jsonl",
+            "events.jsonl.20260415110000000000",
+            "events.jsonl.20260415120000000000",
+        ],
         "logs": ["events.jsonl"],
     }
     sources = _build_event_sources_from_grouped_files(files_by_dir)
@@ -1275,20 +1343,23 @@ def test_build_event_sources_from_grouped_files_multiple_dirs() -> None:
     assert sources[1].source_path == "messages"
     assert sources[1].is_current_file_present is True
     assert len(sources[1].rotated_files) == 2
-    # Rotated files should be oldest first (highest number first)
-    assert sources[1].rotated_files == ("events.jsonl.2", "events.jsonl.1")
+    # Rotated files should be oldest first (lowest timestamp first)
+    assert sources[1].rotated_files == (
+        "events.jsonl.20260415110000000000",
+        "events.jsonl.20260415120000000000",
+    )
 
 
 def test_build_event_sources_from_grouped_files_only_rotated() -> None:
     """A directory with only rotated files should have is_current_file_present=False."""
     files_by_dir = {
-        "messages": ["events.jsonl.1"],
+        "messages": ["events.jsonl.20260415110000000000"],
     }
     sources = _build_event_sources_from_grouped_files(files_by_dir)
 
     assert len(sources) == 1
     assert sources[0].is_current_file_present is False
-    assert sources[0].rotated_files == ("events.jsonl.1",)
+    assert sources[0].rotated_files == ("events.jsonl.20260415110000000000",)
 
 
 def test_build_event_sources_from_grouped_files_empty() -> None:
@@ -1305,7 +1376,7 @@ def test_group_volume_files_into_sources_groups_correctly() -> None:
     """Files should be grouped by directory."""
     files = [
         ("messages", "events.jsonl"),
-        ("messages", "events.jsonl.1"),
+        ("messages", "events.jsonl.20260415110000000000"),
         ("logs", "events.jsonl"),
     ]
     sources = _group_volume_files_into_sources(files)
@@ -1362,10 +1433,10 @@ def test_events_target_rejects_online_host_without_events_path(
 # =============================================================================
 
 
-def test_parse_event_line_non_dict_json_returns_none() -> None:
-    """JSON arrays should be rejected (only dicts are valid events)."""
-    result = parse_event_line("[1, 2, 3]", "test")
-    assert result is None
+def test_parse_event_line_non_dict_json_raises() -> None:
+    """JSON arrays cannot be valid events; parse_event_line raises rather than returning None."""
+    with pytest.raises(MalformedJsonlLineError, match="Expected JSON object"):
+        parse_event_line("[1, 2, 3]", "test")
 
 
 def test_parse_event_line_backfills_source_into_data() -> None:
@@ -1396,6 +1467,37 @@ def test_parse_event_line_matching_source_has_no_original() -> None:
     assert result is not None
     assert result.source == "messages"
     assert result.original_source is None
+
+
+def test_record_from_event_data_does_not_mutate_input_when_source_mismatched() -> None:
+    """_record_from_event_data must not mutate caller-owned input dicts.
+
+    The function is marked @pure and now accepts dicts owned by
+    MalformedJsonLineWarner.parse(); a regression to in-place source-field
+    mutation would silently affect callers that retain the dict.
+    """
+    data = {
+        "timestamp": "2025-01-01T00:00:00Z",
+        "event_id": "evt-1",
+        "source": "wrong_source",
+    }
+    original_data = dict(data)
+    record = _record_from_event_data(data, '{"event_id":"evt-1"}', "correct_source")
+    assert record is not None
+    assert record.source == "correct_source"
+    assert record.data["source"] == "correct_source"
+    # Caller-owned input dict must be untouched.
+    assert data == original_data
+
+
+def test_record_from_event_data_does_not_mutate_input_when_source_missing() -> None:
+    """Backfilling a missing source must not mutate the caller-owned dict."""
+    data = {"timestamp": "2025-01-01T00:00:00Z", "event_id": "evt-1"}
+    original_data = dict(data)
+    record = _record_from_event_data(data, '{"event_id":"evt-1"}', "my-source")
+    assert record is not None
+    assert record.data["source"] == "my-source"
+    assert data == original_data
 
 
 # =============================================================================
@@ -1439,9 +1541,18 @@ def test_maybe_emit_source_mismatch_warning_skips_when_no_mismatch() -> None:
 def test_sort_rotated_files_mixed_valid_and_invalid() -> None:
     """Non-matching filenames should be ignored."""
     result = _sort_rotated_files_oldest_first(
-        ["events.jsonl.3", "not-a-rotated-file.txt", "events.jsonl.1", "events.jsonl.2"]
+        [
+            "events.jsonl.20260415130000000000",
+            "not-a-rotated-file.txt",
+            "events.jsonl.20260415110000000000",
+            "events.jsonl.20260415120000000000",
+        ]
     )
-    assert result == ["events.jsonl.3", "events.jsonl.2", "events.jsonl.1"]
+    assert result == [
+        "events.jsonl.20260415110000000000",
+        "events.jsonl.20260415120000000000",
+        "events.jsonl.20260415130000000000",
+    ]
 
 
 # =============================================================================

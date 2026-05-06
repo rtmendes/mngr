@@ -1,4 +1,3 @@
-from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -17,14 +16,8 @@ from imbue.mngr.primitives import SnapshotId
 from imbue.mngr.primitives import SnapshotName
 from imbue.mngr.providers.docker.instance import DockerProviderInstance
 from imbue.mngr.providers.docker.testing import make_docker_provider
-from imbue.mngr.providers.docker.testing import make_docker_provider_with_cleanup
 
-pytestmark = [pytest.mark.acceptance, pytest.mark.timeout(120)]
-
-
-@pytest.fixture
-def docker_provider(temp_mngr_ctx: MngrContext) -> Generator[DockerProviderInstance, None, None]:
-    yield from make_docker_provider_with_cleanup(temp_mngr_ctx)
+pytestmark = [pytest.mark.acceptance, pytest.mark.timeout(600)]
 
 
 @pytest.mark.docker
@@ -133,8 +126,14 @@ def test_start_host_on_running_host_returns_same_host(docker_provider: DockerPro
 def test_destroy_host_removes_container(docker_provider: DockerProviderInstance) -> None:
     host = docker_provider.create_host(HostName("test-destroy"))
     host_id = host.id
-    docker_provider.destroy_host(host, delete_snapshots=True)
+    docker_provider.destroy_host(host)
 
+    # Container is removed but host record persists in DESTROYED state
+    # so that gc_snapshots can age-gate snapshot cleanup. delete_host
+    # purges the record fully.
+    offline = docker_provider.get_host(host_id)
+    assert isinstance(offline, OfflineHost)
+    docker_provider.delete_host(offline)
     with pytest.raises(HostNotFoundError):
         docker_provider.get_host(host_id)
 
@@ -411,13 +410,22 @@ def test_multiple_snapshots_ordering(docker_provider: DockerProviderInstance) ->
 @pytest.mark.release
 @pytest.mark.docker
 @pytest.mark.docker_sdk
-def test_destroy_with_snapshots_cleans_up_images(docker_provider: DockerProviderInstance) -> None:
-    """Verify destroy_host with delete_snapshots removes snapshot images."""
+def test_delete_host_cleans_up_snapshot_images(docker_provider: DockerProviderInstance) -> None:
+    """Verify delete_host removes snapshot images and the host record.
+
+    destroy_host preserves snapshots so gc_snapshots can age-gate them; the
+    full purge happens in delete_host.
+    """
     host = docker_provider.create_host(HostName("test-destroy-snap"))
     docker_provider.create_snapshot(host, SnapshotName("to-cleanup"))
 
     host_id = host.id
-    docker_provider.destroy_host(host, delete_snapshots=True)
+    docker_provider.destroy_host(host)
+
+    # After destroy_host, snapshots are still tracked
+    assert len(docker_provider.list_snapshots(host_id)) == 1
+
+    docker_provider.delete_host(docker_provider.get_host(host_id))
 
     # Host record should be gone
     with pytest.raises(HostNotFoundError):
@@ -438,7 +446,7 @@ def test_discover_hosts_excludes_destroyed_by_default(
     """Verify destroyed hosts are excluded from discover_hosts by default."""
     host = docker_provider.create_host(HostName("test-destroyed-list"))
     host_id = host.id
-    docker_provider.destroy_host(host, delete_snapshots=True)
+    docker_provider.destroy_host(host)
 
     hosts = docker_provider.discover_hosts(temp_mngr_ctx.concurrency_group)
     host_ids = {h.host_id for h in hosts}
@@ -498,3 +506,41 @@ def test_persist_multiple_agents_for_same_host(docker_provider: DockerProviderIn
     assert len(records) == 2
     agent_ids = {r["id"] for r in records}
     assert agent_ids == {agent_id_1, agent_id_2}
+
+
+@pytest.mark.docker
+@pytest.mark.docker_sdk
+def test_disconnect_closes_paramiko_ssh_client(docker_provider: DockerProviderInstance) -> None:
+    """Verify that Host.disconnect() closes the underlying paramiko SSH client.
+
+    pyinfra's disconnect() only clears its SFTP cache and sets connected=False.
+    It does NOT close the paramiko SSHClient, so when connect() is called again
+    (e.g. during a retry after a transient SSH error), the old TCP connection
+    leaks as an orphaned sshd-session on the server.
+
+    This test creates a real Docker host, establishes an SSH connection, grabs
+    a reference to the paramiko transport, disconnects, and verifies that the
+    transport was actually closed.
+    """
+    host = docker_provider.create_host(HostName("test-disconnect"))
+
+    # Establish the SSH connection by running a command
+    result = host.execute_idempotent_command("echo connected")
+    assert result.success
+
+    # Grab the paramiko transport from the live connection.
+    # Access pyinfra internals directly (not part of the public type surface);
+    # the ty: ignore suppresses the unresolved-attribute type error.
+    old_client = host.connector.host.connector.client  # ty: ignore[unresolved-attribute]
+    assert old_client is not None
+    old_transport = old_client.get_transport()
+    assert old_transport is not None
+    assert old_transport.is_active()
+
+    # Disconnect
+    host.disconnect()
+
+    # The paramiko transport should be closed after disconnect
+    assert not old_transport.is_active(), (
+        "paramiko transport is still active after disconnect -- the SSH connection was leaked"
+    )

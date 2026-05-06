@@ -6,7 +6,7 @@
 **Synopsis:**
 
 ```text
-mngr [destroy|rm] [AGENTS...|-] [--agent <AGENT>] [--session <SESSION>] [-f|--force] [-b|--remove-created-branch]
+mngr [destroy|rm] [AGENTS...|-] [--agent <AGENT>] [--session <SESSION>] [-f|--force] [-b|--remove-created-branch] [--[no-]gc] [--[no-]allow-worktree-removal]
 ```
 
 Destroy agent(s) and clean up resources.
@@ -51,7 +51,7 @@ mngr destroy [OPTIONS] [AGENTS]...
 | `-f`, `--force` | boolean | Skip confirmation prompts and force destroy running agents | `False` |
 | `--gc`, `--no-gc` | boolean | Run garbage collection after destroying agents to clean up orphaned resources (default: enabled) | `True` |
 | `-b`, `--remove-created-branch` | boolean | Delete the git branch that mngr created for the agent's work directory | `False` |
-| `--allow-worktree-removal`, `--no-allow-worktree-removal` | boolean | Allow removal of the git worktree directory (default: enabled) | `True` |
+| `--allow-worktree-removal`, `--no-allow-worktree-removal` | boolean | Allow GC to remove the git worktree directory (default: enabled) | `True` |
 
 ## Common
 
@@ -62,26 +62,20 @@ mngr destroy [OPTIONS] [AGENTS]...
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
 | `--log-file` | path | Path to log file (overrides default ~/.mngr/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
-| `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
-| `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
 | `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNGR_HEADLESS env var or 'headless' config key. | `False` |
 | `--safe` | boolean | Always query all providers during discovery (disable event-stream optimization). Use this when interfacing with mngr from multiple machines. | `False` |
-| `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
 | `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
 | `-h`, `--help` | boolean | Show this message and exit. | `False` |
-
-## Related Documentation
-
-- [Resource Cleanup Options](../generic/resource_cleanup.md) - Control which associated resources are destroyed
-- [Multi-target Options](../generic/multi_target.md) - Behavior when targeting multiple agents
 
 ## See Also
 
 - [mngr create](./create.md) - Create a new agent
 - [mngr list](./list.md) - List existing agents
 - [mngr gc](../secondary/gc.md) - Garbage collect orphaned resources
+- [mngr help resource_cleanup](../generic/resource_cleanup.md) - Control which associated resources are destroyed
+- [mngr help multi_target](../generic/multi_target.md) - Behavior when targeting multiple agents
 
 ## Examples
 

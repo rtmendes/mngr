@@ -22,6 +22,12 @@ The agent can be specified as a positional argument or via --agent:
   mngr connect my-agent
   mngr connect --agent my-agent
 
+Filter flags (--include/--exclude plus aliases like --running, --project,
+--label, ...) narrow the candidate pool used by the interactive selector
+and the non-interactive most-recent fallback. They are ignored when an
+explicit agent is given. See `mngr list --help` for the full filter
+reference; the same flags work identically here.
+
 Alias: conn
 
 **Usage:**
@@ -47,10 +53,24 @@ mngr connect [OPTIONS] [AGENT]
 | Name | Type | Description | Default |
 | ---- | ---- | ----------- | ------- |
 | `--reconnect`, `--no-reconnect` | boolean | Automatically reconnect if dropped [future] | `True` |
-| `--retry` | integer | Number of connection retries [future] | `3` |
-| `--retry-delay` | text | Delay between retries [future] | `5s` |
 | `--session-command` | text | Command to run instead of attaching to main session [future] | None |
 | `--allow-unknown-host`, `--no-allow-unknown-host` | boolean | Allow connecting to hosts without a known_hosts file (disables SSH host key verification) | `False` |
+
+## Filtering
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
+| `--include` | text | Include agents matching CEL expression (repeatable) | None |
+| `--exclude` | text | Exclude agents matching CEL expression (repeatable) | None |
+| `--running` | boolean | Show only running agents (alias for --include 'state == "RUNNING"') | `False` |
+| `--stopped` | boolean | Show only stopped agents (alias for --include 'state == "STOPPED"') | `False` |
+| `--archived` | boolean | Show only archived agents (alias for --include 'has(labels.archived_at)') | `False` |
+| `--active` | boolean | Show only active agents (anything not archived/destroyed/crashed/failed) | `False` |
+| `--local` | boolean | Show only local agents (alias for --include 'host.provider == "local"') | `False` |
+| `--remote` | boolean | Show only remote agents (alias for --exclude 'host.provider == "local"') | `False` |
+| `--project` | text | Show only agents with this project label (repeatable; '.' expands to the current project) | None |
+| `--label` | text | Show only agents with this label (format: KEY=VALUE, repeatable) [experimental] | None |
+| `--host-label` | text | Show only agents on hosts with this host label (format: KEY=VALUE, repeatable) | None |
 
 ## Common
 
@@ -61,11 +81,8 @@ mngr connect [OPTIONS] [AGENT]
 | `-v`, `--verbose` | integer range | Increase verbosity (default: BUILD); -v for DEBUG, -vv for TRACE | `0` |
 | `--log-file` | path | Path to log file (overrides default ~/.mngr/events/logs/<timestamp>-<pid>.json) | None |
 | `--log-commands`, `--no-log-commands` | boolean | Log commands that were executed | None |
-| `--log-command-output`, `--no-log-command-output` | boolean | Log stdout/stderr from commands | None |
-| `--log-env-vars`, `--no-log-env-vars` | boolean | Log environment variables (security risk) | None |
 | `--headless` | boolean | Disable all interactive behavior (prompts, TUI, editor). Also settable via MNGR_HEADLESS env var or 'headless' config key. | `False` |
 | `--safe` | boolean | Always query all providers during discovery (disable event-stream optimization). Use this when interfacing with mngr from multiple machines. | `False` |
-| `--context` | path | Project context directory (for build context and loading project-specific config) [default: local .git root] | None |
 | `--plugin`, `--enable-plugin` | text | Enable a plugin [repeatable] | None |
 | `--disable-plugin` | text | Disable a plugin [repeatable] | None |
 | `-S`, `--setting` | text | Override a config setting for this invocation (KEY=VALUE, dot-separated paths) [repeatable] | None |
@@ -74,7 +91,7 @@ mngr connect [OPTIONS] [AGENT]
 ## See Also
 
 - [mngr create](./create.md) - Create and connect to a new agent
-- [mngr list](./list.md) - List available agents
+- [mngr list](./list.md) - List agents (full filter flag reference lives here)
 
 ## Examples
 
@@ -94,4 +111,10 @@ $ mngr connect my-agent --no-start
 
 ```bash
 $ mngr connect
+```
+
+**Selector limited to running agents on a project**
+
+```bash
+$ mngr connect --running --project my-project
 ```

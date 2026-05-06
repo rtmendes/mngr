@@ -1,6 +1,9 @@
 import json
+import os
+import re
 import shlex
 import subprocess
+from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from pathlib import Path
@@ -10,8 +13,33 @@ from loguru import logger
 from pydantic import Field
 
 from imbue.imbue_common.mutable_model import MutableModel
+from imbue.mngr.primitives import DockerBuilder
 from imbue.mngr_vps_docker.errors import ContainerSetupError
 from imbue.mngr_vps_docker.errors import VpsConnectionError
+
+# Idempotent install: skip if depot already on PATH, otherwise download to
+# /usr/local/bin via depot.dev's official installer. Run once per build (cheap
+# no-op when already present); avoids needing a separate provisioning step.
+_DEPOT_INSTALL_CMD: Final[str] = "command -v depot >/dev/null 2>&1 || curl -fsSL https://depot.dev/install-cli.sh | sh"
+
+# Env-var assignments whose values are secrets and must be redacted before any
+# remote_command string ends up in logs or exception messages.
+_SECRET_ENV_VARS: Final[tuple[str, ...]] = ("DEPOT_TOKEN",)
+# Matches `VAR=value` where value is either a single-quoted string (with no
+# embedded single quotes -- the form shlex.quote produces) or a run of
+# non-whitespace characters. The leading word boundary prevents matching
+# substrings like FOO_DEPOT_TOKEN=...
+_SECRET_ENV_PATTERN: Final[re.Pattern[str]] = re.compile(r"\b(" + "|".join(_SECRET_ENV_VARS) + r")=(?:'[^']*'|\S+)")
+
+
+def _redact_secret_env(remote_command: str) -> str:
+    """Return remote_command with values of known-secret env-var assignments replaced.
+
+    Used for log messages and exception messages so secrets like DEPOT_TOKEN
+    never appear in trace logs or surface to the user.
+    """
+    return _SECRET_ENV_PATTERN.sub(r"\1=<redacted>", remote_command)
+
 
 _SSH_BASE_OPTIONS: Final[tuple[str, ...]] = (
     "-o",
@@ -47,7 +75,8 @@ class DockerOverSsh(MutableModel):
     def run_ssh(self, remote_command: str, timeout_seconds: float = 60.0) -> str:
         """Run an arbitrary command on the VPS via SSH. Returns stdout."""
         cmd = self._build_ssh_command(remote_command)
-        logger.trace("SSH exec: {}", remote_command)
+        safe_command = _redact_secret_env(remote_command)
+        logger.trace("SSH exec: {}", safe_command)
         try:
             result = subprocess.run(
                 cmd,
@@ -56,7 +85,7 @@ class DockerOverSsh(MutableModel):
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as e:
-            raise VpsConnectionError(f"SSH command timed out after {timeout_seconds}s: {remote_command}") from e
+            raise VpsConnectionError(f"SSH command timed out after {timeout_seconds}s: {safe_command}") from e
         except OSError as e:
             raise VpsConnectionError(f"SSH command failed: {e}") from e
         if result.returncode != 0:
@@ -66,6 +95,45 @@ class DockerOverSsh(MutableModel):
                 raise VpsConnectionError(f"Cannot reach VPS at {self.vps_ip}: {error_msg}")
             raise ContainerSetupError(f"Remote command failed (exit {result.returncode}): {error_msg}")
         return result.stdout
+
+    def run_ssh_streaming(
+        self,
+        remote_command: str,
+        on_output: Callable[[str], None],
+        timeout_seconds: float = 600.0,
+    ) -> None:
+        """Run a command on the VPS via SSH, streaming stdout/stderr line by line.
+
+        Each line is passed to on_output as it arrives. Raises ContainerSetupError
+        if the command exits non-zero (with all captured output in the message).
+        """
+        cmd = self._build_ssh_command(remote_command)
+        safe_command = _redact_secret_env(remote_command)
+        logger.trace("SSH streaming: {}", safe_command)
+        collected_output: list[str] = []
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        except OSError as e:
+            raise VpsConnectionError(f"SSH command failed: {e}") from e
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                stripped = line.rstrip("\n")
+                collected_output.append(stripped)
+                on_output(stripped)
+            returncode = process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            raise VpsConnectionError(f"SSH command timed out after {timeout_seconds}s: {safe_command}") from None
+        if returncode != 0:
+            error_output = "\n".join(collected_output[-50:])
+            raise ContainerSetupError(f"Remote command failed (exit {returncode}): {error_output}")
 
     def run_docker(self, docker_args: Sequence[str], timeout_seconds: float = 60.0) -> str:
         """Run a docker command on the VPS and return stdout."""
@@ -171,7 +239,7 @@ class DockerOverSsh(MutableModel):
             logger.debug("Docker not ready on VPS {}: {}", self.vps_ip, e)
             return False
 
-    def upload_directory(self, local_path: Path, remote_path: str, timeout_seconds: float = 120.0) -> None:
+    def upload_directory(self, local_path: Path, remote_path: str, timeout_seconds: float = 300.0) -> None:
         """Upload a local directory to the VPS via rsync over SSH."""
         ssh_cmd = (
             f"ssh -i {shlex.quote(str(self.ssh_key_path))} "
@@ -185,6 +253,15 @@ class DockerOverSsh(MutableModel):
             "rsync",
             "-az",
             "--delete",
+            "--exclude=__pycache__",
+            "--exclude=.venv",
+            "--exclude=node_modules",
+            "--exclude=.mypy_cache",
+            "--exclude=.ruff_cache",
+            "--exclude=.pytest_cache",
+            "--exclude=.test_output",
+            "--exclude=htmlcov",
+            "--exclude=.test_durations",
             "-e",
             ssh_cmd,
             local_str,
@@ -199,11 +276,45 @@ class DockerOverSsh(MutableModel):
             raise ContainerSetupError(f"Upload failed: {result.stderr.strip()}")
 
     def build_image(
-        self, tag: str, build_context_path: str, docker_build_args: Sequence[str], timeout_seconds: float = 600.0
+        self,
+        tag: str,
+        build_context_path: str,
+        docker_build_args: Sequence[str],
+        timeout_seconds: float = 600.0,
+        on_output: Callable[[str], None] | None = None,
+        builder: DockerBuilder = DockerBuilder.DOCKER,
     ) -> str:
-        """Build a Docker image on the VPS from a remote build context. Returns the image tag."""
-        args = ["build", "-t", tag] + list(docker_build_args) + [build_context_path]
-        self.run_docker(args, timeout_seconds=timeout_seconds)
+        """Build a Docker image on the VPS from a remote build context. Returns the image tag.
+
+        When `builder` is DEPOT, ensures the depot CLI is installed on the VPS,
+        forwards DEPOT_TOKEN (required) from the agent's environment, optionally
+        forwards DEPOT_PROJECT_ID when set, and runs `depot build --load` (which
+        imports the resulting image into the local Docker daemon on the VPS so
+        subsequent `docker run` works).
+        """
+        if builder is DockerBuilder.DEPOT:
+            depot_token = os.environ.get("DEPOT_TOKEN", "")
+            depot_project_id = os.environ.get("DEPOT_PROJECT_ID", "")
+            if not depot_token:
+                raise ContainerSetupError(
+                    "builder=DEPOT requires DEPOT_TOKEN in the agent's environment. "
+                    "Set DEPOT_TOKEN (and DEPOT_PROJECT_ID if no depot.json is on the VPS), "
+                    "or set builder=DOCKER."
+                )
+            args = ["build", "--load", "-t", tag] + list(docker_build_args) + [build_context_path]
+            quoted = " ".join(shlex.quote(a) for a in args)
+            env_prefix_parts = [f"DEPOT_TOKEN={shlex.quote(depot_token)}"]
+            if depot_project_id:
+                env_prefix_parts.append(f"DEPOT_PROJECT_ID={shlex.quote(depot_project_id)}")
+            env_prefix = " ".join(env_prefix_parts)
+            remote_cmd = f"{_DEPOT_INSTALL_CMD} && {env_prefix} depot {quoted}"
+        else:
+            args = ["build", "-t", tag] + list(docker_build_args) + [build_context_path]
+            remote_cmd = "docker " + " ".join(shlex.quote(a) for a in args)
+        if on_output is not None:
+            self.run_ssh_streaming(remote_cmd, on_output=on_output, timeout_seconds=timeout_seconds)
+        else:
+            self.run_ssh(remote_cmd, timeout_seconds=timeout_seconds)
         return tag
 
     def check_file_exists(self, path: str) -> bool:
