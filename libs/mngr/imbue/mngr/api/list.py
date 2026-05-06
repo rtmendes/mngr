@@ -386,6 +386,7 @@ def _discover_and_emit_details_for_provider(
             error_type=type(e).__name__,
             error_message=str(e),
             source_name=str(provider.name),
+            provider_name=str(provider.name),
         )
         error_info = ProviderErrorInfo.build_for_provider(e, provider.name)
         with results_lock:
