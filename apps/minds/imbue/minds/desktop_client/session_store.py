@@ -181,7 +181,12 @@ class MultiAccountSessionStore(MutableModel):
                 accounts = self.cli.auth_list()
             except ImbueCloudCliError as exc:
                 logger.warning("Failed to list imbue_cloud accounts: {}", exc)
-                accounts = []
+                # Don't poison the cache with the empty fallback: a
+                # transient subprocess failure would otherwise stick
+                # ``no accounts`` until the next sign-in / sign-out
+                # invalidates the cache. Return an empty mapping for
+                # this call only and let the next read retry.
+                return {}
             self._identity_cache = {account.user_id: account for account in accounts}
             return self._identity_cache
 
