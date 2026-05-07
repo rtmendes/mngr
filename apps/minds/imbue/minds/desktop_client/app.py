@@ -506,11 +506,12 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
     gh_token = str(form.get("gh_token", "")).strip()
 
     session_store_inst: MultiAccountSessionStore | None = request.app.state.session_store
-    minds_config_inst: MindsConfig | None = request.app.state.minds_config
 
     def _re_render_with_error(message: str, status: int = 400) -> Response:
         accounts_list = session_store_inst.list_accounts() if session_store_inst else []
-        default_acct_id = minds_config_inst.get_default_account_id() if minds_config_inst else None
+        # Re-render with the user's submitted account_id pre-selected
+        # (including "" -> "No account") rather than the config default,
+        # so a validation error doesn't silently revert their choice.
         html_body = render_create_form(
             git_url=git_url,
             agent_name=agent_name,
@@ -518,7 +519,7 @@ async def _handle_create_form_submit(request: Request, auth_store: AuthStoreDep)
             launch_mode=launch_mode,
             ai_provider=ai_provider,
             accounts=accounts_list,
-            default_account_id=default_acct_id or "",
+            default_account_id=account_id,
             gh_token=gh_token,
             anthropic_api_key=anthropic_api_key,
             error_message=message,
@@ -642,10 +643,22 @@ async def _handle_create_agent_api(request: Request, auth_store: AuthStoreDep) -
         )
     anthropic_api_key = str(body.get("anthropic_api_key", "")).strip()
     gh_token = str(body.get("gh_token", "")).strip()
+    account_id = str(body.get("account_id", "")).strip()
     if not git_url:
         return Response(
             status_code=400,
             content='{"error": "git_url is required"}',
+            media_type="application/json",
+        )
+    # Mirror the form path's account requirement so the API rejects
+    # imbue_cloud-without-account up front instead of failing later inside
+    # the background thread with a vague MngrCommandError.
+    is_imbue_cloud_compute = launch_mode is LaunchMode.IMBUE_CLOUD
+    is_imbue_cloud_ai = ai_provider is AIProvider.IMBUE_CLOUD
+    if not account_id and (is_imbue_cloud_compute or is_imbue_cloud_ai):
+        return Response(
+            status_code=400,
+            content='{"error": "account_id is required when launch_mode or ai_provider is IMBUE_CLOUD"}',
             media_type="application/json",
         )
     if ai_provider is AIProvider.API_KEY and not anthropic_api_key:
@@ -655,12 +668,22 @@ async def _handle_create_agent_api(request: Request, auth_store: AuthStoreDep) -
             media_type="application/json",
         )
 
+    # Resolve the account email when an imbue_cloud field is selected so the
+    # background creation can mint a LiteLLM key / lease a pool host. The
+    # session store is the source of truth for email <-> user_id mapping.
+    account_email = ""
+    if account_id and (is_imbue_cloud_compute or is_imbue_cloud_ai):
+        session_store_inst: MultiAccountSessionStore | None = request.app.state.session_store
+        if session_store_inst is not None:
+            account_email = session_store_inst.get_account_email(account_id) or ""
+
     creation_id = agent_creator.start_creation(
         git_url,
         agent_name=agent_name,
         branch=branch,
         launch_mode=launch_mode,
         ai_provider=ai_provider,
+        account_email=account_email,
         anthropic_api_key=anthropic_api_key,
         gh_token=gh_token,
     )
