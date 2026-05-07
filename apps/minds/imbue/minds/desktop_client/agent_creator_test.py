@@ -123,8 +123,8 @@ def test_build_mngr_create_command_imbue_cloud_targets_account_provider() -> Non
         imbue_cloud_account="alice@imbue.com",
         imbue_cloud_repo_url="https://github.com/imbue-ai/forever-claude-template",
         imbue_cloud_branch_or_tag="v1.2.3",
-        imbue_cloud_anthropic_api_key="sk-test",
-        imbue_cloud_anthropic_base_url="https://litellm.example.com",
+        has_anthropic_api_key=True,
+        has_anthropic_base_url=True,
     )
     joined = " ".join(command)
     # Address points at the imbue_cloud_<slug> provider so mngr routes
@@ -140,13 +140,14 @@ def test_build_mngr_create_command_imbue_cloud_targets_account_provider() -> Non
     assert "-b" in command
     assert "repo_url=https://github.com/imbue-ai/forever-claude-template" in command
     assert "repo_branch_or_tag=v1.2.3" in command
-    # The actual ANTHROPIC_API_KEY / BASE_URL values are never on the
-    # command line -- they land in the subprocess env that
-    # ``run_mngr_create`` builds, and the template's ``pass_host_env``
-    # forwards them onto the host. ``--pass-host-env`` itself isn't
-    # inlined here either; the ``imbue_cloud`` template owns it.
-    assert "ANTHROPIC_API_KEY=sk-test" not in command
-    assert "ANTHROPIC_BASE_URL=https://litellm.example.com" not in command
+    # ANTHROPIC creds live in the subprocess env that ``run_mngr_create``
+    # populates and are forwarded onto the host by the ``imbue_cloud``
+    # template's own ``pass_host_env`` declaration. The inline
+    # ``--pass-host-env`` flags this builder normally adds for other
+    # compute providers are skipped for IMBUE_CLOUD because the template
+    # already covers them.
+    assert "ANTHROPIC_API_KEY" not in joined
+    assert "ANTHROPIC_BASE_URL" not in joined
     assert "--pass-host-env" not in command
     # IMBUE_CLOUD now uses the symmetric ``--template main --template imbue_cloud``
     # shape (mirroring how DEV/LOCAL/LIMA/CLOUD use ``--template main --template <provider>``).
@@ -159,6 +160,80 @@ def test_build_mngr_create_command_imbue_cloud_targets_account_provider() -> Non
     # ``--idle-mode disabled`` also moved into the template.
     assert "--idle-mode" not in command
     assert api_key
+
+
+def test_build_mngr_create_command_forwards_anthropic_creds_for_local_compute() -> None:
+    """For non-IMBUE_CLOUD compute, anthropic creds are forwarded via inline ``--pass-host-env``.
+
+    The actual values live in the subprocess env that ``run_mngr_create`` populates;
+    only the variable names appear on the command line.
+    """
+    command, _ = _build_mngr_create_command(
+        launch_mode=LaunchMode.LOCAL,
+        agent_name=AgentName("hello"),
+        has_anthropic_api_key=True,
+        has_anthropic_base_url=True,
+    )
+    pass_host_pairs = [
+        (command[i], command[i + 1])
+        for i, arg in enumerate(command)
+        if arg == "--pass-host-env" and i + 1 < len(command)
+    ]
+    assert ("--pass-host-env", "ANTHROPIC_API_KEY") in pass_host_pairs
+    assert ("--pass-host-env", "ANTHROPIC_BASE_URL") in pass_host_pairs
+
+
+def test_build_mngr_create_command_forwards_anthropic_creds_for_dev_compute() -> None:
+    """DEV mode forwards the same creds via ``--pass-env`` (agent env, not host env)."""
+    command, _ = _build_mngr_create_command(
+        launch_mode=LaunchMode.DEV,
+        agent_name=AgentName("hello"),
+        has_anthropic_api_key=True,
+    )
+    pass_pairs = [
+        (command[i], command[i + 1]) for i, arg in enumerate(command) if arg == "--pass-env" and i + 1 < len(command)
+    ]
+    assert ("--pass-env", "ANTHROPIC_API_KEY") in pass_pairs
+    assert "--pass-host-env" not in command
+
+
+def test_build_mngr_create_command_forwards_gh_token_via_pass_host_env() -> None:
+    """``GH_TOKEN`` is forwarded inline for every compute mode (no template covers it)."""
+    command_local, _ = _build_mngr_create_command(
+        launch_mode=LaunchMode.LOCAL,
+        agent_name=AgentName("hello"),
+        has_gh_token=True,
+    )
+    pairs_local = [
+        (command_local[i], command_local[i + 1])
+        for i, arg in enumerate(command_local)
+        if arg == "--pass-host-env" and i + 1 < len(command_local)
+    ]
+    assert ("--pass-host-env", "GH_TOKEN") in pairs_local
+
+    command_imbue, _ = _build_mngr_create_command(
+        launch_mode=LaunchMode.IMBUE_CLOUD,
+        agent_name=AgentName("hello"),
+        imbue_cloud_account="alice@imbue.com",
+        has_gh_token=True,
+    )
+    pairs_imbue = [
+        (command_imbue[i], command_imbue[i + 1])
+        for i, arg in enumerate(command_imbue)
+        if arg == "--pass-host-env" and i + 1 < len(command_imbue)
+    ]
+    assert ("--pass-host-env", "GH_TOKEN") in pairs_imbue
+
+
+def test_build_mngr_create_command_omits_anthropic_flags_when_not_provided() -> None:
+    """No anthropic flags when neither key nor base URL is requested."""
+    command, _ = _build_mngr_create_command(
+        launch_mode=LaunchMode.LOCAL,
+        agent_name=AgentName("hello"),
+    )
+    assert "ANTHROPIC_API_KEY" not in command
+    assert "ANTHROPIC_BASE_URL" not in command
+    assert "GH_TOKEN" not in command
 
 
 def test_is_git_worktree_returns_false_for_nonexistent_path(tmp_path) -> None:
