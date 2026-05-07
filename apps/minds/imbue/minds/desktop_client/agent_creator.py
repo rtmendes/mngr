@@ -344,9 +344,6 @@ def _build_mngr_create_command(
     imbue_cloud_account: str | None = None,
     imbue_cloud_repo_url: str | None = None,
     imbue_cloud_branch_or_tag: str | None = None,
-    has_anthropic_api_key: bool = False,
-    has_anthropic_base_url: bool = False,
-    has_gh_token: bool = False,
 ) -> tuple[list[str], str]:
     """Build the mngr create command and generate an API key for the agent.
 
@@ -374,12 +371,12 @@ def _build_mngr_create_command(
     host instead of failing on a duplicate name (IMBUE_CLOUD's lease
     flow is one-shot per pool host, so reuse is not meaningful there).
 
-    The ``has_*`` flags drive ``--pass-host-env`` / ``--pass-env`` flags so
-    the host (or DEV agent) picks the actual values up out of the subprocess
-    env that ``run_mngr_create`` populates -- the secrets never appear in
-    argv. The IMBUE_CLOUD template already declares ``ANTHROPIC_API_KEY``
-    and ``ANTHROPIC_BASE_URL`` in its own ``pass_host_env`` so the explicit
-    flags here are skipped for that mode (they would be redundant).
+    Secrets (``ANTHROPIC_API_KEY``, ``ANTHROPIC_BASE_URL``, ``GH_TOKEN``)
+    are forwarded by the FCT template's own ``pass_(host_)env`` declarations,
+    not by inline flags here -- ``run_mngr_create`` populates them in the
+    subprocess env when needed and the template-declared forwards pick
+    them up. Keeping the forwarding declaration in FCT means the same
+    template works for ``mngr create`` invocations from outside minds too.
 
     For container/VM/VPS/leased modes, ``LATCHKEY_GATEWAY=http://127.0.0.1:<port>``
     is injected unconditionally; the agent reaches that loopback URL via the
@@ -452,7 +449,7 @@ def _build_mngr_create_command(
     # ``--template main --template <mode>``; the per-mode template provides
     # the provider-specific knobs (idle_mode, pass_host_env, build_arg, ...)
     # while runtime-only knobs that vary per-invocation (``--new-host``,
-    # ``-b lease_attributes``, ``--pass-host-env <KEY>``) stay inline.
+    # ``-b lease_attributes``) stay inline.
     match launch_mode:
         case LaunchMode.DEV:
             # Local (same-machine) mode: the agent inherits the bootstrap-set
@@ -473,10 +470,7 @@ def _build_mngr_create_command(
             # ``main`` + ``imbue_cloud`` templates set ``idle_mode = disabled``
             # + ``pass_host_env`` for the LiteLLM creds, and the runtime-only
             # lease-attribute ``-b`` flags stay inline because they vary per
-            # invocation. ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL (LiteLLM
-            # creds) are forwarded via the template's ``pass_host_env`` --
-            # ``run_mngr_create`` writes them into the subprocess env so the
-            # host actually has them when ``--pass-host-env`` reads.
+            # invocation.
             mngr_command.extend(["--new-host", "--template", "main", "--template", "imbue_cloud"])
             if imbue_cloud_repo_url:
                 mngr_command.extend(["-b", f"repo_url={imbue_cloud_repo_url}"])
@@ -484,22 +478,6 @@ def _build_mngr_create_command(
                 mngr_command.extend(["-b", f"repo_branch_or_tag={imbue_cloud_branch_or_tag}"])
         case _ as unreachable:
             assert_never(unreachable)
-
-    # Forward the secrets that ``run_mngr_create`` populates in the
-    # subprocess env. For DEV the agent runs in-place so we use ``--pass-env``
-    # (agent env). For every other mode the new host is what consumes the
-    # secret (the agent inherits the host's env), so ``--pass-host-env`` is
-    # what we need. IMBUE_CLOUD's template already declares the Anthropic
-    # creds in ``pass_host_env`` so we omit the redundant inline flags
-    # there; GH_TOKEN is not in any template's ``pass_host_env`` so it
-    # always needs the inline flag.
-    forward_flag = "--pass-env" if launch_mode is LaunchMode.DEV else "--pass-host-env"
-    if has_anthropic_api_key and launch_mode is not LaunchMode.IMBUE_CLOUD:
-        mngr_command.extend([forward_flag, "ANTHROPIC_API_KEY"])
-    if has_anthropic_base_url and launch_mode is not LaunchMode.IMBUE_CLOUD:
-        mngr_command.extend([forward_flag, "ANTHROPIC_BASE_URL"])
-    if has_gh_token:
-        mngr_command.extend([forward_flag, "GH_TOKEN"])
 
     return mngr_command, api_key
 
@@ -660,8 +638,8 @@ def run_mngr_create(
 
     ``anthropic_api_key`` / ``anthropic_base_url`` / ``gh_token`` are placed
     into the subprocess env (not argv) so they don't show up in ``ps`` output;
-    the matching ``--pass-(host-)env`` flags added by ``_build_mngr_create_command``
-    cause mngr to forward them onto the host or agent as appropriate.
+    the FCT template's own ``pass_(host_)env`` declarations cause mngr to
+    forward them onto the host (or the DEV agent) as appropriate.
 
     Returns ``(api_key, canonical_agent_id)``. The canonical id is parsed
     out of the ``"event": "created"`` JSONL line that ``mngr create``
@@ -676,9 +654,6 @@ def run_mngr_create(
         imbue_cloud_account=imbue_cloud_account,
         imbue_cloud_repo_url=imbue_cloud_repo_url,
         imbue_cloud_branch_or_tag=imbue_cloud_branch_or_tag,
-        has_anthropic_api_key=anthropic_api_key is not None,
-        has_anthropic_base_url=anthropic_base_url is not None,
-        has_gh_token=gh_token is not None,
     )
 
     # Build the subprocess env from the parent's env + any secrets we inject
