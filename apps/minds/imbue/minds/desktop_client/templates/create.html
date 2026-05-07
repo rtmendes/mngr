@@ -48,6 +48,9 @@
                       {% if mode.value == 'IMBUE_CLOUD' %}data-requires-account="true"{% endif %}>{{ mode.value | lower }}</option>
             {% endfor %}
           </select>
+          <p id="launch-mode-account-error" class="hidden mt-1 text-xs text-amber-600">
+            imbue_cloud requires a selected account.
+          </p>
         </div>
       </div>
 
@@ -64,16 +67,15 @@
                       {% if provider.value == 'IMBUE_CLOUD' %}data-requires-account="true"{% endif %}>{{ provider.value | lower }}</option>
             {% endfor %}
           </select>
+          <p id="ai-provider-account-error" class="hidden mt-1 text-xs text-amber-600">
+            imbue_cloud requires a selected account.
+          </p>
           <div id="api-key-row" class="mt-3 hidden">
             <label for="anthropic_api_key" class="text-sm text-zinc-900 font-medium block mb-1">Anthropic API key</label>
             {{ ui.text_input('anthropic_api_key', value=anthropic_api_key, placeholder='sk-ant-...', id='anthropic_api_key', type='password') }}
           </div>
         </div>
       </div>
-
-      <p id="account-required-warning" class="hidden mt-1 mb-4 text-xs text-amber-600">
-        imbue_cloud requires an account. Select an account or pick a different option for both the compute and AI providers.
-      </p>
 
       <div class="mt-6 mb-4">
         <button type="button" id="toggle-advanced"
@@ -140,18 +142,17 @@
       var aiProviderSelect = document.getElementById('ai_provider');
       var apiKeyRow = document.getElementById('api-key-row');
       var apiKeyInput = document.getElementById('anthropic_api_key');
-      var warning = document.getElementById('account-required-warning');
+      var launchModeError = document.getElementById('launch-mode-account-error');
+      var aiProviderError = document.getElementById('ai-provider-account-error');
       var submitBtn = document.getElementById('create-submit');
-
-      function isImbueCloudWithoutAccount() {
-        var hasAccount = accountSelect.value !== '';
-        if (hasAccount) return false;
-        return launchSelect.value === 'IMBUE_CLOUD' || aiProviderSelect.value === 'IMBUE_CLOUD';
-      }
 
       function update() {
         var hasAccount = accountSelect.value !== '';
 
+        // Disable the imbue_cloud option in each select when no account is
+        // chosen, so the dropdown itself signals "this is unavailable" -- the
+        // per-field amber notice below covers the case where the option was
+        // already selected before the account was cleared.
         var launchImbueOption = launchSelect.querySelector('option[data-requires-account]');
         if (launchImbueOption) launchImbueOption.disabled = !hasAccount;
         var aiImbueOption = aiProviderSelect.querySelector('option[data-requires-account]');
@@ -161,9 +162,11 @@
         apiKeyRow.classList.toggle('hidden', !isApiKey);
         apiKeyInput.required = isApiKey;
 
-        var invalid = isImbueCloudWithoutAccount();
-        warning.classList.toggle('hidden', !invalid);
-        submitBtn.disabled = invalid;
+        var launchInvalid = !hasAccount && launchSelect.value === 'IMBUE_CLOUD';
+        var aiInvalid = !hasAccount && aiProviderSelect.value === 'IMBUE_CLOUD';
+        launchModeError.classList.toggle('hidden', !launchInvalid);
+        aiProviderError.classList.toggle('hidden', !aiInvalid);
+        submitBtn.disabled = launchInvalid || aiInvalid;
       }
 
       accountSelect.addEventListener('change', update);
