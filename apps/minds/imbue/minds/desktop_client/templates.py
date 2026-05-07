@@ -294,15 +294,13 @@ def render_sharing_editor(
     title: str,
     mngr_forward_origin: str = "",
     initial_emails: list[str] | None = None,
-    is_request: bool = False,
-    request_id: str = "",
     has_account: bool = True,
     accounts: Sequence[object] | None = None,
     redirect_url: str = "",
     ws_name: str = "",
     account_email: str = "",
 ) -> str:
-    """Render the sharing editor page used for both request approval and direct editing.
+    """Render the sharing editor page used by the workspace-settings sharing flow.
 
     ``mngr_forward_origin`` is the bare origin of the ``mngr forward`` plugin;
     the workspace link in the page title points at ``{mngr_forward_origin}/goto/<agent>/``.
@@ -313,8 +311,6 @@ def render_sharing_editor(
         service_name=service_name,
         mngr_forward_origin=mngr_forward_origin,
         initial_emails=initial_emails or [],
-        is_request=is_request,
-        request_id=request_id,
         has_account=has_account,
         accounts=accounts or [],
         redirect_url=redirect_url,

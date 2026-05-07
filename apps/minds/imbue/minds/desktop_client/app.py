@@ -64,6 +64,7 @@ from imbue.minds.desktop_client.sharing_handler import enable_sharing_via_cloudf
 from imbue.minds.desktop_client.sharing_handler import parse_emails_form_value
 from imbue.minds.desktop_client.sharing_handler import resolve_account_email_for_workspace
 from imbue.minds.desktop_client.supertokens_routes import create_supertokens_router
+from imbue.minds.desktop_client.supertokens_routes import signout_user_via_plugin
 from imbue.minds.desktop_client.templates import render_accounts_page
 from imbue.minds.desktop_client.templates import render_auth_error_page
 from imbue.minds.desktop_client.templates import render_chrome_page
@@ -1241,12 +1242,19 @@ async def _handle_account_logout(
     request: Request,
     auth_store: AuthStoreDep,
 ) -> Response:
-    """Log out a specific account."""
+    """Log out a specific account.
+
+    Routes through the same plugin-side signout as ``_handle_signout_api``
+    so the SuperTokens session is actually revoked, the
+    ``[providers.imbue_cloud_<slug>]`` block is torn down, and the
+    identity cache reflects the new state. Without this, just dropping
+    the cache would let the next ``auth list`` call resurrect the
+    account because the plugin still holds the session on disk.
+    """
     if not _is_authenticated(cookies=request.cookies, auth_store=auth_store):
         return Response(status_code=403, content="Not authenticated")
-    session_store: MultiAccountSessionStore | None = request.app.state.session_store
-    if session_store:
-        session_store.remove_session(user_id)
+    if request.app.state.session_store is not None:
+        signout_user_via_plugin(request, user_id)
     return Response(status_code=303, headers={"Location": "/accounts"})
 
 
@@ -1512,7 +1520,6 @@ def _handle_sharing_page(
         service_name=service_name,
         title=f"Sharing: {service_name}",
         mngr_forward_origin=_get_mngr_forward_origin(request),
-        is_request=False,
         has_account=has_account,
         accounts=accounts,
         redirect_url=f"/sharing/{agent_id}/{service_name}",
@@ -1529,13 +1536,10 @@ async def _handle_sharing_enable(
     auth_store: AuthStoreDep,
     backend_resolver: BackendResolverDep,
 ) -> Response:
-    """Enable or update sharing for a service via direct editing.
+    """Enable or update sharing for a service via the workspace-settings editor.
 
-    Approving a *pending* sharing request goes through the unified
-    ``POST /requests/{id}/grant`` dispatcher (which calls into
-    :class:`SharingRequestHandler`); this route only services the
-    workspace-settings sharing editor. Both paths funnel through
-    :func:`enable_sharing_via_cloudflare` so they cannot drift.
+    Sharing is configured exclusively from this editor; agents no longer
+    write sharing-request events back into the inbox.
 
     On a soft failure (no signed-in account, plugin error, etc.) the
     handler returns 502 with a JSON ``{"error": "..."}`` body. The

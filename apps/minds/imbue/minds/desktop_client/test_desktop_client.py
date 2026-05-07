@@ -19,15 +19,17 @@ from imbue.minds.desktop_client.backend_resolver import MngrCliBackendResolver
 from imbue.minds.desktop_client.backend_resolver import StaticBackendResolver
 from imbue.minds.desktop_client.conftest import DEFAULT_SERVICE_NAME
 from imbue.minds.desktop_client.conftest import make_agents_json
+from imbue.minds.desktop_client.conftest import make_fake_imbue_cloud_cli
 from imbue.minds.desktop_client.conftest import make_resolver_with_data
 from imbue.minds.desktop_client.conftest import make_service_log
+from imbue.minds.desktop_client.conftest import make_session_store_for_test
 from imbue.minds.desktop_client.cookie_manager import SESSION_COOKIE_NAME
 from imbue.minds.desktop_client.cookie_manager import create_session_cookie
+from imbue.minds.desktop_client.imbue_cloud_cli import ImbueCloudCli
 from imbue.minds.desktop_client.minds_config import MindsConfig
 from imbue.minds.desktop_client.notification import NotificationDispatcher
 from imbue.minds.desktop_client.request_events import RequestInbox
-from imbue.minds.desktop_client.request_events import create_sharing_request_event
-from imbue.minds.desktop_client.session_store import MultiAccountSessionStore
+from imbue.minds.desktop_client.request_events import create_latchkey_permission_request_event
 from imbue.minds.primitives import CreationId
 from imbue.minds.primitives import OneTimeCode
 from imbue.minds.primitives import ServiceName
@@ -897,11 +899,17 @@ def test_chrome_events_sse_returns_workspaces_when_authenticated(tmp_path: Path)
 
 def _create_test_client_with_stores(
     tmp_path: Path,
+    cli: ImbueCloudCli | None = None,
 ) -> tuple[TestClient, FileAuthStore]:
-    """Create a desktop client with session store and config for testing new routes."""
+    """Create a desktop client with session store and config for testing new routes.
+
+    ``cli`` is forwarded to :func:`make_session_store_for_test` so callers
+    can seed the session store with specific accounts; defaults to a
+    fresh empty fake CLI.
+    """
     auth_dir = tmp_path / "auth"
     auth_store = FileAuthStore(data_directory=auth_dir)
-    session_store = MultiAccountSessionStore(data_dir=tmp_path)
+    session_store = make_session_store_for_test(tmp_path, cli=cli)
     minds_config = MindsConfig(data_dir=tmp_path)
     request_inbox = RequestInbox()
 
@@ -937,14 +945,10 @@ def test_accounts_page_shows_empty_when_no_accounts(tmp_path: Path) -> None:
 
 def test_accounts_page_shows_logged_in_accounts(tmp_path: Path) -> None:
     """The /accounts page lists logged-in accounts."""
-    client, auth_store = _create_test_client_with_stores(tmp_path)
+    cli = make_fake_imbue_cloud_cli()
+    cli.add_account(user_id="user-test-123", email="test@example.com")
+    client, auth_store = _create_test_client_with_stores(tmp_path, cli=cli)
     _authenticate_client(client, auth_store)
-
-    session_store = MultiAccountSessionStore(data_dir=tmp_path)
-    session_store.add_or_update_session(
-        user_id="user-test-123",
-        email="test@example.com",
-    )
 
     response = client.get("/accounts")
     assert response.status_code == 200
@@ -992,9 +996,11 @@ def test_requests_panel_card_routes_via_minds_bridge(tmp_path: Path) -> None:
     # Build the app inline so we can seed the inbox before creating the
     # TestClient and still have a concretely-typed handle to app.state.
     agent_id = str(AgentId())
-    event = create_sharing_request_event(agent_id=agent_id, service_name="web")
+    event = create_latchkey_permission_request_event(
+        agent_id=agent_id, service_name="slack", rationale="Need to post status updates"
+    )
     auth_store = FileAuthStore(data_directory=tmp_path / "auth")
-    session_store = MultiAccountSessionStore(data_dir=tmp_path)
+    session_store = make_session_store_for_test(tmp_path)
     minds_config = MindsConfig(data_dir=tmp_path)
     request_inbox = RequestInbox().add_request(event)
     backend_resolver = StaticBackendResolver(url_by_agent_and_service={})
@@ -1094,7 +1100,7 @@ def _build_refresh_test_app(
         auth_store=FileAuthStore(data_directory=tmp_path / "auth"),
         backend_resolver=resolver,
         http_client=http_client,
-        session_store=MultiAccountSessionStore(data_dir=tmp_path),
+        session_store=make_session_store_for_test(tmp_path),
         minds_config=MindsConfig(data_dir=tmp_path),
         request_inbox=RequestInbox(),
         paths=WorkspacePaths(data_dir=tmp_path),
